@@ -55,6 +55,7 @@ class CorrelationFirewall:
         self.max_correlation: float = float(risk["MAX_CORRELATION_TO_PORTFOLIO"])
         self.max_sector_weight: float = float(risk["MAX_SECTOR_WEIGHT_PCT"])
         self.max_single_position: float = float(risk["MAX_SINGLE_POSITION_PCT"])
+        self.vix_panic_threshold: float = float(risk.get("VIX_PANIC_THRESHOLD", 30.0))
         self.ticker_sectors: Dict[str, str] = self._build_sector_map(universe)
 
         logger.debug(
@@ -134,6 +135,37 @@ class CorrelationFirewall:
             ticker,
             sector,
             projected_weight * 100,
+        )
+        return True
+
+    def check_vix_panic(self, vix_level: float) -> bool:
+        """Emergency market-wide brake based on European volatility (VSTOXX).
+
+        When ``vix_level`` exceeds ``VIX_PANIC_THRESHOLD`` the market is in panic
+        mode and all *new satellite* stock-picking buys must be blocked. Core
+        Smart-DCA accumulation is handled separately and is intentionally NOT
+        gated by this check (buy the fear on the broad ETF).
+
+        Args:
+            vix_level: Current ``^V2TX`` level (e.g. 34.0).
+
+        Returns:
+            bool: ``True`` if satellite buying is allowed, ``False`` (VETO) if
+            the market is in panic.
+        """
+        if vix_level is None:
+            return True
+        if vix_level > self.vix_panic_threshold:
+            logger.warning(
+                "VIX PANIC VETO: V2TX %.1f > %.1f -> blocking new satellite buys.",
+                vix_level,
+                self.vix_panic_threshold,
+            )
+            return False
+        logger.debug(
+            "VIX %.1f within calm threshold %.1f; satellite buys allowed.",
+            vix_level,
+            self.vix_panic_threshold,
         )
         return True
 

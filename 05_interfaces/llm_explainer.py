@@ -41,6 +41,66 @@ _FALLBACK = "Technical signal approved. (AI explanation unavailable)"
 _REQUEST_TIMEOUT_S = 20
 
 
+async def openrouter_chat(
+    messages: list[dict],
+    api_key: str | None,
+    model: str = _DEFAULT_MODEL,
+    max_tokens: int = 180,
+    temperature: float = 0.4,
+    timeout_s: int = _REQUEST_TIMEOUT_S,
+) -> str | None:
+    """Send a chat-completion request to OpenRouter and return the text.
+
+    Shared by every LLM consumer (trade explainer, news sentiment scorer, weekly
+    historian) so the HTTP/auth/error handling lives in exactly one place.
+
+    Args:
+        messages: OpenAI-style ``[{"role", "content"}, ...]`` message list.
+        api_key: OpenRouter API key; ``None`` short-circuits to ``None``.
+        model: Model slug to query.
+        max_tokens: Upper bound on the completion length.
+        temperature: Sampling temperature.
+        timeout_s: Total request timeout in seconds.
+
+    Returns:
+        str | None: The assistant message content, or ``None`` on any failure.
+    """
+    if not api_key:
+        return None
+
+    payload = {
+        "model": model,
+        "messages": messages,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+    }
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "X-Title": "PEA Sniper Terminal V-Prime",
+    }
+    try:
+        timeout = aiohttp.ClientTimeout(total=timeout_s)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(
+                _OPENROUTER_URL, json=payload, headers=headers
+            ) as resp:
+                if resp.status != 200:
+                    body = await resp.text()
+                    logger.error("OpenRouter HTTP %s: %s", resp.status, body[:200])
+                    return None
+                data = await resp.json()
+                content = (
+                    data.get("choices", [{}])[0]
+                    .get("message", {})
+                    .get("content", "")
+                ).strip()
+                return content or None
+    except Exception:  # noqa: BLE001 - never let LLM I/O crash a caller.
+        logger.exception("OpenRouter request failed.")
+        return None
+
+
 class NarrativeExplainer:
     """Generates concise trade rationales via OpenRouter."""
 
@@ -106,43 +166,17 @@ class NarrativeExplainer:
             "sentences. No greetings, no disclaimers, no financial advice - "
             "just crisp, professional analysis."
         )
-        payload = {
-            "model": self.model,
-            "messages": [
+        content = await openrouter_chat(
+            messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": self._build_prompt(signal, portfolio)},
             ],
-            "temperature": 0.4,
-            "max_tokens": 180,
-        }
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-            "X-Title": "PEA Sniper Terminal V-Prime",
-        }
-
-        try:
-            timeout = aiohttp.ClientTimeout(total=_REQUEST_TIMEOUT_S)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.post(
-                    _OPENROUTER_URL, json=payload, headers=headers
-                ) as resp:
-                    if resp.status != 200:
-                        body = await resp.text()
-                        logger.error(
-                            "OpenRouter HTTP %s: %s", resp.status, body[:200]
-                        )
-                        return _FALLBACK
-                    data = await resp.json()
-                    content = (
-                        data.get("choices", [{}])[0]
-                        .get("message", {})
-                        .get("content", "")
-                    ).strip()
-                    return content or _FALLBACK
-        except Exception:  # noqa: BLE001 - never let the copilot crash on LLM I/O.
-            logger.exception("OpenRouter request failed; using fallback.")
-            return _FALLBACK
+            api_key=self.api_key,
+            model=self.model,
+            max_tokens=180,
+            temperature=0.4,
+        )
+        return content or _FALLBACK
 
 
 if __name__ == "__main__":

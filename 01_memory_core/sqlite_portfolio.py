@@ -301,3 +301,29 @@ class PortfolioDB:
         except sqlite3.Error:
             logger.exception("Failed to fetch signals by status %s.", statuses)
             raise
+
+    def fetch_signals_since(self, since_iso: str) -> list[dict]:
+        """Read audit-log rows created at or after an ISO timestamp (read-only).
+
+        Args:
+            since_iso: Lower bound as an ISO-8601 string (e.g.
+                ``"2026-07-08T00:00:00+00:00"``). Comparison is lexical, which
+                is correct for zero-padded ISO timestamps.
+
+        Returns:
+            list[dict]: Rows with keys ``id, ticker, signal_type, status,
+            score, reason, created_at``, ordered by ``created_at`` descending.
+        """
+        query = (
+            "SELECT id, ticker, signal_type, status, score, reason, created_at "
+            "FROM audit_logs "
+            "WHERE created_at >= ? "
+            "ORDER BY created_at DESC"
+        )
+        try:
+            with self._connect() as conn:
+                rows = conn.execute(query, (since_iso,)).fetchall()
+            return [dict(row) for row in rows]
+        except sqlite3.Error:
+            logger.exception("Failed to fetch signals since %s.", since_iso)
+            raise

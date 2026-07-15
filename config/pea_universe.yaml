@@ -1,67 +1,120 @@
 # =============================================================================
 # PEA Sniper Terminal V-Prime - Tradable Universe
 # -----------------------------------------------------------------------------
-# EU large/mid-cap equities eligible for the French PEA envelope.
-# Tickers use Yahoo Finance suffixes:
-#   .PA = Euronext Paris | .AS = Euronext Amsterdam | .DE = Xetra (Germany)
-#   .MC = Bolsa de Madrid | .MI = Borsa Italiana
-# Grouped by GICS-style sector. This is the Phase 1 sample universe (~20 names).
+# EU/EEA large & mid-cap equities eligible for the French PEA envelope.
+# Yahoo Finance suffixes:
+#   .PA Euronext Paris | .AS Amsterdam | .BR Brussels | .LS Lisbon
+#   .DE Xetra (Germany) | .MC Madrid | .MI Milan | .HE Helsinki | .IR Dublin
+# Grouped by GICS-style sector. Expanded universe (~75 names).
 # =============================================================================
 
 metadata:
-  version: "1.0"
+  version: "2.0"
   base_currency: "EUR"
-  description: "Highly liquid EU/French equities eligible for PEA."
+  description: "PEA-eligible EU/EEA equities across all major sectors."
 
 universe:
   Luxury:
-    - ticker: "MC.PA"
-      name: "LVMH Moet Hennessy Louis Vuitton"
-    - ticker: "OR.PA"
-      name: "L'Oreal"
-    - ticker: "RMS.PA"
-      name: "Hermes International"
-    - ticker: "KER.PA"
-      name: "Kering"
+    - {ticker: "MC.PA",   name: "LVMH"}
+    - {ticker: "RMS.PA",  name: "Hermes International"}
+    - {ticker: "KER.PA",  name: "Kering"}
+    - {ticker: "CDI.PA",  name: "Christian Dior"}
+    - {ticker: "RACE.MI", name: "Ferrari"}
+    - {ticker: "EL.PA",   name: "EssilorLuxottica"}
 
   Technology:
-    - ticker: "ASML.AS"
-      name: "ASML Holding"
-    - ticker: "SAP.DE"
-      name: "SAP SE"
-    - ticker: "CAP.PA"
-      name: "Capgemini"
-    - ticker: "STMPA.PA"
-      name: "STMicroelectronics"
+    - {ticker: "ASML.AS",  name: "ASML Holding"}
+    - {ticker: "SAP.DE",   name: "SAP SE"}
+    - {ticker: "STMPA.PA", name: "STMicroelectronics"}
+    - {ticker: "CAP.PA",   name: "Capgemini"}
+    - {ticker: "DSY.PA",   name: "Dassault Systemes"}
+    - {ticker: "IFX.DE",   name: "Infineon Technologies"}
+    - {ticker: "ADYEN.AS", name: "Adyen"}
+    - {ticker: "ASM.AS",   name: "ASM International"}
+    - {ticker: "PRX.AS",   name: "Prosus"}
+    - {ticker: "WKL.AS",   name: "Wolters Kluwer"}
 
   Financials:
-    - ticker: "BNP.PA"
-      name: "BNP Paribas"
-    - ticker: "ACA.PA"
-      name: "Credit Agricole"
-    - ticker: "INGA.AS"
-      name: "ING Groep"
-    - ticker: "ALV.DE"
-      name: "Allianz SE"
+    - {ticker: "BNP.PA",   name: "BNP Paribas"}
+    - {ticker: "ACA.PA",   name: "Credit Agricole"}
+    - {ticker: "GLE.PA",   name: "Societe Generale"}
+    - {ticker: "CS.PA",    name: "AXA"}
+    - {ticker: "INGA.AS",  name: "ING Groep"}
+    - {ticker: "ALV.DE",   name: "Allianz"}
+    - {ticker: "MUV2.DE",  name: "Munich Re"}
+    - {ticker: "DBK.DE",   name: "Deutsche Bank"}
+    - {ticker: "SAN.MC",   name: "Banco Santander"}
+    - {ticker: "BBVA.MC",  name: "BBVA"}
+    - {ticker: "ISP.MI",   name: "Intesa Sanpaolo"}
+    - {ticker: "UCG.MI",   name: "UniCredit"}
+    - {ticker: "KBC.BR",   name: "KBC Group"}
 
   Industrials:
-    - ticker: "AIR.PA"
-      name: "Airbus SE"
-    - ticker: "SAF.PA"
-      name: "Safran"
-    - ticker: "SU.PA"
-      name: "Schneider Electric"
-    - ticker: "SIE.DE"
-      name: "Siemens AG"
+    - {ticker: "AIR.PA",  name: "Airbus"}
+    - {ticker: "SAF.PA",  name: "Safran"}
+    - {ticker: "HO.PA",   name: "Thales"}
+    - {ticker: "SU.PA",   name: "Schneider Electric"}
+    - {ticker: "SIE.DE",  name: "Siemens"}
+    - {ticker: "DG.PA",   name: "Vinci"}
+    - {ticker: "ALO.PA",  name: "Alstom"}
+    - {ticker: "LR.PA",   name: "Legrand"}
+    - {ticker: "SGO.PA",  name: "Saint-Gobain"}
+    - {ticker: "DHL.DE",  name: "DHL Group"}
 
   Energy:
-    - ticker: "TTE.PA"
-      name: "TotalEnergies"
-    - ticker: "ENGI.PA"
-      name: "Engie"
+    - {ticker: "TTE.PA",  name: "TotalEnergies"}
+    - {ticker: "ENI.MI",  name: "Eni"}
+    - {ticker: "REP.MC",  name: "Repsol"}
+    - {ticker: "GALP.LS", name: "Galp Energia"}
 
   Healthcare:
-    - ticker: "SAN.PA"
-      name: "Sanofi"
-    - ticker: "AI.PA"
-      name: "Air Liquide"
+    - {ticker: "SAN.PA",  name: "Sanofi"}
+    - {ticker: "PHIA.AS", name: "Philips"}
+    - {ticker: "BAYN.DE", name: "Bayer"}
+    - {ticker: "SHL.DE",  name: "Siemens Healthineers"}
+    - {ticker: "MRK.DE",  name: "Merck KGaA"}
+    - {ticker: "ERF.PA",  name: "Eurofins Scientific"}
+
+  ConsumerStaples:
+    - {ticker: "OR.PA",   name: "L'Oreal"}
+    - {ticker: "BN.PA",   name: "Danone"}
+    - {ticker: "RI.PA",   name: "Pernod Ricard"}
+    - {ticker: "CA.PA",   name: "Carrefour"}
+    - {ticker: "HEIA.AS", name: "Heineken"}
+    - {ticker: "AD.AS",   name: "Ahold Delhaize"}
+    - {ticker: "ABI.BR",  name: "Anheuser-Busch InBev"}
+
+  ConsumerDiscretionary:
+    - {ticker: "ADS.DE",  name: "Adidas"}
+    - {ticker: "ITX.MC",  name: "Inditex"}
+    - {ticker: "PUB.PA",  name: "Publicis Groupe"}
+    - {ticker: "EN.PA",   name: "Bouygues"}
+
+  Automotive:
+    - {ticker: "STLAP.PA", name: "Stellantis"}
+    - {ticker: "RNO.PA",   name: "Renault"}
+    - {ticker: "ML.PA",    name: "Michelin"}
+    - {ticker: "BMW.DE",   name: "BMW"}
+    - {ticker: "MBG.DE",   name: "Mercedes-Benz Group"}
+    - {ticker: "VOW3.DE",  name: "Volkswagen"}
+
+  Utilities:
+    - {ticker: "ENGI.PA", name: "Engie"}
+    - {ticker: "VIE.PA",  name: "Veolia Environnement"}
+    - {ticker: "IBE.MC",  name: "Iberdrola"}
+    - {ticker: "ENEL.MI", name: "Enel"}
+    - {ticker: "EOAN.DE", name: "E.ON"}
+    - {ticker: "RWE.DE",  name: "RWE"}
+    - {ticker: "EDP.LS",  name: "EDP - Energias de Portugal"}
+
+  Telecom:
+    - {ticker: "ORA.PA",  name: "Orange"}
+    - {ticker: "DTE.DE",  name: "Deutsche Telekom"}
+    - {ticker: "TEF.MC",  name: "Telefonica"}
+    - {ticker: "KPN.AS",  name: "KPN"}
+
+  Materials:
+    - {ticker: "AI.PA",   name: "Air Liquide"}
+    - {ticker: "BAS.DE",  name: "BASF"}
+    - {ticker: "MT.AS",   name: "ArcelorMittal"}
+    - {ticker: "AKZA.AS", name: "Akzo Nobel"}

@@ -47,10 +47,19 @@ class PeaSizer:
         risk = self._load_risk_params(config_path)
         self.kelly_fraction: float = float(risk["KELLY_FRACTION"])
         self.max_single_position: float = float(risk["MAX_SINGLE_POSITION_PCT"])
+        # Core/Satellite + volatility-parity parameters (Phase 10).
+        self.core_ticker: str = str(risk.get("CORE_TICKER", "CW8.PA"))
+        self.satellite_max_budget: float = float(
+            risk.get("SATELLITE_MAX_BUDGET_PCT", 0.30)
+        )
+        self.vol_reference: float = float(risk.get("VOLATILITY_REFERENCE", 0.20))
+        self.vol_max_factor: float = float(risk.get("VOLATILITY_MAX_FACTOR", 1.5))
         logger.debug(
-            "Sizer loaded: kelly=%.2f max_single=%.2f",
+            "Sizer loaded: kelly=%.2f max_single=%.2f sat_budget=%.2f vol_ref=%.2f",
             self.kelly_fraction,
             self.max_single_position,
+            self.satellite_max_budget,
+            self.vol_reference,
         )
 
     @staticmethod
@@ -66,21 +75,57 @@ class PeaSizer:
         with open(path, "r", encoding="utf-8") as fh:
             return yaml.safe_load(fh)
 
+    def _satellite_value(self, portfolio: PortfolioState) -> float:
+        """Sum the market value of all non-core (satellite) holdings."""
+        return sum(
+            pos.market_value
+            for pos in portfolio.positions
+            if pos.ticker != self.core_ticker
+        )
+
+    def _volatility_factor(self, historical_volatility: float | None) -> float:
+        """Return an inverse-volatility scaling factor.
+
+        Uses volatility parity relative to ``VOLATILITY_REFERENCE``: an asset at
+        the reference vol scales by 1.0, one at twice the reference by 0.5, and
+        a very calm asset is capped at ``VOLATILITY_MAX_FACTOR``.
+
+        Args:
+            historical_volatility: Annualized stdev of returns (e.g. 0.25), or
+                ``None``/non-positive for neutral (no scaling).
+
+        Returns:
+            float: Multiplier applied to the base target cash.
+        """
+        if historical_volatility is None or historical_volatility <= 0:
+            return 1.0
+        factor = self.vol_reference / historical_volatility
+        return float(max(0.1, min(self.vol_max_factor, factor)))
+
     def calculate_target_qty(
-        self, signal: Signal, portfolio: PortfolioState, current_price: float
+        self,
+        signal: Signal,
+        portfolio: PortfolioState,
+        current_price: float,
+        historical_volatility: float | None = None,
     ) -> int:
-        """Compute the integer share quantity for a signal.
+        """Compute the integer share quantity for a satellite signal.
 
         Steps:
             1. ``max_alloc = total_equity * MAX_SINGLE_POSITION_PCT``
             2. ``target_cash = max_alloc * (score / 100) * KELLY_FRACTION``
-            3. ``qty = floor(target_cash / current_price)`` (no fractions)
-            4. Clamp to available cash if the notional would exceed it.
+            3. Scale ``target_cash`` by the inverse-volatility parity factor.
+            4. Cap ``target_cash`` so total satellite exposure stays within
+               ``SATELLITE_MAX_BUDGET_PCT`` of equity.
+            5. ``qty = floor(target_cash / current_price)`` (no fractions).
+            6. Clamp to available cash if the notional would exceed it.
 
         Args:
             signal: The signal being sized (score drives the allocation).
             portfolio: Current portfolio snapshot (equity + cash).
             current_price: Latest price per share in EUR.
+            historical_volatility: Annualized stdev of the asset's returns used
+                for volatility parity. ``None`` disables vol scaling.
 
         Returns:
             int: Whole number of shares to buy (0 if nothing is affordable).
@@ -94,6 +139,26 @@ class PeaSizer:
 
         max_alloc = portfolio.total_equity * self.max_single_position
         target_cash = max_alloc * (signal.score / 100.0) * self.kelly_fraction
+
+        # --- Volatility parity: calmer names get more, wild names get less ----
+        vol_factor = self._volatility_factor(historical_volatility)
+        target_cash *= vol_factor
+
+        # --- Enforce the 30% satellite budget across ALL non-core holdings ----
+        satellite_room = max(
+            0.0,
+            self.satellite_max_budget * portfolio.total_equity
+            - self._satellite_value(portfolio),
+        )
+        if target_cash > satellite_room:
+            logger.info(
+                "%s sizing capped by satellite budget: %.2f -> %.2f EUR room.",
+                signal.ticker,
+                target_cash,
+                satellite_room,
+            )
+            target_cash = satellite_room
+
         qty_shares = math.floor(target_cash / current_price)
 
         notional = qty_shares * current_price
@@ -108,12 +173,14 @@ class PeaSizer:
             )
         else:
             logger.info(
-                "%s sized to %d shares (target_cash=%.2f EUR @ %.2f, score=%.1f).",
+                "%s sized to %d shares (target_cash=%.2f EUR @ %.2f, score=%.1f, "
+                "vol_factor=%.2f).",
                 signal.ticker,
                 qty_shares,
                 target_cash,
                 current_price,
                 signal.score,
+                vol_factor,
             )
 
         return max(0, qty_shares)

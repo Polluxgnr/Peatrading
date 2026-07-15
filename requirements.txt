@@ -24,6 +24,7 @@ pandas-ta-classic>=0.6.0
 # --- Interfaces (Phases 7-8) ---
 discord.py>=2.3
 plotly>=5.20
+matplotlib>=3.8   # required by pandas Styler.background_gradient in the dashboard
 # streamlit needs pyarrow, which has NO prebuilt wheel for Python 3.13 / arm64.
 # Use a Python 3.11/3.12 (x64) environment to install and run the dashboard.
 streamlit>=1.33

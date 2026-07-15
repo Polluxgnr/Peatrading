@@ -30,3 +30,20 @@ MACRO_VETO_DAYS_BEFORE: 3        # Veto new trades within N days of macro event.
 # --- Exits -------------------------------------------------------------------
 PROFIT_TARGET_PCT: 0.10          # Limit sell at +10% from entry.
 STOP_LOSS_PCT: -0.05             # Hard stop at -5% from entry.
+
+# --- Core / Satellite model (Phase 10) --------------------------------------
+CORE_TICKER: "CW8.PA"            # Amundi MSCI World UCITS ETF (PEA eligible).
+CORE_TARGET_PCT: 0.70            # Standard core weight when market overheated.
+CORE_CRASH_TARGET_PCT: 0.75      # Larger core weight when CW8 < SMA200 (crash).
+CORE_DCA_MAX_TRANCHE_PCT: 0.05   # Max % of equity deployed to core per pass.
+SATELLITE_MAX_BUDGET_PCT: 0.30   # Max total equity in satellite stock-picking.
+
+# --- Volatility & VIX defense (Phase 10) ------------------------------------
+VOLATILITY_REFERENCE: 0.20       # Baseline annualized vol for parity scaling.
+VOLATILITY_MAX_FACTOR: 1.5       # Cap on inverse-volatility up-scaling.
+VIX_PANIC_THRESHOLD: 30.0        # V2TX above this vetoes new satellite buys.
+
+# --- Rebalancing (Phase 12) -------------------------------------------------
+REBALANCE_PROFIT_SHAVE_PCT: 0.20   # Trim 20% of a winner above +20% PnL.
+REBALANCE_PROFIT_TRIGGER_PCT: 20.0 # Profit-shave trigger (unrealized %).
+REBALANCE_STOPLOSS_TRIGGER_PCT: -10.0  # Full exit below this unrealized %.

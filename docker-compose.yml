@@ -1,0 +1,56 @@
+# PEA Sniper Terminal V-Prime - fleet.
+#   daemon    : always-on backend (scheduled analysis, weekly report, rebalance)
+#   dashboard : Streamlit command center on :8501
+# Both share the same image, the database volume, and the config directory.
+
+services:
+  daemon:
+    build: .
+    image: pea_sniper_terminal:latest
+    container_name: pea_daemon
+    restart: unless-stopped
+    env_file:
+      - config/api_keys.env
+    environment:
+      - TZ=Europe/Paris
+    volumes:
+      - ./database:/app/database
+      - ./config:/app/config
+    command: ["python", "main_scheduler.py"]
+
+  dashboard:
+    build: .
+    image: pea_sniper_terminal:latest
+    container_name: pea_dashboard
+    restart: unless-stopped
+    depends_on:
+      - daemon
+    env_file:
+      - config/api_keys.env
+    environment:
+      - TZ=Europe/Paris
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./database:/app/database
+      - ./config:/app/config
+    command:
+      - streamlit
+      - run
+      - 05_interfaces/terminal_dashboard.py
+      - --server.port=8501
+      - --server.address=0.0.0.0
+      - --server.headless=true
+
+  # Optional: enable the interactive Discord bot (approve/revoke buttons).
+  # discord:
+  #   build: .
+  #   image: pea_sniper_terminal:latest
+  #   container_name: pea_discord
+  #   restart: unless-stopped
+  #   env_file:
+  #     - config/api_keys.env
+  #   volumes:
+  #     - ./database:/app/database
+  #     - ./config:/app/config
+  #   command: ["python", "run_discord.py"]

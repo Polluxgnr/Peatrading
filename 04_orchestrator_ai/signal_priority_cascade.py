@@ -70,11 +70,37 @@ class SignalOrchestrator:
         signal.reason = f"{signal.reason} | {reason}".strip(" |")
         return signal
 
+    def _historical_volatility(self, ticker: str, days: int = 60) -> float | None:
+        """Annualized stdev of daily returns for a ticker (or ``None``).
+
+        Args:
+            ticker: Ticker to measure.
+            days: Lookback window in trading days.
+
+        Returns:
+            float | None: Annualized volatility (e.g. 0.28), or ``None`` when
+            history is unavailable.
+        """
+        if self.timeseries_db is None:
+            return None
+        try:
+            df = self.timeseries_db.get_historical_prices(ticker, days=days)
+            if df is None or df.empty or "Close" not in df or len(df) < 10:
+                return None
+            returns = df["Close"].astype(float).pct_change().dropna()
+            if returns.empty:
+                return None
+            return float(returns.std() * (252 ** 0.5))
+        except Exception:  # noqa: BLE001
+            logger.debug("Volatility unavailable for %s.", ticker)
+            return None
+
     def process_raw_signals(
         self,
         raw_signals: List[Signal],
         portfolio: PortfolioState,
         current_prices: Dict[str, float],
+        vix_level: float | None = None,
     ) -> List[Signal]:
         """Run each raw signal through the full decision cascade.
 
@@ -82,6 +108,8 @@ class SignalOrchestrator:
             raw_signals: PENDING signals from the quant engine.
             portfolio: Current portfolio snapshot.
             current_prices: Mapping of ticker -> latest price (EUR).
+            vix_level: Optional current European VIX (``^V2TX``). When above the
+                panic threshold, ALL new satellite buys are vetoed.
 
         Returns:
             List[Signal]: The same signals, each finalized as APPROVED or
@@ -91,6 +119,9 @@ class SignalOrchestrator:
         today = datetime.now(timezone.utc).date()
         processed: List[Signal] = []
 
+        # Market-wide panic brake: evaluated once for the whole batch.
+        vix_ok = self.firewall.check_vix_panic(vix_level) if vix_level is not None else True
+
         for signal in raw_signals:
             ticker = signal.ticker
 
@@ -98,6 +129,17 @@ class SignalOrchestrator:
             price = current_prices.get(ticker)
             if price is None or price <= 0:
                 processed.append(self._reject(signal, "REJECTED: No current price"))
+                continue
+
+            # --- Check 0b: VIX panic veto (market-wide emergency brake) ---
+            if not vix_ok:
+                processed.append(
+                    self._reject(
+                        signal,
+                        f"REJECTED: VIX panic (V2TX={vix_level:.1f}) - "
+                        "satellite buys frozen",
+                    )
+                )
                 continue
 
             # --- Check 1: Macro veto (cheapest - runs first) ---
@@ -121,8 +163,11 @@ class SignalOrchestrator:
                 processed.append(self._reject(signal, f"REJECTED: {corr_reason}"))
                 continue
 
-            # --- Check 3: PEA position sizing ---
-            target_qty = self.sizer.calculate_target_qty(signal, portfolio, price)
+            # --- Check 3: PEA position sizing (volatility-adjusted) ---
+            hist_vol = self._historical_volatility(ticker)
+            target_qty = self.sizer.calculate_target_qty(
+                signal, portfolio, price, historical_volatility=hist_vol
+            )
             if target_qty <= 0:
                 processed.append(
                     self._reject(signal, "REJECTED: Insufficient cash for 1 share")

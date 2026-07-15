@@ -12,9 +12,15 @@ import os
 import sys
 import uuid
 from datetime import datetime, timezone
+from functools import lru_cache
 from typing import Any, List
 
 import pandas as pd
+
+try:  # yfinance is only needed for the optional Quality (EPS) filter.
+    import yfinance as yf
+except Exception:  # noqa: BLE001 - keep the pure-math engine importable offline.
+    yf = None  # type: ignore[assignment]
 
 # pandas-ta registers the ``.ta`` DataFrame accessor on import. The classic
 # fork is used because upstream ``pandas_ta`` 0.4.x pulls in numba (no wheel
@@ -55,6 +61,7 @@ class SignalGenerator:
         """
         out = df.copy()
         close = out["Close"]
+        out["SMA_5"] = out.ta.sma(close=close, length=5)
         out["SMA_50"] = out.ta.sma(close=close, length=50)
         out["SMA_200"] = out.ta.sma(close=close, length=200)
         out["RSI_14"] = out.ta.rsi(close=close, length=14)
@@ -80,21 +87,72 @@ class SignalGenerator:
         score = 60.0 + (30.0 - rsi_value) * 2.0
         return float(max(60.0, min(100.0, score)))
 
+    @staticmethod
+    @lru_cache(maxsize=512)
+    def _trailing_eps(ticker: str) -> float | None:
+        """Return trailing EPS for a ticker via yfinance (cached, tolerant).
+
+        Args:
+            ticker: Yahoo Finance ticker symbol.
+
+        Returns:
+            float | None: Trailing EPS, or ``None`` if it cannot be determined
+            (network error, missing field). ``None`` means "unknown -> allow".
+        """
+        if yf is None:
+            return None
+        try:
+            info = yf.Ticker(ticker).info or {}
+            for key in ("trailingEps", "epsTrailingTwelveMonths"):
+                val = info.get(key)
+                if val is not None:
+                    return float(val)
+        except Exception:  # noqa: BLE001 - never block sizing on a data outage.
+            logger.debug("EPS lookup failed for %s; treating as unknown.", ticker)
+        return None
+
+    def is_profitable(self, ticker: str) -> bool:
+        """Quality filter: reject loss-making names (EPS < 0).
+
+        Unknown EPS (data unavailable) is treated as pass, so a data outage
+        never silently blocks the whole universe.
+
+        Args:
+            ticker: Ticker to check.
+
+        Returns:
+            bool: ``False`` only when EPS is known and negative.
+        """
+        eps = self._trailing_eps(ticker)
+        if eps is None:
+            return True
+        return eps > 0
+
     def generate_raw_signals(
-        self, db_manager: Any, tickers: List[str]
+        self,
+        db_manager: Any,
+        tickers: List[str],
+        apply_quality_filter: bool = True,
+        apply_momentum_filter: bool = True,
     ) -> List[Signal]:
         """Evaluate each ticker and emit raw Mean-Reversion Exhaustion signals.
 
         Rule (BUY): the most recent bar has ``Close > SMA_200`` (long-term
-        uptrend) AND ``RSI_14 < 30`` (short-term oversold pullback).
+        uptrend) AND ``RSI_14 < 30`` (short-term oversold pullback), refined by:
+
+          * Quality filter (Phase 11): the company must be profitable (EPS > 0).
+          * Momentum filter (Phase 11): do not catch falling knives — require
+            ``Close > SMA_5`` so the pullback is already stabilizing.
 
         Args:
             db_manager: A Phase 2 ``TimeSeriesDB`` exposing
                 ``get_historical_prices(ticker, days)``.
             tickers: Ticker symbols to evaluate.
+            apply_quality_filter: Skip loss-making companies when ``True``.
+            apply_momentum_filter: Require ``Close > SMA_5`` when ``True``.
 
         Returns:
-            List[Signal]: PENDING BUY signals for tickers meeting the rule.
+            List[Signal]: PENDING BUY signals for tickers meeting all rules.
         """
         signals: List[Signal] = []
 
@@ -112,6 +170,7 @@ class SignalGenerator:
             last = enriched.iloc[-1]
 
             close = last["Close"]
+            sma_5 = last["SMA_5"]
             sma_200 = last["SMA_200"]
             rsi_14 = last["RSI_14"]
 
@@ -121,6 +180,24 @@ class SignalGenerator:
 
             uptrend = close > sma_200
             oversold = rsi_14 < 30
+
+            # --- Momentum filter: reject falling knives (Close <= SMA_5) ------
+            if apply_momentum_filter and (pd.isna(sma_5) or close <= sma_5):
+                if uptrend and oversold:
+                    logger.info(
+                        "Momentum filter blocked %s (Close %.2f <= SMA5 %.2f).",
+                        ticker,
+                        close,
+                        sma_5,
+                    )
+                continue
+
+            # --- Quality filter: reject loss-making hype stocks (EPS < 0) -----
+            if uptrend and oversold and apply_quality_filter and not self.is_profitable(
+                ticker
+            ):
+                logger.info("Quality filter blocked %s (EPS < 0).", ticker)
+                continue
 
             if uptrend and oversold:
                 score = self.score_rsi(rsi_14)
@@ -157,14 +234,15 @@ if __name__ == "__main__":
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
 
-    # Build a synthetic uptrend (Close > SMA200) that ends in a sharp, oversold
-    # pullback (RSI_14 < 30) to prove the BUY rule fires.
+    # Build a synthetic uptrend (Close > SMA200) that dips into an oversold
+    # pullback (RSI_14 < 30) and then STABILISES (Close > SMA_5) so both the
+    # mean-reversion rule and the new momentum filter fire together.
     n = 260
     dates = pd.date_range("2024-01-01", periods=n, freq="B")
     base = np.linspace(100.0, 200.0, n)          # long-term uptrend
     close = base.copy()
-    close[-8:] = close[-9] * np.array(           # abrupt final pullback
-        [0.965, 0.945, 0.930, 0.918, 0.910, 0.905, 0.902, 0.900]
+    close[-8:] = close[-9] * np.array(           # deep dip, then a 2-bar bounce
+        [0.955, 0.925, 0.898, 0.875, 0.858, 0.848, 0.858, 0.866]
     )
     mock = pd.DataFrame(
         {
@@ -189,14 +267,17 @@ if __name__ == "__main__":
     enriched = gen.calculate_indicators(mock)
     last = enriched.iloc[-1]
     print(
-        f"Last bar -> Close={last['Close']:.2f} "
+        f"Last bar -> Close={last['Close']:.2f} SMA5={last['SMA_5']:.2f} "
         f"SMA200={last['SMA_200']:.2f} RSI14={last['RSI_14']:.2f}"
     )
     print("score_rsi checks:",
           gen.score_rsi(30), gen.score_rsi(20), gen.score_rsi(10),
           gen.score_rsi(35), gen.score_rsi(float("nan")))
 
-    results = gen.generate_raw_signals(_MockDB(), ["TEST.PA"])
+    # Quality filter needs network EPS; disable it for this offline demo.
+    results = gen.generate_raw_signals(
+        _MockDB(), ["TEST.PA"], apply_quality_filter=False
+    )
     print(f"\nGenerated {len(results)} signal(s):")
     for s in results:
         print(f"  {s.id[:8]} {s.ticker} {s.signal_type.value} "
