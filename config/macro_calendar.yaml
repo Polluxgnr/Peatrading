@@ -1,0 +1,17 @@
+# =============================================================================
+# PEA Sniper Terminal V-Prime - Macro Event Calendar (dummy / seed data)
+# -----------------------------------------------------------------------------
+# High-impact macro events that trigger a hard veto on new offensive signals
+# within MACRO_VETO_DAYS_BEFORE (see risk_params.yaml).
+#
+# In production this file is refreshed from Trading Economics / Finnhub. For now
+# it is seeded manually. Keys are ISO dates (YYYY-MM-DD), values are event names.
+# =============================================================================
+
+events:
+  2026-06-17: "ECB Rate Decision"
+  2026-07-16: "ECB Rate Decision"
+  2026-07-17: "Euro Area CPI (Flash)"
+  2026-07-31: "US Non-Farm Payrolls (NFP)"
+  2026-08-13: "US CPI"
+  2026-09-17: "FED Rate Decision"

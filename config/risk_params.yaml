@@ -1,0 +1,32 @@
+# =============================================================================
+# PEA Sniper Terminal V-Prime - Institutional Risk Parameters
+# -----------------------------------------------------------------------------
+# These limits are NON-NEGOTIABLE. They are enforced by the Correlation Firewall
+# (03_risk_portfolio), the Position Sizer, and the Macro Veto Engine.
+# All percentages are expressed as fractions (0.15 == 15%).
+# =============================================================================
+
+# --- Position Sizing ---------------------------------------------------------
+KELLY_FRACTION: 0.5              # Half-Kelly. Never use full Kelly.
+MAX_SINGLE_POSITION_PCT: 0.15    # Max 15% of total equity in a single name.
+MAX_SECTOR_WEIGHT_PCT: 0.25      # Max 25% of total equity in a single sector.
+MAX_ALLOCATION_PER_DAY_PCT: 0.03 # Max 3% of capital deployed per calendar day.
+
+# --- Risk Limits (circuit breakers) -----------------------------------------
+DAILY_MAX_LOSS_PCT: -0.005       # Halt execution if daily P&L < -0.5%.
+WEEKLY_MAX_LOSS_PCT: -0.02       # Max weekly drawdown before pause.
+MONTHLY_MAX_LOSS_PCT: -0.05      # Max monthly drawdown -> liquidate + manual review.
+
+# --- Correlation Limits ------------------------------------------------------
+MAX_CORRELATION_TO_PORTFOLIO: 0.70  # Pearson, 60-day rolling window.
+MAX_CORRELATION_SAME_SECTOR: 0.80   # Stricter allowance within same sector.
+
+# --- Signals -----------------------------------------------------------------
+SIGNAL_BUY_THRESHOLD: 75         # Minimum score (0-100) to emit a BUY.
+SIGNAL_SELL_THRESHOLD: 35        # Score below which a SELL is considered.
+SIGNAL_VALIDITY_HOURS: 12        # Signal expires after 12h.
+MACRO_VETO_DAYS_BEFORE: 3        # Veto new trades within N days of macro event.
+
+# --- Exits -------------------------------------------------------------------
+PROFIT_TARGET_PCT: 0.10          # Limit sell at +10% from entry.
+STOP_LOSS_PCT: -0.05             # Hard stop at -5% from entry.

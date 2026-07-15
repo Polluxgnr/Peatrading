@@ -1,0 +1,67 @@
+# =============================================================================
+# PEA Sniper Terminal V-Prime - Tradable Universe
+# -----------------------------------------------------------------------------
+# EU large/mid-cap equities eligible for the French PEA envelope.
+# Tickers use Yahoo Finance suffixes:
+#   .PA = Euronext Paris | .AS = Euronext Amsterdam | .DE = Xetra (Germany)
+#   .MC = Bolsa de Madrid | .MI = Borsa Italiana
+# Grouped by GICS-style sector. This is the Phase 1 sample universe (~20 names).
+# =============================================================================
+
+metadata:
+  version: "1.0"
+  base_currency: "EUR"
+  description: "Highly liquid EU/French equities eligible for PEA."
+
+universe:
+  Luxury:
+    - ticker: "MC.PA"
+      name: "LVMH Moet Hennessy Louis Vuitton"
+    - ticker: "OR.PA"
+      name: "L'Oreal"
+    - ticker: "RMS.PA"
+      name: "Hermes International"
+    - ticker: "KER.PA"
+      name: "Kering"
+
+  Technology:
+    - ticker: "ASML.AS"
+      name: "ASML Holding"
+    - ticker: "SAP.DE"
+      name: "SAP SE"
+    - ticker: "CAP.PA"
+      name: "Capgemini"
+    - ticker: "STMPA.PA"
+      name: "STMicroelectronics"
+
+  Financials:
+    - ticker: "BNP.PA"
+      name: "BNP Paribas"
+    - ticker: "ACA.PA"
+      name: "Credit Agricole"
+    - ticker: "INGA.AS"
+      name: "ING Groep"
+    - ticker: "ALV.DE"
+      name: "Allianz SE"
+
+  Industrials:
+    - ticker: "AIR.PA"
+      name: "Airbus SE"
+    - ticker: "SAF.PA"
+      name: "Safran"
+    - ticker: "SU.PA"
+      name: "Schneider Electric"
+    - ticker: "SIE.DE"
+      name: "Siemens AG"
+
+  Energy:
+    - ticker: "TTE.PA"
+      name: "TotalEnergies"
+    - ticker: "ENGI.PA"
+      name: "Engie"
+
+  Healthcare:
+    - ticker: "SAN.PA"
+      name: "Sanofi"
+    - ticker: "AI.PA"
+      name: "Air Liquide"

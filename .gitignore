@@ -1,0 +1,37 @@
+# --- Secrets & config ---
+config/api_keys.env
+*.env
+!*.env.example
+
+# --- Databases (state & time-series) ---
+database/
+*.db
+*.duckdb
+*.sqlite
+*.sqlite3
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+.python-version
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- Notebooks ---
+.ipynb_checkpoints/
+
+# --- OS / Editor ---
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# --- Logs & data dumps ---
+*.log
+data/

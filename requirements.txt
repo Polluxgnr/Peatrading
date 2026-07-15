@@ -1,0 +1,35 @@
+# PEA Sniper Terminal V-Prime - Python 3.11+
+# Phase 1 only needs pydantic + pyyaml; the rest is pinned for the roadmap.
+
+# --- Core / data contracts (Phase 1) ---
+pydantic>=2.6,<3.0
+pyyaml>=6.0
+
+# --- Memory core (Phase 2) ---
+duckdb>=0.10
+# sqlite3 is part of the Python standard library.
+
+# --- Data sensors (Phase 3) ---
+yfinance>=0.2.40
+requests>=2.31
+feedparser>=6.0
+
+# --- Quant engine (Phase 4) ---
+pandas>=2.1
+numpy>=2.0
+# pandas-ta-classic is the numpy-2.x / numba-free provider of the `.ta`
+# accessor. Upstream `pandas-ta` 0.4.x requires numba (no py3.13/arm64 wheel).
+pandas-ta-classic>=0.6.0
+
+# --- Interfaces (Phases 7-8) ---
+discord.py>=2.3
+plotly>=5.20
+# streamlit needs pyarrow, which has NO prebuilt wheel for Python 3.13 / arm64.
+# Use a Python 3.11/3.12 (x64) environment to install and run the dashboard.
+streamlit>=1.33
+
+# --- Scheduler (Phase 9) ---
+schedule>=1.2
+
+# --- Dev / tests ---
+pytest>=8.0
