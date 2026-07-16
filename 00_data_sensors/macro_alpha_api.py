@@ -13,6 +13,7 @@ neutral value and logs the reason, so the daemon never crashes on a data outage.
 """
 
 import logging
+import os
 import sys
 import time
 from functools import wraps
@@ -20,6 +21,7 @@ from pathlib import Path
 from typing import Callable
 
 import pandas as pd
+import requests
 import yfinance as yf
 
 # Optional French scrapers (isolated; failures must never crash the daemon).
@@ -173,52 +175,48 @@ class MacroAlphaSensor:
 
     # ------------------------------------------------------ Insider signal --
     def get_insider_activity(self, ticker: str) -> int:
-        """Return the net direction of recent insider transactions.
+        """Return net insider direction: AMF first, then FMP, then yfinance.
 
-        Prefers yfinance (reliable). AMF BDIF is attempted only while its
-        process-wide circuit breaker is closed (often trips on HTTP 500/WAF).
+        Cascade (strict):
+            1. ``AmfInsiderScraper`` (official French BDIF)
+            2. Financial Modeling Prep ``/api/v4/insider-trading``
+            3. ``yfinance.insider_transactions``
         """
-        yf_dir = self._insider_from_yfinance(ticker)
-        if yf_dir != 0:
-            return yf_dir
-
-        if AmfInsiderScraper is None:
-            return 0
-        try:
-            from amf_scraper import amf_available  # noqa: WPS433
-            if not amf_available():
-                return 0
-        except Exception:  # noqa: BLE001
-            pass
-
-        isin = None
-        issuer = None
-        if BoursoramaScraper is not None:
+        # --- 1) AMF BDIF (primary) ------------------------------------------
+        if AmfInsiderScraper is not None:
             try:
-                profile = BoursoramaScraper().get_instrument_profile(ticker)
-                if profile:
-                    isin = profile.get("isin")
-                    issuer = profile.get("name")
-            except Exception as exc:  # noqa: BLE001
-                logger.debug("Bourso profile enrich failed for %s: %s", ticker, exc)
-
-        try:
-            amf_df = AmfInsiderScraper().get_recent_declarations(
-                ticker, isin=isin, issuer=issuer
-            )
-            if amf_df is not None and not amf_df.empty:
-                direction = self._score_amf_declarations(amf_df)
-                logger.info(
-                    "%s insider activity (AMF): %+d from %d row(s).",
-                    ticker, direction, len(amf_df),
+                isin = None
+                issuer = None
+                if BoursoramaScraper is not None:
+                    try:
+                        profile = BoursoramaScraper().get_instrument_profile(ticker)
+                        if profile:
+                            isin = profile.get("isin")
+                            issuer = profile.get("name")
+                    except Exception as exc:  # noqa: BLE001
+                        logger.debug(
+                            "Bourso profile enrich failed for %s: %s", ticker, exc
+                        )
+                amf_df = AmfInsiderScraper().get_recent_declarations(
+                    ticker, isin=isin, issuer=issuer
                 )
-                return direction
-        except Exception as exc:  # noqa: BLE001
-            logger.debug(
-                "AMF insider scrape failed for %s (%s); keeping yfinance.",
-                ticker, exc,
-            )
-        return 0
+                if amf_df is not None and not amf_df.empty:
+                    direction = self._score_amf_declarations(amf_df)
+                    logger.info(
+                        "%s insider activity (AMF): %+d from %d row(s).",
+                        ticker, direction, len(amf_df),
+                    )
+                    return direction
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("AMF insider scrape failed for %s: %s", ticker, exc)
+
+        # --- 2) FMP (secondary) ---------------------------------------------
+        fmp_dir = self._insider_from_fmp(ticker)
+        if fmp_dir is not None:
+            return fmp_dir
+
+        # --- 3) yfinance (tertiary) -----------------------------------------
+        return self._insider_from_yfinance(ticker)
 
     @staticmethod
     def _score_amf_declarations(df: pd.DataFrame) -> int:
@@ -231,8 +229,69 @@ class MacroAlphaSensor:
         net = buys - sells
         return 1 if net > 0 else (-1 if net < 0 else 0)
 
+    def _insider_from_fmp(self, ticker: str) -> int | None:
+        """FMP insider-trading net direction (+1 / -1 / 0), or None on failure.
+
+        Returns:
+            int: Scored direction when FMP returns a usable payload.
+            None: Missing key, HTTP error, or empty/invalid response — caller
+                should fall through to yfinance.
+        """
+        api_key = os.getenv("FMP_API_KEY")
+        if not api_key:
+            logger.debug("FMP_API_KEY unset; skipping FMP insider for %s.", ticker)
+            return None
+        # FMP expects US-style symbols; strip .PA/.AS suffix as best-effort.
+        symbol = ticker.split(".")[0]
+        url = (
+            "https://financialmodelingprep.com/api/v4/insider-trading"
+            f"?symbol={symbol}&apikey={api_key}"
+        )
+        try:
+            resp = requests.get(url, timeout=10)
+            if resp.status_code != 200:
+                logger.debug(
+                    "FMP insider HTTP %s for %s.", resp.status_code, ticker
+                )
+                return None
+            payload = resp.json()
+            if not isinstance(payload, list) or not payload:
+                return None
+            buys = 0
+            sells = 0
+            for row in payload[:40]:
+                if not isinstance(row, dict):
+                    continue
+                ttype = str(
+                    row.get("transactionType")
+                    or row.get("acquistionOrDisposition")
+                    or row.get("type")
+                    or ""
+                ).casefold()
+                # FMP uses A/D codes or free text.
+                if ttype in ("a", "acquisition", "purchase", "buy", "p-purchase"):
+                    buys += 1
+                elif ttype in ("d", "disposition", "sale", "sell", "s-sale"):
+                    sells += 1
+                elif "acqui" in ttype or "buy" in ttype or "purchase" in ttype:
+                    buys += 1
+                elif "dispos" in ttype or "sale" in ttype or "sell" in ttype:
+                    sells += 1
+            if buys == 0 and sells == 0:
+                return None
+            net = buys - sells
+            direction = 1 if net > 0 else (-1 if net < 0 else 0)
+            logger.info(
+                "%s insider activity (FMP): buys=%d sells=%d -> %+d.",
+                ticker, buys, sells, direction,
+            )
+            return direction
+        except Exception:  # noqa: BLE001
+            logger.debug("FMP insider unavailable for %s; falling through.", ticker)
+            return None
+
     def _insider_from_yfinance(self, ticker: str) -> int:
-        """Original yfinance insider net-direction logic (fallback)."""
+        """yfinance insider net-direction logic (tertiary fallback)."""
         try:
             tx = yf.Ticker(ticker).insider_transactions
             if tx is None or not isinstance(tx, pd.DataFrame) or tx.empty:

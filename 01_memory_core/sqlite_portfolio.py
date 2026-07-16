@@ -17,6 +17,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator, Optional
 
+import pandas as pd
+
 # The module directory name starts with a digit, so it is not importable as a
 # normal package. Adding this file's directory to sys.path lets us import the
 # Phase 1 data contracts regardless of how the process is launched.
@@ -112,6 +114,15 @@ class PortfolioDB:
                         score        REAL NOT NULL,
                         reason       TEXT,
                         created_at   TEXT NOT NULL
+                    );
+                    """
+                )
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS portfolio_history (
+                        date    TEXT PRIMARY KEY,
+                        equity  REAL NOT NULL,
+                        cash    REAL NOT NULL
                     );
                     """
                 )
@@ -215,6 +226,23 @@ class PortfolioDB:
                         for p in state.positions
                     ],
                 )
+
+                # Daily equity curve snapshot (one row per calendar day).
+                day_key = (
+                    state.last_updated.date().isoformat()
+                    if hasattr(state.last_updated, "date")
+                    else str(state.last_updated)[:10]
+                )
+                conn.execute(
+                    """
+                    INSERT INTO portfolio_history (date, equity, cash)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(date) DO UPDATE SET
+                        equity = excluded.equity,
+                        cash   = excluded.cash;
+                    """,
+                    (day_key, float(state.total_equity), float(state.cash_available)),
+                )
             logger.info(
                 "Portfolio updated: equity=%.2f cash=%.2f positions=%d",
                 state.total_equity,
@@ -224,6 +252,28 @@ class PortfolioDB:
         except sqlite3.Error:
             logger.exception("Failed to update portfolio.")
             raise
+
+    def get_equity_curve(self) -> pd.DataFrame:
+        """Return the daily equity curve sorted by date ascending.
+
+        Returns:
+            pd.DataFrame: Columns ``date``, ``equity``, ``cash``. Empty if none.
+        """
+        try:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    "SELECT date, equity, cash FROM portfolio_history "
+                    "ORDER BY date ASC;"
+                ).fetchall()
+            if not rows:
+                return pd.DataFrame(columns=["date", "equity", "cash"])
+            return pd.DataFrame(
+                [{"date": r["date"], "equity": r["equity"], "cash": r["cash"]}
+                 for r in rows]
+            )
+        except sqlite3.Error:
+            logger.exception("Failed to read portfolio_history.")
+            return pd.DataFrame(columns=["date", "equity", "cash"])
 
     def log_signal(self, signal: Signal) -> None:
         """Insert a signal or update its lifecycle state in ``audit_logs``.

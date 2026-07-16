@@ -43,7 +43,9 @@ VOLATILITY_REFERENCE: 0.20       # Baseline annualized vol for parity scaling.
 VOLATILITY_MAX_FACTOR: 1.5       # Cap on inverse-volatility up-scaling.
 VIX_PANIC_THRESHOLD: 30.0        # V2TX above this vetoes new satellite buys.
 
-# --- Rebalancing (Phase 12) -------------------------------------------------
+# --- Rebalancing (Phase 12 / 15) --------------------------------------------
 REBALANCE_PROFIT_SHAVE_PCT: 0.20   # Trim 20% of a winner above +20% PnL.
 REBALANCE_PROFIT_TRIGGER_PCT: 20.0 # Profit-shave trigger (unrealized %).
-REBALANCE_STOPLOSS_TRIGGER_PCT: -10.0  # Full exit below this unrealized %.
+# Dynamic ATR stop: exit if price < avg_entry - REBALANCE_ATR_STOP_MULT * ATR_14.
+# (Static -10% stop removed in Phase 15.)
+REBALANCE_ATR_STOP_MULT: 2.5

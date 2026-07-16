@@ -280,6 +280,14 @@ def load_portfolio_state():
 
 
 @st.cache_data(ttl=60)
+def load_equity_curve() -> pd.DataFrame:
+    """Load the daily equity curve from SQLite (cached 60s)."""
+    if not _SQLITE_PATH.exists():
+        return pd.DataFrame(columns=["date", "equity", "cash"])
+    return PortfolioDB(db_path=_SQLITE_PATH).get_equity_curve()
+
+
+@st.cache_data(ttl=60)
 def load_signals(statuses: tuple[str, ...], limit: int | None = None) -> pd.DataFrame:
     """Load audit-log rows for the given statuses (cached 60s)."""
     if not _SQLITE_PATH.exists():
@@ -582,8 +590,72 @@ def get_alpha_signals(ticker: str) -> dict:
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def get_insider_data(ticker: str) -> pd.DataFrame:
-    """Fetch insider transactions: yfinance first, AMF only if circuit closed."""
-    # --- Primary: yfinance (AMF BDIF is usually WAF-blocked from this host) --
+    """Fetch insider transactions: AMF BDIF -> FMP -> yfinance."""
+    # --- 1) AMF BDIF (official French legal source) --------------------------
+    try:
+        scrapers_dir = _ROOT / "00_data_sensors" / "scrapers"
+        if str(scrapers_dir) not in sys.path:
+            sys.path.insert(0, str(scrapers_dir))
+        from amf_scraper import AmfInsiderScraper  # noqa: WPS433
+
+        profile: dict = {}
+        try:
+            profile = get_bourso_profile(ticker)
+        except Exception:  # noqa: BLE001
+            profile = {}
+        amf = AmfInsiderScraper().get_recent_declarations(
+            ticker,
+            isin=profile.get("isin"),
+            issuer=profile.get("name"),
+        )
+        if amf is not None and not amf.empty:
+            out = amf.head(25).copy()
+            if "Source" not in out.columns:
+                out["Source"] = "AMF BDIF"
+            return out.reset_index(drop=True)
+    except Exception:  # noqa: BLE001
+        pass
+
+    # --- 2) FMP (secondary) --------------------------------------------------
+    try:
+        import os
+        import requests
+
+        api_key = os.getenv("FMP_API_KEY")
+        if api_key:
+            symbol = ticker.split(".")[0]
+            url = (
+                "https://financialmodelingprep.com/api/v4/insider-trading"
+                f"?symbol={symbol}&apikey={api_key}"
+            )
+            resp = requests.get(url, timeout=10)
+            if resp.status_code == 200:
+                payload = resp.json()
+                if isinstance(payload, list) and payload:
+                    rows = []
+                    for row in payload[:25]:
+                        if not isinstance(row, dict):
+                            continue
+                        rows.append({
+                            "Insider": row.get("reportingName")
+                            or row.get("ownerName")
+                            or "",
+                            "Transaction": row.get("transactionType")
+                            or row.get("acquistionOrDisposition")
+                            or "",
+                            "Shares": row.get("securitiesTransacted")
+                            or row.get("shares"),
+                            "Value": row.get("value") or row.get("price"),
+                            "Date": row.get("transactionDate")
+                            or row.get("filingDate"),
+                            "Source": "FMP",
+                        })
+                    if rows:
+                        return pd.DataFrame(rows)
+    except Exception:  # noqa: BLE001
+        pass
+
+    # --- 3) yfinance (tertiary) ----------------------------------------------
     try:
         raw = yf.Ticker(ticker).insider_transactions
         if isinstance(raw, pd.DataFrame) and not raw.empty:
@@ -601,30 +673,6 @@ def get_insider_data(ticker: str) -> pd.DataFrame:
                 if "Shares" in out.columns:
                     out["Shares"] = pd.to_numeric(out["Shares"], errors="coerce")
                 return out.head(25).reset_index(drop=True)
-    except Exception:  # noqa: BLE001
-        pass
-
-    # --- Optional AMF (skipped once circuit opens after HTTP 500) ------------
-    try:
-        scrapers_dir = _ROOT / "00_data_sensors" / "scrapers"
-        if str(scrapers_dir) not in sys.path:
-            sys.path.insert(0, str(scrapers_dir))
-        from amf_scraper import AmfInsiderScraper, amf_available  # noqa: WPS433
-
-        if not amf_available():
-            return pd.DataFrame()
-        profile: dict = {}
-        try:
-            profile = get_bourso_profile(ticker)
-        except Exception:  # noqa: BLE001
-            profile = {}
-        amf = AmfInsiderScraper().get_recent_declarations(
-            ticker,
-            isin=profile.get("isin"),
-            issuer=profile.get("name"),
-        )
-        if amf is not None and not amf.empty:
-            return amf.head(25).reset_index(drop=True)
     except Exception:  # noqa: BLE001
         pass
     return pd.DataFrame()
@@ -2174,6 +2222,53 @@ with tab_pf:
         "(voir suggestion dans General).</div>",
         unsafe_allow_html=True,
     )
+
+    # --- Equity curve (top of Portefeuille) ---------------------------------
+    st.markdown("#### 📈 Courbe de Performance (Equity Curve)")
+    eq_curve = load_equity_curve()
+    if eq_curve is None or eq_curve.empty or "equity" not in eq_curve.columns:
+        st.info(
+            "Pas encore d'historique d'equity. La courbe se construit a chaque "
+            "``update_portfolio`` (snapshot journalier dans ``portfolio_history``)."
+        )
+    else:
+        eq = eq_curve.copy()
+        eq["date"] = pd.to_datetime(eq["date"], errors="coerce")
+        eq = eq.dropna(subset=["date", "equity"]).sort_values("date")
+        if eq.empty:
+            st.info("Historique equity vide apres nettoyage.")
+        else:
+            y_min = float(eq["equity"].min())
+            y_max = float(eq["equity"].max())
+            pad = max((y_max - y_min) * 0.08, abs(y_max) * 0.01, 1.0)
+            fig_eq = pex.area(
+                eq,
+                x="date",
+                y="equity",
+                labels={"date": "Date", "equity": "Equity (€)"},
+            )
+            fig_eq.update_traces(
+                line=dict(color="#00FF00", width=2),
+                fill="tozeroy",
+                fillcolor="rgba(0, 255, 0, 0.25)",
+            )
+            fig_eq.update_layout(
+                paper_bgcolor=_BG,
+                plot_bgcolor=_BG,
+                font=dict(family="Courier New", color=_WHITE),
+                margin=dict(t=20, l=40, r=20, b=40),
+                height=320,
+                xaxis=dict(gridcolor="#222", showgrid=True),
+                yaxis=dict(
+                    gridcolor="#222",
+                    showgrid=True,
+                    range=[y_min - pad, y_max + pad],
+                    title="Equity (€)",
+                ),
+                showlegend=False,
+            )
+            st.plotly_chart(fig_eq, width="stretch", key="pf_equity_curve")
+
     if not positions:
         st.info("⏸️ Le portefeuille est actuellement 100% en "
                 "liquidites. Aucune position ouverte : le capital attend une "

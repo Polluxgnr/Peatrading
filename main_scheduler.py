@@ -411,7 +411,9 @@ async def run_monthly_rebalance_async() -> None:
     """Generate mechanical rebalance SELLs and push them for manual approval."""
     pdb = PortfolioDB()
     pdb.init_db()
-    rebalancer = PortfolioRebalancer(_CONFIG_DIR)
+    tsdb = TimeSeriesDB()
+    tsdb.init_db()
+    rebalancer = PortfolioRebalancer(_CONFIG_DIR, timeseries_db=tsdb)
 
     portfolio = pdb.get_portfolio_state()
     sells = rebalancer.generate_rebalance_signals(portfolio)
