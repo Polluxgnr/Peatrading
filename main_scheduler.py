@@ -4,7 +4,7 @@ Ties the whole pipeline together and runs it on the multi-pass European market
 schedule (09:00, 13:30, 17:10 Paris time, weekdays only):
 
     fetch (yfinance -> DuckDB) -> quant signals -> orchestrator (macro veto,
-    correlation, sizing) -> Discord alerts for surviving signals.
+    VIX, correlation, sizing) -> revoke/expire PENDING -> Discord alerts.
 
 Design rules honoured here:
   * Async/sync bridge: the synchronous ``schedule`` job runs the async pipeline
@@ -43,7 +43,7 @@ for _sub in (
 import aiohttp  # noqa: E402
 import schedule  # noqa: E402
 
-from data_models import Position, PortfolioState, SignalStatus  # noqa: E402
+from data_models import Position, PortfolioState, Signal, SignalStatus, SignalType  # noqa: E402
 from duckdb_manager import TimeSeriesDB  # noqa: E402
 from sqlite_portfolio import PortfolioDB  # noqa: E402
 from market_prices_api import MarketDataFetcher  # noqa: E402
@@ -52,6 +52,7 @@ from technical_scorer import SignalGenerator  # noqa: E402
 from smart_dca_engine import SmartDcaCore  # noqa: E402
 from monthly_rebalancer import PortfolioRebalancer  # noqa: E402
 from signal_priority_cascade import SignalOrchestrator  # noqa: E402
+from revocation_engine import RevocationEngine  # noqa: E402
 from llm_explainer import NarrativeExplainer  # noqa: E402
 from weekly_historian import WeeklyHistorian  # noqa: E402
 from discord_copilot import DiscordCopilot  # noqa: E402
@@ -273,6 +274,57 @@ async def run_pipeline_async() -> None:
         logger.info(
             "Core DCA APPROVED: buy %d %s.", core_signal.target_qty, core_ticker
         )
+
+    # --- Revocation Phase: anti-stale on existing PENDING signals ------------
+    revoker = RevocationEngine(_CONFIG_DIR)
+    try:
+        pending_rows = pdb.fetch_signals_by_status(["PENDING"])
+    except Exception:  # noqa: BLE001
+        logger.exception("Could not load PENDING signals for revocation.")
+        pending_rows = []
+    for row in pending_rows:
+        try:
+            created_raw = row.get("created_at")
+            if isinstance(created_raw, str):
+                created_at = datetime.fromisoformat(created_raw.replace("Z", "+00:00"))
+            else:
+                created_at = datetime.now(timezone.utc)
+            sig = Signal(
+                id=str(row["id"]),
+                ticker=str(row["ticker"]),
+                signal_type=SignalType(str(row["signal_type"])),
+                status=SignalStatus.PENDING,
+                score=float(row.get("score") or 0),
+                reason=str(row.get("reason") or ""),
+                created_at=created_at,
+            )
+            cur_px = float(current_prices.get(sig.ticker) or 0.0)
+            if cur_px <= 0:
+                # Still allow time-expiry with a dummy equal price (no false drift).
+                cur_px = 1.0
+                orig_px = 1.0
+            else:
+                # Approximate emission price from DuckDB history near created_at.
+                orig_px = cur_px
+                try:
+                    hist = tsdb.get_historical_prices(sig.ticker, days=30)
+                    if hist is not None and not hist.empty and "Close" in hist.columns:
+                        # Use oldest close in window as conservative proxy if
+                        # we cannot align exact timestamp.
+                        series = hist["Close"].dropna()
+                        if len(series):
+                            orig_px = float(series.iloc[0])
+                except Exception:  # noqa: BLE001
+                    orig_px = cur_px
+            updated = revoker.evaluate_signal(sig, cur_px, orig_px)
+            if updated.status in (SignalStatus.REVOKED, SignalStatus.EXPIRED):
+                processed.append(updated)
+                logger.info(
+                    "Pending signal %s -> %s (%s).",
+                    updated.id[:8], updated.status.value, updated.ticker,
+                )
+        except Exception:  # noqa: BLE001
+            logger.exception("Revocation failed for row %s.", row.get("id"))
 
     # Persist every decision to the audit log for the dashboard/ledger.
     for signal in processed:

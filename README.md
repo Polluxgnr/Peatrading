@@ -39,8 +39,10 @@ language. **This is not investment advice.**
 2. **Math first, AI second.** LLMs have **zero** decision power. They only (a) explain
    an already-decided trade, (b) compress news into a **number** (‑100…+100), and
    (c) write a weekly narrative. They never generate or approve a trade.
-3. **API-first, no scraping.** Data comes from `yfinance`, TradingView widgets and
-   Google/Yahoo news feeds.
+3. **API-first, scrapers best-effort.** Primary market data is `yfinance` +
+   TradingView widgets + Polymarket Gamma. Optional French enrichments
+   (Boursorama profile/news, AMF BDIF insiders) are **best-effort scrapers** with
+   circuit-breakers and Yahoo fallbacks — AMF BDIF is often WAF-blocked (HTTP 500).
 4. **Separation of state.** DuckDB for heavy time-series (OHLCV); SQLite for
    application state (portfolio, positions, immutable audit log).
 5. **Zero crash tolerance.** Every scheduled pass is wrapped so a data outage or a
@@ -53,14 +55,14 @@ language. **This is not investment advice.**
 
 | Layer | Capability |
 |------|------------|
-| **Data** | Batch OHLCV ingestion (`yfinance` → DuckDB), European volatility gauge, options Put/Call, insider transactions, Polymarket stub |
-| **Quant** | Mean-Reversion Exhaustion (RSI<30 while price>SMA200), **Quality filter** (EPS>0), **Momentum filter** (price>SMA5) |
-| **Core/Satellite** | **Smart DCA** on the MSCI World PEA ETF (`CW8.PA`), regime-aware (buys harder below SMA200) |
-| **Risk** | Macro-event veto, correlation firewall, sector cap, **volatility-parity sizing**, 30% satellite budget, **VIX panic brake** |
-| **Rebalance** | Monthly **profit-shaving** (+20% → trim 20%) and **hard stop-loss** (‑10% → full exit) |
-| **AI (explain only)** | Trade rationale, **news sentiment score**, **weekly CIO digest** (Historian) |
-| **Interfaces** | Discord Copilot (approve/revoke), Streamlit terminal, Discord webhooks |
-| **Ops** | Daemon scheduler (Paris time), account seeding CLI, mark-to-market refresh |
+| **Data** | OHLCV (`yfinance` → DuckDB), VIX/VSTOXX, Put/Call, insiders (Yahoo; AMF best-effort), Polymarket Gamma, Bourso profile/news |
+| **Quant** | Mean-Reversion Exhaustion (RSI<30 + Close>SMA200 + Close>SMA5), quality EPS>0 |
+| **Core/Satellite** | Smart DCA on `CW8.PA`, regime-aware under SMA200 |
+| **Risk** | Macro veto, correlation firewall, sector/line caps, vol-parity sizing, 30% satellite budget, VIX panic brake |
+| **Rebalance** | Monthly profit-shave (+20%→trim 20%) and stop (−10%→full exit) |
+| **AI (explain only)** | Trade rationale, news sentiment, weekly CIO digest, geo briefing |
+| **Interfaces** | Discord Copilot, Streamlit terminal (General multi-horizon, Exploration, Universe sector perfs) |
+| **Ops** | Daemon scheduler (Paris), seed CLI, wallet editor, **RevocationEngine** on PENDING |
 
 ---
 
@@ -148,7 +150,7 @@ On the 1st of each month:
 | Path | Responsibility |
 |------|----------------|
 | `00_data_sensors/market_prices_api.py` | Batch OHLCV download → DuckDB |
-| `00_data_sensors/macro_alpha_api.py` | `MacroAlphaSensor`: VIX, Put/Call, insider, Polymarket stub |
+| `00_data_sensors/macro_alpha_api.py` | `MacroAlphaSensor`: VIX, Put/Call, insider (Yahoo→AMF), Polymarket Gamma |
 | `01_memory_core/data_models.py` | Pydantic v2 contracts (`Signal`, `Position`, `PortfolioState`) |
 | `01_memory_core/duckdb_manager.py` | `TimeSeriesDB` — OHLCV storage & queries |
 | `01_memory_core/sqlite_portfolio.py` | `PortfolioDB` — account/positions/audit log |
@@ -286,22 +288,23 @@ venv_x64\Scripts\streamlit run 05_interfaces/terminal_dashboard.py
 
 ## 🖥️ The dashboard
 
-Five HUD metrics + a dedicated **Risk/Macro HUD** and six tabs:
+Launch (auto-opens browser):
 
-- **Top HUD** — equity, cash (%), latent PnL, active lines.
-- **Risk/Macro HUD** — VIX panic gauge, Core regime (vs SMA200), satellite-budget
-  usage, max sector concentration (all colour-coded against their limits).
-- **🎯 Portefeuille** — allocation sunburst coloured by PnL + detailed position table.
-- **🌍 Explorateur de Marché** — best/worst performers over an adjustable interval
-  (presets or custom dates), normalised Top/Flop chart, full universe ranking.
-- **📋 Univers Complet** — sector breakdown + filterable universe table.
-- **⚡ Signaux & Registre** — pending signals + immutable audit ledger.
-- **📡 Radar & Actualités** — local indicators (RSI/SMA/vol), alpha sensors
-  (Put/Call, insiders, Polymarket), **on-demand LLM news sentiment**, TradingView
-  chart + TA gauge, live news.
-- **🔮 Projection Monte Carlo** — GBM equity projection (P5/P50/P95, probability of loss).
+```powershell
+.\run_dashboard.ps1
+```
 
-**Sidebar:** auto-refresh toggle + interval, cache reset, and live system status.
+Bloomberg-style black UI. Tabs:
+
+| Tab | What you get |
+|-----|----------------|
+| **General & Signaux** | Adaptive **multi-horizon** portfolio suggestion (MICRO→FULL), explicit *why 1 share + cash*, Core ETF card, geo brief, Discord ledger, **biggest news of the month** |
+| **Portefeuille** | Sunburst + positions + **wallet editor** (writes SQLite) |
+| **Exploration** | Liquid scan top/flop + trajectories (no more fake 0% rows), full ticker dossier (business, catalysts, risk events), TA explained, news, insiders, Polymarket with clickable links |
+| **Univers Complet** | Universe table + **average sector performance** with selectable timeframe |
+| **Architecture** | Living docs (matches the code) |
+
+**Sidebar:** auto-refresh, cache clear, system status.
 
 ---
 
@@ -355,13 +358,18 @@ Weekends are skipped automatically for analysis passes.
 
 | Symptom | Fix |
 |---------|-----|
-| Dashboard shows "En attente de l'initialisation…" | Seed the account: `python seed_account.py --cash 10000`. |
-| `pyarrow`/`streamlit` install fails | Use **Python 3.11/3.12 x64** (`venv_x64`). |
-| VIX always 15.0 / `^V2TX` 404 | Expected — Yahoo delisted VSTOXX; it falls back to `^VIX`. |
+| Dashboard shows "En attente de l'initialisation…" | Seed: `python seed_account.py --cash 10000` (or 100). |
+| `run_dashboard.ps1` parse error on `--server.*` | Use the single-line launcher in repo (no broken backticks). |
+| `pyarrow`/`streamlit` install fails | Python **3.11/3.12 x64** (`venv_x64`). |
+| VIX always 15.0 / `^V2TX` 404 | Falls back to `^VIX` — threshold is still `VIX_PANIC_THRESHOLD`. |
+| AMF BDIF HTTP 500 | Expected; circuit opens **12h** then retries; Yahoo insiders used. |
+| Worst perf shows `0.00%` / pennies | Liquid blue-chip scan only; filter price ≥ 2 €. Clear cache. |
+| `AttributeError: float has no attribute bar` | Fixed (`plotly.express` aliased `pex` — was shadowed by price var `px`). |
+| Browser opens twice | Fixed: `run_dashboard.ps1` no longer double-opens URL. |
+| Duplicate news blocks | Merged into one Actualites section. |
 | No LLM text / sentiment = 0 | Set `OPENROUTER_API_KEY` in `config/api_keys.env`. |
-| Weekly report "computed but NOT sent" | Set `DISCORD_WEBHOOK_URL`. |
-| All BUYs rejected "insufficient cash" | Seed capital, or your cash is genuinely too low for 1 share. |
-| `Styler.background_gradient requires matplotlib` | `pip install matplotlib` (already in `requirements.txt`). |
+| Weekly report not sent | Set `DISCORD_WEBHOOK_URL`. |
+| All BUYs "insufficient cash" | Seed capital, or cash < 1 share price. |
 
 ---
 

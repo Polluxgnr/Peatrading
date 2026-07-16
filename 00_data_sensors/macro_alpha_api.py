@@ -13,12 +13,27 @@ neutral value and logs the reason, so the daemon never crashes on a data outage.
 """
 
 import logging
+import sys
 import time
 from functools import wraps
+from pathlib import Path
 from typing import Callable
 
 import pandas as pd
 import yfinance as yf
+
+# Optional French scrapers (isolated; failures must never crash the daemon).
+_SCRAPERS_DIR = Path(__file__).resolve().parent / "scrapers"
+if str(_SCRAPERS_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRAPERS_DIR))
+try:
+    from amf_scraper import AmfInsiderScraper  # noqa: E402
+except Exception:  # noqa: BLE001
+    AmfInsiderScraper = None  # type: ignore[assignment,misc]
+try:
+    from bourso_scraper import BoursoramaScraper  # noqa: E402
+except Exception:  # noqa: BLE001
+    BoursoramaScraper = None  # type: ignore[assignment,misc]
 
 logger = logging.getLogger(__name__)
 
@@ -160,13 +175,64 @@ class MacroAlphaSensor:
     def get_insider_activity(self, ticker: str) -> int:
         """Return the net direction of recent insider transactions.
 
-        Args:
-            ticker: Yahoo Finance ticker symbol.
-
-        Returns:
-            int: ``+1`` if insiders are net buyers, ``-1`` if net sellers,
-            ``0`` if neutral or unavailable.
+        Prefers yfinance (reliable). AMF BDIF is attempted only while its
+        process-wide circuit breaker is closed (often trips on HTTP 500/WAF).
         """
+        yf_dir = self._insider_from_yfinance(ticker)
+        if yf_dir != 0:
+            return yf_dir
+
+        if AmfInsiderScraper is None:
+            return 0
+        try:
+            from amf_scraper import amf_available  # noqa: WPS433
+            if not amf_available():
+                return 0
+        except Exception:  # noqa: BLE001
+            pass
+
+        isin = None
+        issuer = None
+        if BoursoramaScraper is not None:
+            try:
+                profile = BoursoramaScraper().get_instrument_profile(ticker)
+                if profile:
+                    isin = profile.get("isin")
+                    issuer = profile.get("name")
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("Bourso profile enrich failed for %s: %s", ticker, exc)
+
+        try:
+            amf_df = AmfInsiderScraper().get_recent_declarations(
+                ticker, isin=isin, issuer=issuer
+            )
+            if amf_df is not None and not amf_df.empty:
+                direction = self._score_amf_declarations(amf_df)
+                logger.info(
+                    "%s insider activity (AMF): %+d from %d row(s).",
+                    ticker, direction, len(amf_df),
+                )
+                return direction
+        except Exception as exc:  # noqa: BLE001
+            logger.debug(
+                "AMF insider scrape failed for %s (%s); keeping yfinance.",
+                ticker, exc,
+            )
+        return 0
+
+    @staticmethod
+    def _score_amf_declarations(df: pd.DataFrame) -> int:
+        """Map AMF Achat/Vente rows to +1 / -1 / 0."""
+        if "Transaction" not in df.columns:
+            return 0
+        text = df["Transaction"].astype(str).str.lower()
+        buys = int(text.str.contains("achat|acquisition|buy|purchase").sum())
+        sells = int(text.str.contains("vente|cession|sale|sell").sum())
+        net = buys - sells
+        return 1 if net > 0 else (-1 if net < 0 else 0)
+
+    def _insider_from_yfinance(self, ticker: str) -> int:
+        """Original yfinance insider net-direction logic (fallback)."""
         try:
             tx = yf.Ticker(ticker).insider_transactions
             if tx is None or not isinstance(tx, pd.DataFrame) or tx.empty:
@@ -184,7 +250,7 @@ class MacroAlphaSensor:
             net = buys - sells
             direction = 1 if net > 0 else (-1 if net < 0 else 0)
             logger.info(
-                "%s insider activity: buys=%d sells=%d -> %+d.",
+                "%s insider activity (yfinance): buys=%d sells=%d -> %+d.",
                 ticker,
                 buys,
                 sells,
@@ -195,25 +261,42 @@ class MacroAlphaSensor:
             logger.debug("Insider data unavailable for %s; neutral.", ticker)
             return 0
 
-    # -------------------------------------------------- Polymarket (stub) ---
+    # -------------------------------------------------- Polymarket ----------
     def get_polymarket_sentiment(self, query: str) -> float:
-        """Placeholder for Polymarket geopolitical-event probabilities.
+        """Best-effort Polymarket YES probability for a macro query.
 
-        Ready to be wired to Polymarket's free CLOB API. For now it returns a
-        deterministic pseudo-probability in ``[0, 1]`` derived from ``query`` so
-        downstream code has a stable, testable value.
-
-        Args:
-            query: Free-text event description (e.g. "recession 2026").
-
-        Returns:
-            float: Event probability in ``[0.0, 1.0]``.
+        Tries the public Gamma API search; falls back to a deterministic stub
+        so callers always get a float in ``[0, 1]``.
         """
-        # Deterministic stub: hash the query to a stable value in [0.35, 0.65].
+        try:
+            import json
+            import urllib.parse
+            import urllib.request
+
+            q = urllib.parse.quote(query[:80])
+            url = f"https://gamma-api.polymarket.com/public-search?q={q}&limit_per_type=3"
+            req = urllib.request.Request(
+                url,
+                headers={"User-Agent": "PEA-Sniper-Terminal/1.0",
+                         "Accept": "application/json"},
+            )
+            with urllib.request.urlopen(req, timeout=6) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            events = (data or {}).get("events") or []
+            for ev in events:
+                markets = ev.get("markets") or []
+                if not markets:
+                    continue
+                prices = markets[0].get("outcomePrices")
+                if isinstance(prices, str):
+                    prices = json.loads(prices)
+                if isinstance(prices, (list, tuple)) and prices:
+                    return round(float(prices[0]), 4)
+        except Exception:  # noqa: BLE001
+            logger.debug("Polymarket live fetch failed for %r", query, exc_info=True)
+
         seed = sum(ord(c) for c in query) % 31
-        prob = 0.35 + (seed / 30.0) * 0.30
-        logger.debug("Polymarket stub for %r -> %.2f", query, prob)
-        return round(prob, 4)
+        return round(0.35 + (seed / 30.0) * 0.30, 4)
 
 
 if __name__ == "__main__":

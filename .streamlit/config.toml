@@ -1,0 +1,25 @@
+# Force a pure-black "Bloomberg terminal" dark theme so native widgets
+# (st.dataframe grid, st.metric, inputs) never render on a white background.
+[theme]
+base = "dark"
+backgroundColor = "#050505"
+secondaryBackgroundColor = "#0A0A0A"
+textColor = "#FFFFFF"
+primaryColor = "#00FF00"
+font = "monospace"
+
+[client]
+# false for any non-local deploy (Docker / public IP) — avoids leaking paths.
+# Local debug: set STREAMLIT_CLIENT_SHOW_ERROR_DETAILS=true or flip to true.
+showErrorDetails = false
+toolbarMode = "minimal"
+
+[browser]
+gatherUsageStats = false
+serverAddress = "localhost"
+
+[server]
+# Local default: open a browser. Docker overrides with --server.headless=true
+# (see docker-compose.yml dashboard service) — containers have no display.
+headless = false
+port = 8501

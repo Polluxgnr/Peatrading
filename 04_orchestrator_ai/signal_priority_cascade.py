@@ -2,10 +2,12 @@
 
 The strict conductor. Raw signals flow through an ordered, CPU-optimal cascade:
 
-    1. Macro Veto        (cheap date lookup - runs first)
-    2. Sector limit      (cheap arithmetic)
-    3. Correlation       (heavy Pearson math - runs only if still alive)
-    4. PEA sizing        (integer shares vs available cash)
+    0. Price sanity      (reject non-positive / missing marks)
+    1. VIX panic         (market-wide emergency brake — CorrelationFirewall)
+    2. Macro Veto        (cheap date lookup)
+    3. Sector limit      (cheap arithmetic)
+    4. Correlation       (heavy Pearson math — only if still alive)
+    5. PEA sizing        (integer shares vs available cash)
 
 This is the ONLY module that finalizes a signal's ``status``, ``target_qty``
 and ``reason``. Pure logical routing: no LLMs, no APIs. All paths use

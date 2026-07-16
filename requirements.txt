@@ -12,6 +12,7 @@ duckdb>=0.10
 # --- Data sensors (Phase 3) ---
 yfinance>=0.2.40
 requests>=2.31
+beautifulsoup4>=4.12
 feedparser>=6.0
 
 # --- Quant engine (Phase 4) ---

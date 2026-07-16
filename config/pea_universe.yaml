@@ -1,353 +1,1901 @@
 # PEA Sniper Terminal V-Prime - investable universe
-# Curated Euronext Paris tickers, validated against Yahoo Finance.
-# Regenerate with: python tools/build_universe.py
+# Synced from Boursorama Eligibilité PEA filter (tools/sync_universe_from_bourso.py).
+# Extra flags: srd=true (liquid SRD), pea_pme=true.
 
 universe:
   Basic Materials:
   - ticker: AI.PA
     name: Air Liquide
+    srd: true
   - ticker: AKE.PA
     name: Arkema
+    srd: true
+  - ticker: ALAFY.PA
+    name: AFYREN
+    pea_pme: true
+  - ticker: ALBKK.PA
+    name: BAIKOWSKI
+    pea_pme: true
+  - ticker: ALCOG.PA
+    name: COGRA
+    pea_pme: true
+  - ticker: ALCRB.PA
+    name: CARBIOS
+    pea_pme: true
+  - ticker: ALDUB.PA
+    name: ENCRES DUBUIT
+    pea_pme: true
+  - ticker: ALFLO.PA
+    name: FLORENTAISE
+    pea_pme: true
+  - ticker: ALGLD.PA
+    name: GOLD BY GOLD
+    pea_pme: true
+  - ticker: ALHGR.PA
+    name: HOFFMANN GREEN CEMENT TEC.
+    pea_pme: true
+  - ticker: ALHRG.PA
+    name: HERIGE
+    pea_pme: true
+  - ticker: ALKOM.PA
+    name: PLASTICOS COMP
+    pea_pme: true
+  - ticker: ALLUX.PA
+    name: INSTALLUX
+    pea_pme: true
+  - ticker: ALMIB.PA
+    name: AMOEBA
+    pea_pme: true
+  - ticker: ALMOU.PA
+    name: MOULINVEST
+    pea_pme: true
+  - ticker: ALRGR.PA
+    name: ROUGIER S.A.
+    pea_pme: true
+  - ticker: ALVIN.PA
+    name: VINPAI
+  - ticker: CBE.PA
+    name: ROBERTET CI E87
+    pea_pme: true
   - ticker: ERA.PA
     name: Eramet
+    pea_pme: true
+    srd: true
+  - ticker: EXPL.PA
+    name: EPC GROUPE
+    pea_pme: true
+  - ticker: GRVO.PA
+    name: VOLTZ (GRAINES)
   - ticker: JCQ.PA
     name: Jacquet Metals
+    pea_pme: true
+    srd: true
+  - ticker: LHYFE.PA
+    name: LHYFE
+    pea_pme: true
+  - ticker: MLDYN.PA
+    name: DYNAFOND
+    pea_pme: true
+  - ticker: MLPRX.PA
+    name: PARX MATERIALS
+    pea_pme: true
   - ticker: NK.PA
     name: Imerys
+    srd: true
+  - ticker: RBT.PA
+    name: ROBERTET
+    pea_pme: true
   - ticker: VCT.PA
     name: Vicat
+    srd: true
   - ticker: VK.PA
     name: Vallourec
+    srd: true
   Communication Services:
+  - ticker: ALALO.PA
+    name: ACHETER-LOUER.FR
+    pea_pme: true
+  - ticker: ALATA.PA
+    name: ATARI
+    pea_pme: true
+  - ticker: ALBIZ.PA
+    name: OBIZ
+    pea_pme: true
+  - ticker: ALBLD.PA
+    name: BILENDI
+    pea_pme: true
+  - ticker: ALDNE.PA
+    name: DONTNOD
+    pea_pme: true
+  - ticker: ALDNX.PA
+    name: DNXCORP
+    pea_pme: true
+  - ticker: ALDUX.PA
+    name: ADUX
+    pea_pme: true
+  - ticker: ALECP.PA
+    name: EUROPACORP
+    pea_pme: true
+    srd: true
+  - ticker: ALENT.PA
+    name: ETHERO
+    pea_pme: true
+  - ticker: ALFUM.PA
+    name: FILL UP MEDIA
+    pea_pme: true
+  - ticker: ALHOP.PA
+    name: HOPSCOTCH GRP
+    pea_pme: true
+  - ticker: ALINV.PA
+    name: INVIBES ADV
+    pea_pme: true
+  - ticker: ALISP.PA
+    name: ISPD NETWORK
+    pea_pme: true
+  - ticker: ALKLA.PA
+    name: KLARSEN
+    pea_pme: true
+  - ticker: ALLLN.PA
+    name: LLEID SERV TELEM
+    pea_pme: true
+  - ticker: ALMEX.PA
+    name: MEXEDIA
+    pea_pme: true
+  - ticker: ALMKS.PA
+    name: MAKING SCI GRP
+    pea_pme: true
+  - ticker: ALNMG.PA
+    name: NETMEDIA GROUP
+    pea_pme: true
+  - ticker: ALPRI.PA
+    name: PRISMAFLEX INTL
+    pea_pme: true
+  - ticker: ALPUL.PA
+    name: PULLUP ENTERTAINMENT
+    pea_pme: true
+  - ticker: ALSRS.PA
+    name: SIRIUS MEDIA
+    pea_pme: true
+  - ticker: ALUNI.PA
+    name: UNIFY GROUP
+  - ticker: ALWIN.PA
+    name: WINAMP GROUP
+  - ticker: ALWIT.PA
+    name: WITBE
+  - ticker: ALXIL.PA
+    name: XILAM ANIMATION
   - ticker: BOL.PA
     name: Bollore
+    srd: true
   - ticker: DEC.PA
     name: JCDecaux
+    pea_pme: true
+    srd: true
+  - ticker: DEEZR.PA
+    name: DEEZER
+    pea_pme: true
+  - ticker: DKUPL.PA
+    name: DEKUPLE
+    pea_pme: true
+  - ticker: EFG.PA
+    name: EAGLE FOOTBALL GR
+    pea_pme: true
   - ticker: ETL.PA
     name: Eutelsat
+    pea_pme: true
+    srd: true
+  - ticker: GAM.PA
+    name: GAUMONT
+    pea_pme: true
+  - ticker: HCO.PA
+    name: HIGH CO
+    pea_pme: true
   - ticker: LOCAL.PA
     name: Solocal
+    pea_pme: true
+    srd: true
+  - ticker: MLHPE.PA
+    name: HOPENING
+    pea_pme: true
+  - ticker: MLIML.PA
+    name: IMALLIANCE
+    pea_pme: true
+  - ticker: MLIMP.PA
+    name: IMPRIMERIE CHIRAT
+    pea_pme: true
   - ticker: MMT.PA
     name: M6 Metropole Television
+    pea_pme: true
+    srd: true
+  - ticker: NACON.PA
+    name: NACON
+    pea_pme: true
+  - ticker: NRG.PA
+    name: NRJ GRP
+    pea_pme: true
   - ticker: ODET.PA
     name: Compagnie de l'Odet
+    srd: true
   - ticker: ORA.PA
     name: Orange
+    pea_pme: true
+    srd: true
   - ticker: PRC.PA
     name: Artmarket.com
+    pea_pme: true
+    srd: true
   - ticker: PUB.PA
     name: Publicis Groupe
+    pea_pme: true
+    srd: true
   - ticker: TFI.PA
     name: TF1
+    srd: true
   - ticker: UBI.PA
     name: Ubisoft
+    srd: true
+  - ticker: VANTI.PA
+    name: VANTIVA
+  - ticker: VIV.PA
+    name: VIVENDI
   Consumer Cyclical:
+  - ticker: ABEO.PA
+    name: ABEO
+    pea_pme: true
   - ticker: AC.PA
     name: Accor
+    srd: true
   - ticker: AKW.PA
     name: Akwel
+    pea_pme: true
+    srd: true
+  - ticker: ALAIR.PA
+    name: AIRWELL
+    pea_pme: true
+  - ticker: ALATI.PA
+    name: ACTIA GROUP
+    pea_pme: true
+  - ticker: ALBI.PA
+    name: GASCOGNE
+    pea_pme: true
+  - ticker: ALBOU.PA
+    name: BOURRELIER GRP
+    pea_pme: true
+  - ticker: ALCAF.PA
+    name: CAFOM
+    pea_pme: true
   - ticker: ALCAT.PA
     name: Catana Group
+    pea_pme: true
+    srd: true
+  - ticker: ALDAR.PA
+    name: DAMARTEX
+    pea_pme: true
+  - ticker: ALDBL.PA
+    name: BERNARD LOISEAU
+    pea_pme: true
+  - ticker: ALDEL.PA
+    name: DELFINGEN
+    pea_pme: true
+  - ticker: ALDEV.PA
+    name: DEVERNOIS
+    pea_pme: true
+  - ticker: ALDLT.PA
+    name: DELTA PLUS GRP
+    pea_pme: true
+  - ticker: ALEMV.PA
+    name: EMOVA GRP
+    pea_pme: true
+  - ticker: ALFOR.PA
+    name: FORSEE POWER
+    pea_pme: true
+  - ticker: ALFPC.PA
+    name: FOUNTAINE PAJOT
+    pea_pme: true
+  - ticker: ALGIL.PA
+    name: GROUPE GUILLIN
+    pea_pme: true
   - ticker: ALHEX.PA
     name: Hexaom
+    pea_pme: true
+    srd: true
+  - ticker: ALHPI.PA
+    name: HOPIUM
+    pea_pme: true
+  - ticker: ALHRS.PA
+    name: HRS (HYDROGEN REFUELING SOL.)
+    pea_pme: true
+  - ticker: ALHUN.PA
+    name: HUNYVERS
+    pea_pme: true
+  - ticker: ALKLN.PA
+    name: KALEON
+    pea_pme: true
+  - ticker: ALLEX.PA
+    name: LEXIBOOK LINGUIST
+    pea_pme: true
+  - ticker: ALLPL.PA
+    name: LEPERMISLIBRE
+    pea_pme: true
+  - ticker: ALLSF.PA
+    name: LE SLIP FRANCAIS
+    pea_pme: true
+  - ticker: ALMLB.PA
+    name: MILIBOO
+    pea_pme: true
+  - ticker: ALMRB.PA
+    name: MR BRICOLAGE
+    pea_pme: true
+  - ticker: ALNLF.PA
+    name: NEOLIFE
+    pea_pme: true
+  - ticker: ALPAS.PA
+    name: PASSAT
+    pea_pme: true
+  - ticker: ALPDX.PA
+    name: PISCINES DESJOYAUX
+    pea_pme: true
+  - ticker: ALPET.PA
+    name: PET SVC HLDG
+    pea_pme: true
+  - ticker: ALPG.PA
+    name: PREATONI GRP
+    pea_pme: true
+  - ticker: ALPVL.PA
+    name: PLASTiVALOIRE
+    pea_pme: true
+    srd: true
+  - ticker: ALRFG.PA
+    name: RACING FORCE
+    pea_pme: true
+  - ticker: ALSPT.PA
+    name: SPARTOO
+    pea_pme: true
+  - ticker: ALU10.PA
+    name: U10 CORP
+  - ticker: ALUPG.PA
+    name: UPERGY
+  - ticker: ALVAP.PA
+    name: KUMULUS VAPE
+    pea_pme: true
+  - ticker: ALVIA.PA
+    name: VIALIFE
+  - ticker: ALVU.PA
+    name: VENTE UNIQUE.COM
+  - ticker: ARAMI.PA
+    name: ARAMIS GROUP
+    pea_pme: true
+  - ticker: BAIN.PA
+    name: BAINS DE MER MONACO
+    srd: true
   - ticker: BB.PA
     name: Bic
+    srd: true
   - ticker: BEN.PA
     name: Beneteau
+    pea_pme: true
+    srd: true
+  - ticker: BUI.PA
+    name: BARBARA BUI
+    pea_pme: true
+  - ticker: BUR.PA
+    name: BURELLE
+    pea_pme: true
   - ticker: CDA.PA
     name: Compagnie des Alpes
+    pea_pme: true
+    srd: true
   - ticker: CDI.PA
     name: Christian Dior
+    srd: true
+  - ticker: CHSR.PA
+    name: LA CHAUSSERIA
+    pea_pme: true
+  - ticker: DPT.PA
+    name: ST DUPONT
+    pea_pme: true
+  - ticker: ELIOR.PA
+    name: ELIOR GROUP
+    pea_pme: true
+    srd: true
+  - ticker: FCMC.PA
+    name: CASINO CANNES
+    pea_pme: true
   - ticker: FDJU.PA
     name: FDJ United
+    pea_pme: true
+    srd: true
   - ticker: FNAC.PA
     name: Fnac Darty
+    pea_pme: true
+    srd: true
   - ticker: FR.PA
     name: Valeo
+    srd: true
   - ticker: FRVIA.PA
     name: Forvia
+    pea_pme: true
+    srd: true
+  - ticker: GJAJ.PA
+    name: GROUPE JAJ (EX JAJ DISTRIBUTION)
+    pea_pme: true
+  - ticker: HDP.PA
+    name: HOTELS DE PARIS
+    pea_pme: true
+  - ticker: ITXT.PA
+    name: INTL TEXT.ASSOCIES
+    pea_pme: true
   - ticker: KER.PA
     name: Kering
+    srd: true
+  - ticker: KOF.PA
+    name: KAUFMAN ET BROAD
+    pea_pme: true
+  - ticker: LEBL.PA
+    name: FONCIERE 7 INV
+    pea_pme: true
   - ticker: MC.PA
     name: LVMH
+    srd: true
+  - ticker: MDM.PA
+    name: MAISONS DU MONDE
+    pea_pme: true
+  - ticker: MHM.PA
+    name: MYHOTELMATCH
+    pea_pme: true
+  - ticker: MLAA.PA
+    name: L'AGENCE AUTOMOBILIERE
+    pea_pme: true
+  - ticker: MLARD.PA
+    name: ARDOIN AMAND N-A
+    pea_pme: true
+  - ticker: MLCLI.PA
+    name: MAISON CLIO
+    pea_pme: true
+  - ticker: MLCLP.PA
+    name: Colipays
+    pea_pme: true
+  - ticker: MLCMB.PA
+    name: COMPAGNIE MONT BLANC
+    pea_pme: true
+  - ticker: MLHBP.PA
+    name: HOTELES BESTPR
+    pea_pme: true
+  - ticker: MLHCF.PA
+    name: HOME CONCEPT
+    pea_pme: true
+  - ticker: MLHIN.PA
+    name: HOTELIERE IMMOBILIERE DE NICE
+    pea_pme: true
+  - ticker: MLHOT.PA
+    name: HOTELIM
+    pea_pme: true
+  - ticker: MLIFS.PA
+    name: IMPULSE FITNESS
+    pea_pme: true
+  - ticker: MLODT.PA
+    name: ODIOT
+    pea_pme: true
+  - ticker: MLONE.PA
+    name: BODY ONE
+    pea_pme: true
+  - ticker: MLSML.PA
+    name: SMALTO
+    pea_pme: true
+  - ticker: MLSTR.PA
+    name: STREIT MECANIQ.
+    pea_pme: true
   - ticker: MMB.PA
     name: Lagardere
+    srd: true
+  - ticker: NR21.PA
+    name: NR21
+    pea_pme: true
   - ticker: OPM.PA
     name: OPmobility
+    pea_pme: true
+    srd: true
+  - ticker: PARP.PA
+    name: PARTOUCHE
+    pea_pme: true
+  - ticker: RBO.PA
+    name: ROCHE BOBOIS
+    pea_pme: true
   - ticker: RMS.PA
     name: Hermes International
+    srd: true
   - ticker: RNO.PA
     name: Renault
+    pea_pme: true
+    srd: true
+  - ticker: SFCA.PA
+    name: SOC FRANC CASINOS
+    pea_pme: true
+  - ticker: SK.PA
+    name: SEB
+    srd: true
+  - ticker: SMCP.PA
+    name: SMCP
+    pea_pme: true
+  - ticker: SRP.PA
+    name: SHOWROOMPRIVE
+    pea_pme: true
   - ticker: STLAP.PA
     name: Stellantis
+    pea_pme: true
+    srd: true
   - ticker: TFF.PA
     name: TFF Group
+    srd: true
   - ticker: TRI.PA
     name: Trigano
+    srd: true
   - ticker: VAC.PA
     name: Pierre et Vacances
+    pea_pme: true
+    srd: true
+  - ticker: VRLA.PA
+    name: VERALLIA
   Consumer Defensive:
+  - ticker: ALAVI.PA
+    name: ADVINI
+    pea_pme: true
+  - ticker: ALECO.PA
+    name: ECOMIAM
+    pea_pme: true
+  - ticker: ALFLE.PA
+    name: FLEURY MICHON
+    pea_pme: true
+  - ticker: ALIEV.PA
+    name: IEVA GROUP
+    pea_pme: true
+  - ticker: ALKKO.PA
+    name: KKO INTL
+    pea_pme: true
+  - ticker: ALLAN.PA
+    name: LANSON-BCC
+    pea_pme: true
+  - ticker: ALMER.PA
+    name: SAPMER
+    pea_pme: true
+  - ticker: ALODC.PA
+    name: OMER-DECUGIS & CIE
+    pea_pme: true
+  - ticker: ALPAU.PA
+    name: PAULIC MEUNERIE
+    pea_pme: true
+  - ticker: ALPOU.PA
+    name: POULAILLON
+    pea_pme: true
+  - ticker: ALVAL.PA
+    name: VALBIOTIS
   - ticker: BN.PA
     name: Danone
+    srd: true
   - ticker: BOI.PA
     name: Boiron
+    pea_pme: true
+    srd: true
   - ticker: BON.PA
     name: Bonduelle
+    pea_pme: true
+    srd: true
   - ticker: CA.PA
     name: Carrefour
+    srd: true
   - ticker: CO.PA
     name: Casino Guichard
+    pea_pme: true
+    srd: true
   - ticker: ITP.PA
     name: Interparfums
+    srd: true
+  - ticker: JBOG.PA
+    name: BOGART
+    pea_pme: true
   - ticker: LOUP.PA
     name: LDC
+    pea_pme: true
+    srd: true
+  - ticker: LPE.PA
+    name: LAURENT PERRIER
+    pea_pme: true
+  - ticker: MALT.PA
+    name: MALTER.FRANCO-BEL
+    pea_pme: true
   - ticker: MBWS.PA
     name: Marie Brizard
+    pea_pme: true
+    srd: true
+  - ticker: MLAAH.PA
+    name: AMATHEON AGRI
+    pea_pme: true
+  - ticker: MLCAC.PA
+    name: LOMBARD ET MEDOT
+    pea_pme: true
+  - ticker: MLFDV.PA
+    name: FD
+    pea_pme: true
+  - ticker: MLGAL.PA
+    name: GALEO
+    pea_pme: true
+  - ticker: MLGRC.PA
+    name: GROUPE CARNIVOR
+    pea_pme: true
+  - ticker: MLONL.PA
+    name: ONLINEFORMAPRO N
+    pea_pme: true
+  - ticker: MLSCI.PA
+    name: SCIENTIA SCHOOL
+    pea_pme: true
+  - ticker: MLSDN.PA
+    name: SAVONNERIE NYONS
+    pea_pme: true
+  - ticker: MLSRP.PA
+    name: SPEED RABBIT PIZZA
+    pea_pme: true
   - ticker: OR.PA
     name: L'Oreal
+    srd: true
+  - ticker: POMRY.PA
+    name: MAISON POMMERY & ASS.
+    pea_pme: true
+    srd: true
   - ticker: RCO.PA
     name: Remy Cointreau
+    pea_pme: true
+    srd: true
   - ticker: RI.PA
     name: Pernod Ricard
+    srd: true
+  - ticker: SABE.PA
+    name: SAINT JEAN GRP
+    pea_pme: true
   - ticker: SAVE.PA
     name: Savencia
+    pea_pme: true
+    srd: true
   - ticker: SBT.PA
     name: Oeneo
+    pea_pme: true
+    srd: true
+  Divers:
+  - ticker: ALSEI.PA
+    name: SOC EDIT IL FAT
+    pea_pme: true
+  - ticker: AUGR.PA
+    name: AUGROS COSM PACK
+    pea_pme: true
+  - ticker: FGRMC.PA
+    name: EIFFAGE
+    srd: true
+  - ticker: ML.PA
+    name: MICHELIN
+    srd: true
+  - ticker: MLBIO.PA
+    name: NORTEM BIOGROUP
+    pea_pme: true
+  - ticker: MLCOR.PA
+    name: COREP LIGHTING
+    pea_pme: true
+  - ticker: MLEAV.PA
+    name: E.A.V.S. GROUPE
+    pea_pme: true
+  - ticker: MLMFI.PA
+    name: CONDOR TECH
+    pea_pme: true
+  - ticker: MLVIE.PA
+    name: INTEGRIT VIAGER
+    pea_pme: true
+  - ticker: YOUNI.PA
+    name: YOUNITED FINL
   ETF:
-  - ticker: CW8.PA
-    name: Amundi MSCI World UCITS ETF (Core)
-  - ticker: WPEA.PA
-    name: iShares MSCI World Swap PEA UCITS ETF
-  - ticker: PE500.PA
-    name: Amundi PEA S&P 500 UCITS ETF
-  - ticker: ESE.PA
-    name: BNP Paribas Easy S&P 500 UCITS ETF
-  - ticker: PUST.PA
-    name: Amundi PEA Nasdaq-100 UCITS ETF
-  - ticker: PANX.PA
-    name: Amundi Nasdaq-100 UCITS ETF
-  - ticker: CAC.PA
-    name: Amundi CAC 40 UCITS ETF
   - ticker: C50.PA
     name: Amundi Euro Stoxx 50 UCITS ETF
-  - ticker: PCEU.PA
-    name: Amundi PEA MSCI Europe UCITS ETF
-  - ticker: PAEEM.PA
-    name: Amundi PEA Emerging Markets UCITS ETF
+  - ticker: CAC.PA
+    name: Amundi CAC 40 UCITS ETF
+  - ticker: CW8.PA
+    name: Amundi MSCI World UCITS ETF (Core)
+  - ticker: ESE.PA
+    name: BNP Paribas Easy S&P 500 UCITS ETF
+  - ticker: LYPS.DE
+    name: Amundi S&P 500 UCITS ETF
   - ticker: PAASI.PA
     name: Amundi PEA Asie Emergente UCITS ETF
   - ticker: PABZ.PA
     name: Amundi PEA MSCI USA UCITS ETF
-  - ticker: LYPS.DE
-    name: Amundi S&P 500 UCITS ETF
+  - ticker: PAEEM.PA
+    name: Amundi PEA Emerging Markets UCITS ETF
+  - ticker: PANX.PA
+    name: Amundi Nasdaq-100 UCITS ETF
+  - ticker: PCEU.PA
+    name: Amundi PEA MSCI Europe UCITS ETF
+  - ticker: PE500.PA
+    name: Amundi PEA S&P 500 UCITS ETF
+  - ticker: PUST.PA
+    name: Amundi PEA Nasdaq-100 UCITS ETF
+  - ticker: WPEA.PA
+    name: iShares MSCI World Swap PEA UCITS ETF
   Energy:
+  - ticker: ALDOL.PA
+    name: DOLFINES
+    pea_pme: true
+  - ticker: ALESA.PA
+    name: ECOSLOPS
+    pea_pme: true
+  - ticker: DPAM.PA
+    name: DOCKS PETR.D'AMBE
+    pea_pme: true
+  - ticker: FDE.PA
+    name: FRANCAISE DE L'ENERGIE
+    pea_pme: true
   - ticker: GTT.PA
     name: GTT
+    srd: true
   - ticker: MAU.PA
     name: Maurel et Prom
+    pea_pme: true
+    srd: true
+  - ticker: MLSEQ.PA
+    name: SEQUA PETROLEUM
+    pea_pme: true
+  - ticker: NAE.PA
+    name: NORTH ATLANTIC ENERGIES
+    pea_pme: true
   - ticker: RUI.PA
     name: Rubis
+    srd: true
   - ticker: TE.PA
     name: Technip Energies
+    srd: true
   - ticker: TTE.PA
     name: TotalEnergies
+    pea_pme: true
+    srd: true
+  - ticker: VIRI.PA
+    name: VIRIDIEN
   Financial Services:
   - ticker: ABCA.PA
     name: ABC Arbitrage
+    pea_pme: true
+    srd: true
   - ticker: ACA.PA
     name: Credit Agricole
+    pea_pme: true
+    srd: true
+  - ticker: ALAUD.PA
+    name: AUDACIA
+    pea_pme: true
+  - ticker: ALBON.PA
+    name: LEBON
+    pea_pme: true
+  - ticker: ALCBI.PA
+    name: CRYPTO BLOCKCHAIN INDUSTRIES
+    pea_pme: true
+  - ticker: ALEFA.PA
+    name: EDUFORM'ACTION
+    pea_pme: true
+  - ticker: ALERO.PA
+    name: EUROLAND CORP
+    pea_pme: true
+  - ticker: ALEXP.PA
+    name: ONE EXPERIENCE
+    pea_pme: true
+  - ticker: ALVAZ.PA
+    name: VAZIVA
   - ticker: AMUN.PA
     name: Amundi
+    srd: true
+  - ticker: ANTIN.PA
+    name: ANTIN INFRA. PARTNERS
+    pea_pme: true
   - ticker: BNP.PA
     name: BNP Paribas
+    srd: true
+  - ticker: BSD.PA
+    name: BOURSE DIRECT
+    pea_pme: true
+  - ticker: CAF.PA
+    name: CRCAM PARIS ET IDF
+    pea_pme: true
+  - ticker: CAT31.PA
+    name: CA TOULOUSE 31 CCI
+    pea_pme: true
+  - ticker: CBDG.PA
+    name: CAMBODGE DIV.24
+  - ticker: CCN.PA
+    name: CRCAM NOR.SE.CCI
+    pea_pme: true
+  - ticker: CIV.PA
+    name: CRCAM ILLE CCI
+    pea_pme: true
+  - ticker: CMO.PA
+    name: CRCAM MORBIHAN CCI
+    pea_pme: true
+  - ticker: CNDF.PA
+    name: CRCAM NORD FRANCE
+    pea_pme: true
   - ticker: COFA.PA
     name: Coface
+    pea_pme: true
+    srd: true
+  - ticker: CRAP.PA
+    name: CRCAM ALPES PROVENCE.CCI
+    pea_pme: true
+  - ticker: CRAV.PA
+    name: LOIRE ATL.VEND.CCI
+    pea_pme: true
+  - ticker: CRBP2.PA
+    name: CRCAM BRIE PIC2CCI
+    pea_pme: true
+  - ticker: CRLA.PA
+    name: CRCAM LANGUEDOC
+    pea_pme: true
+  - ticker: CRLO.PA
+    name: CRCAM LOIRE HAUTE LOIRE
+    pea_pme: true
+  - ticker: CRSU.PA
+    name: CRCAM SRA CI
+    pea_pme: true
+  - ticker: CRTO.PA
+    name: CRCAM TOURAINE CCI
+    pea_pme: true
   - ticker: CS.PA
     name: AXA
+    srd: true
   - ticker: EDEN.PA
     name: Edenred
+    srd: true
+  - ticker: EEM.PA
+    name: EEM
+    pea_pme: true
+  - ticker: EGR.PA
+    name: TRANSITION EVERGREEN
   - ticker: ENX.PA
     name: Euronext
+    srd: true
+  - ticker: FMONC.PA
+    name: FINANCIERE MONCEY
+    pea_pme: true
+    srd: true
   - ticker: GLE.PA
     name: Societe Generale
+    srd: true
+  - ticker: IDIP.PA
+    name: IDI
+    pea_pme: true
   - ticker: LTA.PA
     name: Altamir
+    pea_pme: true
+    srd: true
   - ticker: MF.PA
     name: Wendel
+    srd: true
+  - ticker: MLAEM.PA
+    name: ASHLER MANSON
+    pea_pme: true
+  - ticker: MLGEQ.PA
+    name: GENTLEMEN'S
+    pea_pme: true
+  - ticker: MLHBB.PA
+    name: HOCHE BAINS LES BAINS
+    pea_pme: true
+  - ticker: MLIRF.PA
+    name: INNOVATIVE-RFK
+    pea_pme: true
+  - ticker: MLMUT.PA
+    name: MUTTER VENTURE-WI23
+    pea_pme: true
+  - ticker: MLNMA.PA
+    name: NICOLAS MIGUET N
+    pea_pme: true
+  - ticker: MLPHO.PA
+    name: PHOTONIKE
+    pea_pme: true
+  - ticker: MLPTZ.PA
+    name: PYRATZ CORP.
+    pea_pme: true
   - ticker: PEUG.PA
     name: Peugeot Invest
+    pea_pme: true
+    srd: true
   - ticker: RF.PA
     name: Eurazeo
+    srd: true
+  - ticker: SCR.PA
+    name: SCOR
+    srd: true
+  - ticker: TBSO.PA
+    name: TBSO
   - ticker: TKO.PA
     name: Tikehau Capital
+    srd: true
+  - ticker: VIL.PA
+    name: VIEL
   Healthcare:
   - ticker: AB.PA
     name: AB Science
+    pea_pme: true
+    srd: true
+  - ticker: ABLD.PA
+    name: ABL DIAGNOSTICS
+    pea_pme: true
+  - ticker: ABNX.PA
+    name: ABIONYX PHARMA
+    pea_pme: true
+  - ticker: ABVX.PA
+    name: ABIVAX
+    pea_pme: true
   - ticker: ADOC.PA
     name: Adocia
-  - ticker: BIM.PA
-    name: bioMerieux
-  - ticker: LBIRD.PA
-    name: Lumibird
+    pea_pme: true
+    srd: true
+  - ticker: AELIS.PA
+    name: AELIS FARMA
+    pea_pme: true
+  - ticker: ALBIO.PA
+    name: BIOSYNEX
+    pea_pme: true
+  - ticker: ALBLU.PA
+    name: BLUELINEA
+    pea_pme: true
+  - ticker: ALBPS.PA
+    name: BIOPHYTIS
+    pea_pme: true
   - ticker: ALCGM.PA
     name: Cegedim
+    pea_pme: true
+    srd: true
+  - ticker: ALCJ.PA
+    name: CROSSJECT
+    pea_pme: true
+  - ticker: ALCOX.PA
+    name: NICOX
+    pea_pme: true
+  - ticker: ALDMS.PA
+    name: DMS
+    pea_pme: true
+  - ticker: ALDVI.PA
+    name: ADVICENNE
+    pea_pme: true
+  - ticker: ALECR.PA
+    name: EUROFINS-CEREP
+    pea_pme: true
+  - ticker: ALEMG.PA
+    name: EUROMEDIS GROUP
+    pea_pme: true
+  - ticker: ALERS.PA
+    name: EUROBIO SCIENTIFIC
+    pea_pme: true
+  - ticker: ALGAE.PA
+    name: FERMENTALG
+    pea_pme: true
+  - ticker: ALIKO.PA
+    name: IKONISYS
+    pea_pme: true
+  - ticker: ALIMP.PA
+    name: IMPLANET
+    pea_pme: true
+  - ticker: ALINT.PA
+    name: INTEGRAGEN
+    pea_pme: true
+  - ticker: ALKLH.PA
+    name: KLEA HOLDING (ex VISIOMED)
+    pea_pme: true
+  - ticker: ALMDT.PA
+    name: MEDIAN TECHNOLOGIES
+    pea_pme: true
+  - ticker: ALMKT.PA
+    name: MAUNA KEA
+    pea_pme: true
+  - ticker: ALNEV.PA
+    name: NEOVACS
+    pea_pme: true
+  - ticker: ALNFL.PA
+    name: NFL BIOSCIENCES
+    pea_pme: true
+  - ticker: ALNOV.PA
+    name: NOVACYT
+    pea_pme: true
+  - ticker: ALOPM.PA
+    name: ONCODESIGN PM
+    pea_pme: true
+  - ticker: ALPAT.PA
+    name: PLANT ADVANCED
+    pea_pme: true
+  - ticker: ALPRE.PA
+    name: PREDILIFE
+    pea_pme: true
+  - ticker: ALQGC.PA
+    name: QUANTUM GENOMICS
+    pea_pme: true
+  - ticker: ALSAF.PA
+    name: SAFE
+    pea_pme: true
+  - ticker: ALSEN.PA
+    name: SENSORION
+    pea_pme: true
+  - ticker: ALSGD.PA
+    name: SPINEGUARD
+    pea_pme: true
+  - ticker: ALSMA.PA
+    name: SMAIO
+    pea_pme: true
+  - ticker: ALSPW.PA
+    name: SPINEWAY
+    pea_pme: true
+  - ticker: ALTAO.PA
+    name: ATON
+    pea_pme: true
+  - ticker: ALTHE.PA
+    name: THERACLION
+  - ticker: ALTHX.PA
+    name: THX PHARMA (EX THERANEXUS)
+  - ticker: ALTME.PA
+    name: TME PHARMA
+  - ticker: ALVIO.PA
+    name: VALERIO THER. (EX...
+    pea_pme: true
+    srd: true
+  - ticker: BIM.PA
+    name: bioMerieux
+    srd: true
+  - ticker: BLC.PA
+    name: BASTIDE LE CONFORT MED.
+    pea_pme: true
   - ticker: CLARI.PA
     name: Clariane
+    pea_pme: true
+    srd: true
+  - ticker: CVX.PA
+    name: CARVOLIX
+    pea_pme: true
   - ticker: DBV.PA
     name: DBV Technologies
+    pea_pme: true
+    srd: true
   - ticker: DIM.PA
     name: Sartorius Stedim Biotech
+    srd: true
   - ticker: EAPI.PA
     name: EuroAPI
+    pea_pme: true
+    srd: true
   - ticker: EL.PA
     name: EssilorLuxottica
+    srd: true
   - ticker: EMEIS.PA
     name: Emeis
+    pea_pme: true
+    srd: true
+  - ticker: EQS.PA
+    name: EQUASENS
+    pea_pme: true
+    srd: true
   - ticker: ERF.PA
     name: Eurofins Scientific
+    srd: true
+  - ticker: GBT.PA
+    name: GUERBET
+    pea_pme: true
   - ticker: GDS.PA
     name: Ramsay Generale de Sante
+    pea_pme: true
+    srd: true
   - ticker: GNFT.PA
     name: Genfit
+    pea_pme: true
+    srd: true
   - ticker: IPH.PA
     name: Innate Pharma
+    pea_pme: true
+    srd: true
   - ticker: IPN.PA
     name: Ipsen
+    srd: true
+  - ticker: IVA.PA
+    name: INVENTIVA
+    pea_pme: true
+  - ticker: LBIRD.PA
+    name: Lumibird
+    pea_pme: true
+    srd: true
   - ticker: LNA.PA
     name: LNA Sante
+    pea_pme: true
+    srd: true
+  - ticker: MAAT.PA
+    name: MAAT PHARMA
+    pea_pme: true
+  - ticker: MEDCL.PA
+    name: MEDINCELL
+    pea_pme: true
+  - ticker: MLBON.PA
+    name: BONYF
+    pea_pme: true
+  - ticker: MLINA.PA
+    name: INMOLECULE NANO
+    pea_pme: true
+  - ticker: MLLAB.PA
+    name: MEDIA LAB
+    pea_pme: true
+  - ticker: MLMIB.PA
+    name: METRICS IN BAL
+    pea_pme: true
   - ticker: NANO.PA
     name: Nanobiotix
+    pea_pme: true
+    srd: true
   - ticker: OSE.PA
     name: OSE Immunotherapeutics
+    pea_pme: true
+    srd: true
+  - ticker: POXEL.PA
+    name: POXEL
+    pea_pme: true
   - ticker: SAN.PA
     name: Sanofi
+    srd: true
+  - ticker: SIGHT.PA
+    name: GENSIGHT BIOLOGICS
+    pea_pme: true
+  - ticker: TNG.PA
+    name: TRANSGENE
   - ticker: VETO.PA
     name: Vetoquinol
+    srd: true
   - ticker: VIRP.PA
     name: Virbac
+    srd: true
   - ticker: VLA.PA
     name: Valneva
+    srd: true
   Industrials:
+  - ticker: AAA.PA
+    name: ALAN ALLMAN ASSOCIATES
+    pea_pme: true
   - ticker: ADP.PA
     name: Aeroports de Paris
+    srd: true
   - ticker: AF.PA
     name: Air France-KLM
+    srd: true
   - ticker: AIR.PA
     name: Airbus
+    srd: true
+  - ticker: ALBOA.PA
+    name: BOA CONCEPT
+    pea_pme: true
   - ticker: ALCIS.PA
     name: Catering International Services
+    pea_pme: true
+    srd: true
+  - ticker: ALCUR.PA
+    name: ARCURE
+    pea_pme: true
+  - ticker: ALDBT.PA
+    name: DBT
+    pea_pme: true
+  - ticker: ALEAC.PA
+    name: EDILIZIACROB
+    pea_pme: true
+  - ticker: ALENO.PA
+    name: ENOGIA
+    pea_pme: true
+  - ticker: ALEUP.PA
+    name: EUROPLASMA
+    pea_pme: true
   - ticker: ALEXA.PA
     name: Exail Technologies
+    pea_pme: true
+  - ticker: ALFER.PA
+    name: SERGE FERRARI
+    pea_pme: true
+  - ticker: ALGEV.PA
+    name: GEVELOT
+    pea_pme: true
+  - ticker: ALGIR.PA
+    name: SIGNAUX GIROD
+    pea_pme: true
+  - ticker: ALGRO.PA
+    name: GROLLEAU
+    pea_pme: true
+  - ticker: ALHG.PA
+    name: LOUIS HACHETTE GROUP
+    pea_pme: true
+  - ticker: ALIBR.PA
+    name: CALIBRE
+    pea_pme: true
+  - ticker: ALMAR.PA
+    name: MARE NOSTRUM
+    pea_pme: true
+  - ticker: ALMCE.PA
+    name: MON COURTIER ENERGIE
+    pea_pme: true
+  - ticker: ALMGI.PA
+    name: MG INTERNATIONAL
+    pea_pme: true
+  - ticker: ALNSC.PA
+    name: NSC GROUPE
+    pea_pme: true
   - ticker: ALO.PA
     name: Alstom
+    srd: true
+  - ticker: ALODY.PA
+    name: ODYSSEE TECHNOLOGIES
+    pea_pme: true
+  - ticker: ALORA.PA
+    name: ALTHEORA
+    pea_pme: true
+  - ticker: ALPJT.PA
+    name: POUJOULAT
+    pea_pme: true
+  - ticker: ALPM.PA
+    name: PRECIA
+    pea_pme: true
+  - ticker: ALSEC.PA
+    name: SODITECH
+    pea_pme: true
+  - ticker: ALSOG.PA
+    name: SOGECLAIR
+    pea_pme: true
+  - ticker: ALSTI.PA
+    name: STIF
+    pea_pme: true
+  - ticker: ALTD.PA
+    name: TONNER DRONES
+  - ticker: ALTOO.PA
+    name: TOOSLA
+  - ticker: ALTOU.PA
+    name: TOUAX
+  - ticker: ALTPC.PA
+    name: SMTPC
+    pea_pme: true
+  - ticker: ALTUV.PA
+    name: BIO-UV GRP
+    pea_pme: true
+  - ticker: ALUCI.PA
+    name: LUCIBEL
+    pea_pme: true
+  - ticker: ALUVI.PA
+    name: UV GERMI
+  - ticker: ALWF.PA
+    name: WINFARM
+  - ticker: ALWTR.PA
+    name: WATERA
   - ticker: AM.PA
     name: Dassault Aviation
+    srd: true
   - ticker: ASY.PA
     name: Assystem
+    pea_pme: true
+    srd: true
+  - ticker: AURE.PA
+    name: AUREA
+    pea_pme: true
   - ticker: AYV.PA
     name: Ayvens
+    srd: true
   - ticker: BVI.PA
     name: Bureau Veritas
+    srd: true
   - ticker: CEN.PA
     name: Groupe CRIT
+    pea_pme: true
+    srd: true
   - ticker: CRI.PA
     name: Chargeurs
+    pea_pme: true
+    srd: true
+  - ticker: DBG.PA
+    name: DERICHEBOURG
+    pea_pme: true
   - ticker: DG.PA
     name: Vinci
+    pea_pme: true
+    srd: true
   - ticker: ELIS.PA
     name: Elis
+    srd: true
   - ticker: EN.PA
     name: Bouygues
+    pea_pme: true
+    srd: true
+  - ticker: EXA.PA
+    name: EXAIL TECHNOLOGIES
+    pea_pme: true
+    srd: true
   - ticker: EXE.PA
     name: Exel Industries
-  - ticker: FGR.PA
-    name: Eiffage
+    pea_pme: true
+    srd: true
+  - ticker: EXENS.PA
+    name: EXOSENS
+    pea_pme: true
+  - ticker: FGA.PA
+    name: FIGEAC AERO
+    pea_pme: true
+  - ticker: FII.PA
+    name: LISI
+    pea_pme: true
+  - ticker: FINM.PA
+    name: FIN MARJOS
+    pea_pme: true
+  - ticker: GEA.PA
+    name: GEA
+    pea_pme: true
+  - ticker: GET.PA
+    name: GETLINK
+    srd: true
   - ticker: GLO.PA
     name: GL Events
+    pea_pme: true
+    srd: true
+  - ticker: GPE.PA
+    name: GPE PIZZORNO ENVI
+    pea_pme: true
   - ticker: HO.PA
     name: Thales
+    srd: true
   - ticker: IDL.PA
     name: ID Logistics
+    pea_pme: true
+    srd: true
   - ticker: IPS.PA
     name: Ipsos
+    pea_pme: true
+    srd: true
+  - ticker: LAT.PA
+    name: LATECOERE
+    pea_pme: true
   - ticker: LR.PA
     name: Legrand
+    srd: true
+  - ticker: MLAAT.PA
+    name: AZOREAN
+    pea_pme: true
+  - ticker: MLAGI.PA
+    name: GROUPE AG3I
+    pea_pme: true
+  - ticker: MLAIG.PA
+    name: ANDINO GLB
+    pea_pme: true
+  - ticker: MLCFD.PA
+    name: CHEMIN FER DEPARTEMENTAUX
+    pea_pme: true
+  - ticker: MLCMI.PA
+    name: SCEMI
+    pea_pme: true
+  - ticker: MLFXO.PA
+    name: FINAXO
+    pea_pme: true
+  - ticker: MLHK.PA
+    name: H&K
+    pea_pme: true
+  - ticker: MLHYD.PA
+    name: HYDRAULIQUE HLD
+    pea_pme: true
+  - ticker: MLHYE.PA
+    name: HYDRO-EXPLOITATIONS
+    pea_pme: true
+  - ticker: MLITN.PA
+    name: ITALY INNOV
+    pea_pme: true
+  - ticker: MLPHW.PA
+    name: PHONE WEB
+    pea_pme: true
+  - ticker: MLPLC.PA
+    name: PLACOPLATRE
+    pea_pme: true
+  - ticker: MLROT.PA
+    name: ROTH MIONS
+    pea_pme: true
   - ticker: MRN.PA
     name: Mersen
+    pea_pme: true
+    srd: true
   - ticker: MTU.PA
     name: Manitou
+    pea_pme: true
+    srd: true
+  - ticker: NEX.PA
+    name: NEXANS
+    srd: true
+  - ticker: OREGE.PA
+    name: OREGE
+    pea_pme: true
+  - ticker: PERR.PA
+    name: PERRIER INDUSTRIE
+    pea_pme: true
   - ticker: PIG.PA
     name: Haulotte Group
+    pea_pme: true
+    srd: true
+  - ticker: PLX.PA
+    name: PLUXEE
+    pea_pme: true
   - ticker: RXL.PA
     name: Rexel
+    srd: true
+  - ticker: SACI.PA
+    name: FIDUCIAL OFF.SOLU
+    pea_pme: true
   - ticker: SAF.PA
     name: Safran
+    pea_pme: true
+    srd: true
+  - ticker: SAMS.PA
+    name: SAMSE
+    pea_pme: true
   - ticker: SCHP.PA
     name: Seche Environnement
+    pea_pme: true
+    srd: true
+  - ticker: SDG.PA
+    name: SYNERGIE
+    srd: true
+  - ticker: SFPI.PA
+    name: GROUPE SFPI
+    pea_pme: true
   - ticker: SGO.PA
     name: Saint-Gobain
+    pea_pme: true
+    srd: true
   - ticker: SPIE.PA
     name: Spie
+    srd: true
   - ticker: STF.PA
     name: STEF
+    pea_pme: true
+    srd: true
   - ticker: SU.PA
     name: Schneider Electric
+    srd: true
   - ticker: SW.PA
     name: Sodexo
+    srd: true
   - ticker: TEP.PA
     name: Teleperformance
+    srd: true
+  - ticker: THEP.PA
+    name: THERMADOR
   - ticker: VIE.PA
     name: Veolia
+    srd: true
+  - ticker: WAGA.PA
+    name: WAGA ENERGY
   Real Estate:
+  - ticker: ALADO.PA
+    name: ADOMOS
+    pea_pme: true
+  - ticker: ALEUA.PA
+    name: EURASIA GROUPE
+    pea_pme: true
+  - ticker: ALIMO.PA
+    name: GROUPIMO
+    pea_pme: true
+  - ticker: ALREA.PA
+    name: REALITES
+    pea_pme: true
+  - ticker: ALREB.PA
+    name: REBIRTH
+    pea_pme: true
+  - ticker: ALRIS.PA
+    name: RISING STONE
+    pea_pme: true
+  - ticker: ALTA.PA
+    name: ALTAREA
+    srd: true
+  - ticker: AREIT.PA
+    name: ALTAREIT
+    pea_pme: true
+  - ticker: ARG.PA
+    name: ARGAN
+    srd: true
+  - ticker: ARTE.PA
+    name: ARTEA
+    pea_pme: true
+  - ticker: ATLD.PA
+    name: ATLAND
+  - ticker: BASS.PA
+    name: BASSAC
+    pea_pme: true
+  - ticker: CFI.PA
+    name: CFI
+    pea_pme: true
+  - ticker: COUR.PA
+    name: COURTOIS N
+    pea_pme: true
+  - ticker: CROS.PA
+    name: CROSSWOOD
+    pea_pme: true
+  - ticker: EFI.PA
+    name: EFI
   - ticker: EIFF.PA
     name: Societe de la Tour Eiffel
+    srd: true
+  - ticker: FSDV.PA
+    name: FSDV
+    pea_pme: true
+  - ticker: MLALV.PA
+    name: ALVEEN
+    pea_pme: true
+  - ticker: MLCOU.PA
+    name: COURBET HERITAGE
+    pea_pme: true
+  - ticker: MLFTI.PA
+    name: FRANCE TOURISME
+    pea_pme: true
+  - ticker: MLIPP.PA
+    name: IMM.PARIS.PERLE
+    pea_pme: true
+  - ticker: MLLCB.PA
+    name: LES CONSTRUCTEURS DU BOIS
+    pea_pme: true
+  - ticker: MLPRE.PA
+    name: PRELUDE
+    pea_pme: true
+  - ticker: MLPRI.PA
+    name: SOC NAT PR IMM
+    pea_pme: true
+  - ticker: MLVIN.PA
+    name: FONCIERE VINDI
+    pea_pme: true
   - ticker: NXI.PA
     name: Nexity
+    pea_pme: true
+    srd: true
+  - ticker: ORIA.PA
+    name: FIDUCIAL REAL ESTATE
+    pea_pme: true
+  - ticker: SPEL.PA
+    name: FONCIERE VOLTA
+    pea_pme: true
   Technology:
   - ticker: 74SW.PA
     name: 74Software
+    pea_pme: true
+    srd: true
+  - ticker: AL2SI.PA
+    name: 2CRSI
+    pea_pme: true
+    srd: true
+  - ticker: ALARF.PA
+    name: ADEUNIS
+    pea_pme: true
+  - ticker: ALBFR.PA
+    name: SIDETRADE
+    pea_pme: true
+  - ticker: ALBOO.PA
+    name: BOOSTHEAT
+    pea_pme: true
+  - ticker: ALBPK.PA
+    name: BROADPEAK
+    pea_pme: true
+  - ticker: ALCBX.PA
+    name: CIBOX INTER ACTIVE
+    pea_pme: true
+  - ticker: ALCLA.PA
+    name: CLARANOVA
+    pea_pme: true
+  - ticker: ALCOF.PA
+    name: COFIDUR
+    pea_pme: true
+  - ticker: ALCPA.PA
+    name: MACOMPTA.FR
+    pea_pme: true
+  - ticker: ALCPB.PA
+    name: CAPITAL B
+    pea_pme: true
+  - ticker: ALDRV.PA
+    name: DRONE VOLT
+    pea_pme: true
+  - ticker: ALGEC.PA
+    name: GECI INTL
+    pea_pme: true
+  - ticker: ALGID.PA
+    name: EGIDE
+    pea_pme: true
+  - ticker: ALGTR.PA
+    name: GROUPE TERA
+    pea_pme: true
+  - ticker: ALHF.PA
+    name: HF COMPANY
+    pea_pme: true
+  - ticker: ALHIT.PA
+    name: HITECHPROS
+    pea_pme: true
+  - ticker: ALHYP.PA
+    name: HIPAY GROUP
+    pea_pme: true
+  - ticker: ALICA.PA
+    name: ICAPE HOLDING
+    pea_pme: true
+  - ticker: ALIMR.PA
+    name: IMMERSION
+    pea_pme: true
+  - ticker: ALINN.PA
+    name: INNELEC MULTIMEDIA
+    pea_pme: true
+  - ticker: ALITL.PA
+    name: IT LINK
+    pea_pme: true
+  - ticker: ALJXR.PA
+    name: ARCHOS
+    pea_pme: true
+  - ticker: ALKAL.PA
+    name: KALRAY
+    pea_pme: true
+  - ticker: ALKEY.PA
+    name: KEYRUS
+    pea_pme: true
+  - ticker: ALKLK.PA
+    name: KERLINK
+    pea_pme: true
+  - ticker: ALLDL.PA
+    name: GROUPE LDLC
+    pea_pme: true
+  - ticker: ALLGO.PA
+    name: LARGO
+    pea_pme: true
+  - ticker: ALLIX.PA
+    name: WALLIX GROUP
+  - ticker: ALLOG.PA
+    name: LOGIC INSTRUMENT
+    pea_pme: true
+  - ticker: ALMDG.PA
+    name: MGI DIGIT TECH
+    pea_pme: true
+  - ticker: ALMUN.PA
+    name: MUNIC
+    pea_pme: true
+  - ticker: ALNMR.PA
+    name: NAM.R
+    pea_pme: true
+  - ticker: ALNN6.PA
+    name: ENENSYS TECHNO
+    pea_pme: true
+  - ticker: ALNRG.PA
+    name: ENERGISME
+    pea_pme: true
+  - ticker: ALNSE.PA
+    name: NSE
+    pea_pme: true
+  - ticker: ALNTG.PA
+    name: NETGEM
+    pea_pme: true
+  - ticker: ALORD.PA
+    name: ORDISSIMO
+    pea_pme: true
+  - ticker: ALPHI.PA
+    name: FACEPHI BIOMETR
+    pea_pme: true
   - ticker: ALPRG.PA
     name: Prologue
+    pea_pme: true
+    srd: true
+  - ticker: ALPWG.PA
+    name: PRODWAYS
+    pea_pme: true
+  - ticker: ALRIB.PA
+    name: RIBER
+    pea_pme: true
+  - ticker: ALROC.PA
+    name: ROCTOOL
+    pea_pme: true
+  - ticker: ALSEM.PA
+    name: SEMCO TECHNOLOGIES
+    pea_pme: true
+  - ticker: ALTAI.PA
+    name: LIGHTON
+    pea_pme: true
+  - ticker: ALTHO.PA
+    name: METAVISIO (THOMSON COMP.)
+    pea_pme: true
+  - ticker: ALTRA.PA
+    name: TRACTIAL
+  - ticker: ALUAV.PA
+    name: EMB SIST INTEL
+    pea_pme: true
+  - ticker: ALVGO.PA
+    name: VOGO
+  - ticker: ALWEC.PA
+    name: WE.CONNECT
+  - ticker: ARTO.PA
+    name: ARTOIS
+    pea_pme: true
   - ticker: ATE.PA
     name: Alten
+    srd: true
+  - ticker: ATEME.PA
+    name: ATEME
+    pea_pme: true
+  - ticker: ATO.PA
+    name: ATOS GROUP
+    pea_pme: true
   - ticker: AUB.PA
     name: Aubay
+    pea_pme: true
+    srd: true
   - ticker: AVT.PA
     name: Avenir Telecom
+    pea_pme: true
+    srd: true
   - ticker: BIG.PA
     name: Bigben Interactive
+    pea_pme: true
+    srd: true
   - ticker: CAP.PA
     name: Capgemini
+    srd: true
+  - ticker: COH.PA
+    name: COHERIS
+    pea_pme: true
   - ticker: DSY.PA
     name: Dassault Systemes
+    srd: true
   - ticker: EKI.PA
     name: Ekinops
+    pea_pme: true
+    srd: true
+  - ticker: EOS.PA
+    name: ACTEOS (EX DATATRONIC)
+    pea_pme: true
+  - ticker: FPG.PA
+    name: UTI GROUP
+  - ticker: GUI.PA
+    name: GUILLEMOT CORP.
+    pea_pme: true
+  - ticker: INF.PA
+    name: INFOTEL
+    pea_pme: true
+  - ticker: LACR.PA
+    name: LACROIX
+    pea_pme: true
+  - ticker: LIN.PA
+    name: LINEDATA SERVICES
+    pea_pme: true
   - ticker: LSS.PA
     name: Lectra
+    pea_pme: true
+    srd: true
+  - ticker: MEMS.PA
+    name: MEMSCAP REGPT
+    pea_pme: true
+  - ticker: MLACT.PA
+    name: ACTIVIUM GROUP
+    pea_pme: true
+  - ticker: MLCHE.PA
+    name: CHEOPS TECH FCE
+    pea_pme: true
+  - ticker: MLCNT.PA
+    name: CONSORT NT
+    pea_pme: true
+  - ticker: MLDAM.PA
+    name: DAMARIS
+    pea_pme: true
+  - ticker: MLFNP.PA
+    name: FNP TECH
+    pea_pme: true
+  - ticker: MLIDS.PA
+    name: IDS
+    pea_pme: true
+  - ticker: MLIFC.PA
+    name: INFOCLIP
+    pea_pme: true
+  - ticker: MLLOI.PA
+    name: LOCASYSTEM INTERNATIONAL
+    pea_pme: true
+  - ticker: MLMGL.PA
+    name: MD SERVICES
+    pea_pme: true
+  - ticker: MLNOV.PA
+    name: NOVATECH INDUSTRIES
+    pea_pme: true
+  - ticker: MLOCT.PA
+    name: OCTOPUS BIOSAF
+    pea_pme: true
+  - ticker: MLPAC.PA
+    name: PACTE NOVATION
+    pea_pme: true
   - ticker: NRO.PA
     name: Neurones
+    pea_pme: true
+    srd: true
+  - ticker: OVH.PA
+    name: OVHCLOUD
+    pea_pme: true
+  - ticker: PARRO.PA
+    name: PARROT
+    pea_pme: true
+  - ticker: PLNW.PA
+    name: PLANISWARE
+    pea_pme: true
+  - ticker: PROAC.PA
+    name: PROACTIS
+    pea_pme: true
   - ticker: QDT.PA
     name: Quadient
+    pea_pme: true
+    srd: true
   - ticker: S30.PA
     name: Solutions 30
+    pea_pme: true
+    srd: true
   - ticker: SOI.PA
     name: Soitec
+    pea_pme: true
+    srd: true
   - ticker: SOP.PA
     name: Sopra Steria
+    srd: true
   - ticker: STMPA.PA
     name: STMicroelectronics
+    pea_pme: true
+    srd: true
   - ticker: SWP.PA
     name: Sword Group
+    srd: true
   - ticker: VMX.PA
     name: Verimatrix
+    srd: true
   - ticker: VU.PA
     name: VusionGroup
+    srd: true
   - ticker: WAVE.PA
     name: Wavestone
+    srd: true
   - ticker: WLN.PA
     name: Worldline
+    srd: true
+  - ticker: XFAB.PA
+    name: X-FAB SILICON
   Utilities:
+  - ticker: ALAGO.PA
+    name: E-PANGO
+    pea_pme: true
+  - ticker: ALAGP.PA
+    name: AGRIPOWER
+    pea_pme: true
+  - ticker: ALCWE.PA
+    name: CHARWOOD ENERGY
+    pea_pme: true
+  - ticker: ALESE.PA
+    name: ENTECH
+    pea_pme: true
+  - ticker: ALETC.PA
+    name: ENERGY SOL TECH
+    pea_pme: true
+  - ticker: ALHAF.PA
+    name: HAFFNER ENERGY
+    pea_pme: true
+  - ticker: ALMIN.PA
+    name: MINT
+    pea_pme: true
+  - ticker: ALOKW.PA
+    name: GROUPE OKWIND
+    pea_pme: true
+  - ticker: ARVEN.PA
+    name: ARVERNE
+    pea_pme: true
+  - ticker: ELEC.PA
+    name: ELECTRICITE DE STRASBOURG
+    pea_pme: true
   - ticker: ENGI.PA
     name: Engie
+    srd: true
+  - ticker: HDF.PA
+    name: HYDROGENE DE FRANCE
+    pea_pme: true
+  - ticker: MLBSP.PA
+    name: BLUE SHARK PS
+    pea_pme: true
+  - ticker: MLCMG.PA
+    name: CMG CLEANTECH
+    pea_pme: true
+  - ticker: MLEDR.PA
+    name: EAUX DE ROYAN
+    pea_pme: true
   - ticker: VLTSA.PA
     name: Voltalia
+    srd: true
