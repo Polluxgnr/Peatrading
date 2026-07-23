@@ -1,0 +1,18 @@
+# =============================================================================
+# PEA Sniper Terminal — Earnings / dividend blackout calendar
+# -----------------------------------------------------------------------------
+# Per-ticker corporate events. The cascade vetoes NEW satellite buys for a
+# ticker when an event falls within EARNINGS_BLACKOUT_DAYS (risk_params.yaml).
+#
+# Format:
+#   events:
+#     MC.PA:
+#       2026-07-24: "Q2 earnings"
+#     OR.PA:
+#       2026-08-01: "Ex-dividend"
+#
+# Prefer official / API calendars later (Euronext, Trading Economics). Keep
+# HTML scraping of broker sites as a last resort.
+# =============================================================================
+
+events: {}

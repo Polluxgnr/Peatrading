@@ -64,7 +64,13 @@ class WeeklyHistorian:
         if status == "REJECTED":
             if "vix" in reason or "panic" in reason:
                 return "vetoed_vix"
-            if "macro" in reason or "veto" in reason:
+            if "earnings" in reason or "blackout" in reason:
+                return "vetoed_earnings"
+            if "illiquid" in reason or "adv" in reason:
+                return "vetoed_liquidity"
+            if "max satellite" in reason or "max positions" in reason:
+                return "vetoed_max_positions"
+            if "macro" in reason or ("veto" in reason and "earnings" not in reason):
                 return "vetoed_macro"
             if "sector" in reason:
                 return "vetoed_sector"
@@ -100,7 +106,10 @@ class WeeklyHistorian:
             f"Executed/Approved: {buckets.get('executed', 0)}.\n"
             f"Revoked (macro window): {buckets.get('revoked', 0)}.\n"
             f"Vetoed by MACRO event: {buckets.get('vetoed_macro', 0)}.\n"
+            f"Vetoed by EARNINGS blackout: {buckets.get('vetoed_earnings', 0)}.\n"
             f"Vetoed by VIX panic: {buckets.get('vetoed_vix', 0)}.\n"
+            f"Vetoed by LIQUIDITY: {buckets.get('vetoed_liquidity', 0)}.\n"
+            f"Vetoed by MAX POSITIONS: {buckets.get('vetoed_max_positions', 0)}.\n"
             f"Vetoed by SECTOR limit: {buckets.get('vetoed_sector', 0)}.\n"
             f"Vetoed by CORRELATION: {buckets.get('vetoed_correlation', 0)}.\n"
             f"Other rejections: {buckets.get('rejected_other', 0)}.\n"

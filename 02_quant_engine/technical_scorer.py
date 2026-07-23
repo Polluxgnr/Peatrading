@@ -13,9 +13,11 @@ import sys
 import uuid
 from datetime import datetime, timezone
 from functools import lru_cache
+from pathlib import Path
 from typing import Any, List
 
 import pandas as pd
+import yaml
 
 try:  # yfinance is only needed for the optional Quality (EPS) filter.
     import yfinance as yf
@@ -41,12 +43,28 @@ from data_models import Signal, SignalStatus, SignalType  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_DEFAULT_CONFIG_DIR = _PROJECT_ROOT / "config"
+
 # Minimum history required to compute a valid SMA-200.
 _MIN_ROWS = 200
+_DEFAULT_RSI_OVERSOLD = 30.0
 
 
 class SignalGenerator:
     """Generates raw BUY signals from mathematical price-action rules."""
+
+    def __init__(self, config_path: str | Path | None = None) -> None:
+        """Load optional thresholds from ``risk_params.yaml``."""
+        path = Path(config_path) if config_path else _DEFAULT_CONFIG_DIR
+        risk_file = path if path.is_file() else path / "risk_params.yaml"
+        risk: dict = {}
+        if risk_file.exists():
+            with open(risk_file, "r", encoding="utf-8") as fh:
+                risk = yaml.safe_load(fh) or {}
+        self.rsi_oversold: float = float(
+            risk.get("RSI_OVERSOLD_THRESHOLD", _DEFAULT_RSI_OVERSOLD)
+        )
 
     def calculate_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
         """Attach SMA-50, SMA-200 and RSI-14 columns for a single ticker.
@@ -70,21 +88,14 @@ class SignalGenerator:
     def score_rsi(self, rsi_value: float) -> float:
         """Map an RSI value to a BUY conviction score.
 
-        Linear mapping in the oversold zone: RSI 30 -> 60, RSI 20 -> 80,
-        RSI 10 -> 100 (clamped to [60, 100]).
-
-        Args:
-            rsi_value: The RSI(14) reading.
-
-        Returns:
-            float: Score in [60, 100] when ``rsi_value < 30``; otherwise 0.0.
-            Returns 0.0 for NaN input.
+        Linear mapping in the oversold zone relative to ``rsi_oversold``.
         """
+        thr = self.rsi_oversold
         if rsi_value is None or pd.isna(rsi_value):
             return 0.0
-        if rsi_value >= 30:
+        if rsi_value >= thr:
             return 0.0
-        score = 60.0 + (30.0 - rsi_value) * 2.0
+        score = 60.0 + (thr - rsi_value) * 2.0
         return float(max(60.0, min(100.0, score)))
 
     @staticmethod
@@ -138,7 +149,7 @@ class SignalGenerator:
         """Evaluate each ticker and emit raw Mean-Reversion Exhaustion signals.
 
         Rule (BUY): the most recent bar has ``Close > SMA_200`` (long-term
-        uptrend) AND ``RSI_14 < 30`` (short-term oversold pullback), refined by:
+        uptrend) AND ``RSI_14 < RSI_OVERSOLD_THRESHOLD`` (default 30), refined by:
 
           * Quality filter (Phase 11): the company must be profitable (EPS > 0).
           * Momentum filter (Phase 11): do not catch falling knives — require
@@ -179,7 +190,7 @@ class SignalGenerator:
                 continue
 
             uptrend = close > sma_200
-            oversold = rsi_14 < 30
+            oversold = rsi_14 < self.rsi_oversold
 
             # --- Momentum filter: reject falling knives (Close <= SMA_5) ------
             if apply_momentum_filter and (pd.isna(sma_5) or close <= sma_5):
@@ -210,7 +221,7 @@ class SignalGenerator:
                     target_qty=None,
                     created_at=datetime.now(timezone.utc),
                     reason=(
-                        f"RSI < 30 (Value: {rsi_14:.1f}) while Price > SMA200 "
+                        f"RSI < {self.rsi_oversold:.0f} (Value: {rsi_14:.1f}) while Price > SMA200 "
                         f"({close:.2f} > {sma_200:.2f}). Mean-reversion setup."
                     ),
                 )

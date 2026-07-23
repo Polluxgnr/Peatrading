@@ -5,6 +5,9 @@ The strict conductor. Raw signals flow through an ordered, CPU-optimal cascade:
     0. Price sanity      (reject non-positive / missing marks)
     1. VIX panic         (market-wide emergency brake — CorrelationFirewall)
     2. Macro Veto        (cheap date lookup)
+    2b. Earnings blackout (per-ticker corporate calendar)
+    2c. Max positions    (satellite line count cap)
+    2d. Min liquidity    (ADV € floor)
     3. Sector limit      (cheap arithmetic)
     4. Correlation       (heavy Pearson math — only if still alive)
     5. PEA sizing        (integer shares vs available cash)
@@ -21,6 +24,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List
 
+import yaml
+
 # --- Cross-package imports (directories start with digits) --------------------
 _ROOT = Path(__file__).resolve().parent.parent
 for _sub in ("01_memory_core", "03_risk_portfolio", "04_orchestrator_ai"):
@@ -30,6 +35,7 @@ from data_models import PortfolioState, Signal, SignalStatus  # noqa: E402
 from correlation_firewall import CorrelationFirewall  # noqa: E402
 from pea_position_sizer import PeaSizer  # noqa: E402
 from macro_veto import MacroVetoEngine  # noqa: E402
+from earnings_blackout import EarningsBlackoutEngine  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +65,17 @@ class SignalOrchestrator:
         self.portfolio_db = portfolio_db
         self.timeseries_db = timeseries_db
 
+        risk_path = config_path / "risk_params.yaml"
+        risk: dict = {}
+        if risk_path.exists():
+            with open(risk_path, "r", encoding="utf-8") as fh:
+                risk = yaml.safe_load(fh) or {}
+        self.core_ticker: str = str(risk.get("CORE_TICKER", "CW8.PA"))
+        self.max_positions_total: int = int(risk.get("MAX_POSITIONS_TOTAL", 12))
+        self.min_liquidity_adv: float = float(risk.get("MIN_LIQUIDITY_ADV", 50_000))
+
         self.macro_veto = MacroVetoEngine(config_path)
+        self.earnings_blackout = EarningsBlackoutEngine(config_path)
         self.firewall = CorrelationFirewall(config_path)
         self.sizer = PeaSizer(config_path)
 
@@ -97,6 +113,32 @@ class SignalOrchestrator:
             logger.debug("Volatility unavailable for %s.", ticker)
             return None
 
+    def _avg_daily_euro_volume(self, ticker: str, days: int = 20) -> float | None:
+        """Approximate ADV in EUR = mean(Close * Volume) over ``days``."""
+        if self.timeseries_db is None:
+            return None
+        try:
+            df = self.timeseries_db.get_historical_prices(ticker, days=days)
+            if df is None or df.empty:
+                return None
+            if "Close" not in df.columns or "Volume" not in df.columns:
+                return None
+            close = df["Close"].astype(float)
+            vol = df["Volume"].astype(float)
+            adv = (close * vol).dropna()
+            if adv.empty:
+                return None
+            return float(adv.mean())
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _satellite_line_count(self, portfolio: PortfolioState) -> int:
+        return sum(
+            1
+            for p in portfolio.positions
+            if p.qty_shares > 0 and p.ticker != self.core_ticker
+        )
+
     def process_raw_signals(
         self,
         raw_signals: List[Signal],
@@ -104,22 +146,10 @@ class SignalOrchestrator:
         current_prices: Dict[str, float],
         vix_level: float | None = None,
     ) -> List[Signal]:
-        """Run each raw signal through the full decision cascade.
-
-        Args:
-            raw_signals: PENDING signals from the quant engine.
-            portfolio: Current portfolio snapshot.
-            current_prices: Mapping of ticker -> latest price (EUR).
-            vix_level: Optional current European VIX (``^V2TX``). When above the
-                panic threshold, ALL new satellite buys are vetoed.
-
-        Returns:
-            List[Signal]: The same signals, each finalized as APPROVED or
-            REJECTED with an explanatory reason (and ``target_qty`` when
-            approved).
-        """
+        """Run each raw signal through the full decision cascade."""
         today = datetime.now(timezone.utc).date()
         processed: List[Signal] = []
+        satellite_lines = self._satellite_line_count(portfolio)
 
         # Market-wide panic brake: evaluated once for the whole batch.
         vix_ok = self.firewall.check_vix_panic(vix_level) if vix_level is not None else True
@@ -150,6 +180,36 @@ class SignalOrchestrator:
                 processed.append(self._reject(signal, f"REJECTED: {veto_reason}"))
                 continue
 
+            # --- Check 1b: Earnings / dividend blackout (per ticker) ---
+            earn_veto, earn_reason = self.earnings_blackout.check_veto(ticker, today)
+            if earn_veto:
+                processed.append(self._reject(signal, f"REJECTED: {earn_reason}"))
+                continue
+
+            # --- Check 1c: Max simultaneous satellite lines ---
+            already_held = any(p.ticker == ticker for p in portfolio.positions)
+            if not already_held and satellite_lines >= self.max_positions_total:
+                processed.append(
+                    self._reject(
+                        signal,
+                        f"REJECTED: Max satellite positions "
+                        f"({self.max_positions_total}) reached",
+                    )
+                )
+                continue
+
+            # --- Check 1d: Minimum liquidity (ADV €) ---
+            adv = self._avg_daily_euro_volume(ticker)
+            if adv is not None and adv < self.min_liquidity_adv:
+                processed.append(
+                    self._reject(
+                        signal,
+                        f"REJECTED: Illiquid (ADV €{adv:,.0f} < "
+                        f"{self.min_liquidity_adv:,.0f})",
+                    )
+                )
+                continue
+
             # --- Check 2a: Sector concentration limit (cheap arithmetic) ---
             if not self.firewall.check_sector_limit(ticker, portfolio):
                 processed.append(
@@ -157,7 +217,7 @@ class SignalOrchestrator:
                 )
                 continue
 
-            # --- Check 2b: Correlation firewall (heavy Pearson - runs last of vetoes) ---
+            # --- Check 2b: Correlation firewall (heavy Pearson) ---
             ok, corr_reason = self.firewall.check_correlation(
                 ticker, portfolio, self.timeseries_db
             )
@@ -189,6 +249,8 @@ class SignalOrchestrator:
                 price,
                 signal.score,
             )
+            if not already_held:
+                satellite_lines += 1
             processed.append(signal)
 
         return processed

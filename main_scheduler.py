@@ -65,7 +65,8 @@ _RISK_PATH = _CONFIG_DIR / "risk_params.yaml"
 _TIMEZONE = "Europe/Paris"
 _PASS_TIMES = ("09:00", "13:30", "17:10")
 _WEEKLY_REPORT_TIME = "18:00"     # Friday CIO digest.
-_MONTHLY_CHECK_TIME = "08:30"     # Daily probe; acts only on the 1st.
+_MONTHLY_CHECK_TIME = "08:30"     # Daily probe; profit-shave acts only on the 1st.
+_ATR_STOP_CHECK_TIME = "08:35"    # Daily ATR stop evaluation (weekdays via loop).
 _LOOKBACK_DAYS = 400  # ~270 trading days -> enough for SMA-200.
 
 
@@ -407,8 +408,58 @@ def run_weekly_report() -> None:
         logger.critical("Weekly report FAILED: %s", exc, exc_info=True)
 
 
+async def _push_rebalance_sells(
+    sells: list, pdb: PortfolioDB, title: str
+) -> None:
+    """Audit-log and webhook a batch of rebalance SELL signals."""
+    if not sells:
+        return
+    for signal in sells:
+        try:
+            pdb.log_signal(signal)
+        except Exception:  # noqa: BLE001
+            logger.exception("Failed to audit-log rebalance signal %s.", signal.id)
+    lines = [f"\U0001F501 **{title}**\n"]
+    for s in sells:
+        lines.append(f"- **{s.ticker}** SELL {s.target_qty} - {s.reason}")
+    await _post_webhook("\n".join(lines))
+    logger.info("%s pushed %d SELL signal(s).", title, len(sells))
+
+
+async def run_daily_atr_stops_async() -> None:
+    """Evaluate ATR stop-losses every day (independent of profit-shave)."""
+    pdb = PortfolioDB()
+    pdb.init_db()
+    tsdb = TimeSeriesDB()
+    tsdb.init_db()
+    rebalancer = PortfolioRebalancer(_CONFIG_DIR, timeseries_db=tsdb)
+    portfolio = pdb.get_portfolio_state()
+    sells = rebalancer.generate_atr_stop_signals(portfolio)
+    if not sells:
+        logger.info("Daily ATR stops: nothing triggered.")
+        return
+    await _push_rebalance_sells(sells, pdb, "Daily ATR Stop-Loss — SELLs for approval")
+
+
+def run_daily_atr_stops() -> None:
+    """Sync wrapper for the daily ATR stop job."""
+    # Skip weekends (Euronext closed) — same spirit as analysis passes.
+    if datetime.today().weekday() >= 5:
+        return
+    started = time.perf_counter()
+    logger.info("=== Daily ATR stop job starting ===")
+    try:
+        asyncio.run(run_daily_atr_stops_async())
+        logger.info(
+            "=== Daily ATR stops done in %.1fs ===",
+            time.perf_counter() - started,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.critical("Daily ATR stops FAILED: %s", exc, exc_info=True)
+
+
 async def run_monthly_rebalance_async() -> None:
-    """Generate mechanical rebalance SELLs and push them for manual approval."""
+    """Monthly profit-shave SELLs only (ATR stops run daily separately)."""
     pdb = PortfolioDB()
     pdb.init_db()
     tsdb = TimeSeriesDB()
@@ -416,27 +467,17 @@ async def run_monthly_rebalance_async() -> None:
     rebalancer = PortfolioRebalancer(_CONFIG_DIR, timeseries_db=tsdb)
 
     portfolio = pdb.get_portfolio_state()
-    sells = rebalancer.generate_rebalance_signals(portfolio)
+    sells = rebalancer.generate_profit_shave_signals(portfolio)
     if not sells:
-        logger.info("Monthly rebalance: no positions triggered.")
+        logger.info("Monthly rebalance: no profit-shave triggers.")
         await _post_webhook(
-            "\U0001F501 **Monthly Rebalance** - no profit-taking or stop-loss "
-            "triggers this month."
+            "\U0001F501 **Monthly Rebalance** - no profit-shave triggers this month."
         )
         return
 
-    # Persist to the audit log and surface for manual approval.
-    for signal in sells:
-        try:
-            pdb.log_signal(signal)
-        except Exception:  # noqa: BLE001
-            logger.exception("Failed to audit-log rebalance signal %s.", signal.id)
-
-    lines = ["\U0001F501 **Monthly Rebalance - SELL signals for approval**\n"]
-    for s in sells:
-        lines.append(f"- **{s.ticker}** SELL {s.target_qty} - {s.reason}")
-    await _post_webhook("\n".join(lines))
-    logger.info("Monthly rebalance pushed %d SELL signal(s).", len(sells))
+    await _push_rebalance_sells(
+        sells, pdb, "Monthly Rebalance — profit-shave SELLs for approval"
+    )
 
 
 def run_monthly_rebalance() -> None:
@@ -444,11 +485,11 @@ def run_monthly_rebalance() -> None:
     if datetime.today().day != 1:
         return
     started = time.perf_counter()
-    logger.info("=== Monthly rebalance job starting (1st of month) ===")
+    logger.info("=== Monthly profit-shave job starting (1st of month) ===")
     try:
         asyncio.run(run_monthly_rebalance_async())
         logger.info(
-            "=== Monthly rebalance done in %.1fs ===",
+            "=== Monthly profit-shave done in %.1fs ===",
             time.perf_counter() - started,
         )
     except Exception as exc:  # noqa: BLE001
@@ -461,13 +502,17 @@ def _schedule_passes() -> None:
         schedule.every().day.at(pass_time, _TIMEZONE).do(run_analysis_pass)
     # Weekly CIO digest: Friday 18:00 Paris.
     schedule.every().friday.at(_WEEKLY_REPORT_TIME, _TIMEZONE).do(run_weekly_report)
-    # Monthly rebalance: probe daily, act only on the 1st (guarded inside).
+    # Monthly profit-shave: probe daily, act only on the 1st (guarded inside).
     schedule.every().day.at(_MONTHLY_CHECK_TIME, _TIMEZONE).do(run_monthly_rebalance)
+    # Daily ATR stops (weekdays guarded inside).
+    schedule.every().day.at(_ATR_STOP_CHECK_TIME, _TIMEZONE).do(run_daily_atr_stops)
     logger.info(
-        "Scheduled: passes at %s; weekly report Fri %s; monthly probe %s (%s).",
+        "Scheduled: passes at %s; weekly report Fri %s; monthly probe %s; "
+        "ATR stops %s (%s).",
         ", ".join(_PASS_TIMES),
         _WEEKLY_REPORT_TIME,
         _MONTHLY_CHECK_TIME,
+        _ATR_STOP_CHECK_TIME,
         _TIMEZONE,
     )
 
@@ -493,7 +538,12 @@ def main() -> None:
     parser.add_argument(
         "--rebalance",
         action="store_true",
-        help="Run the monthly rebalancer now (ignores the 1st-of-month guard).",
+        help="Run monthly profit-shave now (ignores the 1st-of-month guard).",
+    )
+    parser.add_argument(
+        "--atr-stops",
+        action="store_true",
+        help="Run daily ATR stop-loss evaluation now.",
     )
     args = parser.parse_args()
 
@@ -507,8 +557,13 @@ def main() -> None:
         run_weekly_report()
         return
 
+    if args.atr_stops:
+        logger.info("--atr-stops: running ATR stop evaluation now.")
+        asyncio.run(run_daily_atr_stops_async())
+        return
+
     if args.rebalance:
-        logger.info("--rebalance: running monthly rebalancer now.")
+        logger.info("--rebalance: running monthly profit-shave now.")
         asyncio.run(run_monthly_rebalance_async())
         return
 

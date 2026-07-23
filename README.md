@@ -53,8 +53,8 @@ considering; AI only *explains*. **Not investment advice.**
 | **Quant** | Mean-reversion exhaustion (RSI&lt;30 + Close&gt;SMA200 + Close&gt;SMA5), EPS&gt;0 |
 | **Core/Satellite** | Smart DCA on `CW8.PA`, regime-aware under SMA200 |
 | **Risk** | Macro veto, correlation firewall, sector/line caps, vol-parity sizing, 30% satellite budget, VIX panic |
-| **Rebalance** | Monthly: +20% profit-shave; **dynamic ATR stop** (`price < entry − 2.5×ATR14`) |
-| **Memory** | Daily `portfolio_history` equity curve in SQLite |
+| **Rebalance** | Daily ATR stop (`--atr-stops`); monthly +20% profit-shave |
+| **Memory** | Daily equity curve + shared `equity_metrics` (DD/CAGR/Sharpe/Sortino) |
 | **AI (explain only)** | Trade rationale, news sentiment, weekly CIO digest, geo brief |
 | **UI** | Discord Copilot + Streamlit (multi-horizon, equity curve, Exploration, Universe) |
 | **Ops** | Paris daemon, seed CLI, wallet editor, RevocationEngine on PENDING |
@@ -77,9 +77,9 @@ Trend `Close > SMA200` · Exhaustion `RSI(14) < 30` · Quality `EPS > 0` · Mome
 4. Sector / correlation caps  
 5. Vol-parity sizing → whole shares → cash + satellite budget clamp  
 
-### 4. Monthly rebalance
-- **Profit-shave:** satellite &gt; +20% → SELL 20%.  
-- **ATR stop:** losing satellite with `current < avg_entry − 2.5×ATR(14)` → SELL 100%.  
+### 4. Exits
+- **Daily ATR stop:** losing satellite with `current < avg_entry − 2.5×ATR(14)` → SELL 100%.  
+- **Monthly profit-shave:** satellite &gt; +20% → SELL 20%.  
 - Core ETF excluded.
 
 ### 5. AI as analyst only
@@ -185,8 +185,9 @@ cp config/api_keys.env.example config/api_keys.env
 
 ### `config/risk_params.yaml`
 
-Sizing · circuit breakers · correlation · Core/Satellite · VIX ·  
-`REBALANCE_PROFIT_*` · **`REBALANCE_ATR_STOP_MULT`** (default `2.5`).
+Sizing · circuit breakers · correlation (`CORRELATION_LOOKBACK_DAYS`) · Core/Satellite · VIX ·  
+`REBALANCE_PROFIT_*` · `REBALANCE_ATR_STOP_MULT` · `EARNINGS_BLACKOUT_DAYS` ·  
+`MIN_LIQUIDITY_ADV` · `MAX_POSITIONS_TOTAL` · `RSI_OVERSOLD_THRESHOLD`.
 
 ### `config/pea_universe.yaml`
 
@@ -201,7 +202,8 @@ python seed_account.py --cash 10000          # seed once
 python seed_account.py --show
 python main_scheduler.py --now               # one pass
 python main_scheduler.py --weekly
-python main_scheduler.py --rebalance         # ATR / shave now
+python main_scheduler.py --rebalance         # profit-shave now
+python main_scheduler.py --atr-stops         # ATR stops now
 python main_scheduler.py                     # daemon
 python run_discord.py
 .\run_dashboard.ps1                          # Streamlit (auto-open)
@@ -241,30 +243,78 @@ Or systemd / cron calling `main_scheduler.py --now` / `--weekly` / `--rebalance`
 |-----|---------------------|--------|
 | Analysis | 09:00, 13:30, 17:10 weekdays | Full pipeline → Discord |
 | Weekly report | Friday 18:00 | Historian → webhook |
-| Monthly rebalance | Probe 08:30 (acts on the 1st) | ATR stop / profit-shave → webhook |
+| ATR stops | 08:35 weekdays | Dynamic ATR SELLs → webhook |
+| Profit-shave | Probe 08:30 (acts on the 1st) | +20% trim → webhook |
 
 ---
 
 ## Roadmap / future improvements
 
-Prioritized ideas that fit the current architecture:
+Prioritized after Phase 15/16 wiring feedback. **Diff-only broker import** (never
+blind overwrite). Prefer official/API sources over furtive HTML scraping.
 
-| Priority | Idea | Why |
-|----------|------|-----|
-| **P0** | **Daily ATR stop check** (not only 1st of month) | Volatility stops should not wait 30 days |
-| **P0** | **pytest + CI** on cascade, sizer, AMF/FMP cascade, ATR edge cases | Regressions are silent today |
-| **P1** | **Equity metrics** on the curve (max DD, CAGR, Sharpe, cash %) | Curve alone is not enough to judge process |
-| **P1** | **Read-only broker import** (CSV / Boursorama / Degiro) | Kill manual wallet drift |
-| **P1** | **Walk-forward backtester** on DuckDB OHLCV | Validate MRE + ATR params before live capital |
-| **P2** | **Paid VSTOXX** (or Stooq/EODHD) instead of `^VIX` proxy | Panic brake should be European |
-| **P2** | **AMF resilience** (ISIN cache, retry jitter, optional proxy) | Keep official source usable more often |
-| **P2** | **Earnings / dividend blackout** in macro calendar | Avoid event-driven gaps on satellites |
-| **P3** | **Multi-core ETF** rotation (CW8 / EWLD / ESE / PAEEM) | Regime-aware core, still PEA-legal |
-| **P3** | **Intraday tape + Discord digest** of veto reasons | Operator learning loop |
-| **P3** | **Position-level trailing ATR** after +20% shave | Lock gains without fixed % |
-| **P3** | Wire **EODHD** for EU fundamentals when Yahoo is thin | Better EPS / quality filter |
+### P0 — ship next / in progress
 
-Non-goals (keep out of scope): auto-broker execution, leverage, US penny universe, LLM-as-trader.
+| Item | Notes |
+|------|-------|
+| **Daily ATR stops** | ✅ Split from monthly profit-shave; probe weekdays 08:35 (`--atr-stops`) |
+| **pytest + CI** | ✅ Minimal suite + GitHub Actions; expand coverage continuously |
+| **Equity metrics (shared)** | ✅ `equity_metrics.py` (max DD / CAGR / Sharpe / Sortino) on live curve — **same functions for the future backtester** |
+
+### P0 / P1 — next up
+
+| Item | Notes |
+|------|-------|
+| **Earnings / dividend blackout** | ✅ Engine + empty `earnings_calendar.yaml` + cascade hook; fill calendar (API later) |
+| **Walk-forward backtester** | Biggest ROI: turns “system that runs” into “strategy validated empirically”; reuse `equity_metrics` |
+| **Broker CSV import (diff)** | Diff Boursorama CSV vs SQLite; show missing/qty mismatches — **never blind overwrite** |
+
+### New cascade / risk params (config ready)
+
+| Key | Role |
+|-----|------|
+| `EARNINGS_BLACKOUT_DAYS` | Per-ticker corporate blackout window |
+| `MIN_LIQUIDITY_ADV` | Floor on average daily € volume |
+| `MAX_POSITIONS_TOTAL` | Cap on simultaneous satellite lines |
+| `CORRELATION_LOOKBACK_DAYS` | Explicit Pearson window (was hardcoded 60) |
+| `RSI_OVERSOLD_THRESHOLD` | Calibrable later via walk-forward (vol-regime adaptive) |
+
+**ATR note:** stop distance uses **absolute** ATR (correct per name; ATR scales with
+price). `atr_pct = ATR/price` is logged for cross-name comparison / dashboards —
+use % for vol-parity style comparisons, absolute for the stop rule.
+
+### Additional signals (post-backtester calibration)
+
+| Signal | Role |
+|--------|------|
+| Relative strength vs sector / CAC40 (3–6m) | Filter structurally broken RSI&lt;30 names |
+| Distance to 52w high/low | Cheap DuckDB confirmation beside SMA200/RSI |
+| Analyst revision drift (`yfinance` upgrades) | Soft consensus signal, not a hard filter |
+| EUR/USD context for `CW8.PA` | Info in weekly CIO digest (USD FX exposure), not a veto |
+
+### Data sources (legal preference)
+
+1. **Official / regulator** — AMF (done), Euronext corporate actions, ECB SDW / INSEE  
+2. **Macro APIs with free tier** — Trading Economics → auto-sync `macro_calendar.yaml`  
+3. **Structured commercial APIs** — FMP (already secondary for insiders), EODHD  
+4. **HTML scrapers last** — Boursorama / Zonebourse / Investing: fragile + ToS grey zone; keep minimal  
+
+### Dashboard visualizations (queued)
+
+| Viz | Purpose |
+|-----|---------|
+| Signal funnel waterfall | raw → VIX → macro → earnings → liquidity → sector → corr → sizing → approved |
+| Rejection motif pie (30/90d) | Expose `weekly_historian._classify` in UI |
+| Per-ticker RSI/SMA200 sparkline | Audit false negatives with approve/reject markers |
+| Rolling Sharpe / Sortino / DD | Built on `equity_metrics` |
+| Richer ticker dossier | More `yfinance.info` fields, insider table (done path), per-article LLM scores, portfolio correlation heatmap |
+
+### P2 / P3
+
+Paid VSTOXX · AMF resilience · multi-core ETF rotation · trailing ATR after shave ·
+intraday Discord veto digest.
+
+**Non-goals:** auto-broker execution, leverage, LLM-as-trader, US pennies.
 
 ---
 

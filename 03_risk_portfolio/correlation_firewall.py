@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _DEFAULT_CONFIG_DIR = _PROJECT_ROOT / "config"
-_CORR_WINDOW = 60
+_CORR_WINDOW_DEFAULT = 60
 
 
 class CorrelationFirewall:
@@ -38,6 +38,7 @@ class CorrelationFirewall:
         max_correlation: Max allowed Pearson correlation to any holding.
         max_sector_weight: Max fraction of equity allowed in one sector.
         max_single_position: Max fraction of equity for a single new position.
+        corr_lookback_days: Trading-day window for Pearson correlation.
         ticker_sectors: Mapping of ticker -> sector from the universe file.
     """
 
@@ -56,14 +57,18 @@ class CorrelationFirewall:
         self.max_sector_weight: float = float(risk["MAX_SECTOR_WEIGHT_PCT"])
         self.max_single_position: float = float(risk["MAX_SINGLE_POSITION_PCT"])
         self.vix_panic_threshold: float = float(risk.get("VIX_PANIC_THRESHOLD", 30.0))
+        self.corr_lookback_days: int = int(
+            risk.get("CORRELATION_LOOKBACK_DAYS", _CORR_WINDOW_DEFAULT)
+        )
         self.ticker_sectors: Dict[str, str] = self._build_sector_map(universe)
 
         logger.debug(
             "Firewall loaded: max_corr=%.2f max_sector=%.2f max_single=%.2f "
-            "(%d tickers mapped).",
+            "lookback=%d (%d tickers mapped).",
             self.max_correlation,
             self.max_sector_weight,
             self.max_single_position,
+            self.corr_lookback_days,
             len(self.ticker_sectors),
         )
 
@@ -217,8 +222,10 @@ class CorrelationFirewall:
         return True, "Correlation check passed"
 
     def _close_series(self, ticker: str, db_manager) -> pd.Series | None:
-        """Return a Date-indexed Close series (last 60 days) for a ticker."""
-        df = db_manager.get_historical_prices(ticker, days=_CORR_WINDOW)
+        """Return a Date-indexed Close series for the configured lookback."""
+        df = db_manager.get_historical_prices(
+            ticker, days=self.corr_lookback_days
+        )
         if df is None or df.empty or "Close" not in df.columns:
             return None
         series = df.set_index("Date")["Close"].astype(float)
@@ -238,21 +245,27 @@ if __name__ == "__main__":
     sys.path.insert(0, _CORE_DIR)
     from data_models import Position, PortfolioState as _PS  # noqa: E402
 
-    dates = pd.date_range("2026-01-01", periods=_CORR_WINDOW, freq="B")
+    n = _CORR_WINDOW_DEFAULT
+    dates = pd.date_range("2026-01-01", periods=n, freq="B")
     rng = np.random.default_rng(42)
-    base = np.cumsum(rng.normal(0, 1, _CORR_WINDOW)) + 100
+    base = np.cumsum(rng.normal(0, 1, n)) + 100
 
     class _MockDB:
         """Returns synthetic close series to demonstrate correlation logic."""
 
         def get_historical_prices(self, ticker: str, days: int = 60) -> pd.DataFrame:
-            if ticker == "SAF.PA":            # near-identical to candidate AIR.PA
-                close = base + rng.normal(0, 0.05, _CORR_WINDOW)
-            elif ticker == "OR.PA":           # unrelated series
-                close = np.cumsum(rng.normal(0, 1, _CORR_WINDOW)) + 200
-            else:                              # candidate AIR.PA
-                close = base + rng.normal(0, 0.05, _CORR_WINDOW)
-            return pd.DataFrame({"Ticker": ticker, "Date": dates, "Close": close})
+            if ticker == "SAF.PA":
+                close = base + rng.normal(0, 0.05, n)
+            elif ticker == "OR.PA":
+                close = np.cumsum(rng.normal(0, 1, n)) + 200
+            else:
+                close = base + rng.normal(0, 0.05, n)
+            use = min(days, n)
+            return pd.DataFrame({
+                "Ticker": ticker,
+                "Date": dates[:use],
+                "Close": close[:use],
+            })
 
     fw = CorrelationFirewall()
 
@@ -264,7 +277,6 @@ if __name__ == "__main__":
                     positions=[lvmh, kering], last_updated=datetime.now(timezone.utc))
 
     print("--- Sector limit demo ---")
-    # Luxury already 2450/10000 = 24.5%; adding 15% would breach 25%.
     print("Buy another Luxury (RMS.PA) allowed?", fw.check_sector_limit("RMS.PA", portfolio))
     print("Buy Industrials (AIR.PA) allowed?", fw.check_sector_limit("AIR.PA", portfolio))
 

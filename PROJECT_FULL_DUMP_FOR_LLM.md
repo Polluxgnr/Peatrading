@@ -1,9 +1,10 @@
 # PEA Sniper Terminal — Full Project Dump for LLM
 Root: `C:\Users\PolluxGronier\Downloads\pea_sniper_terminal`
-Generated: 2026-07-23 13:06 UTC
+Generated: 2026-07-23 13:20 UTC
 One-shot context dump of source, configs, and docs (no venv, no DBs, no secrets).
 ---
-## File index (45 files)
+## File index (51 files)
+- .github/workflows/ci.yml
 - .gitignore
 - .streamlit/config.toml
 - 00_data_sensors/__init__.py
@@ -22,9 +23,11 @@ One-shot context dump of source, configs, and docs (no venv, no DBs, no secrets)
 - 02_quant_engine/technical_scorer.py
 - 03_risk_portfolio/__init__.py
 - 03_risk_portfolio/correlation_firewall.py
+- 03_risk_portfolio/equity_metrics.py
 - 03_risk_portfolio/monthly_rebalancer.py
 - 03_risk_portfolio/pea_position_sizer.py
 - 04_orchestrator_ai/__init__.py
+- 04_orchestrator_ai/earnings_blackout.py
 - 04_orchestrator_ai/macro_veto.py
 - 04_orchestrator_ai/news_sentiment_llm.py
 - 04_orchestrator_ai/revocation_engine.py
@@ -35,6 +38,7 @@ One-shot context dump of source, configs, and docs (no venv, no DBs, no secrets)
 - 05_interfaces/llm_explainer.py
 - 05_interfaces/terminal_dashboard.py
 - config/api_keys.env.example
+- config/earnings_calendar.yaml
 - config/macro_calendar.yaml
 - config/pea_universe.yaml
 - config/risk_params.yaml
@@ -46,11 +50,40 @@ One-shot context dump of source, configs, and docs (no venv, no DBs, no secrets)
 - run_dashboard.ps1
 - run_discord.py
 - seed_account.py
+- tests/__init__.py
+- tests/test_phase16_foundations.py
 - tools/build_llm_dump.py
 - tools/build_universe.py
 - tools/sync_universe_from_bourso.py
 
 ---
+## FILE: .github/workflows/ci.yml
+```yaml
+# PEA Sniper Terminal — CI
+name: ci
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pandas numpy pyyaml pydantic pandas-ta-classic
+      - name: Run tests
+        run: python -m pytest -q
+```
+
 ## FILE: .gitignore
 ```text
 # --- Secrets & config ---
@@ -2534,9 +2567,11 @@ import sys
 import uuid
 from datetime import datetime, timezone
 from functools import lru_cache
+from pathlib import Path
 from typing import Any, List
 
 import pandas as pd
+import yaml
 
 try:  # yfinance is only needed for the optional Quality (EPS) filter.
     import yfinance as yf
@@ -2562,12 +2597,28 @@ from data_models import Signal, SignalStatus, SignalType  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_DEFAULT_CONFIG_DIR = _PROJECT_ROOT / "config"
+
 # Minimum history required to compute a valid SMA-200.
 _MIN_ROWS = 200
+_DEFAULT_RSI_OVERSOLD = 30.0
 
 
 class SignalGenerator:
     """Generates raw BUY signals from mathematical price-action rules."""
+
+    def __init__(self, config_path: str | Path | None = None) -> None:
+        """Load optional thresholds from ``risk_params.yaml``."""
+        path = Path(config_path) if config_path else _DEFAULT_CONFIG_DIR
+        risk_file = path if path.is_file() else path / "risk_params.yaml"
+        risk: dict = {}
+        if risk_file.exists():
+            with open(risk_file, "r", encoding="utf-8") as fh:
+                risk = yaml.safe_load(fh) or {}
+        self.rsi_oversold: float = float(
+            risk.get("RSI_OVERSOLD_THRESHOLD", _DEFAULT_RSI_OVERSOLD)
+        )
 
     def calculate_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
         """Attach SMA-50, SMA-200 and RSI-14 columns for a single ticker.
@@ -2591,21 +2642,14 @@ class SignalGenerator:
     def score_rsi(self, rsi_value: float) -> float:
         """Map an RSI value to a BUY conviction score.
 
-        Linear mapping in the oversold zone: RSI 30 -> 60, RSI 20 -> 80,
-        RSI 10 -> 100 (clamped to [60, 100]).
-
-        Args:
-            rsi_value: The RSI(14) reading.
-
-        Returns:
-            float: Score in [60, 100] when ``rsi_value < 30``; otherwise 0.0.
-            Returns 0.0 for NaN input.
+        Linear mapping in the oversold zone relative to ``rsi_oversold``.
         """
+        thr = self.rsi_oversold
         if rsi_value is None or pd.isna(rsi_value):
             return 0.0
-        if rsi_value >= 30:
+        if rsi_value >= thr:
             return 0.0
-        score = 60.0 + (30.0 - rsi_value) * 2.0
+        score = 60.0 + (thr - rsi_value) * 2.0
         return float(max(60.0, min(100.0, score)))
 
     @staticmethod
@@ -2659,7 +2703,7 @@ class SignalGenerator:
         """Evaluate each ticker and emit raw Mean-Reversion Exhaustion signals.
 
         Rule (BUY): the most recent bar has ``Close > SMA_200`` (long-term
-        uptrend) AND ``RSI_14 < 30`` (short-term oversold pullback), refined by:
+        uptrend) AND ``RSI_14 < RSI_OVERSOLD_THRESHOLD`` (default 30), refined by:
 
           * Quality filter (Phase 11): the company must be profitable (EPS > 0).
           * Momentum filter (Phase 11): do not catch falling knives — require
@@ -2700,7 +2744,7 @@ class SignalGenerator:
                 continue
 
             uptrend = close > sma_200
-            oversold = rsi_14 < 30
+            oversold = rsi_14 < self.rsi_oversold
 
             # --- Momentum filter: reject falling knives (Close <= SMA_5) ------
             if apply_momentum_filter and (pd.isna(sma_5) or close <= sma_5):
@@ -2731,7 +2775,7 @@ class SignalGenerator:
                     target_qty=None,
                     created_at=datetime.now(timezone.utc),
                     reason=(
-                        f"RSI < 30 (Value: {rsi_14:.1f}) while Price > SMA200 "
+                        f"RSI < {self.rsi_oversold:.0f} (Value: {rsi_14:.1f}) while Price > SMA200 "
                         f"({close:.2f} > {sma_200:.2f}). Mean-reversion setup."
                     ),
                 )
@@ -2843,7 +2887,7 @@ logger = logging.getLogger(__name__)
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _DEFAULT_CONFIG_DIR = _PROJECT_ROOT / "config"
-_CORR_WINDOW = 60
+_CORR_WINDOW_DEFAULT = 60
 
 
 class CorrelationFirewall:
@@ -2853,6 +2897,7 @@ class CorrelationFirewall:
         max_correlation: Max allowed Pearson correlation to any holding.
         max_sector_weight: Max fraction of equity allowed in one sector.
         max_single_position: Max fraction of equity for a single new position.
+        corr_lookback_days: Trading-day window for Pearson correlation.
         ticker_sectors: Mapping of ticker -> sector from the universe file.
     """
 
@@ -2871,14 +2916,18 @@ class CorrelationFirewall:
         self.max_sector_weight: float = float(risk["MAX_SECTOR_WEIGHT_PCT"])
         self.max_single_position: float = float(risk["MAX_SINGLE_POSITION_PCT"])
         self.vix_panic_threshold: float = float(risk.get("VIX_PANIC_THRESHOLD", 30.0))
+        self.corr_lookback_days: int = int(
+            risk.get("CORRELATION_LOOKBACK_DAYS", _CORR_WINDOW_DEFAULT)
+        )
         self.ticker_sectors: Dict[str, str] = self._build_sector_map(universe)
 
         logger.debug(
             "Firewall loaded: max_corr=%.2f max_sector=%.2f max_single=%.2f "
-            "(%d tickers mapped).",
+            "lookback=%d (%d tickers mapped).",
             self.max_correlation,
             self.max_sector_weight,
             self.max_single_position,
+            self.corr_lookback_days,
             len(self.ticker_sectors),
         )
 
@@ -3032,8 +3081,10 @@ class CorrelationFirewall:
         return True, "Correlation check passed"
 
     def _close_series(self, ticker: str, db_manager) -> pd.Series | None:
-        """Return a Date-indexed Close series (last 60 days) for a ticker."""
-        df = db_manager.get_historical_prices(ticker, days=_CORR_WINDOW)
+        """Return a Date-indexed Close series for the configured lookback."""
+        df = db_manager.get_historical_prices(
+            ticker, days=self.corr_lookback_days
+        )
         if df is None or df.empty or "Close" not in df.columns:
             return None
         series = df.set_index("Date")["Close"].astype(float)
@@ -3053,21 +3104,27 @@ if __name__ == "__main__":
     sys.path.insert(0, _CORE_DIR)
     from data_models import Position, PortfolioState as _PS  # noqa: E402
 
-    dates = pd.date_range("2026-01-01", periods=_CORR_WINDOW, freq="B")
+    n = _CORR_WINDOW_DEFAULT
+    dates = pd.date_range("2026-01-01", periods=n, freq="B")
     rng = np.random.default_rng(42)
-    base = np.cumsum(rng.normal(0, 1, _CORR_WINDOW)) + 100
+    base = np.cumsum(rng.normal(0, 1, n)) + 100
 
     class _MockDB:
         """Returns synthetic close series to demonstrate correlation logic."""
 
         def get_historical_prices(self, ticker: str, days: int = 60) -> pd.DataFrame:
-            if ticker == "SAF.PA":            # near-identical to candidate AIR.PA
-                close = base + rng.normal(0, 0.05, _CORR_WINDOW)
-            elif ticker == "OR.PA":           # unrelated series
-                close = np.cumsum(rng.normal(0, 1, _CORR_WINDOW)) + 200
-            else:                              # candidate AIR.PA
-                close = base + rng.normal(0, 0.05, _CORR_WINDOW)
-            return pd.DataFrame({"Ticker": ticker, "Date": dates, "Close": close})
+            if ticker == "SAF.PA":
+                close = base + rng.normal(0, 0.05, n)
+            elif ticker == "OR.PA":
+                close = np.cumsum(rng.normal(0, 1, n)) + 200
+            else:
+                close = base + rng.normal(0, 0.05, n)
+            use = min(days, n)
+            return pd.DataFrame({
+                "Ticker": ticker,
+                "Date": dates[:use],
+                "Close": close[:use],
+            })
 
     fw = CorrelationFirewall()
 
@@ -3079,7 +3136,6 @@ if __name__ == "__main__":
                     positions=[lvmh, kering], last_updated=datetime.now(timezone.utc))
 
     print("--- Sector limit demo ---")
-    # Luxury already 2450/10000 = 24.5%; adding 15% would breach 25%.
     print("Buy another Luxury (RMS.PA) allowed?", fw.check_sector_limit("RMS.PA", portfolio))
     print("Buy Industrials (AIR.PA) allowed?", fw.check_sector_limit("AIR.PA", portfolio))
 
@@ -3094,38 +3150,184 @@ if __name__ == "__main__":
     print(f"AIR.PA correlation check -> {ok}: {msg}")
 ```
 
+## FILE: 03_risk_portfolio/equity_metrics.py
+```python
+"""Shared equity-curve analytics for live dashboard and future backtests.
+
+Pure functions over a daily equity series — no I/O, no Streamlit, no broker.
+Reuse the same metrics on ``portfolio_history`` (live) and on a simulated curve
+(walk-forward backtester) so numbers stay comparable.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+import numpy as np
+import pandas as pd
+
+
+def _prepare_equity_series(curve: pd.DataFrame | pd.Series) -> pd.Series:
+    """Normalize a curve into a sorted float Series indexed by date."""
+    if isinstance(curve, pd.Series):
+        s = curve.astype(float).copy()
+        s.index = pd.to_datetime(s.index, errors="coerce")
+        return s.dropna().sort_index()
+
+    if curve is None or getattr(curve, "empty", True):
+        return pd.Series(dtype=float)
+
+    df = curve.copy()
+    if "equity" not in df.columns:
+        return pd.Series(dtype=float)
+    if "date" in df.columns:
+        df["date"] = pd.to_datetime(df["date"], errors="coerce")
+        df = df.dropna(subset=["date", "equity"]).sort_values("date")
+        return df.set_index("date")["equity"].astype(float)
+
+    s = df["equity"].astype(float)
+    s.index = pd.to_datetime(s.index, errors="coerce")
+    return s.dropna().sort_index()
+
+
+def max_drawdown(equity: pd.Series) -> float:
+    """Peak-to-trough drawdown as a negative fraction (e.g. -0.12 = -12%)."""
+    if equity is None or len(equity) < 2:
+        return 0.0
+    peak = equity.cummax()
+    dd = (equity / peak) - 1.0
+    val = float(dd.min())
+    return val if np.isfinite(val) else 0.0
+
+
+def cagr(equity: pd.Series, periods_per_year: float = 252.0) -> float | None:
+    """Compound annual growth rate from first to last equity point.
+
+    Uses calendar days between endpoints when the index is datetime-like;
+    otherwise falls back to ``len(equity) / periods_per_year`` years.
+    """
+    if equity is None or len(equity) < 2:
+        return None
+    start = float(equity.iloc[0])
+    end = float(equity.iloc[-1])
+    if start <= 0 or end <= 0 or not np.isfinite(start) or not np.isfinite(end):
+        return None
+    try:
+        delta_days = (equity.index[-1] - equity.index[0]).days
+        years = max(delta_days / 365.25, 1e-9)
+    except Exception:  # noqa: BLE001
+        years = max(len(equity) / periods_per_year, 1e-9)
+    return float((end / start) ** (1.0 / years) - 1.0)
+
+
+def sharpe_ratio(
+    equity: pd.Series,
+    risk_free: float = 0.0,
+    periods_per_year: float = 252.0,
+) -> float | None:
+    """Annualized Sharpe from daily equity returns (sample stdev)."""
+    if equity is None or len(equity) < 3:
+        return None
+    rets = equity.pct_change().dropna()
+    if rets.empty or float(rets.std()) == 0.0:
+        return None
+    excess = rets - (risk_free / periods_per_year)
+    val = float(excess.mean() / excess.std() * np.sqrt(periods_per_year))
+    return val if np.isfinite(val) else None
+
+
+def sortino_ratio(
+    equity: pd.Series,
+    risk_free: float = 0.0,
+    periods_per_year: float = 252.0,
+) -> float | None:
+    """Annualized Sortino (downside deviation only)."""
+    if equity is None or len(equity) < 3:
+        return None
+    rets = equity.pct_change().dropna()
+    if rets.empty:
+        return None
+    excess = rets - (risk_free / periods_per_year)
+    downside = excess[excess < 0]
+    if downside.empty or float(downside.std()) == 0.0:
+        return None
+    val = float(excess.mean() / downside.std() * np.sqrt(periods_per_year))
+    return val if np.isfinite(val) else None
+
+
+def compute_equity_metrics(
+    curve: pd.DataFrame | pd.Series,
+    risk_free: float = 0.0,
+) -> dict[str, Any]:
+    """Return a metrics dict ready for dashboard / backtest reports.
+
+    Keys: ``n_points``, ``start_equity``, ``end_equity``, ``total_return``,
+    ``cagr``, ``max_drawdown``, ``sharpe``, ``sortino``, ``cash_last`` (if col).
+    """
+    equity = _prepare_equity_series(curve)
+    out: dict[str, Any] = {
+        "n_points": int(len(equity)),
+        "start_equity": None,
+        "end_equity": None,
+        "total_return": None,
+        "cagr": None,
+        "max_drawdown": 0.0,
+        "sharpe": None,
+        "sortino": None,
+        "cash_last": None,
+    }
+    if equity.empty:
+        return out
+
+    start = float(equity.iloc[0])
+    end = float(equity.iloc[-1])
+    out["start_equity"] = start
+    out["end_equity"] = end
+    out["total_return"] = (end / start - 1.0) if start > 0 else None
+    out["cagr"] = cagr(equity)
+    out["max_drawdown"] = max_drawdown(equity)
+    out["sharpe"] = sharpe_ratio(equity, risk_free=risk_free)
+    out["sortino"] = sortino_ratio(equity, risk_free=risk_free)
+
+    if isinstance(curve, pd.DataFrame) and "cash" in curve.columns and not curve.empty:
+        try:
+            out["cash_last"] = float(curve.sort_values("date").iloc[-1]["cash"])
+        except Exception:  # noqa: BLE001
+            out["cash_last"] = None
+    return out
+```
+
 ## FILE: 03_risk_portfolio/monthly_rebalancer.py
 ```python
-"""Monthly portfolio rebalancer for PEA Sniper Terminal V-Prime (Phase 12/15).
+"""Portfolio rebalancer for PEA Sniper Terminal V-Prime (Phase 12/15/16).
 
-Adds mechanical, emotionless housekeeping trades so the operator does not have to
-babysit winners and losers:
+Mechanical housekeeping trades:
 
-  * Profit shaving: trim a fixed slice of any satellite winner above +20% PnL.
-  * Dynamic ATR stop-loss: fully exit any satellite whose price trades below
-    ``avg_entry - 2.5 * ATR_14`` (replaces the static -10% rule).
+  * **ATR stop-loss (daily):** fully exit a satellite when
+    ``current_price < avg_entry - mult * ATR_14``.
+  * **Profit shave (monthly):** trim a fixed slice of winners above +20% PnL.
 
-The Core ETF (Smart-DCA accumulation vehicle) is deliberately excluded — it is
-meant to be held and averaged into, not shaved or stopped out.
+The Core ETF is excluded — held and averaged into, never shaved or stopped out.
 
-Pure logic: reads a ``PortfolioState`` and config, returns ``SELL`` signals. It
-never writes to a database or touches a broker.
+Absolute ATR is correct for *per-name* stop distance (ATR scales with price).
+``atr_pct = ATR / price`` is exposed for cross-name comparisons / vol dashboards.
 """
+
+from __future__ import annotations
 
 import logging
 import math
 import os
 import sys
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any, Iterable, List, Optional, Sequence
 
 import pandas as pd
 import yaml
 
-# pandas-ta registers the ``.ta`` DataFrame accessor on import.
 try:
     import pandas_ta as ta  # noqa: F401
-except ImportError:  # pragma: no cover - classic fork on some envs
+except ImportError:  # pragma: no cover
     import pandas_ta_classic as ta  # noqa: F401
 
 _CORE_DIR = os.path.join(
@@ -3140,28 +3342,19 @@ logger = logging.getLogger(__name__)
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _DEFAULT_CONFIG_DIR = _PROJECT_ROOT / "config"
 
-# Multiplier applied to ATR_14 for the dynamic stop distance.
 _ATR_STOP_MULT = 2.5
 _ATR_LENGTH = 14
 _OHLCV_LOOKBACK = 60
 
 
 class PortfolioRebalancer:
-    """Generates mechanical SELL signals for profit-taking and ATR stop-losses."""
+    """Generates mechanical SELL signals for ATR stops and/or profit shaves."""
 
     def __init__(
         self,
         config_path: str | Path | None = None,
         timeseries_db: Any | None = None,
     ) -> None:
-        """Load rebalancing thresholds from ``risk_params.yaml``.
-
-        Args:
-            config_path: Path to the ``config`` directory (or a risk_params
-                YAML file). Defaults to ``<project_root>/config``.
-            timeseries_db: Optional ``TimeSeriesDB`` used to fetch OHLCV for
-                ATR-based stop-loss calculation.
-        """
         risk = self._load_risk_params(config_path)
         self.timeseries_db = timeseries_db
         self.core_ticker: str = str(risk.get("CORE_TICKER", "CW8.PA"))
@@ -3175,8 +3368,7 @@ class PortfolioRebalancer:
             risk.get("REBALANCE_ATR_STOP_MULT", _ATR_STOP_MULT)
         )
         logger.debug(
-            "Rebalancer loaded: profit>+%.0f%% shave %.0f%%, ATR stop %.1fx "
-            "(core=%s).",
+            "Rebalancer: profit>+%.0f%% shave %.0f%%, ATR stop %.1fx (core=%s).",
             self.profit_trigger,
             self.profit_shave * 100,
             self.atr_stop_mult,
@@ -3185,7 +3377,6 @@ class PortfolioRebalancer:
 
     @staticmethod
     def _load_risk_params(config_path: str | Path | None) -> dict:
-        """Resolve and load the risk_params YAML into a dict."""
         if config_path is None:
             path = _DEFAULT_CONFIG_DIR / "risk_params.yaml"
         else:
@@ -3197,9 +3388,8 @@ class PortfolioRebalancer:
             return yaml.safe_load(fh)
 
     def _latest_atr14(self, ticker: str) -> Optional[float]:
-        """Return the latest ATR_14 from DuckDB OHLCV, or None if unavailable."""
+        """Latest ATR_14 in price units, or None."""
         if self.timeseries_db is None:
-            logger.debug("No timeseries_db; cannot compute ATR for %s.", ticker)
             return None
         try:
             hist = self.timeseries_db.get_historical_prices(
@@ -3209,11 +3399,6 @@ class PortfolioRebalancer:
             logger.exception("Failed to fetch OHLCV for ATR on %s.", ticker)
             return None
         if hist is None or hist.empty or len(hist) < _ATR_LENGTH + 1:
-            logger.debug(
-                "Insufficient OHLCV for ATR on %s (%s rows).",
-                ticker,
-                0 if hist is None else len(hist),
-            )
             return None
         try:
             work = hist.copy()
@@ -3239,40 +3424,57 @@ class PortfolioRebalancer:
             logger.exception("ATR_14 calculation failed for %s.", ticker)
             return None
 
-    def generate_rebalance_signals(
+    @staticmethod
+    def atr_pct(atr: float, price: float) -> float | None:
+        """Normalized ATR (ATR / price) for cross-name comparisons."""
+        if price is None or price <= 0 or atr is None or atr <= 0:
+            return None
+        return float(atr / price)
+
+    def generate_atr_stop_signals(
         self, portfolio: PortfolioState
     ) -> List[Signal]:
-        """Produce mechanical SELL signals from the current portfolio.
+        """Daily job: ATR stop-loss SELLs only."""
+        return self.generate_rebalance_signals(portfolio, modes=("atr",))
 
-        Rules (satellite positions only):
-            * ``unrealized_pnl_pct`` > +20% -> SELL 20% of the shares (shave).
-            * Losing position (``unrealized_pnl_pct`` < 0) whose
-              ``current_price < avg_entry - 2.5 * ATR_14`` -> SELL 100%.
+    def generate_profit_shave_signals(
+        self, portfolio: PortfolioState
+    ) -> List[Signal]:
+        """Monthly job: profit-shave SELLs only."""
+        return self.generate_rebalance_signals(portfolio, modes=("shave",))
+
+    def generate_rebalance_signals(
+        self,
+        portfolio: PortfolioState,
+        modes: Sequence[str] | None = None,
+    ) -> List[Signal]:
+        """Produce SELL signals for the requested modes.
 
         Args:
-            portfolio: Current portfolio snapshot.
-
-        Returns:
-            List[Signal]: PENDING SELL signals (empty if nothing triggers).
+            portfolio: Current snapshot.
+            modes: Subset of ``(\"atr\", \"shave\")``. Default = both
+                (backward compatible with Phase 15 callers).
         """
+        wanted: Iterable[str] = modes if modes is not None else ("atr", "shave")
+        want_atr = "atr" in wanted
+        want_shave = "shave" in wanted
         signals: List[Signal] = []
 
         for pos in portfolio.positions:
-            if pos.ticker == self.core_ticker:
-                continue  # Core ETF is accumulated, never rebalanced out.
-            if pos.qty_shares <= 0:
+            if pos.ticker == self.core_ticker or pos.qty_shares <= 0:
                 continue
 
             pnl_pct = pos.unrealized_pnl_pct * 100.0
 
-            # --- Dynamic ATR stop-loss: full exit on volatility breach ------
-            if pnl_pct < 0:
+            if want_atr and pnl_pct < 0:
                 atr14 = self._latest_atr14(pos.ticker)
                 if atr14 is not None:
                     stop_level = pos.avg_entry_price - (
                         self.atr_stop_mult * atr14
                     )
                     if pos.current_price < stop_level:
+                        pct = self.atr_pct(atr14, pos.current_price)
+                        pct_s = f", ATR%={pct * 100:.2f}%" if pct else ""
                         signals.append(
                             Signal(
                                 ticker=pos.ticker,
@@ -3286,32 +3488,23 @@ class PortfolioRebalancer:
                                     f"entry {pos.avg_entry_price:.2f} - "
                                     f"{self.atr_stop_mult:.1f}*ATR14 "
                                     f"({atr14:.2f}) = {stop_level:.2f} "
-                                    f"(PnL {pnl_pct:+.1f}%). Full exit of "
-                                    f"{pos.qty_shares} share(s)."
+                                    f"(PnL {pnl_pct:+.1f}%{pct_s}). "
+                                    f"Full exit of {pos.qty_shares} share(s)."
                                 ),
                             )
                         )
                         logger.info(
-                            "Rebalance ATR-STOP %s: price=%.2f stop=%.2f "
-                            "ATR14=%.2f — sell all %d.",
+                            "ATR-STOP %s: price=%.2f stop=%.2f ATR14=%.2f.",
                             pos.ticker,
                             pos.current_price,
                             stop_level,
                             atr14,
-                            pos.qty_shares,
                         )
-                        continue
+                        continue  # already exiting; skip shave
 
-            # --- Profit shaving: trim a slice of the winner ------------------
-            if pnl_pct > self.profit_trigger:
+            if want_shave and pnl_pct > self.profit_trigger:
                 shave_qty = int(math.floor(pos.qty_shares * self.profit_shave))
                 if shave_qty < 1:
-                    logger.debug(
-                        "%s up %.1f%% but too few shares (%d) to shave.",
-                        pos.ticker,
-                        pnl_pct,
-                        pos.qty_shares,
-                    )
                     continue
                 signals.append(
                     Signal(
@@ -3329,7 +3522,7 @@ class PortfolioRebalancer:
                     )
                 )
                 logger.info(
-                    "Rebalance PROFIT-SHAVE %s (%.1f%%): sell %d of %d.",
+                    "PROFIT-SHAVE %s (%.1f%%): sell %d of %d.",
                     pos.ticker,
                     pnl_pct,
                     shave_qty,
@@ -3338,43 +3531,6 @@ class PortfolioRebalancer:
 
         logger.info("Rebalancer produced %d SELL signal(s).", len(signals))
         return signals
-
-
-if __name__ == "__main__":
-    from datetime import datetime, timezone
-
-    sys.path.insert(0, _CORE_DIR)
-    from data_models import Position  # noqa: E402
-
-    logging.basicConfig(
-        level=logging.INFO, format="%(levelname)s %(name)s: %(message)s"
-    )
-
-    portfolio = PortfolioState(
-        cash_available=5000.0,
-        total_equity=20000.0,
-        positions=[
-            # Winner (+25%) -> profit shave.
-            Position(ticker="MC.PA", qty_shares=10, avg_entry_price=100.0,
-                     current_price=125.0, sector="Luxury"),
-            # Loser without DuckDB -> ATR stop skipped (no timeseries_db).
-            Position(ticker="STLAP.PA", qty_shares=8, avg_entry_price=20.0,
-                     current_price=17.6, sector="Auto"),
-            # Small mover (+3%) -> untouched.
-            Position(ticker="AI.PA", qty_shares=4, avg_entry_price=150.0,
-                     current_price=154.5, sector="Industrials"),
-            # Core ETF up +30% -> still excluded.
-            Position(ticker="CW8.PA", qty_shares=50, avg_entry_price=400.0,
-                     current_price=520.0, sector="ETF"),
-        ],
-        last_updated=datetime.now(timezone.utc),
-    )
-
-    rebal = PortfolioRebalancer()
-    out = rebal.generate_rebalance_signals(portfolio)
-    print(f"\nGenerated {len(out)} rebalance signal(s):")
-    for s in out:
-        print(f"  {s.ticker} {s.signal_type.value} qty={s.target_qty}\n    {s.reason}")
 ```
 
 ## FILE: 03_risk_portfolio/pea_position_sizer.py
@@ -3607,6 +3763,102 @@ if __name__ == "__main__":
 ## FILE: 04_orchestrator_ai/__init__.py
 ```python
 
+```
+
+## FILE: 04_orchestrator_ai/earnings_blackout.py
+```python
+"""Per-ticker earnings / dividend blackout (same pattern as MacroVetoEngine).
+
+Blocks new satellite buys when a corporate event for that ticker falls within
+``EARNINGS_BLACKOUT_DAYS``. Calendar is maintained in
+``config/earnings_calendar.yaml`` (manual seed; later auto-synced from an API).
+"""
+
+from __future__ import annotations
+
+import datetime as dt
+import logging
+from pathlib import Path
+from typing import Dict, Tuple
+
+import yaml
+
+logger = logging.getLogger(__name__)
+
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_DEFAULT_CONFIG_DIR = _PROJECT_ROOT / "config"
+
+
+class EarningsBlackoutEngine:
+    """Vetoes buys near ticker-specific earnings/dividend dates."""
+
+    def __init__(self, config_dir: str | Path | None = None) -> None:
+        config_path = Path(config_dir) if config_dir else _DEFAULT_CONFIG_DIR
+        risk = self._load_yaml(config_path / "risk_params.yaml")
+        cal_raw = self._load_yaml(config_path / "earnings_calendar.yaml")
+        self.blackout_days: int = int(risk.get("EARNINGS_BLACKOUT_DAYS", 2))
+        # ticker -> {date -> event_name}
+        self.calendar: Dict[str, Dict[dt.date, str]] = self._parse_calendar(cal_raw)
+        logger.debug(
+            "EarningsBlackoutEngine: window=%d day(s), %d ticker(s).",
+            self.blackout_days,
+            len(self.calendar),
+        )
+
+    @staticmethod
+    def _load_yaml(path: Path) -> dict:
+        if not path.exists():
+            return {}
+        with open(path, "r", encoding="utf-8") as fh:
+            return yaml.safe_load(fh) or {}
+
+    @staticmethod
+    def _parse_calendar(raw: dict) -> Dict[str, Dict[dt.date, str]]:
+        """Accept ``events: { TICKER: { YYYY-MM-DD: name } }``."""
+        events = raw.get("events", raw) if isinstance(raw, dict) else {}
+        parsed: Dict[str, Dict[dt.date, str]] = {}
+        if not isinstance(events, dict):
+            return parsed
+        for ticker, dates in events.items():
+            if not isinstance(dates, dict):
+                continue
+            bucket: Dict[dt.date, str] = {}
+            for key, name in dates.items():
+                if isinstance(key, dt.datetime):
+                    event_date = key.date()
+                elif isinstance(key, dt.date):
+                    event_date = key
+                else:
+                    try:
+                        event_date = dt.date.fromisoformat(str(key))
+                    except ValueError:
+                        continue
+                bucket[event_date] = str(name)
+            if bucket:
+                parsed[str(ticker)] = bucket
+        return parsed
+
+    def check_veto(
+        self, ticker: str, target_date: dt.date
+    ) -> Tuple[bool, str]:
+        """Return ``(True, reason)`` if ``ticker`` is in an earnings blackout."""
+        if isinstance(target_date, dt.datetime):
+            target_date = target_date.date()
+        events = self.calendar.get(ticker) or {}
+        for event_date, name in sorted(events.items()):
+            delta = (event_date - target_date).days
+            if 0 <= delta <= self.blackout_days:
+                if delta == 0:
+                    reason = f"EARNINGS BLACKOUT: {name} today ({ticker})"
+                elif delta == 1:
+                    reason = f"EARNINGS BLACKOUT: {name} in 1 day ({ticker})"
+                else:
+                    reason = (
+                        f"EARNINGS BLACKOUT: {name} in {delta} days ({ticker})"
+                    )
+                logger.info("%s", reason)
+                return True, reason
+        return False, "Clear"
 ```
 
 ## FILE: 04_orchestrator_ai/macro_veto.py
@@ -4027,6 +4279,9 @@ The strict conductor. Raw signals flow through an ordered, CPU-optimal cascade:
     0. Price sanity      (reject non-positive / missing marks)
     1. VIX panic         (market-wide emergency brake — CorrelationFirewall)
     2. Macro Veto        (cheap date lookup)
+    2b. Earnings blackout (per-ticker corporate calendar)
+    2c. Max positions    (satellite line count cap)
+    2d. Min liquidity    (ADV € floor)
     3. Sector limit      (cheap arithmetic)
     4. Correlation       (heavy Pearson math — only if still alive)
     5. PEA sizing        (integer shares vs available cash)
@@ -4043,6 +4298,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List
 
+import yaml
+
 # --- Cross-package imports (directories start with digits) --------------------
 _ROOT = Path(__file__).resolve().parent.parent
 for _sub in ("01_memory_core", "03_risk_portfolio", "04_orchestrator_ai"):
@@ -4052,6 +4309,7 @@ from data_models import PortfolioState, Signal, SignalStatus  # noqa: E402
 from correlation_firewall import CorrelationFirewall  # noqa: E402
 from pea_position_sizer import PeaSizer  # noqa: E402
 from macro_veto import MacroVetoEngine  # noqa: E402
+from earnings_blackout import EarningsBlackoutEngine  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -4081,7 +4339,17 @@ class SignalOrchestrator:
         self.portfolio_db = portfolio_db
         self.timeseries_db = timeseries_db
 
+        risk_path = config_path / "risk_params.yaml"
+        risk: dict = {}
+        if risk_path.exists():
+            with open(risk_path, "r", encoding="utf-8") as fh:
+                risk = yaml.safe_load(fh) or {}
+        self.core_ticker: str = str(risk.get("CORE_TICKER", "CW8.PA"))
+        self.max_positions_total: int = int(risk.get("MAX_POSITIONS_TOTAL", 12))
+        self.min_liquidity_adv: float = float(risk.get("MIN_LIQUIDITY_ADV", 50_000))
+
         self.macro_veto = MacroVetoEngine(config_path)
+        self.earnings_blackout = EarningsBlackoutEngine(config_path)
         self.firewall = CorrelationFirewall(config_path)
         self.sizer = PeaSizer(config_path)
 
@@ -4119,6 +4387,32 @@ class SignalOrchestrator:
             logger.debug("Volatility unavailable for %s.", ticker)
             return None
 
+    def _avg_daily_euro_volume(self, ticker: str, days: int = 20) -> float | None:
+        """Approximate ADV in EUR = mean(Close * Volume) over ``days``."""
+        if self.timeseries_db is None:
+            return None
+        try:
+            df = self.timeseries_db.get_historical_prices(ticker, days=days)
+            if df is None or df.empty:
+                return None
+            if "Close" not in df.columns or "Volume" not in df.columns:
+                return None
+            close = df["Close"].astype(float)
+            vol = df["Volume"].astype(float)
+            adv = (close * vol).dropna()
+            if adv.empty:
+                return None
+            return float(adv.mean())
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _satellite_line_count(self, portfolio: PortfolioState) -> int:
+        return sum(
+            1
+            for p in portfolio.positions
+            if p.qty_shares > 0 and p.ticker != self.core_ticker
+        )
+
     def process_raw_signals(
         self,
         raw_signals: List[Signal],
@@ -4126,22 +4420,10 @@ class SignalOrchestrator:
         current_prices: Dict[str, float],
         vix_level: float | None = None,
     ) -> List[Signal]:
-        """Run each raw signal through the full decision cascade.
-
-        Args:
-            raw_signals: PENDING signals from the quant engine.
-            portfolio: Current portfolio snapshot.
-            current_prices: Mapping of ticker -> latest price (EUR).
-            vix_level: Optional current European VIX (``^V2TX``). When above the
-                panic threshold, ALL new satellite buys are vetoed.
-
-        Returns:
-            List[Signal]: The same signals, each finalized as APPROVED or
-            REJECTED with an explanatory reason (and ``target_qty`` when
-            approved).
-        """
+        """Run each raw signal through the full decision cascade."""
         today = datetime.now(timezone.utc).date()
         processed: List[Signal] = []
+        satellite_lines = self._satellite_line_count(portfolio)
 
         # Market-wide panic brake: evaluated once for the whole batch.
         vix_ok = self.firewall.check_vix_panic(vix_level) if vix_level is not None else True
@@ -4172,6 +4454,36 @@ class SignalOrchestrator:
                 processed.append(self._reject(signal, f"REJECTED: {veto_reason}"))
                 continue
 
+            # --- Check 1b: Earnings / dividend blackout (per ticker) ---
+            earn_veto, earn_reason = self.earnings_blackout.check_veto(ticker, today)
+            if earn_veto:
+                processed.append(self._reject(signal, f"REJECTED: {earn_reason}"))
+                continue
+
+            # --- Check 1c: Max simultaneous satellite lines ---
+            already_held = any(p.ticker == ticker for p in portfolio.positions)
+            if not already_held and satellite_lines >= self.max_positions_total:
+                processed.append(
+                    self._reject(
+                        signal,
+                        f"REJECTED: Max satellite positions "
+                        f"({self.max_positions_total}) reached",
+                    )
+                )
+                continue
+
+            # --- Check 1d: Minimum liquidity (ADV €) ---
+            adv = self._avg_daily_euro_volume(ticker)
+            if adv is not None and adv < self.min_liquidity_adv:
+                processed.append(
+                    self._reject(
+                        signal,
+                        f"REJECTED: Illiquid (ADV €{adv:,.0f} < "
+                        f"{self.min_liquidity_adv:,.0f})",
+                    )
+                )
+                continue
+
             # --- Check 2a: Sector concentration limit (cheap arithmetic) ---
             if not self.firewall.check_sector_limit(ticker, portfolio):
                 processed.append(
@@ -4179,7 +4491,7 @@ class SignalOrchestrator:
                 )
                 continue
 
-            # --- Check 2b: Correlation firewall (heavy Pearson - runs last of vetoes) ---
+            # --- Check 2b: Correlation firewall (heavy Pearson) ---
             ok, corr_reason = self.firewall.check_correlation(
                 ticker, portfolio, self.timeseries_db
             )
@@ -4211,6 +4523,8 @@ class SignalOrchestrator:
                 price,
                 signal.score,
             )
+            if not already_held:
+                satellite_lines += 1
             processed.append(signal)
 
         return processed
@@ -4346,7 +4660,13 @@ class WeeklyHistorian:
         if status == "REJECTED":
             if "vix" in reason or "panic" in reason:
                 return "vetoed_vix"
-            if "macro" in reason or "veto" in reason:
+            if "earnings" in reason or "blackout" in reason:
+                return "vetoed_earnings"
+            if "illiquid" in reason or "adv" in reason:
+                return "vetoed_liquidity"
+            if "max satellite" in reason or "max positions" in reason:
+                return "vetoed_max_positions"
+            if "macro" in reason or ("veto" in reason and "earnings" not in reason):
                 return "vetoed_macro"
             if "sector" in reason:
                 return "vetoed_sector"
@@ -4382,7 +4702,10 @@ class WeeklyHistorian:
             f"Executed/Approved: {buckets.get('executed', 0)}.\n"
             f"Revoked (macro window): {buckets.get('revoked', 0)}.\n"
             f"Vetoed by MACRO event: {buckets.get('vetoed_macro', 0)}.\n"
+            f"Vetoed by EARNINGS blackout: {buckets.get('vetoed_earnings', 0)}.\n"
             f"Vetoed by VIX panic: {buckets.get('vetoed_vix', 0)}.\n"
+            f"Vetoed by LIQUIDITY: {buckets.get('vetoed_liquidity', 0)}.\n"
+            f"Vetoed by MAX POSITIONS: {buckets.get('vetoed_max_positions', 0)}.\n"
             f"Vetoed by SECTOR limit: {buckets.get('vetoed_sector', 0)}.\n"
             f"Vetoed by CORRELATION: {buckets.get('vetoed_correlation', 0)}.\n"
             f"Other rejections: {buckets.get('rejected_other', 0)}.\n"
@@ -5038,11 +5361,16 @@ import yfinance as yf
 # --- Cross-package imports (dirs start with digits) --------------------------
 _ROOT = Path(__file__).resolve().parent.parent
 for _sub in ("00_data_sensors", "01_memory_core", "02_quant_engine",
-             "04_orchestrator_ai", "05_interfaces"):
+             "03_risk_portfolio", "04_orchestrator_ai", "05_interfaces"):
     sys.path.insert(0, str(_ROOT / _sub))
 
 from sqlite_portfolio import PortfolioDB  # noqa: E402
 from data_models import Position, PortfolioState  # noqa: E402
+
+try:
+    from equity_metrics import compute_equity_metrics  # noqa: E402
+except Exception:  # noqa: BLE001
+    compute_equity_metrics = None  # type: ignore[assignment]
 
 try:  # Optional sensors — the dashboard still works if a network dep is missing.
     from macro_alpha_api import MacroAlphaSensor  # noqa: E402
@@ -7271,6 +7599,26 @@ with tab_pf:
                 showlegend=False,
             )
             st.plotly_chart(fig_eq, width="stretch", key="pf_equity_curve")
+            if compute_equity_metrics is not None:
+                m = compute_equity_metrics(eq)
+                c1, c2, c3, c4, c5 = st.columns(5)
+
+                def _pct(x):
+                    return "—" if x is None else f"{x * 100:+.1f}%"
+
+                def _num(x):
+                    return "—" if x is None else f"{x:.2f}"
+
+                c1.metric("Total return", _pct(m.get("total_return")))
+                c2.metric("CAGR", _pct(m.get("cagr")))
+                c3.metric("Max DD", _pct(m.get("max_drawdown")))
+                c4.metric("Sharpe", _num(m.get("sharpe")))
+                c5.metric("Sortino", _num(m.get("sortino")))
+                st.caption(
+                    f"{m.get('n_points', 0)} point(s) · "
+                    "métriques partagées (`equity_metrics`) — mêmes formules "
+                    "que le futur backtester."
+                )
 
     if not positions:
         st.info("⏸️ Le portefeuille est actuellement 100% en "
@@ -7898,7 +8246,7 @@ quotidiennes** (heure de Paris), uniquement les **jours de bourse** :
 | **17:10** | Cloture — derniere passe |
 
 - **Week-end** : pause. **Vendredi 18:00** : Weekly Historian (Discord).
-- **1er du mois** : Monthly Rebalancer (prise de profit / stop-loss).
+- **1er du mois** : Profit-shave mensuel. **Chaque jour ouvré 08:35** : ATR stops.
 - Force manuelle : `python main_scheduler.py --now`
 
 ---
@@ -7964,7 +8312,7 @@ L'IA **n'approuve jamais** un trade. Discord = copilot manuel.
 | Budget satellite | Max ~30% equity |
 | Secteur / ligne | Max ~25% / ~15% (assoupli en MICRO) |
 | VIX panic | Bloque nouveaux satellites |
-| Stop / shave | ATR dynamique (2.5×ATR14) exit / +20% trim 20% |
+| Stop / shave | ATR quotidien (2.5×ATR14) / +20% trim mensuel |
 | Execution | Discord only |
 
 ---
@@ -8035,6 +8383,28 @@ FMP_API_KEY=your_fmp_api_key_here
 
 # EOD Historical Data (https://eodhistoricaldata.com/) — optional market data.
 EODHD_API_KEY=your_eodhd_api_key_here
+```
+
+## FILE: config/earnings_calendar.yaml
+```yaml
+# =============================================================================
+# PEA Sniper Terminal — Earnings / dividend blackout calendar
+# -----------------------------------------------------------------------------
+# Per-ticker corporate events. The cascade vetoes NEW satellite buys for a
+# ticker when an event falls within EARNINGS_BLACKOUT_DAYS (risk_params.yaml).
+#
+# Format:
+#   events:
+#     MC.PA:
+#       2026-07-24: "Q2 earnings"
+#     OR.PA:
+#       2026-08-01: "Ex-dividend"
+#
+# Prefer official / API calendars later (Euronext, Trading Economics). Keep
+# HTML scraping of broker sites as a last resort.
+# =============================================================================
+
+events: {}
 ```
 
 ## FILE: config/macro_calendar.yaml
@@ -9985,18 +10355,23 @@ WEEKLY_MAX_LOSS_PCT: -0.02       # Max weekly drawdown before pause.
 MONTHLY_MAX_LOSS_PCT: -0.05      # Max monthly drawdown -> liquidate + manual review.
 
 # --- Correlation Limits ------------------------------------------------------
-MAX_CORRELATION_TO_PORTFOLIO: 0.70  # Pearson, 60-day rolling window.
+MAX_CORRELATION_TO_PORTFOLIO: 0.70  # Pearson vs any holding.
 MAX_CORRELATION_SAME_SECTOR: 0.80   # Stricter allowance within same sector.
+CORRELATION_LOOKBACK_DAYS: 60       # Trading days for Pearson window.
 
 # --- Signals -----------------------------------------------------------------
 SIGNAL_BUY_THRESHOLD: 75         # Minimum score (0-100) to emit a BUY.
 SIGNAL_SELL_THRESHOLD: 35        # Score below which a SELL is considered.
 SIGNAL_VALIDITY_HOURS: 12        # Signal expires after 12h.
 MACRO_VETO_DAYS_BEFORE: 3        # Veto new trades within N days of macro event.
+EARNINGS_BLACKOUT_DAYS: 2        # Per-ticker earnings/div blackout window.
+RSI_OVERSOLD_THRESHOLD: 30.0     # MRE trigger; later walk-forward calibrable.
+MIN_LIQUIDITY_ADV: 50000         # Min average daily € volume (20d) for new buys.
+MAX_POSITIONS_TOTAL: 12          # Cap on simultaneous satellite lines.
 
 # --- Exits -------------------------------------------------------------------
 PROFIT_TARGET_PCT: 0.10          # Limit sell at +10% from entry.
-STOP_LOSS_PCT: -0.05             # Hard stop at -5% from entry.
+STOP_LOSS_PCT: -0.05             # Legacy hard stop (ATR stop is primary).
 
 # --- Core / Satellite model (Phase 10) --------------------------------------
 CORE_TICKER: "CW8.PA"            # Amundi MSCI World UCITS ETF (PEA eligible).
@@ -10180,7 +10555,8 @@ _RISK_PATH = _CONFIG_DIR / "risk_params.yaml"
 _TIMEZONE = "Europe/Paris"
 _PASS_TIMES = ("09:00", "13:30", "17:10")
 _WEEKLY_REPORT_TIME = "18:00"     # Friday CIO digest.
-_MONTHLY_CHECK_TIME = "08:30"     # Daily probe; acts only on the 1st.
+_MONTHLY_CHECK_TIME = "08:30"     # Daily probe; profit-shave acts only on the 1st.
+_ATR_STOP_CHECK_TIME = "08:35"    # Daily ATR stop evaluation (weekdays via loop).
 _LOOKBACK_DAYS = 400  # ~270 trading days -> enough for SMA-200.
 
 
@@ -10522,8 +10898,58 @@ def run_weekly_report() -> None:
         logger.critical("Weekly report FAILED: %s", exc, exc_info=True)
 
 
+async def _push_rebalance_sells(
+    sells: list, pdb: PortfolioDB, title: str
+) -> None:
+    """Audit-log and webhook a batch of rebalance SELL signals."""
+    if not sells:
+        return
+    for signal in sells:
+        try:
+            pdb.log_signal(signal)
+        except Exception:  # noqa: BLE001
+            logger.exception("Failed to audit-log rebalance signal %s.", signal.id)
+    lines = [f"\U0001F501 **{title}**\n"]
+    for s in sells:
+        lines.append(f"- **{s.ticker}** SELL {s.target_qty} - {s.reason}")
+    await _post_webhook("\n".join(lines))
+    logger.info("%s pushed %d SELL signal(s).", title, len(sells))
+
+
+async def run_daily_atr_stops_async() -> None:
+    """Evaluate ATR stop-losses every day (independent of profit-shave)."""
+    pdb = PortfolioDB()
+    pdb.init_db()
+    tsdb = TimeSeriesDB()
+    tsdb.init_db()
+    rebalancer = PortfolioRebalancer(_CONFIG_DIR, timeseries_db=tsdb)
+    portfolio = pdb.get_portfolio_state()
+    sells = rebalancer.generate_atr_stop_signals(portfolio)
+    if not sells:
+        logger.info("Daily ATR stops: nothing triggered.")
+        return
+    await _push_rebalance_sells(sells, pdb, "Daily ATR Stop-Loss — SELLs for approval")
+
+
+def run_daily_atr_stops() -> None:
+    """Sync wrapper for the daily ATR stop job."""
+    # Skip weekends (Euronext closed) — same spirit as analysis passes.
+    if datetime.today().weekday() >= 5:
+        return
+    started = time.perf_counter()
+    logger.info("=== Daily ATR stop job starting ===")
+    try:
+        asyncio.run(run_daily_atr_stops_async())
+        logger.info(
+            "=== Daily ATR stops done in %.1fs ===",
+            time.perf_counter() - started,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.critical("Daily ATR stops FAILED: %s", exc, exc_info=True)
+
+
 async def run_monthly_rebalance_async() -> None:
-    """Generate mechanical rebalance SELLs and push them for manual approval."""
+    """Monthly profit-shave SELLs only (ATR stops run daily separately)."""
     pdb = PortfolioDB()
     pdb.init_db()
     tsdb = TimeSeriesDB()
@@ -10531,27 +10957,17 @@ async def run_monthly_rebalance_async() -> None:
     rebalancer = PortfolioRebalancer(_CONFIG_DIR, timeseries_db=tsdb)
 
     portfolio = pdb.get_portfolio_state()
-    sells = rebalancer.generate_rebalance_signals(portfolio)
+    sells = rebalancer.generate_profit_shave_signals(portfolio)
     if not sells:
-        logger.info("Monthly rebalance: no positions triggered.")
+        logger.info("Monthly rebalance: no profit-shave triggers.")
         await _post_webhook(
-            "\U0001F501 **Monthly Rebalance** - no profit-taking or stop-loss "
-            "triggers this month."
+            "\U0001F501 **Monthly Rebalance** - no profit-shave triggers this month."
         )
         return
 
-    # Persist to the audit log and surface for manual approval.
-    for signal in sells:
-        try:
-            pdb.log_signal(signal)
-        except Exception:  # noqa: BLE001
-            logger.exception("Failed to audit-log rebalance signal %s.", signal.id)
-
-    lines = ["\U0001F501 **Monthly Rebalance - SELL signals for approval**\n"]
-    for s in sells:
-        lines.append(f"- **{s.ticker}** SELL {s.target_qty} - {s.reason}")
-    await _post_webhook("\n".join(lines))
-    logger.info("Monthly rebalance pushed %d SELL signal(s).", len(sells))
+    await _push_rebalance_sells(
+        sells, pdb, "Monthly Rebalance — profit-shave SELLs for approval"
+    )
 
 
 def run_monthly_rebalance() -> None:
@@ -10559,11 +10975,11 @@ def run_monthly_rebalance() -> None:
     if datetime.today().day != 1:
         return
     started = time.perf_counter()
-    logger.info("=== Monthly rebalance job starting (1st of month) ===")
+    logger.info("=== Monthly profit-shave job starting (1st of month) ===")
     try:
         asyncio.run(run_monthly_rebalance_async())
         logger.info(
-            "=== Monthly rebalance done in %.1fs ===",
+            "=== Monthly profit-shave done in %.1fs ===",
             time.perf_counter() - started,
         )
     except Exception as exc:  # noqa: BLE001
@@ -10576,13 +10992,17 @@ def _schedule_passes() -> None:
         schedule.every().day.at(pass_time, _TIMEZONE).do(run_analysis_pass)
     # Weekly CIO digest: Friday 18:00 Paris.
     schedule.every().friday.at(_WEEKLY_REPORT_TIME, _TIMEZONE).do(run_weekly_report)
-    # Monthly rebalance: probe daily, act only on the 1st (guarded inside).
+    # Monthly profit-shave: probe daily, act only on the 1st (guarded inside).
     schedule.every().day.at(_MONTHLY_CHECK_TIME, _TIMEZONE).do(run_monthly_rebalance)
+    # Daily ATR stops (weekdays guarded inside).
+    schedule.every().day.at(_ATR_STOP_CHECK_TIME, _TIMEZONE).do(run_daily_atr_stops)
     logger.info(
-        "Scheduled: passes at %s; weekly report Fri %s; monthly probe %s (%s).",
+        "Scheduled: passes at %s; weekly report Fri %s; monthly probe %s; "
+        "ATR stops %s (%s).",
         ", ".join(_PASS_TIMES),
         _WEEKLY_REPORT_TIME,
         _MONTHLY_CHECK_TIME,
+        _ATR_STOP_CHECK_TIME,
         _TIMEZONE,
     )
 
@@ -10608,7 +11028,12 @@ def main() -> None:
     parser.add_argument(
         "--rebalance",
         action="store_true",
-        help="Run the monthly rebalancer now (ignores the 1st-of-month guard).",
+        help="Run monthly profit-shave now (ignores the 1st-of-month guard).",
+    )
+    parser.add_argument(
+        "--atr-stops",
+        action="store_true",
+        help="Run daily ATR stop-loss evaluation now.",
     )
     args = parser.parse_args()
 
@@ -10622,8 +11047,13 @@ def main() -> None:
         run_weekly_report()
         return
 
+    if args.atr_stops:
+        logger.info("--atr-stops: running ATR stop evaluation now.")
+        asyncio.run(run_daily_atr_stops_async())
+        return
+
     if args.rebalance:
-        logger.info("--rebalance: running monthly rebalancer now.")
+        logger.info("--rebalance: running monthly profit-shave now.")
         asyncio.run(run_monthly_rebalance_async())
         return
 
@@ -10703,8 +11133,8 @@ considering; AI only *explains*. **Not investment advice.**
 | **Quant** | Mean-reversion exhaustion (RSI&lt;30 + Close&gt;SMA200 + Close&gt;SMA5), EPS&gt;0 |
 | **Core/Satellite** | Smart DCA on `CW8.PA`, regime-aware under SMA200 |
 | **Risk** | Macro veto, correlation firewall, sector/line caps, vol-parity sizing, 30% satellite budget, VIX panic |
-| **Rebalance** | Monthly: +20% profit-shave; **dynamic ATR stop** (`price < entry − 2.5×ATR14`) |
-| **Memory** | Daily `portfolio_history` equity curve in SQLite |
+| **Rebalance** | Daily ATR stop (`--atr-stops`); monthly +20% profit-shave |
+| **Memory** | Daily equity curve + shared `equity_metrics` (DD/CAGR/Sharpe/Sortino) |
 | **AI (explain only)** | Trade rationale, news sentiment, weekly CIO digest, geo brief |
 | **UI** | Discord Copilot + Streamlit (multi-horizon, equity curve, Exploration, Universe) |
 | **Ops** | Paris daemon, seed CLI, wallet editor, RevocationEngine on PENDING |
@@ -10727,9 +11157,9 @@ Trend `Close > SMA200` · Exhaustion `RSI(14) < 30` · Quality `EPS > 0` · Mome
 4. Sector / correlation caps  
 5. Vol-parity sizing → whole shares → cash + satellite budget clamp  
 
-### 4. Monthly rebalance
-- **Profit-shave:** satellite &gt; +20% → SELL 20%.  
-- **ATR stop:** losing satellite with `current < avg_entry − 2.5×ATR(14)` → SELL 100%.  
+### 4. Exits
+- **Daily ATR stop:** losing satellite with `current < avg_entry − 2.5×ATR(14)` → SELL 100%.  
+- **Monthly profit-shave:** satellite &gt; +20% → SELL 20%.  
 - Core ETF excluded.
 
 ### 5. AI as analyst only
@@ -10835,8 +11265,9 @@ cp config/api_keys.env.example config/api_keys.env
 
 ### `config/risk_params.yaml`
 
-Sizing · circuit breakers · correlation · Core/Satellite · VIX ·  
-`REBALANCE_PROFIT_*` · **`REBALANCE_ATR_STOP_MULT`** (default `2.5`).
+Sizing · circuit breakers · correlation (`CORRELATION_LOOKBACK_DAYS`) · Core/Satellite · VIX ·  
+`REBALANCE_PROFIT_*` · `REBALANCE_ATR_STOP_MULT` · `EARNINGS_BLACKOUT_DAYS` ·  
+`MIN_LIQUIDITY_ADV` · `MAX_POSITIONS_TOTAL` · `RSI_OVERSOLD_THRESHOLD`.
 
 ### `config/pea_universe.yaml`
 
@@ -10851,7 +11282,8 @@ python seed_account.py --cash 10000          # seed once
 python seed_account.py --show
 python main_scheduler.py --now               # one pass
 python main_scheduler.py --weekly
-python main_scheduler.py --rebalance         # ATR / shave now
+python main_scheduler.py --rebalance         # profit-shave now
+python main_scheduler.py --atr-stops         # ATR stops now
 python main_scheduler.py                     # daemon
 python run_discord.py
 .\run_dashboard.ps1                          # Streamlit (auto-open)
@@ -10891,30 +11323,78 @@ Or systemd / cron calling `main_scheduler.py --now` / `--weekly` / `--rebalance`
 |-----|---------------------|--------|
 | Analysis | 09:00, 13:30, 17:10 weekdays | Full pipeline → Discord |
 | Weekly report | Friday 18:00 | Historian → webhook |
-| Monthly rebalance | Probe 08:30 (acts on the 1st) | ATR stop / profit-shave → webhook |
+| ATR stops | 08:35 weekdays | Dynamic ATR SELLs → webhook |
+| Profit-shave | Probe 08:30 (acts on the 1st) | +20% trim → webhook |
 
 ---
 
 ## Roadmap / future improvements
 
-Prioritized ideas that fit the current architecture:
+Prioritized after Phase 15/16 wiring feedback. **Diff-only broker import** (never
+blind overwrite). Prefer official/API sources over furtive HTML scraping.
 
-| Priority | Idea | Why |
-|----------|------|-----|
-| **P0** | **Daily ATR stop check** (not only 1st of month) | Volatility stops should not wait 30 days |
-| **P0** | **pytest + CI** on cascade, sizer, AMF/FMP cascade, ATR edge cases | Regressions are silent today |
-| **P1** | **Equity metrics** on the curve (max DD, CAGR, Sharpe, cash %) | Curve alone is not enough to judge process |
-| **P1** | **Read-only broker import** (CSV / Boursorama / Degiro) | Kill manual wallet drift |
-| **P1** | **Walk-forward backtester** on DuckDB OHLCV | Validate MRE + ATR params before live capital |
-| **P2** | **Paid VSTOXX** (or Stooq/EODHD) instead of `^VIX` proxy | Panic brake should be European |
-| **P2** | **AMF resilience** (ISIN cache, retry jitter, optional proxy) | Keep official source usable more often |
-| **P2** | **Earnings / dividend blackout** in macro calendar | Avoid event-driven gaps on satellites |
-| **P3** | **Multi-core ETF** rotation (CW8 / EWLD / ESE / PAEEM) | Regime-aware core, still PEA-legal |
-| **P3** | **Intraday tape + Discord digest** of veto reasons | Operator learning loop |
-| **P3** | **Position-level trailing ATR** after +20% shave | Lock gains without fixed % |
-| **P3** | Wire **EODHD** for EU fundamentals when Yahoo is thin | Better EPS / quality filter |
+### P0 — ship next / in progress
 
-Non-goals (keep out of scope): auto-broker execution, leverage, US penny universe, LLM-as-trader.
+| Item | Notes |
+|------|-------|
+| **Daily ATR stops** | ✅ Split from monthly profit-shave; probe weekdays 08:35 (`--atr-stops`) |
+| **pytest + CI** | ✅ Minimal suite + GitHub Actions; expand coverage continuously |
+| **Equity metrics (shared)** | ✅ `equity_metrics.py` (max DD / CAGR / Sharpe / Sortino) on live curve — **same functions for the future backtester** |
+
+### P0 / P1 — next up
+
+| Item | Notes |
+|------|-------|
+| **Earnings / dividend blackout** | ✅ Engine + empty `earnings_calendar.yaml` + cascade hook; fill calendar (API later) |
+| **Walk-forward backtester** | Biggest ROI: turns “system that runs” into “strategy validated empirically”; reuse `equity_metrics` |
+| **Broker CSV import (diff)** | Diff Boursorama CSV vs SQLite; show missing/qty mismatches — **never blind overwrite** |
+
+### New cascade / risk params (config ready)
+
+| Key | Role |
+|-----|------|
+| `EARNINGS_BLACKOUT_DAYS` | Per-ticker corporate blackout window |
+| `MIN_LIQUIDITY_ADV` | Floor on average daily € volume |
+| `MAX_POSITIONS_TOTAL` | Cap on simultaneous satellite lines |
+| `CORRELATION_LOOKBACK_DAYS` | Explicit Pearson window (was hardcoded 60) |
+| `RSI_OVERSOLD_THRESHOLD` | Calibrable later via walk-forward (vol-regime adaptive) |
+
+**ATR note:** stop distance uses **absolute** ATR (correct per name; ATR scales with
+price). `atr_pct = ATR/price` is logged for cross-name comparison / dashboards —
+use % for vol-parity style comparisons, absolute for the stop rule.
+
+### Additional signals (post-backtester calibration)
+
+| Signal | Role |
+|--------|------|
+| Relative strength vs sector / CAC40 (3–6m) | Filter structurally broken RSI&lt;30 names |
+| Distance to 52w high/low | Cheap DuckDB confirmation beside SMA200/RSI |
+| Analyst revision drift (`yfinance` upgrades) | Soft consensus signal, not a hard filter |
+| EUR/USD context for `CW8.PA` | Info in weekly CIO digest (USD FX exposure), not a veto |
+
+### Data sources (legal preference)
+
+1. **Official / regulator** — AMF (done), Euronext corporate actions, ECB SDW / INSEE  
+2. **Macro APIs with free tier** — Trading Economics → auto-sync `macro_calendar.yaml`  
+3. **Structured commercial APIs** — FMP (already secondary for insiders), EODHD  
+4. **HTML scrapers last** — Boursorama / Zonebourse / Investing: fragile + ToS grey zone; keep minimal  
+
+### Dashboard visualizations (queued)
+
+| Viz | Purpose |
+|-----|---------|
+| Signal funnel waterfall | raw → VIX → macro → earnings → liquidity → sector → corr → sizing → approved |
+| Rejection motif pie (30/90d) | Expose `weekly_historian._classify` in UI |
+| Per-ticker RSI/SMA200 sparkline | Audit false negatives with approve/reject markers |
+| Rolling Sharpe / Sortino / DD | Built on `equity_metrics` |
+| Richer ticker dossier | More `yfinance.info` fields, insider table (done path), per-article LLM scores, portfolio correlation heatmap |
+
+### P2 / P3
+
+Paid VSTOXX · AMF resilience · multi-core ETF rotation · trailing ATR after shave ·
+intraday Discord veto digest.
+
+**Non-goals:** auto-broker execution, leverage, LLM-as-trader, US pennies.
 
 ---
 
@@ -11231,6 +11711,107 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+```
+
+## FILE: tests/__init__.py
+```python
+# Empty package marker for pytest discovery.
+```
+
+## FILE: tests/test_phase16_foundations.py
+```python
+"""Unit tests for equity metrics and rebalancer mode split."""
+
+from __future__ import annotations
+
+import os
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+import pandas as pd
+import pytest
+
+ROOT = Path(__file__).resolve().parents[1]
+for sub in ("01_memory_core", "03_risk_portfolio", "04_orchestrator_ai"):
+    sys.path.insert(0, str(ROOT / sub))
+
+from equity_metrics import (  # noqa: E402
+    compute_equity_metrics,
+    max_drawdown,
+    sharpe_ratio,
+)
+from monthly_rebalancer import PortfolioRebalancer  # noqa: E402
+from earnings_blackout import EarningsBlackoutEngine  # noqa: E402
+from data_models import Position, PortfolioState  # noqa: E402
+
+
+def test_max_drawdown_and_sharpe_on_synthetic_curve():
+    dates = pd.date_range("2025-01-01", periods=60, freq="B")
+    # Rise then 20% drawdown then recover partially.
+    eq = pd.Series(
+        [100.0] * 10
+        + list(range(100, 120))
+        + [120 * 0.8] * 10
+        + [100.0] * 20,
+        index=dates[:60],
+    )
+    # Pad/trim to 60
+    eq = eq.iloc[:60]
+    dd = max_drawdown(eq)
+    assert dd <= -0.15
+    m = compute_equity_metrics(pd.DataFrame({"date": eq.index, "equity": eq.values}))
+    assert m["n_points"] == 60
+    assert m["max_drawdown"] <= -0.15
+    assert m["sharpe"] is None or isinstance(m["sharpe"], float)
+
+
+def test_rebalancer_modes_split_without_tsdb():
+    cfg = ROOT / "config"
+    rb = PortfolioRebalancer(cfg, timeseries_db=None)
+    portfolio = PortfolioState(
+        cash_available=1000,
+        total_equity=5000,
+        positions=[
+            Position(
+                ticker="MC.PA",
+                qty_shares=10,
+                avg_entry_price=100.0,
+                current_price=125.0,
+                sector="Luxury",
+            ),
+            Position(
+                ticker="STLAP.PA",
+                qty_shares=8,
+                avg_entry_price=20.0,
+                current_price=17.0,
+                sector="Auto",
+            ),
+        ],
+        last_updated=datetime.now(timezone.utc),
+    )
+    shaves = rb.generate_profit_shave_signals(portfolio)
+    atrs = rb.generate_atr_stop_signals(portfolio)
+    assert len(shaves) == 1 and shaves[0].ticker == "MC.PA"
+    # No DuckDB -> ATR stops cannot fire.
+    assert atrs == []
+
+
+def test_earnings_blackout_window(tmp_path):
+    risk = tmp_path / "risk_params.yaml"
+    risk.write_text("EARNINGS_BLACKOUT_DAYS: 2\n", encoding="utf-8")
+    cal = tmp_path / "earnings_calendar.yaml"
+    cal.write_text(
+        "events:\n  MC.PA:\n    2026-07-25: \"Q2 earnings\"\n",
+        encoding="utf-8",
+    )
+    eng = EarningsBlackoutEngine(tmp_path)
+    from datetime import date
+
+    veto, reason = eng.check_veto("MC.PA", date(2026, 7, 24))
+    assert veto and "Q2" in reason
+    clear, _ = eng.check_veto("OR.PA", date(2026, 7, 24))
+    assert not clear
 ```
 
 ## FILE: tools/build_llm_dump.py

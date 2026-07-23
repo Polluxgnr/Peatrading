@@ -18,18 +18,23 @@ WEEKLY_MAX_LOSS_PCT: -0.02       # Max weekly drawdown before pause.
 MONTHLY_MAX_LOSS_PCT: -0.05      # Max monthly drawdown -> liquidate + manual review.
 
 # --- Correlation Limits ------------------------------------------------------
-MAX_CORRELATION_TO_PORTFOLIO: 0.70  # Pearson, 60-day rolling window.
+MAX_CORRELATION_TO_PORTFOLIO: 0.70  # Pearson vs any holding.
 MAX_CORRELATION_SAME_SECTOR: 0.80   # Stricter allowance within same sector.
+CORRELATION_LOOKBACK_DAYS: 60       # Trading days for Pearson window.
 
 # --- Signals -----------------------------------------------------------------
 SIGNAL_BUY_THRESHOLD: 75         # Minimum score (0-100) to emit a BUY.
 SIGNAL_SELL_THRESHOLD: 35        # Score below which a SELL is considered.
 SIGNAL_VALIDITY_HOURS: 12        # Signal expires after 12h.
 MACRO_VETO_DAYS_BEFORE: 3        # Veto new trades within N days of macro event.
+EARNINGS_BLACKOUT_DAYS: 2        # Per-ticker earnings/div blackout window.
+RSI_OVERSOLD_THRESHOLD: 30.0     # MRE trigger; later walk-forward calibrable.
+MIN_LIQUIDITY_ADV: 50000         # Min average daily € volume (20d) for new buys.
+MAX_POSITIONS_TOTAL: 12          # Cap on simultaneous satellite lines.
 
 # --- Exits -------------------------------------------------------------------
 PROFIT_TARGET_PCT: 0.10          # Limit sell at +10% from entry.
-STOP_LOSS_PCT: -0.05             # Hard stop at -5% from entry.
+STOP_LOSS_PCT: -0.05             # Legacy hard stop (ATR stop is primary).
 
 # --- Core / Satellite model (Phase 10) --------------------------------------
 CORE_TICKER: "CW8.PA"            # Amundi MSCI World UCITS ETF (PEA eligible).

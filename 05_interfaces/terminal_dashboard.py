@@ -36,11 +36,16 @@ import yfinance as yf
 # --- Cross-package imports (dirs start with digits) --------------------------
 _ROOT = Path(__file__).resolve().parent.parent
 for _sub in ("00_data_sensors", "01_memory_core", "02_quant_engine",
-             "04_orchestrator_ai", "05_interfaces"):
+             "03_risk_portfolio", "04_orchestrator_ai", "05_interfaces"):
     sys.path.insert(0, str(_ROOT / _sub))
 
 from sqlite_portfolio import PortfolioDB  # noqa: E402
 from data_models import Position, PortfolioState  # noqa: E402
+
+try:
+    from equity_metrics import compute_equity_metrics  # noqa: E402
+except Exception:  # noqa: BLE001
+    compute_equity_metrics = None  # type: ignore[assignment]
 
 try:  # Optional sensors — the dashboard still works if a network dep is missing.
     from macro_alpha_api import MacroAlphaSensor  # noqa: E402
@@ -2269,6 +2274,26 @@ with tab_pf:
                 showlegend=False,
             )
             st.plotly_chart(fig_eq, width="stretch", key="pf_equity_curve")
+            if compute_equity_metrics is not None:
+                m = compute_equity_metrics(eq)
+                c1, c2, c3, c4, c5 = st.columns(5)
+
+                def _pct(x):
+                    return "—" if x is None else f"{x * 100:+.1f}%"
+
+                def _num(x):
+                    return "—" if x is None else f"{x:.2f}"
+
+                c1.metric("Total return", _pct(m.get("total_return")))
+                c2.metric("CAGR", _pct(m.get("cagr")))
+                c3.metric("Max DD", _pct(m.get("max_drawdown")))
+                c4.metric("Sharpe", _num(m.get("sharpe")))
+                c5.metric("Sortino", _num(m.get("sortino")))
+                st.caption(
+                    f"{m.get('n_points', 0)} point(s) · "
+                    "métriques partagées (`equity_metrics`) — mêmes formules "
+                    "que le futur backtester."
+                )
 
     if not positions:
         st.info("⏸️ Le portefeuille est actuellement 100% en "
@@ -2896,7 +2921,7 @@ quotidiennes** (heure de Paris), uniquement les **jours de bourse** :
 | **17:10** | Cloture — derniere passe |
 
 - **Week-end** : pause. **Vendredi 18:00** : Weekly Historian (Discord).
-- **1er du mois** : Monthly Rebalancer (prise de profit / stop-loss).
+- **1er du mois** : Profit-shave mensuel. **Chaque jour ouvré 08:35** : ATR stops.
 - Force manuelle : `python main_scheduler.py --now`
 
 ---
@@ -2962,7 +2987,7 @@ L'IA **n'approuve jamais** un trade. Discord = copilot manuel.
 | Budget satellite | Max ~30% equity |
 | Secteur / ligne | Max ~25% / ~15% (assoupli en MICRO) |
 | VIX panic | Bloque nouveaux satellites |
-| Stop / shave | ATR dynamique (2.5×ATR14) exit / +20% trim 20% |
+| Stop / shave | ATR quotidien (2.5×ATR14) / +20% trim mensuel |
 | Execution | Discord only |
 
 ---
