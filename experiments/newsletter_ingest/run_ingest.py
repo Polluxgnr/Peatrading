@@ -23,6 +23,11 @@ from ingest.imap_client import YahooImapClient  # noqa: E402
 from ingest.html_parser import parse_newsletter  # noqa: E402
 from ingest.dedupe import dedupe_articles  # noqa: E402
 from ingest.writer import write_output  # noqa: E402
+from ingest.whitelist import (  # noqa: E402
+    ALLOWED_SENDERS,
+    extract_sender_email,
+    is_allowed_sender,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -71,16 +76,36 @@ def main() -> int:
         app_password=creds["YAHOO_MAIL_APP_PASSWORD"],
     )
     articles = []
+    allowed_msgs = 0
+    ignored_msgs = 0
     try:
-        messages = client.fetch_recent(folder=args.folder, limit=args.limit)
-        logger.info("Fetched %d raw message(s) from folder '%s'.", len(messages), args.folder)
+        # Over-fetch: whitelist drops receipts/alerts before parse.
+        scan_limit = max(int(args.limit) * 5, 50)
+        messages = client.fetch_recent(folder=args.folder, limit=scan_limit)
+        logger.info(
+            "Fetched %d raw message(s) from '%s' (whitelist=%d senders, "
+            "scan_limit=%d).",
+            len(messages),
+            args.folder,
+            len(ALLOWED_SENDERS),
+            scan_limit,
+        )
         for msg in messages:
             try:
+                if not is_allowed_sender(msg.sender):
+                    ignored_msgs += 1
+                    logger.debug(
+                        "Ignored email from %s",
+                        extract_sender_email(msg.sender) or msg.sender,
+                    )
+                    continue
+                allowed_msgs += 1
                 parsed = parse_newsletter(msg)
                 articles.extend(parsed.get("articles") or [])
                 logger.info(
-                    "Parsed '%s' → %d article link(s).",
+                    "Parsed '%s' ← %s → %d article link(s).",
                     parsed.get("subject", "?")[:80],
+                    extract_sender_email(msg.sender),
                     len(parsed.get("articles") or []),
                 )
             except Exception as exc:  # noqa: BLE001
@@ -91,6 +116,12 @@ def main() -> int:
     finally:
         client.close()
 
+    logger.info(
+        "Whitelist filter: kept %d newsletter(s), ignored %d other message(s).",
+        allowed_msgs,
+        ignored_msgs,
+    )
+
     before = len(articles)
     articles = dedupe_articles(articles)
     logger.info("Dedupe: %d → %d article(s).", before, len(articles))
@@ -98,6 +129,8 @@ def main() -> int:
     payload = {
         "folder": args.folder,
         "limit": args.limit,
+        "whitelist_kept": allowed_msgs,
+        "whitelist_ignored": ignored_msgs,
         "articles_raw": before,
         "articles_deduped": len(articles),
         "articles": articles,

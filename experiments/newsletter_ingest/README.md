@@ -19,6 +19,8 @@ Output JSON lands in `experiments/newsletter_ingest/output/`.
 ## Acceptance
 
 - IMAP connects and always closes.
+- **Sender whitelist** — only listed newsletter From addresses are parsed;
+  receipts / security mail are skipped (`ingest/whitelist.py`).
 - Titles/links extracted from varied HTML digests.
 - Deduper collapses obvious same-day reprints.
 - Zero mailbox mutations; zero production DB I/O.

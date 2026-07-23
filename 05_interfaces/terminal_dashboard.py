@@ -789,6 +789,8 @@ def get_valuation_metrics(ticker: str) -> dict:
         "fifty_two_week_high": None,
         "trailing_pe": None,
         "price_to_book": None,
+        "return_1m_pct": None,
+        "return_1y_pct": None,
         "buy_zone_low": None,
         "buy_zone_high": None,
         "ok": False,
@@ -827,6 +829,20 @@ def get_valuation_metrics(ticker: str) -> dict:
         elif w52_low is not None:
             buy_high = w52_low * 1.08
 
+        # Trailing 1M / 1Y returns from daily history (robust empty on failure).
+        ret_1m = None
+        ret_1y = None
+        try:
+            hist = yf.Ticker(ticker).history(period="1y", auto_adjust=True)
+            if hist is not None and not hist.empty and "Close" in hist.columns:
+                close = pd.to_numeric(hist["Close"], errors="coerce").dropna()
+                if len(close) >= 2:
+                    ret_1y = float(close.iloc[-1] / close.iloc[0] - 1.0) * 100.0
+                if len(close) >= 22:
+                    ret_1m = float(close.iloc[-1] / close.iloc[-22] - 1.0) * 100.0
+        except Exception:  # noqa: BLE001
+            pass
+
         return {
             "ticker": ticker,
             "current_price": current,
@@ -836,6 +852,8 @@ def get_valuation_metrics(ticker: str) -> dict:
             "fifty_two_week_high": w52_high,
             "trailing_pe": pe,
             "price_to_book": pb,
+            "return_1m_pct": ret_1m,
+            "return_1y_pct": ret_1y,
             "buy_zone_low": buy_low,
             "buy_zone_high": buy_high,
             "ok": True,
@@ -3466,6 +3484,30 @@ with tab_mkt:
                 f"{pb:.2f}×" if pb is not None else "n/a",
                 sub="valeur comptable",
                 help_text="Cours / book value par action.",
+            ), unsafe_allow_html=True)
+
+        r1m = val.get("return_1m_pct")
+        r1y = val.get("return_1y_pct")
+        p1, p2 = st.columns(2)
+        with p1:
+            st.markdown(metric_box(
+                "Perf. 1 mois",
+                f"{r1m:+.1f}%" if r1m is not None else "n/a",
+                sub="~21 séances",
+                accent="" if r1m is None or r1m >= 0 else "red",
+                sub_cls=("sub-green" if r1m is not None and r1m >= 0
+                         else "sub-red" if r1m is not None else "sub-muted"),
+                help_text="Variation du close sur ~1 mois de séances.",
+            ), unsafe_allow_html=True)
+        with p2:
+            st.markdown(metric_box(
+                "Perf. 1 an",
+                f"{r1y:+.1f}%" if r1y is not None else "n/a",
+                sub="trailing 12 mois",
+                accent="" if r1y is None or r1y >= 0 else "red",
+                sub_cls=("sub-green" if r1y is not None and r1y >= 0
+                         else "sub-red" if r1y is not None else "sub-muted"),
+                help_text="Close actuel vs close il y a ~1 an.",
             ), unsafe_allow_html=True)
 
         bz_lo = val.get("buy_zone_low")

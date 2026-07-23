@@ -439,7 +439,8 @@ sources over furtive HTML scraping.
 | ADV / max positions / RSI / corr lookback | Wired in `risk_params.yaml` + cascade |
 | Mission Control + trade cards + logs | Operator UX |
 | **Decision funnel waterfall + rejection pie** | ✅ Phase 17 — 7J/30J audit-log analytics in General |
-| **Valuation + 10y annual returns** | ✅ Phase 18 — Exploration fiche ticker (buy zone, P/E, P/B, bar chart) |
+| **Valuation + 10y annual returns** | ✅ Phase 18 — Exploration (buy zone, P/E, P/B, **1M/1Y**, annual bars) |
+| **Newsletter sender whitelist** | ✅ Phase 18 — IMAP skips non-listed From addresses |
 | pytest + GitHub Actions CI | Expand coverage over time |
 | Newsletter IMAP sandbox | Manual validation before any prod hook |
 

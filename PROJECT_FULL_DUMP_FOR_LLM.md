@@ -1,9 +1,9 @@
 # PEA Sniper Terminal — Full Project Dump for LLM
 Root: `C:\Users\PolluxGronier\Downloads\pea_sniper_terminal`
-Generated: 2026-07-23 14:01 UTC
+Generated: 2026-07-23 14:12 UTC
 One-shot context dump of source, configs, and docs (no venv, no DBs, no secrets).
 ---
-## File index (64 files)
+## File index (66 files)
 - .github/workflows/ci.yml
 - .gitignore
 - .streamlit/config.toml
@@ -51,6 +51,7 @@ One-shot context dump of source, configs, and docs (no venv, no DBs, no secrets)
 - experiments/newsletter_ingest/ingest/env_loader.py
 - experiments/newsletter_ingest/ingest/html_parser.py
 - experiments/newsletter_ingest/ingest/imap_client.py
+- experiments/newsletter_ingest/ingest/whitelist.py
 - experiments/newsletter_ingest/ingest/writer.py
 - experiments/newsletter_ingest/output/ingest_20260723_140121.json
 - experiments/newsletter_ingest/README.md
@@ -63,6 +64,7 @@ One-shot context dump of source, configs, and docs (no venv, no DBs, no secrets)
 - seed_account.py
 - tests/__init__.py
 - tests/test_funnel_analytics.py
+- tests/test_newsletter_whitelist.py
 - tests/test_phase16_foundations.py
 - tests/test_ui_and_sandbox.py
 - tools/build_llm_dump.py
@@ -6362,6 +6364,8 @@ def get_valuation_metrics(ticker: str) -> dict:
         "fifty_two_week_high": None,
         "trailing_pe": None,
         "price_to_book": None,
+        "return_1m_pct": None,
+        "return_1y_pct": None,
         "buy_zone_low": None,
         "buy_zone_high": None,
         "ok": False,
@@ -6400,6 +6404,20 @@ def get_valuation_metrics(ticker: str) -> dict:
         elif w52_low is not None:
             buy_high = w52_low * 1.08
 
+        # Trailing 1M / 1Y returns from daily history (robust empty on failure).
+        ret_1m = None
+        ret_1y = None
+        try:
+            hist = yf.Ticker(ticker).history(period="1y", auto_adjust=True)
+            if hist is not None and not hist.empty and "Close" in hist.columns:
+                close = pd.to_numeric(hist["Close"], errors="coerce").dropna()
+                if len(close) >= 2:
+                    ret_1y = float(close.iloc[-1] / close.iloc[0] - 1.0) * 100.0
+                if len(close) >= 22:
+                    ret_1m = float(close.iloc[-1] / close.iloc[-22] - 1.0) * 100.0
+        except Exception:  # noqa: BLE001
+            pass
+
         return {
             "ticker": ticker,
             "current_price": current,
@@ -6409,6 +6427,8 @@ def get_valuation_metrics(ticker: str) -> dict:
             "fifty_two_week_high": w52_high,
             "trailing_pe": pe,
             "price_to_book": pb,
+            "return_1m_pct": ret_1m,
+            "return_1y_pct": ret_1y,
             "buy_zone_low": buy_low,
             "buy_zone_high": buy_high,
             "ok": True,
@@ -9039,6 +9059,30 @@ with tab_mkt:
                 f"{pb:.2f}×" if pb is not None else "n/a",
                 sub="valeur comptable",
                 help_text="Cours / book value par action.",
+            ), unsafe_allow_html=True)
+
+        r1m = val.get("return_1m_pct")
+        r1y = val.get("return_1y_pct")
+        p1, p2 = st.columns(2)
+        with p1:
+            st.markdown(metric_box(
+                "Perf. 1 mois",
+                f"{r1m:+.1f}%" if r1m is not None else "n/a",
+                sub="~21 séances",
+                accent="" if r1m is None or r1m >= 0 else "red",
+                sub_cls=("sub-green" if r1m is not None and r1m >= 0
+                         else "sub-red" if r1m is not None else "sub-muted"),
+                help_text="Variation du close sur ~1 mois de séances.",
+            ), unsafe_allow_html=True)
+        with p2:
+            st.markdown(metric_box(
+                "Perf. 1 an",
+                f"{r1y:+.1f}%" if r1y is not None else "n/a",
+                sub="trailing 12 mois",
+                accent="" if r1y is None or r1y >= 0 else "red",
+                sub_cls=("sub-green" if r1y is not None and r1y >= 0
+                         else "sub-red" if r1y is not None else "sub-muted"),
+                help_text="Close actuel vs close il y a ~1 an.",
             ), unsafe_allow_html=True)
 
         bz_lo = val.get("buy_zone_low")
@@ -12146,6 +12190,49 @@ class YahooImapClient:
         return html, text
 ```
 
+## FILE: experiments/newsletter_ingest/ingest/whitelist.py
+```python
+"""Strict sender whitelist for newsletter IMAP ingest.
+
+Only these From addresses are parsed; receipts / security alerts are skipped.
+"""
+
+from __future__ import annotations
+
+import re
+from typing import FrozenSet
+
+# Exact email addresses allowed (case-insensitive match on extracted address).
+ALLOWED_SENDERS: FrozenSet[str] = frozenset({
+    "dan@tldrnewsletter.com",
+    "luc@the-nbs.fr",
+    "thevccorner@substack.com",
+    "theaicorner1@substack.com",
+    "hello@brief.me",
+    "daily@timetosignoff.fr",
+    "hello@brief.eco",
+    "newsletter@thedeepview.co",
+    "laura@lbkconsulting.fr",
+    "hello@brief.science",
+})
+
+_EMAIL_RE = re.compile(r"[\w.+-]+@[\w.-]+\.\w+", re.IGNORECASE)
+
+
+def extract_sender_email(from_header: str) -> str:
+    """Pull the bare email from a From header (``Name <a@b.c>`` or bare)."""
+    if not from_header:
+        return ""
+    match = _EMAIL_RE.search(from_header)
+    return match.group(0).lower() if match else ""
+
+
+def is_allowed_sender(from_header: str) -> bool:
+    """Return True iff the From address is on the newsletter whitelist."""
+    email = extract_sender_email(from_header)
+    return bool(email) and email in ALLOWED_SENDERS
+```
+
 ## FILE: experiments/newsletter_ingest/ingest/writer.py
 ```python
 """Write timestamped JSON under the sandbox ``output/`` folder only."""
@@ -12828,6 +12915,8 @@ Output JSON lands in `experiments/newsletter_ingest/output/`.
 ## Acceptance
 
 - IMAP connects and always closes.
+- **Sender whitelist** — only listed newsletter From addresses are parsed;
+  receipts / security mail are skipped (`ingest/whitelist.py`).
 - Titles/links extracted from varied HTML digests.
 - Deduper collapses obvious same-day reprints.
 - Zero mailbox mutations; zero production DB I/O.
@@ -12860,6 +12949,11 @@ from ingest.imap_client import YahooImapClient  # noqa: E402
 from ingest.html_parser import parse_newsletter  # noqa: E402
 from ingest.dedupe import dedupe_articles  # noqa: E402
 from ingest.writer import write_output  # noqa: E402
+from ingest.whitelist import (  # noqa: E402
+    ALLOWED_SENDERS,
+    extract_sender_email,
+    is_allowed_sender,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -12908,16 +13002,36 @@ def main() -> int:
         app_password=creds["YAHOO_MAIL_APP_PASSWORD"],
     )
     articles = []
+    allowed_msgs = 0
+    ignored_msgs = 0
     try:
-        messages = client.fetch_recent(folder=args.folder, limit=args.limit)
-        logger.info("Fetched %d raw message(s) from folder '%s'.", len(messages), args.folder)
+        # Over-fetch: whitelist drops receipts/alerts before parse.
+        scan_limit = max(int(args.limit) * 5, 50)
+        messages = client.fetch_recent(folder=args.folder, limit=scan_limit)
+        logger.info(
+            "Fetched %d raw message(s) from '%s' (whitelist=%d senders, "
+            "scan_limit=%d).",
+            len(messages),
+            args.folder,
+            len(ALLOWED_SENDERS),
+            scan_limit,
+        )
         for msg in messages:
             try:
+                if not is_allowed_sender(msg.sender):
+                    ignored_msgs += 1
+                    logger.debug(
+                        "Ignored email from %s",
+                        extract_sender_email(msg.sender) or msg.sender,
+                    )
+                    continue
+                allowed_msgs += 1
                 parsed = parse_newsletter(msg)
                 articles.extend(parsed.get("articles") or [])
                 logger.info(
-                    "Parsed '%s' → %d article link(s).",
+                    "Parsed '%s' ← %s → %d article link(s).",
                     parsed.get("subject", "?")[:80],
+                    extract_sender_email(msg.sender),
                     len(parsed.get("articles") or []),
                 )
             except Exception as exc:  # noqa: BLE001
@@ -12928,6 +13042,12 @@ def main() -> int:
     finally:
         client.close()
 
+    logger.info(
+        "Whitelist filter: kept %d newsletter(s), ignored %d other message(s).",
+        allowed_msgs,
+        ignored_msgs,
+    )
+
     before = len(articles)
     articles = dedupe_articles(articles)
     logger.info("Dedupe: %d → %d article(s).", before, len(articles))
@@ -12935,6 +13055,8 @@ def main() -> int:
     payload = {
         "folder": args.folder,
         "limit": args.limit,
+        "whitelist_kept": allowed_msgs,
+        "whitelist_ignored": ignored_msgs,
         "articles_raw": before,
         "articles_deduped": len(articles),
         "articles": articles,
@@ -14006,7 +14128,8 @@ sources over furtive HTML scraping.
 | ADV / max positions / RSI / corr lookback | Wired in `risk_params.yaml` + cascade |
 | Mission Control + trade cards + logs | Operator UX |
 | **Decision funnel waterfall + rejection pie** | ✅ Phase 17 — 7J/30J audit-log analytics in General |
-| **Valuation + 10y annual returns** | ✅ Phase 18 — Exploration fiche ticker (buy zone, P/E, P/B, bar chart) |
+| **Valuation + 10y annual returns** | ✅ Phase 18 — Exploration (buy zone, P/E, P/B, **1M/1Y**, annual bars) |
+| **Newsletter sender whitelist** | ✅ Phase 18 — IMAP skips non-listed From addresses |
 | pytest + GitHub Actions CI | Expand coverage over time |
 | Newsletter IMAP sandbox | Manual validation before any prod hook |
 
@@ -14419,6 +14542,34 @@ def test_funnel_drop_mapping_logic():
         "rejected_other", "REJECTED: Insufficient cash for 1 share"
     ) == "cash_sizing"
     assert map_drop("vetoed_sector", "Sector weight") == "sector"
+```
+
+## FILE: tests/test_newsletter_whitelist.py
+```python
+"""Whitelist sender filter for newsletter ingest."""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "experiments" / "newsletter_ingest"))
+
+from ingest.whitelist import (  # noqa: E402
+    extract_sender_email,
+    is_allowed_sender,
+)
+
+
+def test_extract_and_allow_known_senders():
+    assert extract_sender_email('TLDR <dan@tldrnewsletter.com>') == (
+        "dan@tldrnewsletter.com"
+    )
+    assert is_allowed_sender("dan@tldrnewsletter.com")
+    assert is_allowed_sender("Brief <hello@brief.me>")
+    assert not is_allowed_sender("Yahoo <noreply@yahoo.com>")
+    assert not is_allowed_sender("Security Alert <account-protection@yahoo.com>")
 ```
 
 ## FILE: tests/test_phase16_foundations.py
