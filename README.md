@@ -1,4 +1,4 @@
-# PEA Sniper Terminal — V-Prime 3.0 (Phase 17)
+# PEA Sniper Terminal — V-Prime 3.0 (Phase 18)
 
 > **Sovereign execution. Kinetic risk management. Absolute quantitative transparency.**
 
@@ -343,7 +343,7 @@ real Bloomberg conventions and easier on long sessions than green-everywhere.
 |-----|---------|
 | **General & Signaux** | Adaptive multi-horizon suggestion (MICRO→FULL), Core card, geo brief, **Entonnoir de décision (waterfall 7J/30J)**, **rich PENDING trade cards**, news, ledger |
 | **Portefeuille** | Equity curve + **Sharpe/DD/CAGR/Sortino**, sunburst, positions, wallet editor → SQLite |
-| **Exploration** | Liquid scan, full ticker dossier (business, TA explained, news, AMF→FMP→YF insiders, Polymarket) |
+| **Exploration** | Liquid scan, ticker dossier, TA, **valorisation / zone d'achat**, **perf annuelle 10 ans**, news, insiders AMF→FMP→YF, Polymarket |
 | **Univers** | Full list + average sector performance |
 | **Architecture & Logs** | Living docs + **log file picker / tail / copy** |
 
@@ -439,6 +439,7 @@ sources over furtive HTML scraping.
 | ADV / max positions / RSI / corr lookback | Wired in `risk_params.yaml` + cascade |
 | Mission Control + trade cards + logs | Operator UX |
 | **Decision funnel waterfall + rejection pie** | ✅ Phase 17 — 7J/30J audit-log analytics in General |
+| **Valuation + 10y annual returns** | ✅ Phase 18 — Exploration fiche ticker (buy zone, P/E, P/B, bar chart) |
 | pytest + GitHub Actions CI | Expand coverage over time |
 | Newsletter IMAP sandbox | Manual validation before any prod hook |
 
@@ -488,4 +489,4 @@ Decision-support and educational tool only. **No automated execution. No financi
 advice.** You are solely responsible for every trade. Past or backtested results
 do not guarantee future performance.
 
-© 2026 Pollux Quantitative Research — V-Prime 3.0 (Phase 17).
+© 2026 Pollux Quantitative Research — V-Prime 3.0 (Phase 18).

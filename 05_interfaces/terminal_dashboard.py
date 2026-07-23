@@ -726,6 +726,152 @@ def render_rejection_pie(funnel_data: dict) -> go.Figure:
     return _style_dark_fig(fig, height=420)
 
 
+@st.cache_data(ttl=86400, show_spinner=False)
+def get_annual_returns(ticker: str) -> pd.DataFrame:
+    """Year-over-year % returns from ~10y monthly closes (yfinance).
+
+    Args:
+        ticker: Yahoo symbol (e.g. ``MC.PA``).
+
+    Returns:
+        pd.DataFrame: Columns ``Year`` (YYYY str) and ``Return_Pct`` (float).
+        Empty DataFrame on network/delist failure.
+    """
+    empty = pd.DataFrame(columns=["Year", "Return_Pct"])
+    if not ticker:
+        return empty
+    try:
+        raw = yf.download(
+            ticker,
+            period="10y",
+            interval="1mo",
+            progress=False,
+            auto_adjust=True,
+            threads=False,
+        )
+        if raw is None or raw.empty:
+            return empty
+        close = raw["Close"] if "Close" in raw.columns else raw.iloc[:, 0]
+        if isinstance(close, pd.DataFrame):
+            close = close.iloc[:, 0]
+        close = pd.to_numeric(close, errors="coerce").dropna()
+        if close.empty:
+            return empty
+        yearly = close.resample("YE").last().dropna()
+        if len(yearly) < 2:
+            return empty
+        rets = yearly.pct_change().dropna() * 100.0
+        return pd.DataFrame({
+            "Year": [str(int(ts.year)) for ts in rets.index],
+            "Return_Pct": [float(v) for v in rets.values],
+        })
+    except Exception:  # noqa: BLE001
+        return empty
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_valuation_metrics(ticker: str) -> dict:
+    """Analyst targets + multiples for a suggested buy-zone band.
+
+    Pulls ``yfinance.Ticker.info`` and derives ``buy_zone_high`` as the midpoint
+    between the 52-week low and the analyst target low (when both exist).
+
+    Returns:
+        dict: Keys include current/target/52w/P-E/P-B and buy-zone bounds.
+        Empty-ish dict (all None) on failure — never raises.
+    """
+    blank = {
+        "ticker": ticker,
+        "current_price": None,
+        "target_low": None,
+        "target_mean": None,
+        "fifty_two_week_low": None,
+        "fifty_two_week_high": None,
+        "trailing_pe": None,
+        "price_to_book": None,
+        "buy_zone_low": None,
+        "buy_zone_high": None,
+        "ok": False,
+    }
+    if not ticker:
+        return blank
+    try:
+        info = yf.Ticker(ticker).info
+        if not isinstance(info, dict) or not info:
+            return blank
+
+        def _f(x):
+            try:
+                v = float(x)
+                return v if v == v else None
+            except (TypeError, ValueError):
+                return None
+
+        current = _f(info.get("currentPrice") or info.get("regularMarketPrice"))
+        target_low = _f(info.get("targetLowPrice"))
+        target_mean = _f(info.get("targetMeanPrice"))
+        w52_low = _f(info.get("fiftyTwoWeekLow"))
+        w52_high = _f(info.get("fiftyTwoWeekHigh"))
+        pe = _f(info.get("trailingPE"))
+        pb = _f(info.get("priceToBook"))
+
+        buy_low = w52_low
+        buy_high = None
+        if w52_low is not None and target_low is not None:
+            buy_high = (w52_low + target_low) / 2.0
+            if buy_high < w52_low:
+                buy_high = w52_low
+        elif target_low is not None:
+            buy_high = target_low
+            buy_low = target_low * 0.92 if buy_low is None else buy_low
+        elif w52_low is not None:
+            buy_high = w52_low * 1.08
+
+        return {
+            "ticker": ticker,
+            "current_price": current,
+            "target_low": target_low,
+            "target_mean": target_mean,
+            "fifty_two_week_low": w52_low,
+            "fifty_two_week_high": w52_high,
+            "trailing_pe": pe,
+            "price_to_book": pb,
+            "buy_zone_low": buy_low,
+            "buy_zone_high": buy_high,
+            "ok": True,
+        }
+    except Exception:  # noqa: BLE001
+        return blank
+
+
+def render_annual_returns_chart(df: pd.DataFrame, ticker: str) -> go.Figure:
+    """Neon/red yearly return bars on the terminal dark theme."""
+    colors = [_NEON if float(v) >= 0 else _RED for v in df["Return_Pct"]]
+    fig = go.Figure(
+        go.Bar(
+            x=df["Year"].astype(str),
+            y=df["Return_Pct"].astype(float),
+            marker_color=colors,
+            text=[f"{v:+.1f}%" for v in df["Return_Pct"]],
+            textposition="outside",
+            hovertemplate="%{x}: %{y:+.1f}%<extra></extra>",
+        )
+    )
+    fig.add_hline(y=0, line_dash="dot", line_color=_MUTED)
+    fig.update_layout(
+        title=dict(
+            text=f"Perf. annuelle — {ticker} (≈10 ans)",
+            font=dict(color=_WHITE, size=14),
+        ),
+        xaxis_title="Année",
+        yaxis_title="Rendement %",
+        showlegend=False,
+        margin=dict(t=48, l=40, r=20, b=40),
+        bargap=0.25,
+    )
+    return _style_dark_fig(fig, height=380)
+
+
 @st.cache_data(ttl=300, show_spinner=False)
 def _extract_close_frame(raw: pd.DataFrame, tickers: tuple[str, ...] | list[str]) -> pd.DataFrame:
     """Extract a clean Close matrix from yfinance download (no cross-ticker fill)."""
@@ -3256,6 +3402,130 @@ with tab_mkt:
             f"TradingView: <code>{tv}</code></div>"
             f"</div>",
             unsafe_allow_html=True,
+        )
+
+    # --- Phase 18: Valuation / buy zone + 10y annual returns ----------------
+    st.markdown("---")
+    st.markdown("#### 🎯 Valorisation & Recommandation de Prix")
+    st.markdown(
+        "<div class='info-text'>Multiples et objectifs analystes via yfinance "
+        "(souvent plus riches sur large caps). La <b>zone d'achat suggérée</b> "
+        "est une bande heuristique (52w low → milieu vers target low) — "
+        "contexte pour ton jugement PEA, pas un ordre automatique.</div>",
+        unsafe_allow_html=True,
+    )
+    val = get_valuation_metrics(selected)
+    if not val.get("ok"):
+        st.caption(
+            "Valorisation indisponible pour ce ticker "
+            "(réseau, delisting, ou champs Yahoo vides)."
+        )
+    else:
+        cur = val.get("current_price")
+        # Prefer live indicator close when Yahoo info price is missing.
+        if cur is None and ind and ind.get("close"):
+            cur = float(ind["close"])
+        tmean = val.get("target_mean")
+        upside = None
+        if cur and tmean and cur > 0:
+            upside = (tmean / cur - 1.0) * 100.0
+
+        v1, v2, v3, v4 = st.columns(4)
+        with v1:
+            st.markdown(metric_box(
+                "Cours actuel",
+                f"{cur:,.2f} €" if cur is not None else "n/a",
+                sub=(f"vs target mean {upside:+.1f}%" if upside is not None
+                     else "prix Yahoo / indicateur"),
+                accent="" if (upside is None or upside >= 0) else "red",
+                sub_cls=("sub-green" if upside is not None and upside >= 0
+                         else "sub-red" if upside is not None else "sub-muted"),
+                help_text="Dernier cours connu (Yahoo info ou close indicateur).",
+            ), unsafe_allow_html=True)
+        with v2:
+            st.markdown(metric_box(
+                "Target mean analystes",
+                f"{tmean:,.2f} €" if tmean is not None else "n/a",
+                sub=(f"Target low {val['target_low']:,.2f} €"
+                     if val.get("target_low") is not None else "consensus Yahoo"),
+                accent="cyan",
+                help_text="Objectif moyen des analystes (Yahoo Finance).",
+            ), unsafe_allow_html=True)
+        with v3:
+            pe = val.get("trailing_pe")
+            st.markdown(metric_box(
+                "P/E trailing",
+                f"{pe:.1f}×" if pe is not None else "n/a",
+                sub="multiple de bénéfices",
+                help_text="Price / trailing EPS. Vide sur ETF ou pertes.",
+            ), unsafe_allow_html=True)
+        with v4:
+            pb = val.get("price_to_book")
+            st.markdown(metric_box(
+                "Price / Book",
+                f"{pb:.2f}×" if pb is not None else "n/a",
+                sub="valeur comptable",
+                help_text="Cours / book value par action.",
+            ), unsafe_allow_html=True)
+
+        bz_lo = val.get("buy_zone_low")
+        bz_hi = val.get("buy_zone_high")
+        w52_lo = val.get("fifty_two_week_low")
+        w52_hi = val.get("fifty_two_week_high")
+        in_zone = (
+            cur is not None and bz_lo is not None and bz_hi is not None
+            and bz_lo <= cur <= bz_hi
+        )
+        zone_color = _NEON if in_zone else _AMBER
+        zone_label = (
+            f"{bz_lo:,.2f} € → {bz_hi:,.2f} €"
+            if bz_lo is not None and bz_hi is not None
+            else "n/a (données manquantes)"
+        )
+        status = (
+            "DANS LA ZONE — setup prix intéressant à croiser avec le MRE"
+            if in_zone else
+            "HORS ZONE — attendre un meilleur point d'entrée ou ignorer"
+            if bz_hi is not None and cur is not None else
+            "Zone non calculable"
+        )
+        st.markdown(
+            f"<div style='background:#0A0A0A;padding:14px 16px;margin-top:8px;"
+            f"border:1px solid #2A2A2A;border-left:4px solid {zone_color};"
+            f"font-family:Courier New,monospace;'>"
+            f"<div style='color:{_CYAN};font-size:11px;letter-spacing:1.5px;'>"
+            f"ZONE D'ACHAT SUGGÉRÉE</div>"
+            f"<div style='color:{_WHITE};font-size:20px;font-weight:700;"
+            f"margin-top:6px;'>{zone_label}</div>"
+            f"<div style='color:{zone_color};margin-top:8px;font-size:13px;'>"
+            f"{status}</div>"
+            f"<div style='color:{_MUTED};margin-top:8px;font-size:12px;'>"
+            f"52w low "
+            f"{f'{w52_lo:,.2f} €' if w52_lo is not None else 'n/a'} · "
+            f"52w high "
+            f"{f'{w52_hi:,.2f} €' if w52_hi is not None else 'n/a'} · "
+            f"règle = milieu(52w low, target low) comme plafond de zone"
+            f"</div></div>",
+            unsafe_allow_html=True,
+        )
+
+    st.markdown("#### 📊 Performances Annuelles (10 dernières années)")
+    ann = get_annual_returns(selected)
+    if ann is None or ann.empty:
+        st.caption(
+            "Historique annuel indisponible (ticker trop récent, delisté, "
+            "ou erreur réseau Yahoo)."
+        )
+    else:
+        st.plotly_chart(
+            render_annual_returns_chart(ann, selected),
+            width="stretch",
+            key=f"explore_annual_returns_{selected}",
+        )
+        pos_yrs = int((ann["Return_Pct"] >= 0).sum())
+        st.caption(
+            f"{len(ann)} année(s) · {pos_yrs} positive(s) · "
+            f"moyenne {ann['Return_Pct'].mean():+.1f}% / an (arithmétique)."
         )
 
     # News — full width, 2 columns (not a cramped side panel)
