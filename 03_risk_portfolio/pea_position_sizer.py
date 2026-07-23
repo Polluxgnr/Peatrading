@@ -102,6 +102,95 @@ class PeaSizer:
         factor = self.vol_reference / historical_volatility
         return float(max(0.1, min(self.vol_max_factor, factor)))
 
+    def size_with_explanation(
+        self,
+        signal: Signal,
+        portfolio: PortfolioState,
+        current_price: float,
+        historical_volatility: float | None = None,
+    ) -> tuple[int, dict]:
+        """Return ``(qty, meta)`` so UIs can show the sizing reasoning.
+
+        Meta keys: kelly_fraction, score, historical_volatility, vol_factor,
+        max_alloc, target_cash_pre_cap, target_cash, notional, weight_pct,
+        satellite_room, cash_capped.
+        """
+        meta: dict = {
+            "kelly_fraction": self.kelly_fraction,
+            "score": float(signal.score),
+            "historical_volatility": historical_volatility,
+            "vol_factor": 1.0,
+            "max_alloc": 0.0,
+            "target_cash_pre_cap": 0.0,
+            "target_cash": 0.0,
+            "notional": 0.0,
+            "weight_pct": 0.0,
+            "satellite_room": 0.0,
+            "cash_capped": False,
+        }
+        if current_price <= 0 or portfolio.total_equity <= 0:
+            logger.warning(
+                "Sizing %s to 0 (price=%.4f equity=%.2f).",
+                signal.ticker, current_price, portfolio.total_equity,
+            )
+            return 0, meta
+
+        max_alloc = portfolio.total_equity * self.max_single_position
+        target_cash = max_alloc * (signal.score / 100.0) * self.kelly_fraction
+        vol_factor = self._volatility_factor(historical_volatility)
+        target_cash *= vol_factor
+        meta.update({
+            "vol_factor": vol_factor,
+            "max_alloc": max_alloc,
+            "target_cash_pre_cap": target_cash,
+        })
+
+        satellite_room = max(
+            0.0,
+            self.satellite_budget_room(portfolio),
+        )
+        meta["satellite_room"] = satellite_room
+        if target_cash > satellite_room:
+            logger.info(
+                "%s sizing capped by satellite budget: %.2f -> %.2f EUR.",
+                signal.ticker, target_cash, satellite_room,
+            )
+            target_cash = satellite_room
+
+        qty_shares = math.floor(target_cash / current_price)
+        notional = qty_shares * current_price
+        if notional > portfolio.cash_available:
+            qty_shares = math.floor(portfolio.cash_available / current_price)
+            notional = qty_shares * current_price
+            meta["cash_capped"] = True
+            logger.info(
+                "%s sizing capped by cash -> %d shares.",
+                signal.ticker, qty_shares,
+            )
+        else:
+            logger.info(
+                "%s sized to %d shares (target=%.2f @ %.2f, score=%.1f, vol_f=%.2f).",
+                signal.ticker, qty_shares, target_cash, current_price,
+                signal.score, vol_factor,
+            )
+
+        qty_shares = max(0, qty_shares)
+        notional = qty_shares * current_price
+        meta["target_cash"] = target_cash
+        meta["notional"] = notional
+        meta["weight_pct"] = (
+            (notional / portfolio.total_equity * 100.0)
+            if portfolio.total_equity else 0.0
+        )
+        return qty_shares, meta
+
+    def satellite_budget_room(self, portfolio: PortfolioState) -> float:
+        """EUR room left under the satellite budget cap."""
+        return (
+            self.satellite_max_budget * portfolio.total_equity
+            - self._satellite_value(portfolio)
+        )
+
     def calculate_target_qty(
         self,
         signal: Signal,
@@ -111,79 +200,12 @@ class PeaSizer:
     ) -> int:
         """Compute the integer share quantity for a satellite signal.
 
-        Steps:
-            1. ``max_alloc = total_equity * MAX_SINGLE_POSITION_PCT``
-            2. ``target_cash = max_alloc * (score / 100) * KELLY_FRACTION``
-            3. Scale ``target_cash`` by the inverse-volatility parity factor.
-            4. Cap ``target_cash`` so total satellite exposure stays within
-               ``SATELLITE_MAX_BUDGET_PCT`` of equity.
-            5. ``qty = floor(target_cash / current_price)`` (no fractions).
-            6. Clamp to available cash if the notional would exceed it.
-
-        Args:
-            signal: The signal being sized (score drives the allocation).
-            portfolio: Current portfolio snapshot (equity + cash).
-            current_price: Latest price per share in EUR.
-            historical_volatility: Annualized stdev of the asset's returns used
-                for volatility parity. ``None`` disables vol scaling.
-
-        Returns:
-            int: Whole number of shares to buy (0 if nothing is affordable).
+        See ``size_with_explanation`` for the full breakdown (dashboard cards).
         """
-        if current_price <= 0:
-            logger.warning("Non-positive price for %s; sizing to 0.", signal.ticker)
-            return 0
-        if portfolio.total_equity <= 0:
-            logger.warning("Zero equity; sizing %s to 0.", signal.ticker)
-            return 0
-
-        max_alloc = portfolio.total_equity * self.max_single_position
-        target_cash = max_alloc * (signal.score / 100.0) * self.kelly_fraction
-
-        # --- Volatility parity: calmer names get more, wild names get less ----
-        vol_factor = self._volatility_factor(historical_volatility)
-        target_cash *= vol_factor
-
-        # --- Enforce the 30% satellite budget across ALL non-core holdings ----
-        satellite_room = max(
-            0.0,
-            self.satellite_max_budget * portfolio.total_equity
-            - self._satellite_value(portfolio),
+        qty, _meta = self.size_with_explanation(
+            signal, portfolio, current_price, historical_volatility
         )
-        if target_cash > satellite_room:
-            logger.info(
-                "%s sizing capped by satellite budget: %.2f -> %.2f EUR room.",
-                signal.ticker,
-                target_cash,
-                satellite_room,
-            )
-            target_cash = satellite_room
-
-        qty_shares = math.floor(target_cash / current_price)
-
-        notional = qty_shares * current_price
-        if notional > portfolio.cash_available:
-            qty_shares = math.floor(portfolio.cash_available / current_price)
-            logger.info(
-                "%s sizing capped by cash: target %.2f EUR > cash %.2f EUR -> %d shares.",
-                signal.ticker,
-                notional,
-                portfolio.cash_available,
-                qty_shares,
-            )
-        else:
-            logger.info(
-                "%s sized to %d shares (target_cash=%.2f EUR @ %.2f, score=%.1f, "
-                "vol_factor=%.2f).",
-                signal.ticker,
-                qty_shares,
-                target_cash,
-                current_price,
-                signal.score,
-                vol_factor,
-            )
-
-        return max(0, qty_shares)
+        return qty
 
 
 if __name__ == "__main__":

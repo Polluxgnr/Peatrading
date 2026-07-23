@@ -127,8 +127,9 @@ Trade explainer · news → integer score · Friday CIO digest → Discord webho
 | `05_interfaces/terminal_dashboard.py` | Streamlit command center |
 | `05_interfaces/discord_copilot.py` | Alerts + approve/revoke |
 | `main_scheduler.py` | Daemon: passes, weekly, monthly |
-| `tools/build_llm_dump.py` | Regenerate `PROJECT_FULL_DUMP_FOR_LLM.md` |
-| `tools/sync_universe_from_bourso.py` | Refresh PEA universe YAML |
+| `01_memory_core/logging_setup.py` | Rotating per-component logs + pipeline heartbeat JSON |
+| `05_interfaces/trade_cards.py` | Rich PENDING trade cards (Kelly / ATR risk / sector / Tier) |
+| `experiments/newsletter_ingest/` | Yahoo Mail IMAP sandbox → local JSON only |
 
 ---
 
@@ -216,11 +217,14 @@ python tools/build_llm_dump.py               # refresh LLM dump
 
 | Tab | Content |
 |-----|---------|
-| **General & Signaux** | Adaptive multi-horizon suggestion (MICRO→FULL), Core card, geo, ledger, month news |
-| **Portefeuille** | **Equity curve**, sunburst, positions, wallet editor → SQLite |
-| **Exploration** | Liquid scan, ticker dossier, TA explain, news, insiders (AMF→FMP→YF), Polymarket |
+| **General & Signaux** | Adaptive multi-horizon suggestion, **rich PENDING trade cards**, geo, ledger |
+| **Portefeuille** | **Equity curve + metrics**, sunburst, wallet editor → SQLite |
+| **Exploration** | Liquid scan, ticker dossier (also via Mission Control `TICKER` GO) |
 | **Univers** | Full list + sector average performance |
-| **Architecture** | Living docs (matches code) |
+| **Architecture & Logs** | Living docs + **tail/copy of `logs/*.log`** |
+
+**Mission Control** (above tabs): Euronext open/closed, last pipeline health,
+equity day Δ, VIX, pending count, Bloomberg-style `TICKER` + **GO**.
 
 ---
 

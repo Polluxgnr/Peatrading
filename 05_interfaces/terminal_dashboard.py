@@ -47,6 +47,38 @@ try:
 except Exception:  # noqa: BLE001
     compute_equity_metrics = None  # type: ignore[assignment]
 
+try:
+    from logging_setup import (  # noqa: E402
+        list_log_files,
+        read_pipeline_status,
+        setup_app_logging,
+        tail_log,
+        get_component_logger,
+    )
+    setup_app_logging(level="INFO", console=False)
+    _dash_log = get_component_logger("dashboard")
+except Exception:  # noqa: BLE001
+    list_log_files = None  # type: ignore[assignment]
+    read_pipeline_status = None  # type: ignore[assignment]
+    tail_log = None  # type: ignore[assignment]
+    _dash_log = None
+
+try:
+    from trade_cards import (  # noqa: E402
+        atr_risk_line,
+        render_signal_card,
+        sector_impact_line,
+    )
+except Exception:  # noqa: BLE001
+    atr_risk_line = None  # type: ignore[assignment]
+    render_signal_card = None  # type: ignore[assignment]
+    sector_impact_line = None  # type: ignore[assignment]
+
+try:
+    from pea_position_sizer import PeaSizer  # noqa: E402
+except Exception:  # noqa: BLE001
+    PeaSizer = None  # type: ignore[assignment]
+
 try:  # Optional sensors — the dashboard still works if a network dep is missing.
     from macro_alpha_api import MacroAlphaSensor  # noqa: E402
 except Exception:  # noqa: BLE001
@@ -78,20 +110,20 @@ _SAT_BUDGET = float(_RISK.get("SATELLITE_MAX_BUDGET_PCT", 0.30))
 _MAX_SECTOR = float(_RISK.get("MAX_SECTOR_WEIGHT_PCT", 0.25))
 _CORE_TICKER = str(_RISK.get("CORE_TICKER", "CW8.PA"))
 
-# --- Bloomberg palette (pure black + stark neon accents) ---------------------
+# --- Terminal palette (Bloomberg-inspired, easy on long sessions) ------------
+# Neon green is reserved for POSITIVE PnL / APPROVED only — not every chrome.
 _BG = "#050505"
 _PANEL = "#000000"
-_WHITE = "#FFFFFF"
-_NEON = "#00FF00"       # neon green (bullish / positive)
-_AMBER = "#FFB000"      # amber (warning / median)
-_CYAN = "#00FFFF"       # cyan (labels / links / info)
-_RED = "#FF3B30"        # red (bearish / negative / breach)
-_MUTED = "#9BA3AF"      # readable light gray (never gray-on-gray)
-_GRID = "#1A1A1A"       # chart gridlines
+_WHITE = "#E0E0E0"      # off-white primary text (not pure white)
+_NEON = "#00FF00"       # positive PnL / APPROVED accents only
+_AMBER = "#FFB000"      # alerts / vetoes / warnings
+_CYAN = "#00B4D8"       # labels / links / info (softer than electric cyan)
+_RED = "#FF3B30"        # losses / breaches
+_MUTED = "#9BA3AF"
+_GRID = "#1A1A1A"
 _HEADER_FILL = "#0A0A0A"
-_BRIGHT_SERIES = ["#00FF00", "#00FFFF", "#FFB000", "#FF3B30", "#FF00FF",
-                  "#1E90FF", "#FFFFFF", "#ADFF2F", "#FF7F50", "#7FFFD4"]
-# Diverging scale with a DARK neutral (avoids glaring pale-yellow on black).
+_BRIGHT_SERIES = ["#00FF00", "#00B4D8", "#FFB000", "#FF3B30", "#C77DFF",
+                  "#1E90FF", "#E0E0E0", "#ADFF2F", "#FF7F50", "#7FFFD4"]
 _DIVERGE = [[0.0, _RED], [0.5, "#2A2A2A"], [1.0, _NEON]]
 
 # =============================================================================
@@ -118,6 +150,143 @@ def short_name(ticker: str) -> str:
     return TICKER_NAMES.get(ticker, ticker)
 
 
+def euronext_session_status() -> tuple[str, str]:
+    """Return ``(label, health)`` for Euronext Paris cash session.
+
+    Rough hours 09:00–17:30 Europe/Paris, Mon–Fri. Good enough for a HUD;
+    not a legal exchange calendar.
+    """
+    try:
+        from zoneinfo import ZoneInfo
+        now = datetime.now(ZoneInfo("Europe/Paris"))
+    except Exception:  # noqa: BLE001
+        now = datetime.now()
+    if now.weekday() >= 5:
+        return "FERME (week-end)", "amber"
+    mins = now.hour * 60 + now.minute
+    if 9 * 60 <= mins <= 17 * 60 + 30:
+        return f"OUVERT · {now.strftime('%H:%M')} Paris", "green"
+    return f"FERME · {now.strftime('%H:%M')} Paris", "amber"
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _latest_atr14_approx(ticker: str) -> float | None:
+    """Best-effort ATR(14) for risk cards (DuckDB, else yfinance)."""
+    try:
+        from duckdb_manager import TimeSeriesDB
+        db = TimeSeriesDB()
+        hist = db.get_historical_prices(ticker, days=60)
+        if hist is not None and not hist.empty and len(hist) >= 20:
+            try:
+                import pandas_ta_classic as ta  # noqa: F401
+            except ImportError:
+                import pandas_ta as ta  # noqa: F401
+            work = hist.copy()
+            atr = work.ta.atr(
+                high=work["High"], low=work["Low"], close=work["Close"], length=14
+            )
+            if atr is not None:
+                if isinstance(atr, pd.DataFrame):
+                    atr = atr.iloc[:, 0]
+                val = float(atr.dropna().iloc[-1])
+                return val if val > 0 else None
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        hist = yf.Ticker(ticker).history(period="3mo")
+        if hist is None or hist.empty:
+            return None
+        try:
+            import pandas_ta_classic as ta  # noqa: F401
+        except ImportError:
+            import pandas_ta as ta  # noqa: F401
+        atr = hist.ta.atr(length=14)
+        if atr is None:
+            return None
+        val = float(atr.dropna().iloc[-1])
+        return val if val > 0 else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _sector_for_ticker(ticker: str) -> str:
+    try:
+        row = universe_df[universe_df["Ticker"] == ticker]
+        if not row.empty and "Sector" in row.columns:
+            return str(row.iloc[0]["Sector"])
+    except Exception:  # noqa: BLE001
+        pass
+    return "UNKNOWN"
+
+
+def render_pending_trade_cards(pending_df: pd.DataFrame, portfolio_obj) -> None:
+    """Rich cards for PENDING Discord signals (sizing / ATR risk / sector)."""
+    if pending_df is None or pending_df.empty:
+        st.info(
+            "Aucun signal en attente. Soit le marche n'offre pas de setup MRE, "
+            "soit un veto (VIX / macro / liquidite) a tout bloque."
+        )
+        return
+    if render_signal_card is None:
+        st.dataframe(pending_df)
+        return
+
+    atr_mult = float(_RISK.get("REBALANCE_ATR_STOP_MULT", 2.5))
+    sizer = PeaSizer(_ROOT / "config") if PeaSizer is not None else None
+    prices = get_last_prices(tuple(str(t) for t in pending_df["ticker"].tolist()))
+
+    for _, row in pending_df.head(8).iterrows():
+        ticker = str(row.get("ticker", ""))
+        score = float(row.get("score") or 0)
+        qty = row.get("target_qty")
+        try:
+            qty_i = int(qty) if qty is not None and str(qty) not in ("", "None", "nan") else None
+        except (TypeError, ValueError):
+            qty_i = None
+        price = float(prices.get(ticker) or 0)
+        sizing = None
+        if sizer is not None and price > 0 and str(row.get("signal_type", "")).upper() == "BUY":
+            from data_models import Signal, SignalType, SignalStatus
+            sig = Signal(
+                ticker=ticker,
+                signal_type=SignalType.BUY,
+                status=SignalStatus.PENDING,
+                score=score,
+                reason=str(row.get("reason") or ""),
+            )
+            qty_i, sizing = sizer.size_with_explanation(sig, portfolio_obj, price)
+        notional = (qty_i or 0) * price
+        sector = _sector_for_ticker(ticker)
+        sec_line = ""
+        if sector_impact_line is not None and notional > 0:
+            sec_line = sector_impact_line(
+                portfolio_obj, ticker, sector, notional,
+                float(portfolio_obj.total_equity),
+                sector_cap_pct=_MAX_SECTOR * 100,
+            )
+        risk_line = ""
+        if atr_risk_line is not None and qty_i:
+            atr = _latest_atr14_approx(ticker)
+            risk_line = atr_risk_line(
+                qty_i, atr, atr_mult, float(portfolio_obj.total_equity)
+            )
+        st.markdown(
+            render_signal_card(
+                ticker=ticker,
+                title=format_name(ticker),
+                signal_type=str(row.get("signal_type", "")),
+                score=score,
+                qty=qty_i,
+                reason=str(row.get("reason") or ""),
+                sizing=sizing,
+                sector_line=sec_line,
+                risk_line=risk_line,
+                created_at=str(row.get("created_at", ""))[:19],
+            ),
+            unsafe_allow_html=True,
+        )
+
+
 # =============================================================================
 # Page config & Bloomberg CSS
 # =============================================================================
@@ -139,8 +308,9 @@ st.markdown(
 
     /* --- Custom metric boxes (HUD) --- */
     .metric-box {{ background-color: {_PANEL}; padding: 15px 18px;
-        border: 1px solid #333333; border-left: 4px solid {_NEON};
+        border: 1px solid #333333; border-left: 4px solid {_CYAN};
         margin-bottom: 10px; font-family: 'Courier New', monospace; }}
+    .metric-box.green {{ border-left-color: {_NEON}; }}
     .metric-box.amber {{ border-left-color: {_AMBER}; }}
     .metric-box.cyan  {{ border-left-color: {_CYAN}; }}
     .metric-box.red   {{ border-left-color: {_RED}; }}
@@ -175,7 +345,13 @@ st.markdown(
     .stTabs [data-baseweb="tab-list"] {{ gap: 2px; border-bottom: 1px solid #222; }}
     .stTabs [data-baseweb="tab"] {{ background-color: {_PANEL};
         color: {_MUTED}; font-family: 'Courier New', monospace; }}
-    .stTabs [aria-selected="true"] {{ color: {_NEON} !important; }}
+    .stTabs [aria-selected="true"] {{ color: {_WHITE} !important;
+        border-bottom: 2px solid {_AMBER}; }}
+    .mission {{ background:#080808; border:1px solid #2A2A2A; padding:14px 16px;
+        margin-bottom:14px; font-family:'Courier New',monospace; }}
+    .mission-title {{ color:{_CYAN}; font-size:11px; letter-spacing:2px;
+        text-transform:uppercase; margin-bottom:8px; }}
+    .go-row input {{ font-family:'Courier New',monospace !important; }}
 </style>
 """,
     unsafe_allow_html=True,
@@ -1893,6 +2069,88 @@ with st.sidebar:
 
 st.write("---")
 
+# =============================================================================
+# Mission Control — état du monde en ~3 secondes
+# =============================================================================
+_pending_mc = load_signals(("PENDING",))
+_n_pending = 0 if _pending_mc is None or _pending_mc.empty else len(_pending_mc)
+_eq_curve_mc = load_equity_curve()
+_day_delta = None
+_day_delta_pct = None
+if _eq_curve_mc is not None and not _eq_curve_mc.empty and len(_eq_curve_mc) >= 2:
+    try:
+        _eqs = _eq_curve_mc.sort_values("date")["equity"].astype(float)
+        _day_delta = float(_eqs.iloc[-1] - _eqs.iloc[-2])
+        if float(_eqs.iloc[-2]) > 0:
+            _day_delta_pct = _day_delta / float(_eqs.iloc[-2]) * 100.0
+    except Exception:  # noqa: BLE001
+        pass
+_mkt_label, _mkt_health = euronext_session_status()
+_pipe = read_pipeline_status() if read_pipeline_status else None
+_pipe_health = (_pipe or {}).get("health", "amber")
+_pipe_txt = "jamais"
+if _pipe:
+    _pipe_txt = (
+        f"{_pipe.get('status', '?')} · "
+        f"{_pipe.get('finished_at_local') or _pipe.get('written_at', '')[:19]}"
+    )
+_health_color = {
+    "green": _NEON, "amber": _AMBER, "red": _RED
+}.get(_pipe_health, _AMBER)
+_mkt_color = _NEON if _mkt_health == "green" else _AMBER
+
+st.markdown(
+    f"""
+<div class="mission">
+  <div class="mission-title">Mission Control · PEA personnel</div>
+  <div style="display:flex;flex-wrap:wrap;gap:18px;color:{_WHITE};font-size:13px;">
+    <div>Marché <b style="color:{_mkt_color};">{_mkt_label}</b></div>
+    <div>Dernière passe
+      <b style="color:{_health_color};">{_pipe_txt}</b></div>
+    <div>Equity
+      <b>{portfolio.total_equity:,.0f} €</b>
+      <span style="color:{_NEON if (_day_delta or 0) >= 0 else _RED};">
+        {f"{_day_delta:+,.0f} € ({_day_delta_pct:+.2f}%)" if _day_delta is not None else "·"}
+      </span>
+    </div>
+    <div>VIX <b style="color:{_RED if vix_panic else _WHITE};">{vix:.1f}</b></div>
+    <div>Pending Discord
+      <b style="color:{_AMBER if _n_pending else _MUTED};">{_n_pending}</b></div>
+  </div>
+</div>
+""",
+    unsafe_allow_html=True,
+)
+
+# Bloomberg-style <TICKER> <GO> — jump to Exploration dossier
+mc1, mc2, mc3, mc4 = st.columns([2.2, 0.7, 1.2, 1.2])
+with mc1:
+    _go_raw = st.text_input(
+        "Commande",
+        value=st.session_state.get("go_ticker", ""),
+        placeholder="MC.PA  <GO>  — fiche titre dans Exploration",
+        label_visibility="collapsed",
+        key="go_cmd_input",
+    )
+with mc2:
+    _go_click = st.button("GO", type="primary", width="stretch")
+with mc3:
+    if st.button("Ledger signaux", width="stretch"):
+        st.session_state["scroll_to_ledger"] = True
+with mc4:
+    st.caption("Passe manuelle : `python main_scheduler.py --now`")
+
+if _go_click and _go_raw.strip():
+    # Accept "MC.PA", "MC", "mc.pa GO"
+    tok = _go_raw.strip().upper().replace("<GO>", "").replace("GO", "").strip()
+    if tok and not tok.endswith((".PA", ".AS", ".DE", ".MI", ".BR")) and "." not in tok:
+        # Heuristic: French blue-chips default to .PA
+        cand = f"{tok}.PA"
+    else:
+        cand = tok
+    st.session_state["focus_ticker"] = cand
+    st.session_state["go_ticker"] = cand
+    st.toast(f"Fiche → {cand} (onglet Exploration)", icon="🔎")
 
 # =============================================================================
 # Tabs
@@ -1902,7 +2160,7 @@ tab_gen, tab_pf, tab_mkt, tab_uni, tab_arch = st.tabs([
     "🎯 Portefeuille & Allocation",
     "🌍 Exploration",
     "📋 Univers Complet",
-    "🧠 Architecture & Documentation",
+    "🧠 Architecture & Logs",
 ])
 
 # --- Tab: General + Signals --------------------------------------------------
@@ -2084,29 +2342,9 @@ with tab_gen:
     st.markdown("#### ⚡ Signaux & Registre")
     col1, col2 = st.columns(2)
     with col1:
-        st.markdown("##### En attente (Discord)")
+        st.markdown("##### En attente (Discord) — cartes de trade")
         pending = pending_gen
-        if pending.empty:
-            st.info(
-                "Aucun signal aujourd'hui. Le marche ne presente pas "
-                "d'opportunites asymetriques selon nos filtres, ou la "
-                "volatilite est trop elevee."
-            )
-        else:
-            disp = pd.DataFrame({
-                "Titre": [format_name(t) for t in pending["ticker"]],
-                "Type": pending["signal_type"],
-                "Score": [f"{s:.1f}" for s in pending["score"]],
-                "Raison": pending["reason"].fillna(""),
-                "Date": [str(x)[:16] for x in pending["created_at"]],
-            })
-            st.plotly_chart(
-                dark_table(disp, height=320,
-                           font_color_map={"Score": [_NEON] * len(disp)},
-                           col_widths=[2, 0.8, 0.7, 2.4, 1.2]),
-                width="stretch",
-                key="gen_pending_signals_table",
-            )
+        render_pending_trade_cards(pending, portfolio)
     with col2:
         st.markdown("##### Historique (20 derniers)")
         hist = load_signals(("EXECUTED", "REVOKED", "REJECTED", "EXPIRED"), limit=20)
@@ -2538,6 +2776,14 @@ with tab_mkt:
         w = str(perf.iloc[-1]["Ticker"])
         if w in options:
             default_idx = options.index(w)
+    # Mission-control <TICKER> GO overrides the default once.
+    focus = st.session_state.get("focus_ticker")
+    if focus:
+        if focus in options:
+            default_idx = options.index(focus)
+        elif focus not in options:
+            options = sorted(set(options) | {focus})
+            default_idx = options.index(focus)
     selected = st.selectbox(
         "Actif a analyser", options, index=default_idx,
         format_func=format_name, key="explore_ticker",
@@ -3007,6 +3253,37 @@ AMF → FMP → yfinance / VIX / Bourso best-effort
 Le dashboard lit l'etat en continu. L'editeur de wallet peut ecrire
 cash/positions. Les ordres restent Discord + scheduler.
 """)
+
+    st.markdown("---")
+    st.markdown("### 📋 Logs détaillés (copie / audit)")
+    st.markdown(
+        "<div class='info-text'>Fichiers rotatifs sous <code>logs/</code> — "
+        "un par composant + <code>pea_sniper_all.log</code>. Format détaillé "
+        "(fichier:ligne:fonction). Lecture seule ici ; rien n'est modifié.</div>",
+        unsafe_allow_html=True,
+    )
+    if list_log_files is None or tail_log is None:
+        st.caption("Module logging indisponible.")
+    else:
+        files = list_log_files()
+        if not files:
+            st.caption(
+                "Aucun log encore. Lance `python main_scheduler.py --now` "
+                "pour peupler `logs/`."
+            )
+        else:
+            names = [p.name for p in files]
+            pick = st.selectbox("Fichier", names, key="log_file_pick")
+            nlines = st.slider("Lignes (tail)", 50, 1000, 250, 50, key="log_tail_n")
+            path = next(p for p in files if p.name == pick)
+            body = tail_log(path, nlines)
+            st.text_area(
+                "Contenu (sélectionnable / copiable)",
+                value=body,
+                height=420,
+                key="log_tail_view",
+            )
+            st.caption(str(path))
 
 # =============================================================================
 # Footer + optional auto-refresh

@@ -227,7 +227,7 @@ class SignalOrchestrator:
 
             # --- Check 3: PEA position sizing (volatility-adjusted) ---
             hist_vol = self._historical_volatility(ticker)
-            target_qty = self.sizer.calculate_target_qty(
+            target_qty, sizing = self.sizer.size_with_explanation(
                 signal, portfolio, price, historical_volatility=hist_vol
             )
             if target_qty <= 0:
@@ -238,16 +238,23 @@ class SignalOrchestrator:
 
             signal.target_qty = target_qty
             signal.status = SignalStatus.APPROVED
+            vol = sizing.get("historical_volatility")
+            vol_txt = f"{vol * 100:.1f}%" if isinstance(vol, (int, float)) and vol else "n/a"
             signal.reason = (
-                f"{signal.reason} | APPROVED: {target_qty} share(s) "
-                f"@ {price:.2f} EUR"
+                f"{signal.reason} | APPROVED: {target_qty} share(s) @ {price:.2f} EUR "
+                f"| sizing: Kelly {sizing.get('kelly_fraction', 0):.2f} × "
+                f"score {signal.score:.0f}/100 · vol {vol_txt} "
+                f"(×{sizing.get('vol_factor', 1):.2f}) · "
+                f"poids {sizing.get('weight_pct', 0):.2f}% equity "
+                f"({sizing.get('notional', 0):,.0f} €)"
             ).strip(" |")
             logger.info(
-                "APPROVED %s: %d share(s) @ %.2f EUR (score=%.1f).",
+                "APPROVED %s: %d share(s) @ %.2f EUR (score=%.1f, weight=%.2f%%).",
                 ticker,
                 target_qty,
                 price,
                 signal.score,
+                sizing.get("weight_pct", 0),
             )
             if not already_held:
                 satellite_lines += 1

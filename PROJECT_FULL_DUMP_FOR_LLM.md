@@ -1,9 +1,9 @@
 # PEA Sniper Terminal — Full Project Dump for LLM
 Root: `C:\Users\PolluxGronier\Downloads\pea_sniper_terminal`
-Generated: 2026-07-23 13:20 UTC
+Generated: 2026-07-23 13:27 UTC
 One-shot context dump of source, configs, and docs (no venv, no DBs, no secrets).
 ---
-## File index (51 files)
+## File index (62 files)
 - .github/workflows/ci.yml
 - .gitignore
 - .streamlit/config.toml
@@ -17,6 +17,7 @@ One-shot context dump of source, configs, and docs (no venv, no DBs, no secrets)
 - 01_memory_core/__init__.py
 - 01_memory_core/data_models.py
 - 01_memory_core/duckdb_manager.py
+- 01_memory_core/logging_setup.py
 - 01_memory_core/sqlite_portfolio.py
 - 02_quant_engine/__init__.py
 - 02_quant_engine/smart_dca_engine.py
@@ -37,6 +38,7 @@ One-shot context dump of source, configs, and docs (no venv, no DBs, no secrets)
 - 05_interfaces/discord_copilot.py
 - 05_interfaces/llm_explainer.py
 - 05_interfaces/terminal_dashboard.py
+- 05_interfaces/trade_cards.py
 - config/api_keys.env.example
 - config/earnings_calendar.yaml
 - config/macro_calendar.yaml
@@ -44,6 +46,14 @@ One-shot context dump of source, configs, and docs (no venv, no DBs, no secrets)
 - config/risk_params.yaml
 - docker-compose.yml
 - Dockerfile
+- experiments/newsletter_ingest/ingest/__init__.py
+- experiments/newsletter_ingest/ingest/dedupe.py
+- experiments/newsletter_ingest/ingest/env_loader.py
+- experiments/newsletter_ingest/ingest/html_parser.py
+- experiments/newsletter_ingest/ingest/imap_client.py
+- experiments/newsletter_ingest/ingest/writer.py
+- experiments/newsletter_ingest/README.md
+- experiments/newsletter_ingest/run_ingest.py
 - main_scheduler.py
 - README.md
 - requirements.txt
@@ -52,6 +62,7 @@ One-shot context dump of source, configs, and docs (no venv, no DBs, no secrets)
 - seed_account.py
 - tests/__init__.py
 - tests/test_phase16_foundations.py
+- tests/test_ui_and_sandbox.py
 - tools/build_llm_dump.py
 - tools/build_universe.py
 - tools/sync_universe_from_bourso.py
@@ -124,7 +135,13 @@ Thumbs.db
 
 # --- Logs & data dumps ---
 *.log
+logs/
 data/
+
+# --- Experiment sandboxes ---
+experiments/**/.env
+experiments/**/output/*.json
+!experiments/**/output/.gitkeep
 ```
 
 ## FILE: .streamlit/config.toml
@@ -1951,6 +1968,206 @@ class TimeSeriesDB:
             raise
 ```
 
+## FILE: 01_memory_core/logging_setup.py
+```python
+"""Central logging setup for PEA Sniper Terminal.
+
+One place to configure human-readable, copy-friendly logs:
+
+* Console: compact INFO for day-to-day ops.
+* Rotating files under ``logs/``: one file per logical component, DEBUG detail
+  (module, function, line) so you can audit a full pass without drowning the UI.
+
+Usage::
+
+    from logging_setup import setup_app_logging, get_component_logger
+    setup_app_logging()                    # once at process entry
+    log = get_component_logger("cascade")  # -> logs/cascade.log + console
+
+Keep it light: this is a personal PEA terminal, not a Kubernetes fleet.
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
+from typing import Optional
+
+_ROOT = Path(__file__).resolve().parent.parent
+_LOG_DIR = _ROOT / "logs"
+_CONFIGURED = False
+
+# Concise for humans watching the terminal.
+_CONSOLE_FMT = "%(asctime)s | %(levelname)-7s | %(name)s | %(message)s"
+# Hyper-detailed for post-mortems / copy-paste into tickets.
+_FILE_FMT = (
+    "%(asctime)s | %(levelname)-7s | %(name)s | %(filename)s:%(lineno)d "
+    "%(funcName)s | %(message)s"
+)
+_DATE_FMT = "%Y-%m-%d %H:%M:%S"
+
+
+def log_dir() -> Path:
+    """Return (and create) the project logs directory."""
+    _LOG_DIR.mkdir(parents=True, exist_ok=True)
+    return _LOG_DIR
+
+
+def setup_app_logging(
+    level: int | str = logging.INFO,
+    console: bool = True,
+) -> None:
+    """Idempotent root logging bootstrap for CLI entrypoints.
+
+    Args:
+        level: Root level (INFO recommended; DEBUG for deep dives).
+        console: Attach a StreamHandler when True.
+    """
+    global _CONFIGURED
+    if _CONFIGURED:
+        return
+
+    root = logging.getLogger()
+    root.setLevel(logging.DEBUG)  # handlers filter; keep DEBUG available to files
+
+    if isinstance(level, str):
+        level = getattr(logging, level.upper(), logging.INFO)
+
+    # Quiet noisy third parties so our own trails stay readable.
+    for noisy in ("urllib3", "yfinance", "peewee", "asyncio", "httpx", "httpcore"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
+
+    if console and not any(
+        isinstance(h, logging.StreamHandler) and not isinstance(h, RotatingFileHandler)
+        for h in root.handlers
+    ):
+        sh = logging.StreamHandler()
+        sh.setLevel(level)
+        sh.setFormatter(logging.Formatter(_CONSOLE_FMT, datefmt=_DATE_FMT))
+        root.addHandler(sh)
+
+    # Shared "all" trail — every component fans into this too.
+    all_path = log_dir() / "pea_sniper_all.log"
+    if not any(
+        isinstance(h, RotatingFileHandler) and getattr(h, "baseFilename", "") == str(all_path)
+        for h in root.handlers
+    ):
+        fh = RotatingFileHandler(
+            all_path, maxBytes=2_000_000, backupCount=5, encoding="utf-8"
+        )
+        fh.setLevel(logging.DEBUG)
+        fh.setFormatter(logging.Formatter(_FILE_FMT, datefmt=_DATE_FMT))
+        root.addHandler(fh)
+
+    _CONFIGURED = True
+    logging.getLogger("logging_setup").info(
+        "Logging ready — console=%s, files under %s", console, log_dir()
+    )
+
+
+def get_component_logger(
+    component: str,
+    level: int = logging.DEBUG,
+    max_bytes: int = 1_500_000,
+    backup_count: int = 4,
+) -> logging.Logger:
+    """Return a named logger that also writes ``logs/<component>.log``.
+
+    Args:
+        component: Short slug (``scheduler``, ``cascade``, ``dashboard``…).
+        level: Minimum level for the component file handler.
+        max_bytes: Rotate when the file exceeds this size.
+        backup_count: How many rotated files to keep.
+
+    Returns:
+        logging.Logger: Ready-to-use logger (propagate to root for the all-trail).
+    """
+    setup_app_logging()
+    safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in component)
+    logger = logging.getLogger(safe)
+    logger.setLevel(level)
+
+    path = log_dir() / f"{safe}.log"
+    already = any(
+        isinstance(h, RotatingFileHandler)
+        and Path(getattr(h, "baseFilename", "")).resolve() == path.resolve()
+        for h in logger.handlers
+    )
+    if not already:
+        fh = RotatingFileHandler(
+            path, maxBytes=max_bytes, backupCount=backup_count, encoding="utf-8"
+        )
+        fh.setLevel(level)
+        fh.setFormatter(logging.Formatter(_FILE_FMT, datefmt=_DATE_FMT))
+        logger.addHandler(fh)
+
+    return logger
+
+
+def list_log_files() -> list[Path]:
+    """Sorted list of ``*.log`` files under ``logs/`` (newest first by mtime)."""
+    d = log_dir()
+    files = list(d.glob("*.log"))
+    return sorted(files, key=lambda p: p.stat().st_mtime, reverse=True)
+
+
+def tail_log(path: Path | str, n_lines: int = 200) -> str:
+    """Return the last ``n_lines`` of a log file (UTF-8, tolerant).
+
+    Args:
+        path: Log file path.
+        n_lines: How many trailing lines to return.
+
+    Returns:
+        str: Tail text, or an error message if unreadable.
+    """
+    p = Path(path)
+    try:
+        text = p.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        return f"[unavailable: {exc}]"
+    lines = text.splitlines()
+    return "\n".join(lines[-max(1, n_lines) :])
+
+
+def write_pipeline_status(payload: dict) -> Path:
+    """Persist a tiny JSON heartbeat the dashboard can read (mission control).
+
+    Args:
+        payload: Must be JSON-serializable (status, timestamps, counts…).
+
+    Returns:
+        Path: Written file under ``database/pipeline_status.json``.
+    """
+    import json
+    from datetime import datetime, timezone
+
+    out_dir = _ROOT / "database"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / "pipeline_status.json"
+    body = {
+        **payload,
+        "written_at": datetime.now(timezone.utc).isoformat(),
+    }
+    path.write_text(json.dumps(body, indent=2, default=str), encoding="utf-8")
+    return path
+
+
+def read_pipeline_status() -> Optional[dict]:
+    """Load the last pipeline heartbeat, or ``None`` if missing/corrupt."""
+    import json
+
+    path = _ROOT / "database" / "pipeline_status.json"
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return None
+```
+
 ## FILE: 01_memory_core/sqlite_portfolio.py
 ```python
 """SQLite state manager for PEA Sniper Terminal V-Prime.
@@ -3639,6 +3856,95 @@ class PeaSizer:
         factor = self.vol_reference / historical_volatility
         return float(max(0.1, min(self.vol_max_factor, factor)))
 
+    def size_with_explanation(
+        self,
+        signal: Signal,
+        portfolio: PortfolioState,
+        current_price: float,
+        historical_volatility: float | None = None,
+    ) -> tuple[int, dict]:
+        """Return ``(qty, meta)`` so UIs can show the sizing reasoning.
+
+        Meta keys: kelly_fraction, score, historical_volatility, vol_factor,
+        max_alloc, target_cash_pre_cap, target_cash, notional, weight_pct,
+        satellite_room, cash_capped.
+        """
+        meta: dict = {
+            "kelly_fraction": self.kelly_fraction,
+            "score": float(signal.score),
+            "historical_volatility": historical_volatility,
+            "vol_factor": 1.0,
+            "max_alloc": 0.0,
+            "target_cash_pre_cap": 0.0,
+            "target_cash": 0.0,
+            "notional": 0.0,
+            "weight_pct": 0.0,
+            "satellite_room": 0.0,
+            "cash_capped": False,
+        }
+        if current_price <= 0 or portfolio.total_equity <= 0:
+            logger.warning(
+                "Sizing %s to 0 (price=%.4f equity=%.2f).",
+                signal.ticker, current_price, portfolio.total_equity,
+            )
+            return 0, meta
+
+        max_alloc = portfolio.total_equity * self.max_single_position
+        target_cash = max_alloc * (signal.score / 100.0) * self.kelly_fraction
+        vol_factor = self._volatility_factor(historical_volatility)
+        target_cash *= vol_factor
+        meta.update({
+            "vol_factor": vol_factor,
+            "max_alloc": max_alloc,
+            "target_cash_pre_cap": target_cash,
+        })
+
+        satellite_room = max(
+            0.0,
+            self.satellite_budget_room(portfolio),
+        )
+        meta["satellite_room"] = satellite_room
+        if target_cash > satellite_room:
+            logger.info(
+                "%s sizing capped by satellite budget: %.2f -> %.2f EUR.",
+                signal.ticker, target_cash, satellite_room,
+            )
+            target_cash = satellite_room
+
+        qty_shares = math.floor(target_cash / current_price)
+        notional = qty_shares * current_price
+        if notional > portfolio.cash_available:
+            qty_shares = math.floor(portfolio.cash_available / current_price)
+            notional = qty_shares * current_price
+            meta["cash_capped"] = True
+            logger.info(
+                "%s sizing capped by cash -> %d shares.",
+                signal.ticker, qty_shares,
+            )
+        else:
+            logger.info(
+                "%s sized to %d shares (target=%.2f @ %.2f, score=%.1f, vol_f=%.2f).",
+                signal.ticker, qty_shares, target_cash, current_price,
+                signal.score, vol_factor,
+            )
+
+        qty_shares = max(0, qty_shares)
+        notional = qty_shares * current_price
+        meta["target_cash"] = target_cash
+        meta["notional"] = notional
+        meta["weight_pct"] = (
+            (notional / portfolio.total_equity * 100.0)
+            if portfolio.total_equity else 0.0
+        )
+        return qty_shares, meta
+
+    def satellite_budget_room(self, portfolio: PortfolioState) -> float:
+        """EUR room left under the satellite budget cap."""
+        return (
+            self.satellite_max_budget * portfolio.total_equity
+            - self._satellite_value(portfolio)
+        )
+
     def calculate_target_qty(
         self,
         signal: Signal,
@@ -3648,79 +3954,12 @@ class PeaSizer:
     ) -> int:
         """Compute the integer share quantity for a satellite signal.
 
-        Steps:
-            1. ``max_alloc = total_equity * MAX_SINGLE_POSITION_PCT``
-            2. ``target_cash = max_alloc * (score / 100) * KELLY_FRACTION``
-            3. Scale ``target_cash`` by the inverse-volatility parity factor.
-            4. Cap ``target_cash`` so total satellite exposure stays within
-               ``SATELLITE_MAX_BUDGET_PCT`` of equity.
-            5. ``qty = floor(target_cash / current_price)`` (no fractions).
-            6. Clamp to available cash if the notional would exceed it.
-
-        Args:
-            signal: The signal being sized (score drives the allocation).
-            portfolio: Current portfolio snapshot (equity + cash).
-            current_price: Latest price per share in EUR.
-            historical_volatility: Annualized stdev of the asset's returns used
-                for volatility parity. ``None`` disables vol scaling.
-
-        Returns:
-            int: Whole number of shares to buy (0 if nothing is affordable).
+        See ``size_with_explanation`` for the full breakdown (dashboard cards).
         """
-        if current_price <= 0:
-            logger.warning("Non-positive price for %s; sizing to 0.", signal.ticker)
-            return 0
-        if portfolio.total_equity <= 0:
-            logger.warning("Zero equity; sizing %s to 0.", signal.ticker)
-            return 0
-
-        max_alloc = portfolio.total_equity * self.max_single_position
-        target_cash = max_alloc * (signal.score / 100.0) * self.kelly_fraction
-
-        # --- Volatility parity: calmer names get more, wild names get less ----
-        vol_factor = self._volatility_factor(historical_volatility)
-        target_cash *= vol_factor
-
-        # --- Enforce the 30% satellite budget across ALL non-core holdings ----
-        satellite_room = max(
-            0.0,
-            self.satellite_max_budget * portfolio.total_equity
-            - self._satellite_value(portfolio),
+        qty, _meta = self.size_with_explanation(
+            signal, portfolio, current_price, historical_volatility
         )
-        if target_cash > satellite_room:
-            logger.info(
-                "%s sizing capped by satellite budget: %.2f -> %.2f EUR room.",
-                signal.ticker,
-                target_cash,
-                satellite_room,
-            )
-            target_cash = satellite_room
-
-        qty_shares = math.floor(target_cash / current_price)
-
-        notional = qty_shares * current_price
-        if notional > portfolio.cash_available:
-            qty_shares = math.floor(portfolio.cash_available / current_price)
-            logger.info(
-                "%s sizing capped by cash: target %.2f EUR > cash %.2f EUR -> %d shares.",
-                signal.ticker,
-                notional,
-                portfolio.cash_available,
-                qty_shares,
-            )
-        else:
-            logger.info(
-                "%s sized to %d shares (target_cash=%.2f EUR @ %.2f, score=%.1f, "
-                "vol_factor=%.2f).",
-                signal.ticker,
-                qty_shares,
-                target_cash,
-                current_price,
-                signal.score,
-                vol_factor,
-            )
-
-        return max(0, qty_shares)
+        return qty
 
 
 if __name__ == "__main__":
@@ -4501,7 +4740,7 @@ class SignalOrchestrator:
 
             # --- Check 3: PEA position sizing (volatility-adjusted) ---
             hist_vol = self._historical_volatility(ticker)
-            target_qty = self.sizer.calculate_target_qty(
+            target_qty, sizing = self.sizer.size_with_explanation(
                 signal, portfolio, price, historical_volatility=hist_vol
             )
             if target_qty <= 0:
@@ -4512,16 +4751,23 @@ class SignalOrchestrator:
 
             signal.target_qty = target_qty
             signal.status = SignalStatus.APPROVED
+            vol = sizing.get("historical_volatility")
+            vol_txt = f"{vol * 100:.1f}%" if isinstance(vol, (int, float)) and vol else "n/a"
             signal.reason = (
-                f"{signal.reason} | APPROVED: {target_qty} share(s) "
-                f"@ {price:.2f} EUR"
+                f"{signal.reason} | APPROVED: {target_qty} share(s) @ {price:.2f} EUR "
+                f"| sizing: Kelly {sizing.get('kelly_fraction', 0):.2f} × "
+                f"score {signal.score:.0f}/100 · vol {vol_txt} "
+                f"(×{sizing.get('vol_factor', 1):.2f}) · "
+                f"poids {sizing.get('weight_pct', 0):.2f}% equity "
+                f"({sizing.get('notional', 0):,.0f} €)"
             ).strip(" |")
             logger.info(
-                "APPROVED %s: %d share(s) @ %.2f EUR (score=%.1f).",
+                "APPROVED %s: %d share(s) @ %.2f EUR (score=%.1f, weight=%.2f%%).",
                 ticker,
                 target_qty,
                 price,
                 signal.score,
+                sizing.get("weight_pct", 0),
             )
             if not already_held:
                 satellite_lines += 1
@@ -5372,6 +5618,38 @@ try:
 except Exception:  # noqa: BLE001
     compute_equity_metrics = None  # type: ignore[assignment]
 
+try:
+    from logging_setup import (  # noqa: E402
+        list_log_files,
+        read_pipeline_status,
+        setup_app_logging,
+        tail_log,
+        get_component_logger,
+    )
+    setup_app_logging(level="INFO", console=False)
+    _dash_log = get_component_logger("dashboard")
+except Exception:  # noqa: BLE001
+    list_log_files = None  # type: ignore[assignment]
+    read_pipeline_status = None  # type: ignore[assignment]
+    tail_log = None  # type: ignore[assignment]
+    _dash_log = None
+
+try:
+    from trade_cards import (  # noqa: E402
+        atr_risk_line,
+        render_signal_card,
+        sector_impact_line,
+    )
+except Exception:  # noqa: BLE001
+    atr_risk_line = None  # type: ignore[assignment]
+    render_signal_card = None  # type: ignore[assignment]
+    sector_impact_line = None  # type: ignore[assignment]
+
+try:
+    from pea_position_sizer import PeaSizer  # noqa: E402
+except Exception:  # noqa: BLE001
+    PeaSizer = None  # type: ignore[assignment]
+
 try:  # Optional sensors — the dashboard still works if a network dep is missing.
     from macro_alpha_api import MacroAlphaSensor  # noqa: E402
 except Exception:  # noqa: BLE001
@@ -5403,20 +5681,20 @@ _SAT_BUDGET = float(_RISK.get("SATELLITE_MAX_BUDGET_PCT", 0.30))
 _MAX_SECTOR = float(_RISK.get("MAX_SECTOR_WEIGHT_PCT", 0.25))
 _CORE_TICKER = str(_RISK.get("CORE_TICKER", "CW8.PA"))
 
-# --- Bloomberg palette (pure black + stark neon accents) ---------------------
+# --- Terminal palette (Bloomberg-inspired, easy on long sessions) ------------
+# Neon green is reserved for POSITIVE PnL / APPROVED only — not every chrome.
 _BG = "#050505"
 _PANEL = "#000000"
-_WHITE = "#FFFFFF"
-_NEON = "#00FF00"       # neon green (bullish / positive)
-_AMBER = "#FFB000"      # amber (warning / median)
-_CYAN = "#00FFFF"       # cyan (labels / links / info)
-_RED = "#FF3B30"        # red (bearish / negative / breach)
-_MUTED = "#9BA3AF"      # readable light gray (never gray-on-gray)
-_GRID = "#1A1A1A"       # chart gridlines
+_WHITE = "#E0E0E0"      # off-white primary text (not pure white)
+_NEON = "#00FF00"       # positive PnL / APPROVED accents only
+_AMBER = "#FFB000"      # alerts / vetoes / warnings
+_CYAN = "#00B4D8"       # labels / links / info (softer than electric cyan)
+_RED = "#FF3B30"        # losses / breaches
+_MUTED = "#9BA3AF"
+_GRID = "#1A1A1A"
 _HEADER_FILL = "#0A0A0A"
-_BRIGHT_SERIES = ["#00FF00", "#00FFFF", "#FFB000", "#FF3B30", "#FF00FF",
-                  "#1E90FF", "#FFFFFF", "#ADFF2F", "#FF7F50", "#7FFFD4"]
-# Diverging scale with a DARK neutral (avoids glaring pale-yellow on black).
+_BRIGHT_SERIES = ["#00FF00", "#00B4D8", "#FFB000", "#FF3B30", "#C77DFF",
+                  "#1E90FF", "#E0E0E0", "#ADFF2F", "#FF7F50", "#7FFFD4"]
 _DIVERGE = [[0.0, _RED], [0.5, "#2A2A2A"], [1.0, _NEON]]
 
 # =============================================================================
@@ -5443,6 +5721,143 @@ def short_name(ticker: str) -> str:
     return TICKER_NAMES.get(ticker, ticker)
 
 
+def euronext_session_status() -> tuple[str, str]:
+    """Return ``(label, health)`` for Euronext Paris cash session.
+
+    Rough hours 09:00–17:30 Europe/Paris, Mon–Fri. Good enough for a HUD;
+    not a legal exchange calendar.
+    """
+    try:
+        from zoneinfo import ZoneInfo
+        now = datetime.now(ZoneInfo("Europe/Paris"))
+    except Exception:  # noqa: BLE001
+        now = datetime.now()
+    if now.weekday() >= 5:
+        return "FERME (week-end)", "amber"
+    mins = now.hour * 60 + now.minute
+    if 9 * 60 <= mins <= 17 * 60 + 30:
+        return f"OUVERT · {now.strftime('%H:%M')} Paris", "green"
+    return f"FERME · {now.strftime('%H:%M')} Paris", "amber"
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _latest_atr14_approx(ticker: str) -> float | None:
+    """Best-effort ATR(14) for risk cards (DuckDB, else yfinance)."""
+    try:
+        from duckdb_manager import TimeSeriesDB
+        db = TimeSeriesDB()
+        hist = db.get_historical_prices(ticker, days=60)
+        if hist is not None and not hist.empty and len(hist) >= 20:
+            try:
+                import pandas_ta_classic as ta  # noqa: F401
+            except ImportError:
+                import pandas_ta as ta  # noqa: F401
+            work = hist.copy()
+            atr = work.ta.atr(
+                high=work["High"], low=work["Low"], close=work["Close"], length=14
+            )
+            if atr is not None:
+                if isinstance(atr, pd.DataFrame):
+                    atr = atr.iloc[:, 0]
+                val = float(atr.dropna().iloc[-1])
+                return val if val > 0 else None
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        hist = yf.Ticker(ticker).history(period="3mo")
+        if hist is None or hist.empty:
+            return None
+        try:
+            import pandas_ta_classic as ta  # noqa: F401
+        except ImportError:
+            import pandas_ta as ta  # noqa: F401
+        atr = hist.ta.atr(length=14)
+        if atr is None:
+            return None
+        val = float(atr.dropna().iloc[-1])
+        return val if val > 0 else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _sector_for_ticker(ticker: str) -> str:
+    try:
+        row = universe_df[universe_df["Ticker"] == ticker]
+        if not row.empty and "Sector" in row.columns:
+            return str(row.iloc[0]["Sector"])
+    except Exception:  # noqa: BLE001
+        pass
+    return "UNKNOWN"
+
+
+def render_pending_trade_cards(pending_df: pd.DataFrame, portfolio_obj) -> None:
+    """Rich cards for PENDING Discord signals (sizing / ATR risk / sector)."""
+    if pending_df is None or pending_df.empty:
+        st.info(
+            "Aucun signal en attente. Soit le marche n'offre pas de setup MRE, "
+            "soit un veto (VIX / macro / liquidite) a tout bloque."
+        )
+        return
+    if render_signal_card is None:
+        st.dataframe(pending_df)
+        return
+
+    atr_mult = float(_RISK.get("REBALANCE_ATR_STOP_MULT", 2.5))
+    sizer = PeaSizer(_ROOT / "config") if PeaSizer is not None else None
+    prices = get_last_prices(tuple(str(t) for t in pending_df["ticker"].tolist()))
+
+    for _, row in pending_df.head(8).iterrows():
+        ticker = str(row.get("ticker", ""))
+        score = float(row.get("score") or 0)
+        qty = row.get("target_qty")
+        try:
+            qty_i = int(qty) if qty is not None and str(qty) not in ("", "None", "nan") else None
+        except (TypeError, ValueError):
+            qty_i = None
+        price = float(prices.get(ticker) or 0)
+        sizing = None
+        if sizer is not None and price > 0 and str(row.get("signal_type", "")).upper() == "BUY":
+            from data_models import Signal, SignalType, SignalStatus
+            sig = Signal(
+                ticker=ticker,
+                signal_type=SignalType.BUY,
+                status=SignalStatus.PENDING,
+                score=score,
+                reason=str(row.get("reason") or ""),
+            )
+            qty_i, sizing = sizer.size_with_explanation(sig, portfolio_obj, price)
+        notional = (qty_i or 0) * price
+        sector = _sector_for_ticker(ticker)
+        sec_line = ""
+        if sector_impact_line is not None and notional > 0:
+            sec_line = sector_impact_line(
+                portfolio_obj, ticker, sector, notional,
+                float(portfolio_obj.total_equity),
+                sector_cap_pct=_MAX_SECTOR * 100,
+            )
+        risk_line = ""
+        if atr_risk_line is not None and qty_i:
+            atr = _latest_atr14_approx(ticker)
+            risk_line = atr_risk_line(
+                qty_i, atr, atr_mult, float(portfolio_obj.total_equity)
+            )
+        st.markdown(
+            render_signal_card(
+                ticker=ticker,
+                title=format_name(ticker),
+                signal_type=str(row.get("signal_type", "")),
+                score=score,
+                qty=qty_i,
+                reason=str(row.get("reason") or ""),
+                sizing=sizing,
+                sector_line=sec_line,
+                risk_line=risk_line,
+                created_at=str(row.get("created_at", ""))[:19],
+            ),
+            unsafe_allow_html=True,
+        )
+
+
 # =============================================================================
 # Page config & Bloomberg CSS
 # =============================================================================
@@ -5464,8 +5879,9 @@ st.markdown(
 
     /* --- Custom metric boxes (HUD) --- */
     .metric-box {{ background-color: {_PANEL}; padding: 15px 18px;
-        border: 1px solid #333333; border-left: 4px solid {_NEON};
+        border: 1px solid #333333; border-left: 4px solid {_CYAN};
         margin-bottom: 10px; font-family: 'Courier New', monospace; }}
+    .metric-box.green {{ border-left-color: {_NEON}; }}
     .metric-box.amber {{ border-left-color: {_AMBER}; }}
     .metric-box.cyan  {{ border-left-color: {_CYAN}; }}
     .metric-box.red   {{ border-left-color: {_RED}; }}
@@ -5500,7 +5916,13 @@ st.markdown(
     .stTabs [data-baseweb="tab-list"] {{ gap: 2px; border-bottom: 1px solid #222; }}
     .stTabs [data-baseweb="tab"] {{ background-color: {_PANEL};
         color: {_MUTED}; font-family: 'Courier New', monospace; }}
-    .stTabs [aria-selected="true"] {{ color: {_NEON} !important; }}
+    .stTabs [aria-selected="true"] {{ color: {_WHITE} !important;
+        border-bottom: 2px solid {_AMBER}; }}
+    .mission {{ background:#080808; border:1px solid #2A2A2A; padding:14px 16px;
+        margin-bottom:14px; font-family:'Courier New',monospace; }}
+    .mission-title {{ color:{_CYAN}; font-size:11px; letter-spacing:2px;
+        text-transform:uppercase; margin-bottom:8px; }}
+    .go-row input {{ font-family:'Courier New',monospace !important; }}
 </style>
 """,
     unsafe_allow_html=True,
@@ -7218,6 +7640,88 @@ with st.sidebar:
 
 st.write("---")
 
+# =============================================================================
+# Mission Control — état du monde en ~3 secondes
+# =============================================================================
+_pending_mc = load_signals(("PENDING",))
+_n_pending = 0 if _pending_mc is None or _pending_mc.empty else len(_pending_mc)
+_eq_curve_mc = load_equity_curve()
+_day_delta = None
+_day_delta_pct = None
+if _eq_curve_mc is not None and not _eq_curve_mc.empty and len(_eq_curve_mc) >= 2:
+    try:
+        _eqs = _eq_curve_mc.sort_values("date")["equity"].astype(float)
+        _day_delta = float(_eqs.iloc[-1] - _eqs.iloc[-2])
+        if float(_eqs.iloc[-2]) > 0:
+            _day_delta_pct = _day_delta / float(_eqs.iloc[-2]) * 100.0
+    except Exception:  # noqa: BLE001
+        pass
+_mkt_label, _mkt_health = euronext_session_status()
+_pipe = read_pipeline_status() if read_pipeline_status else None
+_pipe_health = (_pipe or {}).get("health", "amber")
+_pipe_txt = "jamais"
+if _pipe:
+    _pipe_txt = (
+        f"{_pipe.get('status', '?')} · "
+        f"{_pipe.get('finished_at_local') or _pipe.get('written_at', '')[:19]}"
+    )
+_health_color = {
+    "green": _NEON, "amber": _AMBER, "red": _RED
+}.get(_pipe_health, _AMBER)
+_mkt_color = _NEON if _mkt_health == "green" else _AMBER
+
+st.markdown(
+    f"""
+<div class="mission">
+  <div class="mission-title">Mission Control · PEA personnel</div>
+  <div style="display:flex;flex-wrap:wrap;gap:18px;color:{_WHITE};font-size:13px;">
+    <div>Marché <b style="color:{_mkt_color};">{_mkt_label}</b></div>
+    <div>Dernière passe
+      <b style="color:{_health_color};">{_pipe_txt}</b></div>
+    <div>Equity
+      <b>{portfolio.total_equity:,.0f} €</b>
+      <span style="color:{_NEON if (_day_delta or 0) >= 0 else _RED};">
+        {f"{_day_delta:+,.0f} € ({_day_delta_pct:+.2f}%)" if _day_delta is not None else "·"}
+      </span>
+    </div>
+    <div>VIX <b style="color:{_RED if vix_panic else _WHITE};">{vix:.1f}</b></div>
+    <div>Pending Discord
+      <b style="color:{_AMBER if _n_pending else _MUTED};">{_n_pending}</b></div>
+  </div>
+</div>
+""",
+    unsafe_allow_html=True,
+)
+
+# Bloomberg-style <TICKER> <GO> — jump to Exploration dossier
+mc1, mc2, mc3, mc4 = st.columns([2.2, 0.7, 1.2, 1.2])
+with mc1:
+    _go_raw = st.text_input(
+        "Commande",
+        value=st.session_state.get("go_ticker", ""),
+        placeholder="MC.PA  <GO>  — fiche titre dans Exploration",
+        label_visibility="collapsed",
+        key="go_cmd_input",
+    )
+with mc2:
+    _go_click = st.button("GO", type="primary", width="stretch")
+with mc3:
+    if st.button("Ledger signaux", width="stretch"):
+        st.session_state["scroll_to_ledger"] = True
+with mc4:
+    st.caption("Passe manuelle : `python main_scheduler.py --now`")
+
+if _go_click and _go_raw.strip():
+    # Accept "MC.PA", "MC", "mc.pa GO"
+    tok = _go_raw.strip().upper().replace("<GO>", "").replace("GO", "").strip()
+    if tok and not tok.endswith((".PA", ".AS", ".DE", ".MI", ".BR")) and "." not in tok:
+        # Heuristic: French blue-chips default to .PA
+        cand = f"{tok}.PA"
+    else:
+        cand = tok
+    st.session_state["focus_ticker"] = cand
+    st.session_state["go_ticker"] = cand
+    st.toast(f"Fiche → {cand} (onglet Exploration)", icon="🔎")
 
 # =============================================================================
 # Tabs
@@ -7227,7 +7731,7 @@ tab_gen, tab_pf, tab_mkt, tab_uni, tab_arch = st.tabs([
     "🎯 Portefeuille & Allocation",
     "🌍 Exploration",
     "📋 Univers Complet",
-    "🧠 Architecture & Documentation",
+    "🧠 Architecture & Logs",
 ])
 
 # --- Tab: General + Signals --------------------------------------------------
@@ -7409,29 +7913,9 @@ with tab_gen:
     st.markdown("#### ⚡ Signaux & Registre")
     col1, col2 = st.columns(2)
     with col1:
-        st.markdown("##### En attente (Discord)")
+        st.markdown("##### En attente (Discord) — cartes de trade")
         pending = pending_gen
-        if pending.empty:
-            st.info(
-                "Aucun signal aujourd'hui. Le marche ne presente pas "
-                "d'opportunites asymetriques selon nos filtres, ou la "
-                "volatilite est trop elevee."
-            )
-        else:
-            disp = pd.DataFrame({
-                "Titre": [format_name(t) for t in pending["ticker"]],
-                "Type": pending["signal_type"],
-                "Score": [f"{s:.1f}" for s in pending["score"]],
-                "Raison": pending["reason"].fillna(""),
-                "Date": [str(x)[:16] for x in pending["created_at"]],
-            })
-            st.plotly_chart(
-                dark_table(disp, height=320,
-                           font_color_map={"Score": [_NEON] * len(disp)},
-                           col_widths=[2, 0.8, 0.7, 2.4, 1.2]),
-                width="stretch",
-                key="gen_pending_signals_table",
-            )
+        render_pending_trade_cards(pending, portfolio)
     with col2:
         st.markdown("##### Historique (20 derniers)")
         hist = load_signals(("EXECUTED", "REVOKED", "REJECTED", "EXPIRED"), limit=20)
@@ -7863,6 +8347,14 @@ with tab_mkt:
         w = str(perf.iloc[-1]["Ticker"])
         if w in options:
             default_idx = options.index(w)
+    # Mission-control <TICKER> GO overrides the default once.
+    focus = st.session_state.get("focus_ticker")
+    if focus:
+        if focus in options:
+            default_idx = options.index(focus)
+        elif focus not in options:
+            options = sorted(set(options) | {focus})
+            default_idx = options.index(focus)
     selected = st.selectbox(
         "Actif a analyser", options, index=default_idx,
         format_func=format_name, key="explore_ticker",
@@ -8333,6 +8825,37 @@ Le dashboard lit l'etat en continu. L'editeur de wallet peut ecrire
 cash/positions. Les ordres restent Discord + scheduler.
 """)
 
+    st.markdown("---")
+    st.markdown("### 📋 Logs détaillés (copie / audit)")
+    st.markdown(
+        "<div class='info-text'>Fichiers rotatifs sous <code>logs/</code> — "
+        "un par composant + <code>pea_sniper_all.log</code>. Format détaillé "
+        "(fichier:ligne:fonction). Lecture seule ici ; rien n'est modifié.</div>",
+        unsafe_allow_html=True,
+    )
+    if list_log_files is None or tail_log is None:
+        st.caption("Module logging indisponible.")
+    else:
+        files = list_log_files()
+        if not files:
+            st.caption(
+                "Aucun log encore. Lance `python main_scheduler.py --now` "
+                "pour peupler `logs/`."
+            )
+        else:
+            names = [p.name for p in files]
+            pick = st.selectbox("Fichier", names, key="log_file_pick")
+            nlines = st.slider("Lignes (tail)", 50, 1000, 250, 50, key="log_tail_n")
+            path = next(p for p in files if p.name == pick)
+            body = tail_log(path, nlines)
+            st.text_area(
+                "Contenu (sélectionnable / copiable)",
+                value=body,
+                height=420,
+                key="log_tail_view",
+            )
+            st.caption(str(path))
+
 # =============================================================================
 # Footer + optional auto-refresh
 # =============================================================================
@@ -8348,6 +8871,176 @@ if auto_refresh:
 
     _time.sleep(int(refresh_secs))
     st.rerun()
+```
+
+## FILE: 05_interfaces/trade_cards.py
+```python
+"""HTML trade / signal cards for the Streamlit terminal.
+
+Pure presentation helpers: take a portfolio snapshot + signal fields and emit
+Bloomberg-ish cards with sizing rationale, ATR risk, conviction tier, and
+sector impact. No broker / DB writes.
+"""
+
+from __future__ import annotations
+
+from typing import Any, Optional
+
+# Default accents — caller may pass palette overrides.
+_TEXT = "#E0E0E0"
+_MUTED = "#9BA3AF"
+_AMBER = "#FFB000"
+_NEON = "#00FF00"
+_RED = "#FF3B30"
+_CYAN = "#00B4D8"
+_PANEL = "#0A0A0A"
+
+
+def conviction_tier(score: float) -> tuple[str, str]:
+    """Map score to a visual tier label.
+
+    Tier A = deep oversold / high conviction (score ≥ 90).
+    Tier B = base MRE pass (score ≥ 75).
+    Tier C = weaker / informational.
+
+    Returns:
+        tuple[str, str]: ``(label, color)``.
+    """
+    if score >= 90:
+        return "Tier A", _NEON
+    if score >= 75:
+        return "Tier B", _AMBER
+    return "Tier C", _MUTED
+
+
+def sector_impact_line(
+    portfolio: Any,
+    ticker: str,
+    sector: str,
+    notional: float,
+    equity: float,
+    sector_cap_pct: float = 25.0,
+) -> str:
+    """Human line: sector weight before → after this buy."""
+    if equity <= 0:
+        return "Impact secteur: n/a (equity nulle)"
+    before = 0.0
+    for p in getattr(portfolio, "positions", []) or []:
+        if getattr(p, "sector", "") == sector:
+            before += float(getattr(p, "market_value", 0.0) or 0.0)
+    before_pct = before / equity * 100.0
+    after_pct = (before + max(0.0, notional)) / equity * 100.0
+    return (
+        f"Secteur {sector}: {before_pct:.1f}% → {after_pct:.1f}% "
+        f"(cap {sector_cap_pct:.0f}%)"
+    )
+
+
+def atr_risk_line(
+    qty: int,
+    atr: Optional[float],
+    atr_mult: float,
+    equity: float,
+) -> str:
+    """Max € / % loss if the 2.5×ATR stop is hit (R-style risk)."""
+    if not qty or atr is None or atr <= 0:
+        return "Risque stop ATR: n/a (historique insuffisant)"
+    risk_eur = float(qty) * atr_mult * float(atr)
+    risk_pct = (risk_eur / equity * 100.0) if equity > 0 else 0.0
+    return (
+        f"Perte max si stop {atr_mult:.1f}×ATR: "
+        f"−{risk_eur:,.0f} € (−{risk_pct:.2f}% equity)"
+    )
+
+
+def render_signal_card(
+    *,
+    ticker: str,
+    title: str,
+    signal_type: str,
+    score: float,
+    qty: Optional[int],
+    reason: str,
+    sizing: Optional[dict] = None,
+    sector_line: str = "",
+    risk_line: str = "",
+    created_at: str = "",
+) -> str:
+    """Build one approved/pending trade card as HTML.
+
+    Args:
+        ticker: Raw symbol.
+        title: Display name (``Full Name (TICKER)``).
+        signal_type: BUY / SELL.
+        score: 0–100.
+        qty: Target shares (may be None).
+        reason: Pipeline explanation.
+        sizing: Optional dict from ``PeaSizer.size_with_explanation``.
+        sector_line: Precomputed sector impact sentence.
+        risk_line: Precomputed ATR risk sentence.
+        created_at: Timestamp string.
+
+    Returns:
+        str: HTML snippet safe for ``st.markdown(..., unsafe_allow_html=True)``.
+    """
+    tier, tier_color = conviction_tier(float(score or 0))
+    is_buy = str(signal_type).upper() == "BUY"
+    border = _NEON if is_buy and score >= 75 else (_AMBER if is_buy else _RED)
+
+    sizing_html = ""
+    if sizing:
+        vol = sizing.get("historical_volatility")
+        vol_s = f"{vol * 100:.1f}%" if isinstance(vol, (int, float)) and vol else "n/a"
+        sizing_html = (
+            f"<div style='margin-top:8px;color:{_MUTED};font-size:12px;line-height:1.45;'>"
+            f"<b style='color:{_CYAN};'>Sizing</b> — "
+            f"Kelly {sizing.get('kelly_fraction', 0):.2f} × score {sizing.get('score', score):.0f}/100"
+            f" · vol {vol_s} (facteur {sizing.get('vol_factor', 1):.2f})"
+            f" · ticket {sizing.get('notional', 0):,.0f} €"
+            f" · poids {sizing.get('weight_pct', 0):.2f}% equity"
+            f"</div>"
+        )
+
+    extras = ""
+    if risk_line:
+        extras += (
+            f"<div style='margin-top:6px;color:{_AMBER};font-size:12px;'>"
+            f"⚠ {risk_line}</div>"
+        )
+    if sector_line:
+        extras += (
+            f"<div style='margin-top:4px;color:{_MUTED};font-size:12px;'>"
+            f"▣ {sector_line}</div>"
+        )
+
+    qty_s = "—" if qty is None else str(qty)
+    when = f"<span style='color:{_MUTED};font-size:11px;'>{created_at}</span>" if created_at else ""
+
+    return f"""
+<div style="background:{_PANEL};padding:12px 14px;margin-bottom:10px;
+ border:1px solid #2A2A2A;border-left:4px solid {border};
+ font-family:'Courier New',monospace;">
+  <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+    <div>
+      <span style="color:{_TEXT};font-weight:700;font-size:15px;">{title}</span>
+      <span style="color:{_MUTED};font-size:12px;margin-left:8px;">{signal_type}</span>
+    </div>
+    <div>
+      <span style="color:{tier_color};font-weight:700;border:1px solid {tier_color};
+       padding:2px 8px;font-size:11px;letter-spacing:1px;">{tier}</span>
+      <span style="color:{_NEON if score >= 75 else _TEXT};margin-left:10px;">
+        score {score:.0f}</span>
+      <span style="color:{_TEXT};margin-left:10px;">qty {qty_s}</span>
+    </div>
+  </div>
+  <div style="color:{_TEXT};font-size:13px;margin-top:8px;line-height:1.45;">
+    {reason}
+  </div>
+  {sizing_html}
+  {extras}
+  <div style="margin-top:8px;">{when}</div>
+</div>
+"""
 ```
 
 ## FILE: config/api_keys.env.example
@@ -10486,6 +11179,583 @@ EXPOSE 8501
 CMD ["python", "main_scheduler.py"]
 ```
 
+## FILE: experiments/newsletter_ingest/ingest/__init__.py
+```python
+# Package marker for newsletter ingest sandbox.
+```
+
+## FILE: experiments/newsletter_ingest/ingest/dedupe.py
+```python
+"""Simple near-duplicate headline collapse (no ML)."""
+
+from __future__ import annotations
+
+import logging
+import re
+from typing import List
+
+logger = logging.getLogger(__name__)
+
+
+def _norm(title: str) -> str:
+    t = (title or "").lower()
+    t = re.sub(r"[^a-z0-9àâäéèêëïîôùûüç\s]", " ", t)
+    t = re.sub(r"\s+", " ", t).strip()
+    return t
+
+
+def _token_set(title: str) -> set[str]:
+    return {w for w in _norm(title).split() if len(w) > 2}
+
+
+def _similar(a: str, b: str, threshold: float = 0.72) -> bool:
+    """Jaccard similarity on token sets — cheap and good enough for newsletters."""
+    ta, tb = _token_set(a), _token_set(b)
+    if not ta or not tb:
+        return _norm(a) == _norm(b) and bool(_norm(a))
+    inter = len(ta & tb)
+    union = len(ta | tb)
+    return (inter / union) >= threshold if union else False
+
+
+def dedupe_articles(articles: List[dict]) -> List[dict]:
+    """Drop near-identical titles republished the same day across digests.
+
+    Keeps the first occurrence (stable order). Logs how many were removed.
+    """
+    kept: List[dict] = []
+    for art in articles:
+        title = art.get("title") or ""
+        if any(_similar(title, k.get("title") or "") for k in kept):
+            continue
+        # Also collapse exact same cleaned URL
+        url = art.get("url") or ""
+        if url and any(url == (k.get("url") or "") for k in kept):
+            continue
+        kept.append(art)
+    removed = len(articles) - len(kept)
+    if removed:
+        logger.info("Removed %d near-duplicate headline(s).", removed)
+    return kept
+```
+
+## FILE: experiments/newsletter_ingest/ingest/env_loader.py
+```python
+"""Load sandbox ``.env`` without touching production ``config/api_keys.env``."""
+
+from __future__ import annotations
+
+import logging
+from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+
+def load_sandbox_env(path: Path) -> dict[str, str]:
+    """Parse a simple KEY=VALUE env file into a dict.
+
+    Args:
+        path: Path to the sandbox ``.env``.
+
+    Returns:
+        dict[str, str]: Uppercase keys; empty dict if file missing.
+    """
+    out: dict[str, str] = {}
+    if not path.exists():
+        logger.warning("Sandbox env file not found: %s", path)
+        return out
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, val = line.partition("=")
+            key = key.strip()
+            val = val.strip().strip('"').strip("'")
+            if key:
+                out[key] = val
+    except OSError as exc:
+        logger.error("Could not read %s: %s", path, exc)
+    return out
+```
+
+## FILE: experiments/newsletter_ingest/ingest/html_parser.py
+```python
+"""Extract article titles/links from verbose newsletter HTML."""
+
+from __future__ import annotations
+
+import logging
+import re
+from typing import Any
+from urllib.parse import urlparse, urlunparse
+
+from bs4 import BeautifulSoup
+
+from ingest.imap_client import RawMessage
+
+logger = logging.getLogger(__name__)
+
+_TRACKER_HOST_BITS = (
+    "doubleclick", "googleadservices", "facebook.com/tr", "mailchi.mp/track",
+    "list-manage.com/track", "click.", "/track/", "utm_source=",
+)
+
+
+def _clean_url(url: str) -> str:
+    """Strip common tracking query noise while keeping the path."""
+    try:
+        p = urlparse(url)
+        # Drop obvious click-wrappers with empty path
+        if any(b in url.lower() for b in ("unsubscribe", "mailto:")):
+            return ""
+        # Keep scheme/netloc/path; drop query/fragment for stable dedupe keys.
+        return urlunparse((p.scheme, p.netloc, p.path, "", "", ""))
+    except Exception:  # noqa: BLE001
+        return url.strip()
+
+
+def _looks_like_article(title: str, href: str) -> bool:
+    t = (title or "").strip()
+    if len(t) < 18:
+        return False
+    # Skip chrome / CTAs
+    bad = (
+        "unsubscribe", "view in browser", "voir dans le navigateur",
+        "privacy", "preferences", "manage subscription", "ouvrir dans",
+        "share on", "twitter", "linkedin", "facebook", "instagram",
+    )
+    low = t.lower()
+    if any(b in low for b in bad):
+        return False
+    if not href.startswith("http"):
+        return False
+    if any(b in href.lower() for b in _TRACKER_HOST_BITS) and "http" in href:
+        # Still allow if path looks real after clean
+        cleaned = _clean_url(href)
+        if not cleaned or cleaned.count("/") < 3:
+            return False
+    return True
+
+
+def parse_newsletter(msg: RawMessage) -> dict[str, Any]:
+    """Parse one email into metadata + article candidates.
+
+    Args:
+        msg: Raw IMAP message.
+
+    Returns:
+        dict: subject/sender/date + ``articles`` list of
+        ``{title, url, source_subject, source_sender, date}``.
+    """
+    html = msg.html or ""
+    text = msg.text or ""
+    articles: list[dict[str, str]] = []
+    seen_href: set[str] = set()
+
+    if html:
+        soup = BeautifulSoup(html, "html.parser")
+        for a in soup.find_all("a", href=True):
+            title = a.get_text(" ", strip=True)
+            href = a["href"].strip()
+            if not _looks_like_article(title, href):
+                continue
+            clean = _clean_url(href) or href
+            if clean in seen_href:
+                continue
+            seen_href.add(clean)
+            articles.append({
+                "title": re.sub(r"\s+", " ", title)[:240],
+                "url": clean,
+                "source_subject": msg.subject,
+                "source_sender": msg.sender,
+                "date": msg.date,
+            })
+    elif text:
+        # Fallback: plain URLs in text body
+        for m in re.finditer(r"https?://\S+", text):
+            href = m.group(0).rstrip(").,]")
+            title = href
+            if not _looks_like_article(title, href):
+                continue
+            clean = _clean_url(href) or href
+            if clean in seen_href:
+                continue
+            seen_href.add(clean)
+            articles.append({
+                "title": title[:240],
+                "url": clean,
+                "source_subject": msg.subject,
+                "source_sender": msg.sender,
+                "date": msg.date,
+            })
+
+    return {
+        "uid": msg.uid,
+        "subject": msg.subject,
+        "sender": msg.sender,
+        "date": msg.date,
+        "articles": articles,
+    }
+```
+
+## FILE: experiments/newsletter_ingest/ingest/imap_client.py
+```python
+"""Read-only Yahoo Mail IMAP client (SSL, app password)."""
+
+from __future__ import annotations
+
+import email
+import imaplib
+import logging
+from dataclasses import dataclass
+from email.header import decode_header
+from typing import List, Optional
+
+logger = logging.getLogger(__name__)
+
+_HOST = "imap.mail.yahoo.com"
+_PORT = 993
+
+
+@dataclass
+class RawMessage:
+    """Minimal email payload for the HTML parser."""
+
+    uid: str
+    subject: str
+    sender: str
+    date: str
+    html: str
+    text: str
+
+
+def _decode_mime(value: Optional[str]) -> str:
+    if not value:
+        return ""
+    parts = []
+    for chunk, enc in decode_header(value):
+        if isinstance(chunk, bytes):
+            parts.append(chunk.decode(enc or "utf-8", errors="replace"))
+        else:
+            parts.append(str(chunk))
+    return " ".join(parts).strip()
+
+
+class YahooImapClient:
+    """Connect, fetch recent messages, always close cleanly.
+
+    Never deletes, moves, or flags messages as deleted.
+    """
+
+    def __init__(self, user: str, app_password: str) -> None:
+        self.user = user
+        self.app_password = app_password
+        self._conn: Optional[imaplib.IMAP4_SSL] = None
+
+    def connect(self) -> None:
+        """Open an SSL IMAP session."""
+        logger.info("Connecting to %s:%s as %s …", _HOST, _PORT, self.user)
+        self._conn = imaplib.IMAP4_SSL(_HOST, _PORT)
+        self._conn.login(self.user, self.app_password)
+        logger.info("IMAP login OK.")
+
+    def close(self) -> None:
+        """Logout and close; swallow errors (never crash the CLI)."""
+        if self._conn is None:
+            return
+        try:
+            self._conn.close()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            self._conn.logout()
+        except Exception:  # noqa: BLE001
+            pass
+        self._conn = None
+        logger.info("IMAP session closed.")
+
+    def fetch_recent(self, folder: str = "Finance", limit: int = 20) -> List[RawMessage]:
+        """Fetch the ``limit`` most recent messages from ``folder`` (read-only).
+
+        Args:
+            folder: IMAP mailbox / Yahoo label name.
+            limit: Max messages to return (newest first).
+
+        Returns:
+            list[RawMessage]: Parsed envelopes + body parts.
+        """
+        if self._conn is None:
+            self.connect()
+        assert self._conn is not None
+
+        # Yahoo labels often appear as folder names; try a few variants.
+        candidates = [folder, f'"{folder}"', "INBOX"]
+        selected = None
+        for name in candidates:
+            typ, _ = self._conn.select(name, readonly=True)
+            if typ == "OK":
+                selected = name
+                break
+        if selected is None:
+            raise RuntimeError(
+                f"Could not SELECT folder '{folder}' (tried {candidates}). "
+                "Create the Yahoo label/folder and feed it with filters."
+            )
+        logger.info("Selected folder %s (readonly).", selected)
+
+        typ, data = self._conn.search(None, "ALL")
+        if typ != "OK" or not data or not data[0]:
+            logger.warning("No messages in folder %s.", selected)
+            return []
+
+        ids = data[0].split()
+        ids = ids[-max(1, limit) :]  # newest are usually last
+        ids = list(reversed(ids))  # newest first in output
+        out: List[RawMessage] = []
+        for mid in ids:
+            try:
+                typ, msg_data = self._conn.fetch(mid, "(RFC822)")
+                if typ != "OK" or not msg_data or not msg_data[0]:
+                    continue
+                raw = msg_data[0][1]
+                if not isinstance(raw, (bytes, bytearray)):
+                    continue
+                msg = email.message_from_bytes(raw)
+                html, text = self._extract_bodies(msg)
+                out.append(
+                    RawMessage(
+                        uid=mid.decode() if isinstance(mid, bytes) else str(mid),
+                        subject=_decode_mime(msg.get("Subject")),
+                        sender=_decode_mime(msg.get("From")),
+                        date=_decode_mime(msg.get("Date")),
+                        html=html,
+                        text=text,
+                    )
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Skip message %s: %s", mid, exc)
+        return out
+
+    @staticmethod
+    def _extract_bodies(msg: email.message.Message) -> tuple[str, str]:
+        html, text = "", ""
+        if msg.is_multipart():
+            for part in msg.walk():
+                ctype = part.get_content_type()
+                disp = str(part.get("Content-Disposition") or "")
+                if "attachment" in disp.lower():
+                    continue
+                try:
+                    payload = part.get_payload(decode=True) or b""
+                    charset = part.get_content_charset() or "utf-8"
+                    body = payload.decode(charset, errors="replace")
+                except Exception:  # noqa: BLE001
+                    continue
+                if ctype == "text/html" and not html:
+                    html = body
+                elif ctype == "text/plain" and not text:
+                    text = body
+        else:
+            try:
+                payload = msg.get_payload(decode=True) or b""
+                charset = msg.get_content_charset() or "utf-8"
+                body = payload.decode(charset, errors="replace")
+            except Exception:  # noqa: BLE001
+                body = ""
+            if msg.get_content_type() == "text/html":
+                html = body
+            else:
+                text = body
+        return html, text
+```
+
+## FILE: experiments/newsletter_ingest/ingest/writer.py
+```python
+"""Write timestamped JSON under the sandbox ``output/`` folder only."""
+
+from __future__ import annotations
+
+import json
+import logging
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+logger = logging.getLogger(__name__)
+
+
+def write_output(payload: dict[str, Any], out_dir: Path) -> Path:
+    """Serialize ``payload`` to ``output/ingest_YYYYMMDD_HHMMSS.json``.
+
+    Args:
+        payload: JSON-serializable ingest result.
+        out_dir: Destination directory (created if needed).
+
+    Returns:
+        Path: Written file path.
+    """
+    out_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    path = out_dir / f"ingest_{stamp}.json"
+    body = {
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        **payload,
+    }
+    path.write_text(json.dumps(body, indent=2, ensure_ascii=False), encoding="utf-8")
+    logger.info("Sandbox output written (%d bytes).", path.stat().st_size)
+    return path
+```
+
+## FILE: experiments/newsletter_ingest/README.md
+```markdown
+# Newsletter ingest sandbox (Yahoo Mail IMAP → local JSON)
+
+Isolated from `00_`–`05_` production code. **No SQLite/DuckDB writes.**
+
+## Setup
+
+1. Enable Yahoo 2FA and create an **app password**.
+2. `cp .env.example .env` and fill `YAHOO_MAIL_USER` / `YAHOO_MAIL_APP_PASSWORD`.
+3. Create a Yahoo Mail folder/label (e.g. `Finance`) and route newsletters into it.
+4. Run:
+
+``​`bash
+python experiments/newsletter_ingest/run_ingest.py --limit 20 --folder Finance
+python experiments/newsletter_ingest/run_ingest.py --dry-run --limit 5
+``​`
+
+Output JSON lands in `experiments/newsletter_ingest/output/`.
+
+## Acceptance
+
+- IMAP connects and always closes.
+- Titles/links extracted from varied HTML digests.
+- Deduper collapses obvious same-day reprints.
+- Zero mailbox mutations; zero production DB I/O.
+```
+
+## FILE: experiments/newsletter_ingest/run_ingest.py
+```python
+"""Yahoo Mail newsletter ingest — isolated sandbox (no production DB writes).
+
+Connects read-only via IMAP SSL, parses HTML newsletters, dedupes headlines,
+and writes a timestamped JSON under ``output/``.
+
+Secrets live in a local ``.env`` next to this folder (never commit them).
+"""
+
+from __future__ import annotations
+
+import argparse
+import logging
+import sys
+from pathlib import Path
+
+# Keep this sandbox hermetic: only local imports under experiments/.
+_HERE = Path(__file__).resolve().parent
+if str(_HERE) not in sys.path:
+    sys.path.insert(0, str(_HERE))
+
+from ingest.env_loader import load_sandbox_env  # noqa: E402
+from ingest.imap_client import YahooImapClient  # noqa: E402
+from ingest.html_parser import parse_newsletter  # noqa: E402
+from ingest.dedupe import dedupe_articles  # noqa: E402
+from ingest.writer import write_output  # noqa: E402
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)-7s | %(name)s | %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+logger = logging.getLogger("newsletter_ingest")
+
+
+def main() -> int:
+    """CLI entry — same spirit as ``seed_account.py``."""
+    parser = argparse.ArgumentParser(
+        description="Ingest financial newsletters from Yahoo Mail (read-only)."
+    )
+    parser.add_argument(
+        "--limit", type=int, default=20, help="Max emails to fetch (default 20)."
+    )
+    parser.add_argument(
+        "--folder",
+        default="Finance",
+        help="IMAP folder/label name (default: Finance).",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Parse and print summary without writing JSON.",
+    )
+    parser.add_argument(
+        "--env",
+        default=str(_HERE / ".env"),
+        help="Path to sandbox .env (YAHOO_MAIL_USER / YAHOO_MAIL_APP_PASSWORD).",
+    )
+    args = parser.parse_args()
+
+    creds = load_sandbox_env(Path(args.env))
+    if not creds.get("YAHOO_MAIL_USER") or not creds.get("YAHOO_MAIL_APP_PASSWORD"):
+        logger.error(
+            "Missing YAHOO_MAIL_USER / YAHOO_MAIL_APP_PASSWORD in %s "
+            "(copy .env.example → .env and use a Yahoo *app password*).",
+            args.env,
+        )
+        return 2
+
+    client = YahooImapClient(
+        user=creds["YAHOO_MAIL_USER"],
+        app_password=creds["YAHOO_MAIL_APP_PASSWORD"],
+    )
+    articles = []
+    try:
+        messages = client.fetch_recent(folder=args.folder, limit=args.limit)
+        logger.info("Fetched %d raw message(s) from folder '%s'.", len(messages), args.folder)
+        for msg in messages:
+            try:
+                parsed = parse_newsletter(msg)
+                articles.extend(parsed.get("articles") or [])
+                logger.info(
+                    "Parsed '%s' → %d article link(s).",
+                    parsed.get("subject", "?")[:80],
+                    len(parsed.get("articles") or []),
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Parse failed for one message: %s", exc)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("IMAP ingest failed: %s", exc, exc_info=True)
+        return 1
+    finally:
+        client.close()
+
+    before = len(articles)
+    articles = dedupe_articles(articles)
+    logger.info("Dedupe: %d → %d article(s).", before, len(articles))
+
+    payload = {
+        "folder": args.folder,
+        "limit": args.limit,
+        "articles_raw": before,
+        "articles_deduped": len(articles),
+        "articles": articles,
+    }
+    if args.dry_run:
+        logger.info("Dry-run — not writing JSON. Sample titles:")
+        for a in articles[:10]:
+            logger.info("  • %s", (a.get("title") or "")[:100])
+        return 0
+
+    out = write_output(payload, _HERE / "output")
+    logger.info("Wrote %s", out)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+```
+
 ## FILE: main_scheduler.py
 ```python
 """Root daemon scheduler for PEA Sniper Terminal V-Prime.
@@ -10546,8 +11816,9 @@ from revocation_engine import RevocationEngine  # noqa: E402
 from llm_explainer import NarrativeExplainer  # noqa: E402
 from weekly_historian import WeeklyHistorian  # noqa: E402
 from discord_copilot import DiscordCopilot  # noqa: E402
+from logging_setup import get_component_logger, setup_app_logging, write_pipeline_status  # noqa: E402
 
-logger = logging.getLogger("main_scheduler")
+logger = get_component_logger("scheduler")
 
 _CONFIG_DIR = _ROOT / "config"
 _UNIVERSE_PATH = _CONFIG_DIR / "pea_universe.yaml"
@@ -10854,6 +12125,12 @@ def run_analysis_pass() -> None:
     """Synchronous wrapper: skip weekends, run the async pipeline safely."""
     if datetime.today().weekday() >= 5:
         logger.info("Weekend: Market closed, skipping pass.")
+        write_pipeline_status({
+            "job": "analysis",
+            "status": "skipped",
+            "reason": "weekend",
+            "health": "green",
+        })
         return
 
     started = time.perf_counter()
@@ -10862,11 +12139,26 @@ def run_analysis_pass() -> None:
         asyncio.run(run_pipeline_async())
         elapsed = time.perf_counter() - started
         logger.info("=== Analysis pass completed in %.1fs ===", elapsed)
+        write_pipeline_status({
+            "job": "analysis",
+            "status": "ok",
+            "health": "green",
+            "elapsed_sec": round(elapsed, 2),
+            "finished_at_local": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        })
     except Exception as exc:  # noqa: BLE001 - daemon must survive any failure.
         elapsed = time.perf_counter() - started
         logger.critical(
             "Analysis pass FAILED after %.1fs: %s", elapsed, exc, exc_info=True
         )
+        write_pipeline_status({
+            "job": "analysis",
+            "status": "failed",
+            "health": "red",
+            "error": str(exc),
+            "elapsed_sec": round(elapsed, 2),
+            "finished_at_local": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        })
 
 
 async def run_weekly_report_async() -> None:
@@ -11009,10 +12301,7 @@ def _schedule_passes() -> None:
 
 def main() -> None:
     """Entry point: parse CLI args and either run once or loop forever."""
-    logging.basicConfig(
-        level=logging.INFO,
-        format="[%(asctime)s] %(levelname)s: %(message)s",
-    )
+    setup_app_logging(level=logging.INFO, console=True)
 
     parser = argparse.ArgumentParser(description="PEA Sniper Terminal daemon.")
     parser.add_argument(
@@ -11207,8 +12496,9 @@ Trade explainer · news → integer score · Friday CIO digest → Discord webho
 | `05_interfaces/terminal_dashboard.py` | Streamlit command center |
 | `05_interfaces/discord_copilot.py` | Alerts + approve/revoke |
 | `main_scheduler.py` | Daemon: passes, weekly, monthly |
-| `tools/build_llm_dump.py` | Regenerate `PROJECT_FULL_DUMP_FOR_LLM.md` |
-| `tools/sync_universe_from_bourso.py` | Refresh PEA universe YAML |
+| `01_memory_core/logging_setup.py` | Rotating per-component logs + pipeline heartbeat JSON |
+| `05_interfaces/trade_cards.py` | Rich PENDING trade cards (Kelly / ATR risk / sector / Tier) |
+| `experiments/newsletter_ingest/` | Yahoo Mail IMAP sandbox → local JSON only |
 
 ---
 
@@ -11296,11 +12586,14 @@ python tools/build_llm_dump.py               # refresh LLM dump
 
 | Tab | Content |
 |-----|---------|
-| **General & Signaux** | Adaptive multi-horizon suggestion (MICRO→FULL), Core card, geo, ledger, month news |
-| **Portefeuille** | **Equity curve**, sunburst, positions, wallet editor → SQLite |
-| **Exploration** | Liquid scan, ticker dossier, TA explain, news, insiders (AMF→FMP→YF), Polymarket |
+| **General & Signaux** | Adaptive multi-horizon suggestion, **rich PENDING trade cards**, geo, ledger |
+| **Portefeuille** | **Equity curve + metrics**, sunburst, wallet editor → SQLite |
+| **Exploration** | Liquid scan, ticker dossier (also via Mission Control `TICKER` GO) |
 | **Univers** | Full list + sector average performance |
-| **Architecture** | Living docs (matches code) |
+| **Architecture & Logs** | Living docs + **tail/copy of `logs/*.log`** |
+
+**Mission Control** (above tabs): Euronext open/closed, last pipeline health,
+equity day Δ, VIX, pending count, Bloomberg-style `TICKER` + **GO**.
 
 ---
 
@@ -11812,6 +13105,76 @@ def test_earnings_blackout_window(tmp_path):
     assert veto and "Q2" in reason
     clear, _ = eng.check_veto("OR.PA", date(2026, 7, 24))
     assert not clear
+```
+
+## FILE: tests/test_ui_and_sandbox.py
+```python
+"""Tests for trade-card helpers and newsletter dedupe (no network)."""
+
+from __future__ import annotations
+
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+for sub in ("01_memory_core", "03_risk_portfolio", "05_interfaces"):
+    sys.path.insert(0, str(ROOT / sub))
+sys.path.insert(0, str(ROOT / "experiments" / "newsletter_ingest"))
+
+from data_models import Position, PortfolioState, Signal, SignalType  # noqa: E402
+from pea_position_sizer import PeaSizer  # noqa: E402
+from trade_cards import conviction_tier, atr_risk_line, sector_impact_line  # noqa: E402
+from ingest.dedupe import dedupe_articles  # noqa: E402
+
+
+def test_sizing_explanation_keys():
+    sizer = PeaSizer(ROOT / "config")
+    pf = PortfolioState(
+        cash_available=8000,
+        total_equity=20000,
+        positions=[],
+        last_updated=datetime.now(timezone.utc),
+    )
+    sig = Signal(ticker="AI.PA", signal_type=SignalType.BUY, score=90.0)
+    qty, meta = sizer.size_with_explanation(sig, pf, 180.0, historical_volatility=0.25)
+    assert qty >= 0
+    assert "kelly_fraction" in meta and "weight_pct" in meta
+    assert meta["vol_factor"] > 0
+
+
+def test_conviction_and_atr_risk_copy():
+    assert conviction_tier(92)[0] == "Tier A"
+    assert conviction_tier(80)[0] == "Tier B"
+    line = atr_risk_line(10, 2.0, 2.5, 10000)
+    assert "−" in line or "-" in line
+    assert "equity" in line.lower() or "Equity" in line or "%" in line
+
+
+def test_sector_impact_sentence():
+    pf = PortfolioState(
+        cash_available=1000,
+        total_equity=10000,
+        positions=[
+            Position(
+                ticker="MC.PA", qty_shares=1, avg_entry_price=600,
+                current_price=600, sector="Luxury",
+            )
+        ],
+        last_updated=datetime.now(timezone.utc),
+    )
+    line = sector_impact_line(pf, "KER.PA", "Luxury", 500, 10000, 25)
+    assert "Luxury" in line and "→" in line
+
+
+def test_newsletter_dedupe_collapses_near_dupes():
+    arts = [
+        {"title": "LVMH beats estimates on strong US demand", "url": "https://a/1"},
+        {"title": "LVMH beats estimates on strong U.S. demand!", "url": "https://b/2"},
+        {"title": "Air Liquide wins big industrial contract", "url": "https://c/3"},
+    ]
+    out = dedupe_articles(arts)
+    assert len(out) == 2
 ```
 
 ## FILE: tools/build_llm_dump.py

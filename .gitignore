@@ -36,4 +36,10 @@ Thumbs.db
 
 # --- Logs & data dumps ---
 *.log
+logs/
 data/
+
+# --- Experiment sandboxes ---
+experiments/**/.env
+experiments/**/output/*.json
+!experiments/**/output/.gitkeep

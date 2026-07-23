@@ -56,8 +56,9 @@ from revocation_engine import RevocationEngine  # noqa: E402
 from llm_explainer import NarrativeExplainer  # noqa: E402
 from weekly_historian import WeeklyHistorian  # noqa: E402
 from discord_copilot import DiscordCopilot  # noqa: E402
+from logging_setup import get_component_logger, setup_app_logging, write_pipeline_status  # noqa: E402
 
-logger = logging.getLogger("main_scheduler")
+logger = get_component_logger("scheduler")
 
 _CONFIG_DIR = _ROOT / "config"
 _UNIVERSE_PATH = _CONFIG_DIR / "pea_universe.yaml"
@@ -364,6 +365,12 @@ def run_analysis_pass() -> None:
     """Synchronous wrapper: skip weekends, run the async pipeline safely."""
     if datetime.today().weekday() >= 5:
         logger.info("Weekend: Market closed, skipping pass.")
+        write_pipeline_status({
+            "job": "analysis",
+            "status": "skipped",
+            "reason": "weekend",
+            "health": "green",
+        })
         return
 
     started = time.perf_counter()
@@ -372,11 +379,26 @@ def run_analysis_pass() -> None:
         asyncio.run(run_pipeline_async())
         elapsed = time.perf_counter() - started
         logger.info("=== Analysis pass completed in %.1fs ===", elapsed)
+        write_pipeline_status({
+            "job": "analysis",
+            "status": "ok",
+            "health": "green",
+            "elapsed_sec": round(elapsed, 2),
+            "finished_at_local": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        })
     except Exception as exc:  # noqa: BLE001 - daemon must survive any failure.
         elapsed = time.perf_counter() - started
         logger.critical(
             "Analysis pass FAILED after %.1fs: %s", elapsed, exc, exc_info=True
         )
+        write_pipeline_status({
+            "job": "analysis",
+            "status": "failed",
+            "health": "red",
+            "error": str(exc),
+            "elapsed_sec": round(elapsed, 2),
+            "finished_at_local": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        })
 
 
 async def run_weekly_report_async() -> None:
@@ -519,10 +541,7 @@ def _schedule_passes() -> None:
 
 def main() -> None:
     """Entry point: parse CLI args and either run once or loop forever."""
-    logging.basicConfig(
-        level=logging.INFO,
-        format="[%(asctime)s] %(levelname)s: %(message)s",
-    )
+    setup_app_logging(level=logging.INFO, console=True)
 
     parser = argparse.ArgumentParser(description="PEA Sniper Terminal daemon.")
     parser.add_argument(
