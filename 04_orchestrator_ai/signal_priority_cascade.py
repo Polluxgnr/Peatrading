@@ -174,6 +174,18 @@ class SignalOrchestrator:
                 )
                 continue
 
+            # --- Check 0c: Quality / EPS < 0 (Orchestrator-level veto) ---
+            try:
+                from technical_scorer import SignalGenerator  # noqa: WPS433
+
+                if not SignalGenerator().is_profitable(ticker):
+                    processed.append(
+                        self._reject(signal, "REJECTED: EPS < 0 (quality veto)")
+                    )
+                    continue
+            except Exception:  # noqa: BLE001 - never block the cascade on EPS outage
+                pass
+
             # --- Check 1: Macro veto (cheapest - runs first) ---
             vetoed, veto_reason = self.macro_veto.check_veto(today)
             if vetoed:

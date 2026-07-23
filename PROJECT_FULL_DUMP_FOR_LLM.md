@@ -1,15 +1,16 @@
 # PEA Sniper Terminal — Full Project Dump for LLM
 Root: `C:\Users\PolluxGronier\Downloads\pea_sniper_terminal`
-Generated: 2026-07-23 14:12 UTC
+Generated: 2026-07-23 14:41 UTC
 One-shot context dump of source, configs, and docs (no venv, no DBs, no secrets).
 ---
-## File index (66 files)
+## File index (68 files)
 - .github/workflows/ci.yml
 - .gitignore
 - .streamlit/config.toml
 - 00_data_sensors/__init__.py
 - 00_data_sensors/macro_alpha_api.py
 - 00_data_sensors/market_prices_api.py
+- 00_data_sensors/newsletter_api.py
 - 00_data_sensors/scrapers/__init__.py
 - 00_data_sensors/scrapers/_http.py
 - 00_data_sensors/scrapers/amf_scraper.py
@@ -22,6 +23,7 @@ One-shot context dump of source, configs, and docs (no venv, no DBs, no secrets)
 - 02_quant_engine/__init__.py
 - 02_quant_engine/smart_dca_engine.py
 - 02_quant_engine/technical_scorer.py
+- 02_quant_engine/walk_forward_backtester.py
 - 03_risk_portfolio/__init__.py
 - 03_risk_portfolio/correlation_firewall.py
 - 03_risk_portfolio/equity_metrics.py
@@ -506,6 +508,104 @@ class MacroAlphaSensor:
             logger.debug("Insider data unavailable for %s; neutral.", ticker)
             return 0
 
+    # ------------------------------------ Institutional consensus (proxy) --
+    # Placeholder for future web scraper targeting Fundsmith / Amundi public
+    # 13F-equivalent holdings. Hardcoded top European blue-chips for now.
+    TOP_INSTITUTIONAL_HOLDINGS: set[str] = {
+        "MC.PA", "OR.PA", "RMS.PA", "AI.PA", "SAN.PA", "TTE.PA", "BNP.PA",
+        "AIR.PA", "SU.PA", "EL.PA", "KER.PA", "CS.PA", "DG.PA", "DSY.PA",
+        "SAF.PA", "STLAP.PA", "HO.PA", "ENGI.PA", "CAP.PA", "BN.PA",
+        "ASML.AS", "SAP.DE", "SIE.DE", "ALV.DE", "DTE.DE", "ADS.DE",
+        "NESN.SW", "NOVN.SW", "ROG.SW", "AZN.L",
+    }
+
+    def get_institutional_consensus(self, ticker: str) -> bool:
+        """Return True if ticker is in the institutional quality proxy set.
+
+        Placeholder for future web scraper targeting Fundsmith/Amundi public
+        13F-equivalent holdings.
+        """
+        return ticker in self.TOP_INSTITUTIONAL_HOLDINGS
+
+    def get_insider_buy_cluster(self, ticker: str) -> int:
+        """Count recent buy-side insider declarations (0, 1, 2+).
+
+        Used by the Phase 20 conviction scorer (≥2 → 20 pts, ==1 → 10 pts).
+        Cascades AMF → FMP → yfinance; returns 0 on total failure.
+        """
+        # --- AMF -----------------------------------------------------------
+        if AmfInsiderScraper is not None:
+            try:
+                isin = issuer = None
+                if BoursoramaScraper is not None:
+                    try:
+                        profile = BoursoramaScraper().get_instrument_profile(ticker)
+                        if profile:
+                            isin = profile.get("isin")
+                            issuer = profile.get("name")
+                    except Exception:  # noqa: BLE001
+                        pass
+                amf_df = AmfInsiderScraper().get_recent_declarations(
+                    ticker, isin=isin, issuer=issuer
+                )
+                if amf_df is not None and not amf_df.empty and "Transaction" in amf_df:
+                    text = amf_df["Transaction"].astype(str).str.lower()
+                    buys = int(
+                        text.str.contains("achat|acquisition|buy|purchase").sum()
+                    )
+                    if buys > 0:
+                        return min(buys, 5)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("AMF buy-cluster failed for %s: %s", ticker, exc)
+
+        # --- FMP -----------------------------------------------------------
+        api_key = os.getenv("FMP_API_KEY")
+        if api_key:
+            symbol = ticker.split(".")[0]
+            url = (
+                "https://financialmodelingprep.com/api/v4/insider-trading"
+                f"?symbol={symbol}&apikey={api_key}"
+            )
+            try:
+                resp = requests.get(url, timeout=10)
+                if resp.status_code == 200:
+                    payload = resp.json()
+                    buys = 0
+                    if isinstance(payload, list):
+                        for row in payload[:40]:
+                            if not isinstance(row, dict):
+                                continue
+                            ttype = str(
+                                row.get("transactionType")
+                                or row.get("acquistionOrDisposition")
+                                or row.get("type")
+                                or ""
+                            ).casefold()
+                            if ttype in (
+                                "a", "acquisition", "purchase", "buy", "p-purchase"
+                            ) or "acqui" in ttype or "buy" in ttype or "purchase" in ttype:
+                                buys += 1
+                    if buys > 0:
+                        return min(buys, 5)
+            except Exception:  # noqa: BLE001
+                logger.debug("FMP buy-cluster failed for %s.", ticker)
+
+        # --- yfinance ------------------------------------------------------
+        try:
+            tx = yf.Ticker(ticker).insider_transactions
+            if tx is None or not isinstance(tx, pd.DataFrame) or tx.empty:
+                return 0
+            text_col = next(
+                (c for c in ("Text", "Transaction") if c in tx.columns), None
+            )
+            if text_col is None:
+                return 0
+            recent = tx.head(20)[text_col].astype(str).str.lower()
+            buys = int(recent.str.contains("buy|purchase").sum())
+            return min(buys, 5) if buys > 0 else 0
+        except Exception:  # noqa: BLE001
+            return 0
+
     # -------------------------------------------------- Polymarket ----------
     def get_polymarket_sentiment(self, query: str) -> float:
         """Best-effort Polymarket YES probability for a macro query.
@@ -753,6 +853,212 @@ if __name__ == "__main__":
     print("--- Columns:", list(frame.columns))
     print("--- Tickers:", sorted(frame["Ticker"].unique()) if not frame.empty else [])
     print(frame.tail(10).to_string(index=False))
+```
+
+## FILE: 00_data_sensors/newsletter_api.py
+```python
+"""Newsletter IMAP sensor + LLM morning Zeitgeist (Phase 19).
+
+Production wrapper around the read-only Yahoo Mail ingest used in
+``experiments/newsletter_ingest/``. Never deletes or moves mailbox messages.
+
+Secrets: ``YAHOO_MAIL_USER`` / ``YAHOO_MAIL_APP_PASSWORD`` from
+``config/api_keys.env`` or the sandbox ``.env``.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import os
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, List, Optional
+
+logger = logging.getLogger(__name__)
+
+_ROOT = Path(__file__).resolve().parent.parent
+_EXPERIMENT = _ROOT / "experiments" / "newsletter_ingest"
+_DEFAULT_BRIEFING = _ROOT / "database" / "morning_briefing.json"
+
+# Reuse sandbox ingest modules (hermetic package under experiments/).
+if str(_EXPERIMENT) not in sys.path:
+    sys.path.insert(0, str(_EXPERIMENT))
+
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv(_ROOT / "config" / "api_keys.env")
+    load_dotenv(_EXPERIMENT / ".env")
+except Exception:  # noqa: BLE001
+    pass
+
+
+class NewsletterSensor:
+    """Fetch whitelisted newsletter headlines and summarise macro Zeitgeist."""
+
+    def __init__(
+        self,
+        folder: str = "Finance",
+        user: str | None = None,
+        app_password: str | None = None,
+    ) -> None:
+        self.folder = folder
+        self.user = user or os.getenv("YAHOO_MAIL_USER") or ""
+        self.app_password = app_password or os.getenv("YAHOO_MAIL_APP_PASSWORD") or ""
+
+    def fetch_morning_headlines(self, limit: int = 50) -> List[str]:
+        """IMAP extract → parse → dedupe → list of headline strings.
+
+        Args:
+            limit: Soft target for article headlines after dedupe.
+
+        Returns:
+            list[str]: Deduped titles (may be empty on IMAP/auth failure).
+        """
+        if not self.user or not self.app_password:
+            logger.warning(
+                "YAHOO_MAIL_USER / YAHOO_MAIL_APP_PASSWORD unset; "
+                "newsletter headlines unavailable."
+            )
+            return []
+
+        try:
+            from ingest.imap_client import YahooImapClient
+            from ingest.html_parser import parse_newsletter
+            from ingest.dedupe import dedupe_articles
+            from ingest.whitelist import (
+                extract_sender_email,
+                is_allowed_sender,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Newsletter ingest imports failed: %s", exc)
+            return []
+
+        client = YahooImapClient(user=self.user, app_password=self.app_password)
+        articles: list[dict] = []
+        try:
+            scan = max(limit * 3, 40)
+            messages = client.fetch_recent(folder=self.folder, limit=scan)
+            for msg in messages:
+                try:
+                    if not is_allowed_sender(msg.sender):
+                        logger.debug(
+                            "Ignored email from %s",
+                            extract_sender_email(msg.sender) or msg.sender,
+                        )
+                        continue
+                    parsed = parse_newsletter(msg)
+                    articles.extend(parsed.get("articles") or [])
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug("Skip message parse: %s", exc)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("IMAP newsletter fetch failed: %s", exc)
+            return []
+        finally:
+            try:
+                client.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+        deduped = dedupe_articles(articles)
+        titles = [
+            str(a.get("title") or "").strip()
+            for a in deduped
+            if str(a.get("title") or "").strip()
+        ]
+        logger.info("NewsletterSensor: %d headline(s) after dedupe.", len(titles))
+        return titles[: max(1, limit)]
+
+    async def get_daily_zeitgeist(self, headlines: list[str]) -> str:
+        """Ask OpenRouter for 5 short FR macro themes from overnight headlines.
+
+        Returns:
+            str: LLM bullet list, or a graceful French fallback string.
+        """
+        if not headlines:
+            return "Indisponible (aucune une newsletter)."
+
+        try:
+            _iface = str(_ROOT / "05_interfaces")
+            if _iface not in sys.path:
+                sys.path.insert(0, _iface)
+            from llm_explainer import openrouter_chat  # noqa: WPS433
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("openrouter_chat import failed: %s", exc)
+            return "Indisponible (module LLM)."
+
+        api_key = os.getenv("OPENROUTER_API_KEY")
+        model = os.getenv("OPENROUTER_MODEL", "mistralai/mistral-7b-instruct")
+        blob = "\n".join(f"- {h}" for h in headlines[:40])
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "Tu es un analyste macro. Analyse ces titres de newsletters "
+                    "financières reçues cette nuit. Identifie les 5 thèmes ou "
+                    "narratifs dominants qui vont dicter la journée. Fais 5 "
+                    "bullet points très courts et percutants en français. "
+                    "Pas de blabla."
+                ),
+            },
+            {"role": "user", "content": blob},
+        ]
+        try:
+            text = await openrouter_chat(
+                messages, api_key=api_key, model=model, max_tokens=320, temperature=0.3
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Zeitgeist LLM call failed: %s", exc)
+            return "Indisponible (LLM)."
+        if not text or not str(text).strip():
+            return "Indisponible (LLM)."
+        return str(text).strip()
+
+    def write_briefing(
+        self,
+        zeitgeist: str,
+        headlines: list[str],
+        path: Path | None = None,
+    ) -> Path:
+        """Persist morning briefing JSON for the dashboard."""
+        out = Path(path) if path else _DEFAULT_BRIEFING
+        out.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "zeitgeist": zeitgeist or "Indisponible",
+            "headlines": headlines or [],
+            "n_headlines": len(headlines or []),
+        }
+        out.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+        logger.info("Wrote morning briefing → %s", out)
+        return out
+
+    @staticmethod
+    def read_briefing(path: Path | None = None) -> Optional[dict[str, Any]]:
+        """Load ``morning_briefing.json`` or ``None`` if missing/corrupt."""
+        p = Path(path) if path else _DEFAULT_BRIEFING
+        if not p.exists():
+            return None
+        try:
+            return json.loads(p.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            return None
+
+
+def run_morning_briefing_sync(folder: str = "Finance") -> dict[str, Any]:
+    """Sync entry used by the scheduler (wraps async Zeitgeist)."""
+    sensor = NewsletterSensor(folder=folder)
+    headlines = sensor.fetch_morning_headlines(limit=50)
+    try:
+        zeitgeist = asyncio.run(sensor.get_daily_zeitgeist(headlines))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Zeitgeist async failed: %s", exc)
+        zeitgeist = "Indisponible"
+    sensor.write_briefing(zeitgeist, headlines)
+    return {"zeitgeist": zeitgeist, "headlines": headlines}
 ```
 
 ## FILE: 00_data_sensors/scrapers/__init__.py
@@ -2491,6 +2797,48 @@ class PortfolioDB:
             logger.exception("Failed to log signal %s.", signal.id)
             raise
 
+    def update_signal_status(
+        self, signal_id: str, status: str, reason_suffix: str | None = None
+    ) -> bool:
+        """Update a signal's lifecycle status in ``audit_logs`` (Command Center).
+
+        Args:
+            signal_id: Primary key of the audit row.
+            status: New status (e.g. ``APPROVED``, ``REVOKED``, ``REJECTED``).
+            reason_suffix: Optional text appended to the existing reason.
+
+        Returns:
+            bool: ``True`` if a row was updated.
+        """
+        try:
+            with self._connect() as conn:
+                if reason_suffix:
+                    cur = conn.execute(
+                        """
+                        UPDATE audit_logs
+                        SET status = ?,
+                            reason = COALESCE(reason, '') || ?
+                        WHERE id = ?;
+                        """,
+                        (status, f" | {reason_suffix}", signal_id),
+                    )
+                else:
+                    cur = conn.execute(
+                        "UPDATE audit_logs SET status = ? WHERE id = ?;",
+                        (status, signal_id),
+                    )
+                updated = cur.rowcount > 0
+            if updated:
+                logger.info(
+                    "Signal %s status → %s (Streamlit / Command Center).",
+                    signal_id[:8],
+                    status,
+                )
+            return updated
+        except sqlite3.Error:
+            logger.exception("Failed to update signal %s status.", signal_id)
+            raise
+
     def fetch_signals_by_status(
         self, statuses: list[str], limit: int | None = None
     ) -> list[dict]:
@@ -2776,11 +3124,14 @@ if __name__ == "__main__":
 """Quantitative signal engine for PEA Sniper Terminal V-Prime.
 
 Reads OHLCV history from DuckDB, computes technical indicators via the
-pandas-ta accessor, and emits raw ``Signal`` objects from purely mathematical
-rules (Mean-Reversion Exhaustion).
+pandas-ta accessor, and emits raw ``Signal`` objects from an **ensemble
+conviction score** (Phase 20) — not a single boolean mean-reversion flag.
 
-This module is 100% math: no LLMs, no APIs, no risk/portfolio/broker logic.
+Hard vetoes (VIX panic, EPS < 0) live at the Orchestrator. This module only
+scores survivors' technical / alt-data axes (0–100) and emits when ≥ 65.
 """
+
+from __future__ import annotations
 
 import logging
 import os
@@ -2789,7 +3140,7 @@ import uuid
 from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, List
+from typing import Any, List, Optional
 
 import pandas as pd
 import yaml
@@ -2799,16 +3150,11 @@ try:  # yfinance is only needed for the optional Quality (EPS) filter.
 except Exception:  # noqa: BLE001 - keep the pure-math engine importable offline.
     yf = None  # type: ignore[assignment]
 
-# pandas-ta registers the ``.ta`` DataFrame accessor on import. The classic
-# fork is used because upstream ``pandas_ta`` 0.4.x pulls in numba (no wheel
-# for Python 3.13 / arm64) and 0.3.x breaks on numpy 2.x.
 try:  # pragma: no cover - environment-dependent import.
     import pandas_ta as ta  # noqa: F401
 except ImportError:  # pragma: no cover
     import pandas_ta_classic as ta  # noqa: F401
 
-# 01_memory_core starts with a digit, so it is not a normal package. Add it to
-# sys.path so the Phase 1 data contracts import regardless of launch context.
 _CORE_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "01_memory_core"
 )
@@ -2820,17 +3166,39 @@ logger = logging.getLogger(__name__)
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _DEFAULT_CONFIG_DIR = _PROJECT_ROOT / "config"
+_SENSORS_DIR = _PROJECT_ROOT / "00_data_sensors"
 
 # Minimum history required to compute a valid SMA-200.
 _MIN_ROWS = 200
 _DEFAULT_RSI_OVERSOLD = 30.0
+_CONVICTION_EMIT_FLOOR = 65.0
+
+# Proxy for institutional quality (Fundsmith / Amundi-style large holdings).
+# Also mirrored on MacroAlphaSensor.get_institutional_consensus.
+TOP_INSTITUTIONAL_HOLDINGS: set[str] = {
+    "MC.PA", "OR.PA", "RMS.PA", "AI.PA", "SAN.PA", "TTE.PA", "BNP.PA",
+    "AIR.PA", "SU.PA", "EL.PA", "KER.PA", "CS.PA", "DG.PA", "DSY.PA",
+    "SAF.PA", "STLAP.PA", "HO.PA", "ENGI.PA", "CAP.PA", "BN.PA",
+    "ASML.AS", "SAP.DE", "SIE.DE", "ALV.DE", "DTE.DE", "ADS.DE",
+    "NESN.SW", "NOVN.SW", "ROG.SW", "AZN.L",
+}
 
 
 class SignalGenerator:
-    """Generates raw BUY signals from mathematical price-action rules."""
+    """Generates raw BUY signals from ensemble conviction scoring."""
 
-    def __init__(self, config_path: str | Path | None = None) -> None:
-        """Load optional thresholds from ``risk_params.yaml``."""
+    def __init__(
+        self,
+        config_path: str | Path | None = None,
+        macro_sensor: Any | None = None,
+    ) -> None:
+        """Load optional thresholds from ``risk_params.yaml``.
+
+        Args:
+            config_path: Config dir or risk_params.yaml path.
+            macro_sensor: Optional ``MacroAlphaSensor`` for insider /
+                institutional axes (lazy-created on first need if None).
+        """
         path = Path(config_path) if config_path else _DEFAULT_CONFIG_DIR
         risk_file = path if path.is_file() else path / "risk_params.yaml"
         risk: dict = {}
@@ -2840,18 +3208,24 @@ class SignalGenerator:
         self.rsi_oversold: float = float(
             risk.get("RSI_OVERSOLD_THRESHOLD", _DEFAULT_RSI_OVERSOLD)
         )
+        self._macro = macro_sensor
+
+    def _macro_sensor(self) -> Any | None:
+        if self._macro is not None:
+            return self._macro
+        try:
+            if str(_SENSORS_DIR) not in sys.path:
+                sys.path.insert(0, str(_SENSORS_DIR))
+            from macro_alpha_api import MacroAlphaSensor  # noqa: WPS433
+
+            self._macro = MacroAlphaSensor()
+            return self._macro
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("MacroAlphaSensor unavailable for conviction: %s", exc)
+            return None
 
     def calculate_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Attach SMA-50, SMA-200 and RSI-14 columns for a single ticker.
-
-        Args:
-            df: Chronologically-sorted OHLCV for ONE ticker. Must contain a
-                ``Close`` column.
-
-        Returns:
-            pd.DataFrame: A copy of ``df`` with ``SMA_50``, ``SMA_200`` and
-            ``RSI_14`` columns appended.
-        """
+        """Attach SMA-5/50/200 and RSI-14 columns for a single ticker."""
         out = df.copy()
         close = out["Close"]
         out["SMA_5"] = out.ta.sma(close=close, length=5)
@@ -2861,10 +3235,7 @@ class SignalGenerator:
         return out
 
     def score_rsi(self, rsi_value: float) -> float:
-        """Map an RSI value to a BUY conviction score.
-
-        Linear mapping in the oversold zone relative to ``rsi_oversold``.
-        """
+        """Legacy RSI→score helper (kept for UI / back-compat)."""
         thr = self.rsi_oversold
         if rsi_value is None or pd.isna(rsi_value):
             return 0.0
@@ -2876,15 +3247,7 @@ class SignalGenerator:
     @staticmethod
     @lru_cache(maxsize=512)
     def _trailing_eps(ticker: str) -> float | None:
-        """Return trailing EPS for a ticker via yfinance (cached, tolerant).
-
-        Args:
-            ticker: Yahoo Finance ticker symbol.
-
-        Returns:
-            float | None: Trailing EPS, or ``None`` if it cannot be determined
-            (network error, missing field). ``None`` means "unknown -> allow".
-        """
+        """Return trailing EPS via yfinance (cached). ``None`` = unknown."""
         if yf is None:
             return None
         try:
@@ -2893,54 +3256,152 @@ class SignalGenerator:
                 val = info.get(key)
                 if val is not None:
                     return float(val)
-        except Exception:  # noqa: BLE001 - never block sizing on a data outage.
+        except Exception:  # noqa: BLE001
             logger.debug("EPS lookup failed for %s; treating as unknown.", ticker)
         return None
 
     def is_profitable(self, ticker: str) -> bool:
-        """Quality filter: reject loss-making names (EPS < 0).
-
-        Unknown EPS (data unavailable) is treated as pass, so a data outage
-        never silently blocks the whole universe.
-
-        Args:
-            ticker: Ticker to check.
-
-        Returns:
-            bool: ``False`` only when EPS is known and negative.
-        """
+        """Quality filter helper for Orchestrator: False only if EPS known < 0."""
         eps = self._trailing_eps(ticker)
         if eps is None:
             return True
         return eps > 0
 
+    def evaluate(
+        self,
+        ticker: str,
+        history: pd.DataFrame,
+        *,
+        macro_sensor: Any | None = None,
+    ) -> dict[str, Any]:
+        """Score a ticker on the four ensemble axes (max 100).
+
+        Weights
+        -------
+        * Mean Reversion — max 35
+        * Volume Breakout — max 25
+        * Insider Clustering — max 20
+        * Institutional Quality — max 20
+
+        Returns:
+            dict: Keys ``mean_reversion``, ``volume_breakout``, ``insider``,
+            ``institutional``, ``total``, ``factors`` (list[str]), plus
+            diagnostic RSI / close fields when available.
+        """
+        empty = {
+            "mean_reversion": 0,
+            "volume_breakout": 0,
+            "insider": 0,
+            "institutional": 0,
+            "total": 0.0,
+            "factors": [],
+            "rsi": None,
+            "close": None,
+            "sma200": None,
+        }
+        if history is None or history.empty or len(history) < _MIN_ROWS:
+            return empty
+        if "Close" not in history.columns:
+            return empty
+
+        enriched = self.calculate_indicators(history)
+        last = enriched.iloc[-1]
+        close = float(last["Close"])
+        sma_200 = last["SMA_200"]
+        rsi_14 = last["RSI_14"]
+        factors: list[str] = []
+        mr = vol_pts = ins_pts = inst_pts = 0
+
+        if not pd.isna(sma_200) and not pd.isna(rsi_14):
+            above_sma = close > float(sma_200)
+            if above_sma and float(rsi_14) < 30.0:
+                mr = 35
+                factors.append(f"MR+35 RSI={float(rsi_14):.1f}<30 & Close>SMA200")
+            elif above_sma and float(rsi_14) < 40.0:
+                mr = 15
+                factors.append(f"MR+15 RSI={float(rsi_14):.1f}<40 & Close>SMA200")
+
+        # Volume breakout: 50d high close + volume > 2× 20d ADV
+        if (
+            "Volume" in enriched.columns
+            and len(enriched) >= 50
+            and not pd.isna(last.get("Volume"))
+        ):
+            window50 = enriched.tail(50)
+            high_50 = float(window50["Close"].max())
+            avg_vol_20 = float(enriched["Volume"].tail(20).mean())
+            today_vol = float(last["Volume"])
+            if (
+                avg_vol_20 > 0
+                and close >= high_50 * 0.999
+                and today_vol > 2.0 * avg_vol_20
+            ):
+                vol_pts = 25
+                factors.append(
+                    f"VOL+25 50d-high + vol {today_vol / avg_vol_20:.1f}× ADV20"
+                )
+
+        sensor = macro_sensor if macro_sensor is not None else self._macro_sensor()
+        cluster = 0
+        if sensor is not None:
+            try:
+                cluster = int(sensor.get_insider_buy_cluster(ticker))
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("Insider cluster failed for %s: %s", ticker, exc)
+                cluster = 0
+        if cluster >= 2:
+            ins_pts = 20
+            factors.append(f"INS+20 cluster buys={cluster}")
+        elif cluster == 1:
+            ins_pts = 10
+            factors.append("INS+10 single buy cluster")
+
+        is_inst = ticker in TOP_INSTITUTIONAL_HOLDINGS
+        if sensor is not None:
+            try:
+                is_inst = bool(sensor.get_institutional_consensus(ticker)) or is_inst
+            except Exception:  # noqa: BLE001
+                pass
+        if is_inst:
+            inst_pts = 20
+            factors.append("INST+20 institutional consensus proxy")
+
+        total = float(mr + vol_pts + ins_pts + inst_pts)
+        return {
+            "mean_reversion": mr,
+            "volume_breakout": vol_pts,
+            "insider": ins_pts,
+            "institutional": inst_pts,
+            "total": total,
+            "factors": factors,
+            "rsi": None if pd.isna(rsi_14) else float(rsi_14),
+            "close": close,
+            "sma200": None if pd.isna(sma_200) else float(sma_200),
+        }
+
     def generate_raw_signals(
         self,
         db_manager: Any,
         tickers: List[str],
-        apply_quality_filter: bool = True,
-        apply_momentum_filter: bool = True,
+        apply_quality_filter: bool = False,
+        apply_momentum_filter: bool = False,
+        conviction_floor: float = _CONVICTION_EMIT_FLOOR,
     ) -> List[Signal]:
-        """Evaluate each ticker and emit raw Mean-Reversion Exhaustion signals.
-
-        Rule (BUY): the most recent bar has ``Close > SMA_200`` (long-term
-        uptrend) AND ``RSI_14 < RSI_OVERSOLD_THRESHOLD`` (default 30), refined by:
-
-          * Quality filter (Phase 11): the company must be profitable (EPS > 0).
-          * Momentum filter (Phase 11): do not catch falling knives — require
-            ``Close > SMA_5`` so the pullback is already stabilizing.
+        """Evaluate each ticker; emit BUY when ensemble conviction ≥ floor.
 
         Args:
-            db_manager: A Phase 2 ``TimeSeriesDB`` exposing
-                ``get_historical_prices(ticker, days)``.
-            tickers: Ticker symbols to evaluate.
-            apply_quality_filter: Skip loss-making companies when ``True``.
-            apply_momentum_filter: Require ``Close > SMA_5`` when ``True``.
+            db_manager: ``TimeSeriesDB`` with ``get_historical_prices``.
+            tickers: Universe symbols.
+            apply_quality_filter: Legacy EPS gate (prefer Orchestrator).
+            apply_momentum_filter: Unused in ensemble mode (kept for API compat).
+            conviction_floor: Minimum total points to emit (default 65).
 
         Returns:
-            List[Signal]: PENDING BUY signals for tickers meeting all rules.
+            List[Signal]: PENDING BUYs with score = conviction total.
         """
+        _ = apply_momentum_filter  # ensemble replaces SMA5 knife filter
         signals: List[Signal] = []
+        sensor = self._macro_sensor()
 
         for ticker in tickers:
             df = db_manager.get_historical_prices(ticker, days=252)
@@ -2952,62 +3413,43 @@ class SignalGenerator:
                 )
                 continue
 
-            enriched = self.calculate_indicators(df)
-            last = enriched.iloc[-1]
-
-            close = last["Close"]
-            sma_5 = last["SMA_5"]
-            sma_200 = last["SMA_200"]
-            rsi_14 = last["RSI_14"]
-
-            if pd.isna(sma_200) or pd.isna(rsi_14):
-                logger.debug("Skipping %s: indicators not yet warmed up.", ticker)
-                continue
-
-            uptrend = close > sma_200
-            oversold = rsi_14 < self.rsi_oversold
-
-            # --- Momentum filter: reject falling knives (Close <= SMA_5) ------
-            if apply_momentum_filter and (pd.isna(sma_5) or close <= sma_5):
-                if uptrend and oversold:
-                    logger.info(
-                        "Momentum filter blocked %s (Close %.2f <= SMA5 %.2f).",
-                        ticker,
-                        close,
-                        sma_5,
-                    )
-                continue
-
-            # --- Quality filter: reject loss-making hype stocks (EPS < 0) -----
-            if uptrend and oversold and apply_quality_filter and not self.is_profitable(
-                ticker
-            ):
+            if apply_quality_filter and not self.is_profitable(ticker):
                 logger.info("Quality filter blocked %s (EPS < 0).", ticker)
                 continue
 
-            if uptrend and oversold:
-                score = self.score_rsi(rsi_14)
-                signal = Signal(
-                    id=str(uuid.uuid4()),
-                    ticker=ticker,
-                    signal_type=SignalType.BUY,
-                    status=SignalStatus.PENDING,
-                    score=score,
-                    target_qty=None,
-                    created_at=datetime.now(timezone.utc),
-                    reason=(
-                        f"RSI < {self.rsi_oversold:.0f} (Value: {rsi_14:.1f}) while Price > SMA200 "
-                        f"({close:.2f} > {sma_200:.2f}). Mean-reversion setup."
-                    ),
-                )
-                signals.append(signal)
-                logger.info(
-                    "BUY signal %s for %s (RSI=%.1f, score=%.1f).",
-                    signal.id[:8],
+            conv = self.evaluate(ticker, df, macro_sensor=sensor)
+            total = float(conv.get("total") or 0.0)
+            if total < float(conviction_floor):
+                logger.debug(
+                    "Skip %s: conviction %.0f < %.0f (%s).",
                     ticker,
-                    rsi_14,
-                    score,
+                    total,
+                    conviction_floor,
+                    ", ".join(conv.get("factors") or []) or "no factors",
                 )
+                continue
+
+            reason = (
+                f"Conviction {total:.0f}/100 ≥ {conviction_floor:.0f} | "
+                + " · ".join(conv.get("factors") or ["ensemble"])
+            )
+            signal = Signal(
+                id=str(uuid.uuid4()),
+                ticker=ticker,
+                signal_type=SignalType.BUY,
+                status=SignalStatus.PENDING,
+                score=total,
+                target_qty=None,
+                created_at=datetime.now(timezone.utc),
+                reason=reason,
+            )
+            signals.append(signal)
+            logger.info(
+                "BUY signal %s for %s (conviction=%.0f).",
+                signal.id[:8],
+                ticker,
+                total,
+            )
 
         return signals
 
@@ -3020,55 +3462,250 @@ if __name__ == "__main__":
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
 
-    # Build a synthetic uptrend (Close > SMA200) that dips into an oversold
-    # pullback (RSI_14 < 30) and then STABILISES (Close > SMA_5) so both the
-    # mean-reversion rule and the new momentum filter fire together.
     n = 260
     dates = pd.date_range("2024-01-01", periods=n, freq="B")
-    base = np.linspace(100.0, 200.0, n)          # long-term uptrend
+    base = np.linspace(100.0, 200.0, n)
     close = base.copy()
-    close[-8:] = close[-9] * np.array(           # deep dip, then a 2-bar bounce
+    close[-8:] = close[-9] * np.array(
         [0.955, 0.925, 0.898, 0.875, 0.858, 0.848, 0.858, 0.866]
     )
+    volume = np.full(n, 1_000_000.0)
+    volume[-1] = 3_500_000.0  # volume breakout candidate
     mock = pd.DataFrame(
         {
-            "Ticker": "TEST.PA",
+            "Ticker": "MC.PA",
             "Date": dates,
             "Open": close,
             "High": close * 1.01,
             "Low": close * 0.99,
             "Close": close,
-            "Volume": 1_000_000,
+            "Volume": volume,
         }
     )
 
-    class _MockDB:
-        """Minimal stand-in for TimeSeriesDB returning the mock frame."""
+    class _MockMacro:
+        def get_insider_buy_cluster(self, ticker: str) -> int:
+            return 2
 
+        def get_institutional_consensus(self, ticker: str) -> bool:
+            return ticker in TOP_INSTITUTIONAL_HOLDINGS
+
+    class _MockDB:
         def get_historical_prices(self, ticker: str, days: int = 252) -> pd.DataFrame:
             return mock
 
-    gen = SignalGenerator()
-
-    enriched = gen.calculate_indicators(mock)
-    last = enriched.iloc[-1]
-    print(
-        f"Last bar -> Close={last['Close']:.2f} SMA5={last['SMA_5']:.2f} "
-        f"SMA200={last['SMA_200']:.2f} RSI14={last['RSI_14']:.2f}"
-    )
-    print("score_rsi checks:",
-          gen.score_rsi(30), gen.score_rsi(20), gen.score_rsi(10),
-          gen.score_rsi(35), gen.score_rsi(float("nan")))
-
-    # Quality filter needs network EPS; disable it for this offline demo.
-    results = gen.generate_raw_signals(
-        _MockDB(), ["TEST.PA"], apply_quality_filter=False
-    )
+    gen = SignalGenerator(macro_sensor=_MockMacro())
+    conv = gen.evaluate("MC.PA", mock)
+    print("Conviction breakdown:", conv)
+    results = gen.generate_raw_signals(_MockDB(), ["MC.PA"])
     print(f"\nGenerated {len(results)} signal(s):")
     for s in results:
-        print(f"  {s.id[:8]} {s.ticker} {s.signal_type.value} "
-              f"score={s.score:.1f} status={s.status.value}")
+        print(f"  {s.id[:8]} {s.ticker} score={s.score:.1f}")
         print(f"  reason: {s.reason}")
+```
+
+## FILE: 02_quant_engine/walk_forward_backtester.py
+```python
+"""Walk-forward backtester scaffold (Phase 20 companion).
+
+Rewinds DuckDB OHLCV from ``start`` day-by-day, runs ``SignalGenerator.evaluate``
+on the PEA universe slice available at each date, and accumulates a simple
+equity curve (equal-weight paper fills when conviction ≥ floor).
+
+This is intentionally a research CLI — it does **not** place broker orders.
+Full Orchestrator vetoes can be layered later; here we isolate ensemble
+parameter sensitivity (e.g. RSI 25 vs 30 contribution via conviction axes).
+
+Usage
+-----
+::
+
+    python 02_quant_engine/walk_forward_backtester.py --start 2020-01-01
+"""
+
+from __future__ import annotations
+
+import argparse
+import logging
+import os
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+import pandas as pd
+import yaml
+
+_ROOT = Path(__file__).resolve().parent.parent
+for _sub in ("00_data_sensors", "01_memory_core", "02_quant_engine"):
+    sys.path.insert(0, str(_ROOT / _sub))
+
+from duckdb_manager import TimeSeriesDB  # noqa: E402
+from technical_scorer import SignalGenerator, _CONVICTION_EMIT_FLOOR  # noqa: E402
+
+logger = logging.getLogger(__name__)
+
+
+def _load_universe() -> list[str]:
+    path = _ROOT / "config" / "pea_universe.yaml"
+    with open(path, "r", encoding="utf-8") as fh:
+        data = yaml.safe_load(fh) or {}
+    tickers: list[str] = []
+    uni = data.get("universe") or data.get("tickers") or {}
+    if isinstance(uni, list):
+        for item in uni:
+            if isinstance(item, dict) and item.get("ticker"):
+                tickers.append(str(item["ticker"]))
+            elif isinstance(item, str):
+                tickers.append(item)
+    elif isinstance(uni, dict):
+        for _sector, names in uni.items():
+            if not isinstance(names, list):
+                continue
+            for item in names:
+                if isinstance(item, dict) and item.get("ticker"):
+                    tickers.append(str(item["ticker"]))
+                elif isinstance(item, str):
+                    tickers.append(item)
+    # Prefer blue-chips first for a fast smoke run
+    preferred = [
+        "CW8.PA", "MC.PA", "OR.PA", "AI.PA", "ASML.AS", "SAP.DE",
+        "SAN.PA", "TTE.PA", "BNP.PA", "AIR.PA", "RMS.PA",
+    ]
+    ordered = [t for t in preferred if t in tickers]
+    ordered += [t for t in tickers if t not in ordered]
+    return ordered
+
+
+def run_walk_forward(
+    start: str = "2020-01-01",
+    end: str | None = None,
+    conviction_floor: float = _CONVICTION_EMIT_FLOOR,
+    notional_per_trade: float = 1000.0,
+    max_names: int = 40,
+) -> pd.DataFrame:
+    """Day-by-day paper equity using ensemble conviction only.
+
+    Returns:
+        DataFrame with columns ``date``, ``equity``, ``n_signals``, ``cash``.
+    """
+    db = TimeSeriesDB()
+    gen = SignalGenerator(macro_sensor=None)  # price axes only (offline-friendly)
+    tickers = _load_universe()[:max_names]
+    end_ts = pd.Timestamp(end or datetime.now(timezone.utc).date())
+    start_ts = pd.Timestamp(start)
+
+    cash = 10_000.0
+    equity_rows: list[dict] = []
+    # Very simple book: ticker -> {qty, cost}
+    book: dict[str, dict] = {}
+
+    # Build a common calendar from the Core ETF if available.
+    calendar_ticker = "CW8.PA" if "CW8.PA" in tickers else (tickers[0] if tickers else None)
+    if not calendar_ticker:
+        logger.error("Empty universe.")
+        return pd.DataFrame(columns=["date", "equity", "n_signals", "cash"])
+
+    cal = db.get_historical_prices(calendar_ticker, days=4000)
+    if cal is None or cal.empty:
+        logger.error("No calendar history for %s.", calendar_ticker)
+        return pd.DataFrame(columns=["date", "equity", "n_signals", "cash"])
+
+    date_col = "Date" if "Date" in cal.columns else cal.index.name
+    if date_col and date_col in cal.columns:
+        dates = pd.to_datetime(cal[date_col]).sort_values().unique()
+    else:
+        dates = pd.to_datetime(cal.index).sort_values().unique()
+
+    dates = [d for d in dates if start_ts <= pd.Timestamp(d) <= end_ts]
+    logger.info("Walk-forward %s → %s (%d sessions, %d names).",
+                start, end_ts.date(), len(dates), len(tickers))
+
+    for i, day in enumerate(dates):
+        day_ts = pd.Timestamp(day)
+        n_sig = 0
+        # Mark-to-market + optional new entries every ~5 sessions to keep runtime sane.
+        if i % 5 == 0:
+            for ticker in tickers:
+                try:
+                    hist = db.get_historical_prices(ticker, days=400)
+                    if hist is None or hist.empty:
+                        continue
+                    if "Date" in hist.columns:
+                        hist = hist[pd.to_datetime(hist["Date"]) <= day_ts]
+                    else:
+                        hist = hist[pd.to_datetime(hist.index) <= day_ts]
+                    if len(hist) < 200:
+                        continue
+                    conv = gen.evaluate(ticker, hist, macro_sensor=None)
+                    if float(conv.get("total") or 0) < conviction_floor:
+                        continue
+                    n_sig += 1
+                    px = float(conv.get("close") or 0)
+                    if px <= 0 or cash < notional_per_trade:
+                        continue
+                    if ticker in book:
+                        continue
+                    qty = int(notional_per_trade // px)
+                    if qty < 1:
+                        continue
+                    cost = qty * px
+                    cash -= cost
+                    book[ticker] = {"qty": qty, "cost": cost, "px": px}
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug("WF skip %s @ %s: %s", ticker, day_ts.date(), exc)
+
+        mtm = cash
+        for ticker, pos in list(book.items()):
+            try:
+                hist = db.get_historical_prices(ticker, days=5)
+                if hist is None or hist.empty:
+                    mtm += pos["qty"] * pos["px"]
+                    continue
+                if "Date" in hist.columns:
+                    sub = hist[pd.to_datetime(hist["Date"]) <= day_ts]
+                    last_px = float(sub["Close"].iloc[-1]) if not sub.empty else pos["px"]
+                else:
+                    last_px = float(hist["Close"].iloc[-1])
+                pos["px"] = last_px
+                mtm += pos["qty"] * last_px
+            except Exception:  # noqa: BLE001
+                mtm += pos["qty"] * pos.get("px", 0)
+
+        equity_rows.append({
+            "date": day_ts.date().isoformat(),
+            "equity": round(mtm, 2),
+            "n_signals": n_sig,
+            "cash": round(cash, 2),
+            "positions": len(book),
+        })
+
+    return pd.DataFrame(equity_rows)
+
+
+def main() -> None:
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    p = argparse.ArgumentParser(description="Walk-forward ensemble backtester.")
+    p.add_argument("--start", default="2020-01-01")
+    p.add_argument("--end", default=None)
+    p.add_argument("--floor", type=float, default=_CONVICTION_EMIT_FLOOR)
+    p.add_argument("--notional", type=float, default=1000.0)
+    args = p.parse_args()
+    curve = run_walk_forward(
+        start=args.start,
+        end=args.end,
+        conviction_floor=args.floor,
+        notional_per_trade=args.notional,
+    )
+    out = _ROOT / "database" / "walk_forward_equity.csv"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    curve.to_csv(out, index=False)
+    print(f"Wrote {len(curve)} rows → {out}")
+    if not curve.empty:
+        print(curve.tail(3).to_string(index=False))
+
+
+if __name__ == "__main__":
+    main()
 ```
 
 ## FILE: 03_risk_portfolio/__init__.py
@@ -4691,6 +5328,18 @@ class SignalOrchestrator:
                 )
                 continue
 
+            # --- Check 0c: Quality / EPS < 0 (Orchestrator-level veto) ---
+            try:
+                from technical_scorer import SignalGenerator  # noqa: WPS433
+
+                if not SignalGenerator().is_profitable(ticker):
+                    processed.append(
+                        self._reject(signal, "REJECTED: EPS < 0 (quality veto)")
+                    )
+                    continue
+            except Exception:  # noqa: BLE001 - never block the cascade on EPS outage
+                pass
+
             # --- Check 1: Macro veto (cheapest - runs first) ---
             vetoed, veto_reason = self.macro_veto.check_veto(today)
             if vetoed:
@@ -5795,11 +6444,12 @@ def _sector_for_ticker(ticker: str) -> str:
 
 
 def render_pending_trade_cards(pending_df: pd.DataFrame, portfolio_obj) -> None:
-    """Rich cards for PENDING Discord signals (sizing / ATR risk / sector)."""
+    """Rich cards for PENDING Discord/Streamlit signals (sizing / ATR / approve)."""
     if pending_df is None or pending_df.empty:
         st.info(
-            "Aucun signal en attente. Soit le marche n'offre pas de setup MRE, "
-            "soit un veto (VIX / macro / liquidite) a tout bloque."
+            "Aucun signal en attente. Soit le marche n'offre pas de setup "
+            "ensemble (conviction < 65), soit un veto (VIX / macro / liquidite) "
+            "a tout bloque."
         )
         return
     if render_signal_card is None:
@@ -5810,9 +6460,40 @@ def render_pending_trade_cards(pending_df: pd.DataFrame, portfolio_obj) -> None:
     sizer = PeaSizer(_ROOT / "config") if PeaSizer is not None else None
     prices = get_last_prices(tuple(str(t) for t in pending_df["ticker"].tolist()))
 
+    # Score gradient table (65–75 amber, 76–100 neon)
+    score_colors = []
+    for s in pending_df["score"].tolist():
+        try:
+            sc = float(s or 0)
+        except (TypeError, ValueError):
+            sc = 0.0
+        if sc >= 76:
+            score_colors.append(_NEON)
+        elif sc >= 65:
+            score_colors.append(_AMBER)
+        else:
+            score_colors.append(_MUTED)
+    disp = pd.DataFrame({
+        "Titre": [format_name(t) for t in pending_df["ticker"]],
+        "Score": [f"{float(s or 0):.0f}" for s in pending_df["score"]],
+        "Type": pending_df["signal_type"],
+        "Date": [str(x)[:16] for x in pending_df["created_at"]],
+    })
+    st.plotly_chart(
+        dark_table(
+            disp.head(12),
+            height=min(280, 56 + 28 * min(12, len(disp))),
+            font_color_map={"Score": score_colors[: len(disp)]},
+            col_widths=[2.2, 0.7, 0.8, 1.2],
+        ),
+        width="stretch",
+        key="gen_pending_score_table",
+    )
+
     for _, row in pending_df.head(8).iterrows():
         ticker = str(row.get("ticker", ""))
         score = float(row.get("score") or 0)
+        sig_id = str(row.get("id") or "")
         qty = row.get("target_qty")
         try:
             qty_i = int(qty) if qty is not None and str(qty) not in ("", "None", "nan") else None
@@ -5860,6 +6541,40 @@ def render_pending_trade_cards(pending_df: pd.DataFrame, portfolio_obj) -> None:
             ),
             unsafe_allow_html=True,
         )
+        # Command Center: native Streamlit approve / reject (complements Discord)
+        if sig_id:
+            b1, b2, _ = st.columns([1, 1, 2])
+            with b1:
+                if st.button(
+                    "Approuver",
+                    type="primary",
+                    key=f"approve_{sig_id[:12]}",
+                    help="Met à jour SQLite → APPROVED (pas d'ordre broker).",
+                ):
+                    ok = PortfolioDB(db_path=_SQLITE_PATH).update_signal_status(
+                        sig_id, "APPROVED", "Streamlit Command Center approve"
+                    )
+                    if ok:
+                        st.success(f"{format_name(ticker)} → APPROVED")
+                        st.cache_data.clear()
+                        st.rerun()
+                    else:
+                        st.warning("Mise à jour SQLite échouée.")
+            with b2:
+                if st.button(
+                    "Rejeter",
+                    key=f"reject_{sig_id[:12]}",
+                    help="Met à jour SQLite → REJECTED.",
+                ):
+                    ok = PortfolioDB(db_path=_SQLITE_PATH).update_signal_status(
+                        sig_id, "REJECTED", "Streamlit Command Center reject"
+                    )
+                    if ok:
+                        st.info(f"{format_name(ticker)} → REJECTED")
+                        st.cache_data.clear()
+                        st.rerun()
+                    else:
+                        st.warning("Mise à jour SQLite échouée.")
 
 
 # =============================================================================
@@ -6573,9 +7288,161 @@ def get_normalized_prices(
         return pd.DataFrame()
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def load_morning_briefing() -> dict:
+    """Load Phase 19 morning Zeitgeist JSON (graceful empty on miss)."""
+    try:
+        from newsletter_api import NewsletterSensor
+
+        data = NewsletterSensor.read_briefing()
+        return data or {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def get_conviction_axes(ticker: str) -> dict:
+    """Four-axis ensemble conviction for radar chart (Exploration)."""
+    try:
+        from technical_scorer import SignalGenerator
+        from duckdb_manager import TimeSeriesDB
+
+        db = TimeSeriesDB()
+        hist = db.get_historical_prices(ticker, days=300)
+        if hist is None or hist.empty:
+            return {}
+        return SignalGenerator().evaluate(ticker, hist)
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def render_conviction_radar(conv: dict, ticker: str) -> go.Figure:
+    """Plotly polar radar for Mean Reversion / Volume / Insiders / Institutional."""
+    cats = ["Mean Reversion", "Volume", "Insiders", "Institutional"]
+    vals = [
+        float(conv.get("mean_reversion") or 0),
+        float(conv.get("volume_breakout") or 0),
+        float(conv.get("insider") or 0),
+        float(conv.get("institutional") or 0),
+    ]
+    # Close the polygon
+    cats_c = cats + [cats[0]]
+    vals_c = vals + [vals[0]]
+    fig = go.Figure()
+    fig.add_trace(go.Scatterpolar(
+        r=vals_c,
+        theta=cats_c,
+        fill="toself",
+        name=ticker,
+        line=dict(color=_NEON, width=2),
+        fillcolor="rgba(0,255,0,0.12)",
+    ))
+    fig.update_layout(
+        polar=dict(
+            bgcolor="#050505",
+            radialaxis=dict(
+                visible=True, range=[0, 35],
+                gridcolor="#333", tickfont=dict(color=_MUTED, size=10),
+            ),
+            angularaxis=dict(
+                gridcolor="#333", tickfont=dict(color=_WHITE, size=11),
+            ),
+        ),
+        paper_bgcolor="#050505",
+        plot_bgcolor="#050505",
+        font=dict(color=_WHITE),
+        margin=dict(l=40, r=40, t=40, b=40),
+        height=320,
+        showlegend=False,
+        title=dict(
+            text=f"Conviction {float(conv.get('total') or 0):.0f}/100",
+            font=dict(color=_CYAN, size=13),
+        ),
+    )
+    return fig
+
+
+def simulate_buy_what_if(
+    portfolio_obj, ticker: str, notional_eur: float = 1000.0
+) -> dict:
+    """What-if: impact of buying ``notional_eur`` on cash / sector / rough corr."""
+    prices = get_last_prices((ticker,))
+    px = float(prices.get(ticker) or 0)
+    cash = float(portfolio_obj.cash_available)
+    equity = float(portfolio_obj.total_equity) or 1.0
+    sector = _sector_for_ticker(ticker) or "Unknown"
+    qty = int(notional_eur // px) if px > 0 else 0
+    cost = qty * px
+    cash_after = cash - cost
+
+    # Current sector weight
+    sec_now = 0.0
+    for p in portfolio_obj.positions:
+        if _sector_for_ticker(p.ticker) == sector:
+            sec_now += float(p.qty_shares) * float(
+                prices.get(p.ticker) or getattr(p, "avg_price", 0) or 0
+            )
+    sec_now_pct = 100.0 * sec_now / equity
+    sec_after_pct = 100.0 * (sec_now + cost) / (equity)  # approx same equity
+
+    # Rough max abs correlation vs held names (DuckDB closes if available)
+    max_corr = None
+    try:
+        from duckdb_manager import TimeSeriesDB
+
+        db = TimeSeriesDB()
+        cand = db.get_historical_prices(ticker, days=90)
+        if cand is not None and not cand.empty and "Close" in cand.columns:
+            cser = cand["Close"].pct_change().dropna()
+            corrs = []
+            for p in portfolio_obj.positions:
+                if p.ticker == ticker:
+                    continue
+                other = db.get_historical_prices(p.ticker, days=90)
+                if other is None or other.empty:
+                    continue
+                oser = other["Close"].pct_change().dropna()
+                joined = pd.concat([cser, oser], axis=1, join="inner").dropna()
+                if len(joined) < 20:
+                    continue
+                corrs.append(float(joined.iloc[:, 0].corr(joined.iloc[:, 1])))
+            if corrs:
+                max_corr = max(corrs, key=lambda x: abs(x))
+    except Exception:  # noqa: BLE001
+        max_corr = None
+
+    return {
+        "qty": qty,
+        "price": px,
+        "cost": cost,
+        "cash_before": cash,
+        "cash_after": cash_after,
+        "sector": sector,
+        "sector_pct_before": sec_now_pct,
+        "sector_pct_after": sec_after_pct,
+        "max_corr": max_corr,
+        "affordable": qty >= 1 and cost <= cash,
+    }
+
+
 @st.cache_data(ttl=1800, show_spinner=False)
 def get_recent_news(symbol: str, limit: int = 6) -> list[dict]:
-    """Fetch recent news: Boursorama first (rich), then yfinance fallback."""
+    """Fetch recent news: Boursorama → Google News RSS → Yahoo Finance."""
+    collected: list[dict] = []
+    seen_titles: set[str] = set()
+
+    def _push(title: str, link: str, date: str, provider: str) -> None:
+        key = (title or "").strip().casefold()
+        if not key or key in seen_titles:
+            return
+        seen_titles.add(key)
+        collected.append({
+            "title": title.strip(),
+            "link": link or "#",
+            "date": date or "Recent",
+            "provider": provider,
+        })
+
     # --- Primary: Boursorama scraper ----------------------------------------
     try:
         scrapers_dir = _ROOT / "00_data_sensors" / "scrapers"
@@ -6588,57 +7455,86 @@ def get_recent_news(symbol: str, limit: int = 6) -> list[dict]:
         if items:
             sentiment = (profile or {}).get("sentiment") or "Unknown"
             elig = ",".join((profile or {}).get("eligibility") or []) or "?"
-            out = []
-            for n in items[:limit]:
-                out.append({
-                    "title": n.get("title", ""),
-                    "link": n.get("link") or "#",
-                    "date": n.get("date") or "Recent",
-                    "provider": (
-                        f"Boursorama · {n.get('provider') or 'local'} · "
-                        f"sentiment {sentiment} · elig {elig}"
-                    ),
-                })
-            return out
-        # Legacy title-only fallback from get_retail_sentiment_and_news
-        bourso = BoursoramaScraper().get_retail_sentiment_and_news(symbol)
-        headlines = (bourso or {}).get("news") or []
-        if headlines:
+            for n in items:
+                _push(
+                    n.get("title", ""),
+                    n.get("link") or "#",
+                    n.get("date") or "Recent",
+                    f"Boursorama · {n.get('provider') or 'local'} · "
+                    f"sentiment {sentiment} · elig {elig}",
+                )
+        else:
+            bourso = BoursoramaScraper().get_retail_sentiment_and_news(symbol)
+            headlines = (bourso or {}).get("news") or []
             sentiment = (bourso or {}).get("sentiment") or "Unknown"
-            return [
-                {
-                    "title": title,
-                    "link": "#",
-                    "date": "Recent",
-                    "provider": f"Boursorama · sentiment {sentiment}",
-                }
-                for title in headlines[:limit]
-            ]
+            for title in headlines:
+                _push(title, "#", "Recent", f"Boursorama · sentiment {sentiment}")
     except Exception:  # noqa: BLE001
         pass
 
+    # --- Google News + European press RSS (FR) ------------------------------
+    if len(collected) < limit:
+        try:
+            import urllib.parse
+            import urllib.request
+            import xml.etree.ElementTree as ET
+
+            name = short_name(symbol)
+            queries = [
+                f"{symbol} OR {name} when:7d",
+                f"{name} (bourse OR CAC OR PEA) when:7d",
+                f"{name} site:lesechos.fr OR site:latribune.fr OR site:reuters.com when:14d",
+            ]
+            for q in queries:
+                if len(collected) >= limit:
+                    break
+                url = (
+                    "https://news.google.com/rss/search?"
+                    + urllib.parse.urlencode({
+                        "q": q, "hl": "fr", "gl": "FR", "ceid": "FR:fr",
+                    })
+                )
+                req = urllib.request.Request(
+                    url,
+                    headers={"User-Agent": "PEA-Sniper-Terminal/1.0"},
+                )
+                with urllib.request.urlopen(req, timeout=8) as resp:
+                    root = ET.fromstring(resp.read())
+                for item in root.findall(".//item")[:8]:
+                    title = (item.findtext("title") or "").strip()
+                    link = (item.findtext("link") or "#").strip()
+                    pub = (item.findtext("pubDate") or "")[:16]
+                    source = item.find("source")
+                    src = (source.text if source is not None else None) or "Google News"
+                    _push(title, link, pub or "Recent", f"Google News · {src}")
+        except Exception:  # noqa: BLE001
+            pass
+
     # --- Fallback: yfinance -------------------------------------------------
-    try:
-        raw = yf.Ticker(symbol).news or []
-        items = []
-        for n in raw[:limit]:
-            content = n.get("content", n)
-            title = content.get("title") or n.get("title") or ""
-            link = (
-                content.get("clickThroughUrl", {}).get("url")
-                or content.get("canonicalUrl", {}).get("url")
-                or n.get("link")
-                or "#"
-            )
-            date_str = content.get("pubDate") or content.get("displayTime") or ""
-            provider = (content.get("provider") or {}).get("displayName", "")
-            if title:
-                items.append({"title": title, "link": link,
-                              "date": (date_str or "")[:10] or "Recent",
-                              "provider": provider or "Yahoo Finance"})
-        return items
-    except Exception:  # noqa: BLE001
-        return []
+    if len(collected) < limit:
+        try:
+            raw = yf.Ticker(symbol).news or []
+            for n in raw:
+                content = n.get("content", n)
+                title = content.get("title") or n.get("title") or ""
+                link = (
+                    content.get("clickThroughUrl", {}).get("url")
+                    or content.get("canonicalUrl", {}).get("url")
+                    or n.get("link")
+                    or "#"
+                )
+                date_str = content.get("pubDate") or content.get("displayTime") or ""
+                provider = (content.get("provider") or {}).get("displayName", "")
+                _push(
+                    title, link, (date_str or "")[:10] or "Recent",
+                    provider or "Yahoo Finance",
+                )
+                if len(collected) >= limit:
+                    break
+        except Exception:  # noqa: BLE001
+            pass
+
+    return collected[:limit]
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
@@ -8296,6 +9192,27 @@ with tab_gen:
                    help="PEA = actions entieres. Sous ce montant, pas de Core.")
 
     st.markdown("---")
+    # --- Phase 19: Morning Zeitgeist (newsletters) --------------------------
+    st.markdown("#### 🗞️ Morning Zeitgeist (Thèmes des Newsletters)")
+    briefing = load_morning_briefing()
+    zg = (briefing or {}).get("zeitgeist") or "Indisponible"
+    headlines = (briefing or {}).get("headlines") or []
+    gen_at = (briefing or {}).get("generated_at") or ""
+    st.markdown(
+        f"<div class='info-text'><b style='color:{_CYAN};'>Narratifs macro "
+        f"(LLM)</b>"
+        + (f" · <span style='color:{_MUTED};'>{str(gen_at)[:19]} UTC</span>"
+           if gen_at else "")
+        + f"<br><div style='white-space:pre-wrap;margin-top:8px;color:#E8E8E8;"
+        f"line-height:1.55;'>{zg}</div></div>",
+        unsafe_allow_html=True,
+    )
+    with st.expander(f"Voir les {len(headlines)} titres sources", expanded=False):
+        if headlines:
+            st.markdown("\n".join(f"- {h}" for h in headlines))
+        else:
+            st.caption("Aucun titre (IMAP / whitelist / briefing pas encore tourné).")
+
     recos = build_recommendations(portfolio, pending_gen, vix, regime or {})
     g1, g2 = st.columns([1.15, 1])
     with g1:
@@ -8385,7 +9302,7 @@ with tab_gen:
     st.markdown("#### ⚡ Signaux & Registre")
     col1, col2 = st.columns(2)
     with col1:
-        st.markdown("##### En attente (Discord) — cartes de trade")
+        st.markdown("##### En attente (Command Center) — cartes de trade")
         pending = pending_gen
         render_pending_trade_cards(pending, portfolio)
     with col2:
@@ -8935,6 +9852,66 @@ with tab_mkt:
         f"{build_ta_explanation(ind, alpha)}</div>",
         unsafe_allow_html=True,
     )
+
+    # Phase 20: Conviction radar + what-if simulator
+    rc1, rc2 = st.columns([1.1, 1])
+    with rc1:
+        st.markdown("#### 📡 Conviction Score (Ensemble)")
+        conv = get_conviction_axes(selected)
+        if conv and float(conv.get("total") or 0) > 0:
+            st.plotly_chart(
+                render_conviction_radar(conv, selected),
+                width="stretch",
+                key=f"explore_conviction_radar_{selected}",
+            )
+            factors = conv.get("factors") or []
+            if factors:
+                st.caption(" · ".join(factors))
+        else:
+            st.caption(
+                "Conviction nulle / historique insuffisant "
+                "(besoin SMA200 + axes alt-data)."
+            )
+    with rc2:
+        st.markdown("#### 🧪 Simulateur (What-If)")
+        st.markdown(
+            "<div class='info-text'>Impact théorique d'un achat de "
+            "<b>1000 €</b> avant qu'un signal ne soit généré — cash, "
+            "poids sectoriel, corrélation max vs positions.</div>",
+            unsafe_allow_html=True,
+        )
+        if st.button(
+            "Simuler un achat de 1000€",
+            key=f"whatif_1000_{selected}",
+            type="primary",
+        ):
+            sim = simulate_buy_what_if(portfolio, selected, 1000.0)
+            if not sim.get("affordable"):
+                st.warning(
+                    f"Pas assez de cash ou cours trop élevé "
+                    f"(cash {sim['cash_before']:,.0f} € · "
+                    f"cours {sim['price']:,.2f} €)."
+                )
+            else:
+                corr_txt = (
+                    f"{sim['max_corr']:+.2f}"
+                    if sim.get("max_corr") is not None else "n/a"
+                )
+                st.markdown(
+                    f"<div class='metric-box cyan'>"
+                    f"<div class='metric-title'>WHAT-IF 1000 €</div>"
+                    f"<div class='metric-value'>{sim['qty']} × "
+                    f"{sim['price']:,.2f} € = {sim['cost']:,.0f} €</div>"
+                    f"<div class='metric-sub sub-muted'>"
+                    f"Cash {sim['cash_before']:,.0f} → "
+                    f"<b style='color:{_AMBER};'>{sim['cash_after']:,.0f} €</b>"
+                    f"<br>Secteur {sim['sector']}: "
+                    f"{sim['sector_pct_before']:.1f}% → "
+                    f"<b>{sim['sector_pct_after']:.1f}%</b>"
+                    f"<br>Corr. max vs book: {corr_txt}"
+                    f"</div></div>",
+                    unsafe_allow_html=True,
+                )
 
     # Full-width TradingView chart
     chart_html = f"""
@@ -12204,6 +13181,7 @@ from typing import FrozenSet
 
 # Exact email addresses allowed (case-insensitive match on extracted address).
 ALLOWED_SENDERS: FrozenSet[str] = frozenset({
+    # Phase 18 core digests
     "dan@tldrnewsletter.com",
     "luc@the-nbs.fr",
     "thevccorner@substack.com",
@@ -12214,6 +13192,10 @@ ALLOWED_SENDERS: FrozenSet[str] = frozenset({
     "newsletter@thedeepview.co",
     "laura@lbkconsulting.fr",
     "hello@brief.science",
+    # FR / PEA-oriented additions
+    "contact@cafedelabourse.com",
+    "charlessterlings@substack.com",
+    "plancash@substack.com",
 })
 
 _EMAIL_RE = re.compile(r"[\w.+-]+@[\w.-]+\.\w+", re.IGNORECASE)
@@ -13128,6 +14110,7 @@ from duckdb_manager import TimeSeriesDB  # noqa: E402
 from sqlite_portfolio import PortfolioDB  # noqa: E402
 from market_prices_api import MarketDataFetcher  # noqa: E402
 from macro_alpha_api import MacroAlphaSensor  # noqa: E402
+from newsletter_api import run_morning_briefing_sync  # noqa: E402
 from technical_scorer import SignalGenerator  # noqa: E402
 from smart_dca_engine import SmartDcaCore  # noqa: E402
 from monthly_rebalancer import PortfolioRebalancer  # noqa: E402
@@ -13147,6 +14130,7 @@ _TIMEZONE = "Europe/Paris"
 _PASS_TIMES = ("09:00", "13:30", "17:10")
 _WEEKLY_REPORT_TIME = "18:00"     # Friday CIO digest.
 _MONTHLY_CHECK_TIME = "08:30"     # Daily probe; profit-shave acts only on the 1st.
+_MORNING_BRIEFING_TIME = "08:25"  # Newsletter Zeitgeist before market open.
 _ATR_STOP_CHECK_TIME = "08:35"    # Daily ATR stop evaluation (weekdays via loop).
 _LOOKBACK_DAYS = 400  # ~270 trading days -> enough for SMA-200.
 
@@ -13598,21 +14582,50 @@ def run_monthly_rebalance() -> None:
         logger.critical("Monthly rebalance FAILED: %s", exc, exc_info=True)
 
 
+def run_morning_briefing() -> None:
+    """08:25 Paris: IMAP newsletter headlines → LLM Zeitgeist → JSON file.
+
+    Strictly read-only IMAP. Failures write an Indisponible briefing so the
+    dashboard never crashes.
+    """
+    started = time.perf_counter()
+    logger.info("=== Morning briefing (newsletter Zeitgeist) starting ===")
+    try:
+        result = run_morning_briefing_sync(folder=os.getenv("NEWSLETTER_IMAP_FOLDER", "Finance"))
+        n = len(result.get("headlines") or [])
+        logger.info(
+            "=== Morning briefing done in %.1fs (%d headlines) ===",
+            time.perf_counter() - started,
+            n,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.critical("Morning briefing FAILED: %s", exc, exc_info=True)
+        try:
+            from newsletter_api import NewsletterSensor
+
+            NewsletterSensor().write_briefing("Indisponible", [])
+        except Exception:  # noqa: BLE001
+            pass
+
+
 def _schedule_passes() -> None:
     """Register all periodic jobs in Europe/Paris time."""
     for pass_time in _PASS_TIMES:
         schedule.every().day.at(pass_time, _TIMEZONE).do(run_analysis_pass)
     # Weekly CIO digest: Friday 18:00 Paris.
     schedule.every().friday.at(_WEEKLY_REPORT_TIME, _TIMEZONE).do(run_weekly_report)
+    # Morning newsletter Zeitgeist (before monthly probe / ATR stops).
+    schedule.every().day.at(_MORNING_BRIEFING_TIME, _TIMEZONE).do(run_morning_briefing)
     # Monthly profit-shave: probe daily, act only on the 1st (guarded inside).
     schedule.every().day.at(_MONTHLY_CHECK_TIME, _TIMEZONE).do(run_monthly_rebalance)
     # Daily ATR stops (weekdays guarded inside).
     schedule.every().day.at(_ATR_STOP_CHECK_TIME, _TIMEZONE).do(run_daily_atr_stops)
     logger.info(
-        "Scheduled: passes at %s; weekly report Fri %s; monthly probe %s; "
-        "ATR stops %s (%s).",
+        "Scheduled: passes at %s; weekly report Fri %s; morning briefing %s; "
+        "monthly probe %s; ATR stops %s (%s).",
         ", ".join(_PASS_TIMES),
         _WEEKLY_REPORT_TIME,
+        _MORNING_BRIEFING_TIME,
         _MONTHLY_CHECK_TIME,
         _ATR_STOP_CHECK_TIME,
         _TIMEZONE,
@@ -13644,6 +14657,11 @@ def main() -> None:
         action="store_true",
         help="Run daily ATR stop-loss evaluation now.",
     )
+    parser.add_argument(
+        "--briefing",
+        action="store_true",
+        help="Run morning newsletter Zeitgeist now, then exit.",
+    )
     args = parser.parse_args()
 
     if args.now:
@@ -13654,6 +14672,11 @@ def main() -> None:
     if args.weekly:
         logger.info("--weekly: generating the weekly report now.")
         run_weekly_report()
+        return
+
+    if args.briefing:
+        logger.info("--briefing: running morning Zeitgeist now.")
+        run_morning_briefing()
         return
 
     if args.atr_stops:
@@ -13687,20 +14710,21 @@ if __name__ == "__main__":
 
 ## FILE: README.md
 ```markdown
-# PEA Sniper Terminal — V-Prime 3.0 (Phase 18)
+# PEA Sniper Terminal — V-Prime 3.0 (Phase 20)
 
 > **Sovereign execution. Kinetic risk management. Absolute quantitative transparency.**
 
 Zero-leverage quantitative **decision support** for a personal French **PEA**
 (Plan d'Épargne en Actions). The stack ingests market data, runs a deterministic
 quant engine, filters every idea through a multi-layer risk cascade, then surfaces
-highly curated proposals to a **Discord Copilot** for **manual** execution. A
-Bloomberg-inspired **Streamlit** terminal is the day-to-day command center
-(Mission Control, equity curve, rich trade cards, log viewer).
+highly curated proposals to a **Discord Copilot** and the **Streamlit Command Center**
+for **manual** execution. A Bloomberg-inspired **Streamlit** terminal is the
+day-to-day command center (Mission Control, equity curve, rich trade cards,
+morning Zeitgeist, log viewer).
 
 **The system never sends orders to a broker.** Maths decides *what* is worth
-considering; AI only *explains* (rationale, news score, weekly CIO digest).
-**This is not investment advice.**
+considering; AI only *explains* (rationale, news score, weekly CIO digest,
+newsletter Zeitgeist). **This is not investment advice.**
 
 Repo: [github.com/Polluxgnr/Peatrading](https://github.com/Polluxgnr/Peatrading)
 
@@ -13742,7 +14766,8 @@ Repo: [github.com/Polluxgnr/Peatrading](https://github.com/Polluxgnr/Peatrading)
    audit log, **daily equity curve** (`portfolio_history`).
 5. **Zero crash tolerance.** A failed pass logs `CRITICAL` and writes a red
    pipeline heartbeat; the daemon keeps running for the next slot.
-6. **Manual execution.** You always have the last word (Discord approve / revoke).
+6. **Manual execution.** You always have the last word (Discord **or** Streamlit
+   Approuver / Rejeter → SQLite).
 7. **Personal portfolio demo, not a SaaS fleet.** Observability is detailed and
    copy-friendly, but deliberately human-scale (rotating local logs, Mission Control).
 
@@ -13752,15 +14777,15 @@ Repo: [github.com/Polluxgnr/Peatrading](https://github.com/Polluxgnr/Peatrading)
 
 | Layer | What it does (why it exists) |
 |------|------------------------------|
-| **Data** | OHLCV → DuckDB; VIX/VSTOXX; Put/Call; insiders **AMF→FMP→Yahoo**; Polymarket Gamma; Bourso profile/news (best-effort) |
-| **Quant** | Mean-reversion exhaustion: RSI below threshold + Close&gt;SMA200 + Close&gt;SMA5 + EPS&gt;0 |
+| **Data** | OHLCV → DuckDB; VIX/VSTOXX; Put/Call; insiders **AMF→FMP→Yahoo**; Polymarket Gamma; Bourso + **Google News / Yahoo** news; **newsletter IMAP** (whitelist) |
+| **Quant** | **Ensemble conviction (0–100)**: Mean Reversion ≤35 + Volume Breakout ≤25 + Insider cluster ≤20 + Institutional proxy ≤20 — emit if ≥65 |
 | **Core/Satellite** | Smart DCA on `CW8.PA` (more aggressive under SMA200); satellites capped ~30% equity |
-| **Risk cascade** | VIX panic, macro veto, **earnings blackout**, max satellite lines, **ADV € floor**, sector, correlation, vol-parity sizing |
+| **Risk cascade** | VIX panic, **EPS &lt; 0**, macro veto, **earnings blackout**, max satellite lines, **ADV € floor**, sector, correlation, vol-parity sizing |
 | **Exits** | **Daily** ATR stop (`price < entry − 2.5×ATR14`); **monthly** +20% profit-shave |
-| **Memory** | SQLite equity curve + shared `equity_metrics` (max DD, CAGR, Sharpe, Sortino) — same maths for a future backtester |
-| **AI (explain only)** | Trade rationale, news sentiment, weekly digest, geo brief |
-| **UI** | Mission Control + Discord + Streamlit (**decision funnel waterfall**, trade cards, equity curve, Logs) |
-| **Ops** | Paris daemon, seed CLI, wallet editor, RevocationEngine, rotating logs, CI pytest |
+| **Memory** | SQLite equity curve + shared `equity_metrics` + `morning_briefing.json` Zeitgeist |
+| **AI (explain only)** | Trade rationale, news sentiment, weekly digest, geo brief, **morning newsletter Zeitgeist** |
+| **UI** | Mission Control + Discord + Streamlit (**Command Center approve**, decision funnel, conviction radar, what-if 1000€) |
+| **Ops** | Paris daemon (incl. **08:25 briefing**), walk-forward scaffold, seed CLI, CI pytest |
 
 ---
 
@@ -13777,20 +14802,21 @@ Capital is split so the PEA stays diversified even when stock-picking is quiet:
   Also capped by `MAX_POSITIONS_TOTAL` so the 30% budget is not fragmented into
   too many tiny lines.
 
-### 2. Satellite signal (Mean-Reversion Exhaustion)
+### 2. Satellite signal (Ensemble Conviction — Phase 20)
 
-A raw BUY fires only when **all** of these hold (`technical_scorer.py`):
+`SignalGenerator.evaluate` scores four axes (**total 100**). A raw BUY is emitted
+only when **conviction ≥ 65**. Hard vetoes (VIX, **EPS &lt; 0**) stay on the
+Orchestrator — scoring runs after an idea is worth evaluating on price/alt-data.
 
-| Filter | Rule | Intent |
-|--------|------|--------|
-| Trend | `Close > SMA200` | Only pullbacks inside an uptrend |
-| Exhaustion | `RSI(14) < RSI_OVERSOLD_THRESHOLD` (default 30) | Oversold stretch |
-| Momentum | `Close > SMA5` | Avoid catching falling knives |
-| Quality | trailing `EPS > 0` | Skip loss-making hype |
+| Axis | Max | Rule |
+|------|-----|------|
+| Mean Reversion | 35 | RSI&lt;30 + Close&gt;SMA200 → 35; RSI&lt;40 + Close&gt;SMA200 → 15 |
+| Volume Breakout | 25 | Close = 50d high **and** Volume &gt; 2× ADV20 |
+| Insider Clustering | 20 | Buy-cluster ≥2 → 20; ==1 → 10 (`get_insider_buy_cluster`) |
+| Institutional Quality | 20 | Ticker in hardcoded EU blue-chip proxy set |
 
-The continuous score (0–100) maps how deep the RSI is; the dashboard shows a
-**Tier A / B / C** label so you can rank conviction without treating the score
-as a black box (Tier A ≥ 90, Tier B ≥ 75).
+The continuous score (0–100) is the sum of axes; the dashboard colours PENDING
+scores (**amber 65–75**, **neon 76–100**) and shows a polar radar in Exploration.
 
 ### 3. Risk cascade (order matters — cheap checks first)
 
@@ -13798,6 +14824,7 @@ Implemented in `signal_priority_cascade.py`:
 
 0. Live price exists  
 1. **VIX panic** — if V2TX/VIX &gt; `VIX_PANIC_THRESHOLD`, freeze **new satellite buys** (Core DCA still runs)  
+1b. **EPS &lt; 0** — quality veto (Orchestrator)  
 2. **Macro veto** — blackout window before ECB/CPI/NFP (`macro_calendar.yaml`)  
 2b. **Earnings / dividend blackout** — per ticker (`earnings_calendar.yaml` + `EARNINGS_BLACKOUT_DAYS`)  
 2c. **Max satellite positions** — `MAX_POSITIONS_TOTAL`  
@@ -13903,6 +14930,8 @@ is git-ignored.
 | `seed_account.py` | Seed / reset PEA cash & positions |
 | `tools/build_llm_dump.py` | Regenerate `PROJECT_FULL_DUMP_FOR_LLM.md` |
 | `tools/sync_universe_from_bourso.py` | Refresh PEA universe YAML |
+| `00_data_sensors/newsletter_api.py` | IMAP headlines + LLM morning Zeitgeist |
+| `02_quant_engine/walk_forward_backtester.py` | Walk-forward equity scaffold on DuckDB |
 | `experiments/newsletter_ingest/` | Yahoo Mail IMAP sandbox → local JSON only |
 | `tests/` | pytest foundations (sizing, equity metrics, cards, dedupe) |
 | `.github/workflows/ci.yml` | CI on push/PR |
@@ -13995,10 +15024,12 @@ python seed_account.py --show
 
 python main_scheduler.py --now          # full analysis pass
 python main_scheduler.py --weekly       # CIO digest now
+python main_scheduler.py --briefing     # newsletter Zeitgeist now
 python main_scheduler.py --atr-stops    # daily ATR evaluation now
 python main_scheduler.py --rebalance    # monthly profit-shave now
 python main_scheduler.py                # daemon (Paris schedule)
 
+python 02_quant_engine/walk_forward_backtester.py --start 2020-01-01
 python run_discord.py
 .\run_dashboard.ps1
 
@@ -14030,42 +15061,36 @@ real Bloomberg conventions and easier on long sessions than green-everywhere.
 
 | Tab | Content |
 |-----|---------|
-| **General & Signaux** | Adaptive multi-horizon suggestion (MICRO→FULL), Core card, geo brief, **Entonnoir de décision (waterfall 7J/30J)**, **rich PENDING trade cards**, news, ledger |
+| **General & Signaux** | Adaptive suggestion, **Morning Zeitgeist**, geo brief, **Entonnoir de décision**, **Command Center Approuver/Rejeter**, conviction-coloured PENDING scores, news, ledger |
 | **Portefeuille** | Equity curve + **Sharpe/DD/CAGR/Sortino**, sunburst, positions, wallet editor → SQLite |
-| **Exploration** | Liquid scan, ticker dossier, TA, **valorisation / zone d'achat**, **perf annuelle 10 ans**, news, insiders AMF→FMP→YF, Polymarket |
+| **Exploration** | Liquid scan, ticker dossier, TA, **conviction radar**, **what-if 1000€**, valorisation / zone d'achat, perf annuelle 10 ans, news (Bourso/Google/Yahoo), insiders AMF→FMP→YF, Polymarket |
 | **Univers** | Full list + average sector performance |
 | **Architecture & Logs** | Living docs + **log file picker / tail / copy** |
 
-### Rich trade cards (what you see before approving on Discord)
+### Rich trade cards (what you see before approving)
 
 For each PENDING BUY the card shows:
 
-1. **Tier A/B/C** + score  
+1. **Conviction score** (colour: amber 65–75 / neon 76–100) + Tier label  
 2. **Sizing rationale** — Kelly fraction, measured vol + vol factor, ticket €, weight % of equity  
 3. **R-style risk** — max € / % equity loss if the **2.5×ATR** stop is hit  
 4. **Sector impact** — e.g. Luxury 18% → 23% (cap 25%), not just pass/fail  
+5. **Streamlit Approuver / Rejeter** — updates SQLite instantly (complements Discord)  
 
 ---
 
 ## Experiments / sandboxes
 
-### `experiments/newsletter_ingest/` (Yahoo Mail → local JSON)
+### `experiments/newsletter_ingest/` + production `NewsletterSensor`
 
-**Isolated** from `00_`–`05_` (no cross-imports, no SQLite/DuckDB writes).
+Sandbox CLI remains under `experiments/newsletter_ingest/`. **Production** lives in
+`00_data_sensors/newsletter_api.py` (`NewsletterSensor`): read-only IMAP → whitelist
+→ deduped headlines → OpenRouter Zeitgeist → `database/morning_briefing.json`.
 
-1. Yahoo 2FA → generate an **app password** (not your main password)  
-2. `cp experiments/newsletter_ingest/.env.example experiments/newsletter_ingest/.env`  
-3. Create a Yahoo folder/label (e.g. `Finance`) and filter newsletters into it  
-4. Run:
+Scheduler: **08:25 Paris** (`python main_scheduler.py --briefing` to run now).
+Secrets: `YAHOO_MAIL_USER` / `YAHOO_MAIL_APP_PASSWORD` (+ `OPENROUTER_API_KEY`).
 
-``​`bash
-python experiments/newsletter_ingest/run_ingest.py --folder Finance --limit 20
-python experiments/newsletter_ingest/run_ingest.py --dry-run --limit 5
-``​`
-
-Output: `experiments/newsletter_ingest/output/ingest_*.json`. IMAP is
-**read-only** (no delete/move). After manual validation on real digests, headlines
-can later feed `news_sentiment_llm.py` — that wiring is **out of scope** until you decide.
+Whitelist includes Café de la Bourse, Le monde d'après, Plan Cash, Brief.*, TLDR, etc.
 
 ---
 
@@ -14102,9 +15127,10 @@ Alternatives: systemd (`Restart=always` on `main_scheduler.py`) or cron for
 
 | Job | When (Europe/Paris) | Action |
 |-----|---------------------|--------|
-| Analysis | 09:00, 13:30, 17:10 weekdays | Full pipeline → Discord + heartbeat |
+| **Morning briefing** | **08:25** | Newsletter IMAP → LLM Zeitgeist → `morning_briefing.json` |
 | ATR stops | 08:35 weekdays | Dynamic ATR SELLs → webhook |
 | Profit-shave | Probe 08:30 (acts on the **1st**) | +20% trim → webhook |
+| Analysis | 09:00, 13:30, 17:10 weekdays | Full pipeline → Discord + heartbeat |
 | Weekly report | Friday 18:00 | Historian → webhook |
 
 Weekends: analysis / ATR skipped automatically.
@@ -14117,7 +15143,7 @@ Prioritized for a **validated personal PEA process**, not feature theatre.
 Broker import must **diff** vs SQLite (never blind overwrite). Prefer official/API
 sources over furtive HTML scraping.
 
-### Done (Phase 15–16)
+### Done (Phase 15–20)
 
 | Item | Notes |
 |------|-------|
@@ -14129,18 +15155,19 @@ sources over furtive HTML scraping.
 | Mission Control + trade cards + logs | Operator UX |
 | **Decision funnel waterfall + rejection pie** | ✅ Phase 17 — 7J/30J audit-log analytics in General |
 | **Valuation + 10y annual returns** | ✅ Phase 18 — Exploration (buy zone, P/E, P/B, **1M/1Y**, annual bars) |
-| **Newsletter sender whitelist** | ✅ Phase 18 — IMAP skips non-listed From addresses |
+| **Newsletter whitelist + Zeitgeist** | ✅ Phase 19 — `NewsletterSensor` + 08:25 job + dashboard |
+| **Ensemble conviction scoring** | ✅ Phase 20 — 4 axes, emit ≥65; radar + Command Center approve |
+| **What-if 1000€ + walk-forward scaffold** | ✅ Exploration simulator + `walk_forward_backtester.py` |
 | pytest + GitHub Actions CI | Expand coverage over time |
-| Newsletter IMAP sandbox | Manual validation before any prod hook |
 
 ### Next (highest leverage)
 
 | Item | Why |
 |------|-----|
-| **Walk-forward backtester** | Turns “system that runs” into “strategy with evidence”; reuse `equity_metrics` |
-| **Broker CSV diff import** | Kill wallet drift without erasing manual fixes |
+| Richer walk-forward (full Orchestrator + costs) | Validate RSI / conviction weights on PEA universe |
+| Fundsmith/Amundi holdings scraper | Replace institutional proxy set |
+| Broker CSV diff import | Keep SQLite honest vs reality |
 | Fill **earnings_calendar** (Euronext / API) | Blackout already coded |
-| Signal **funnel waterfall** + rejection pie | ✅ Phase 17 — General tab (`get_funnel_metrics`, audit logs + `_classify`) |
 | Relative strength / 52w / analyst drift | Post-backtester calibration knobs |
 
 ### Later
@@ -14179,7 +15206,7 @@ Decision-support and educational tool only. **No automated execution. No financi
 advice.** You are solely responsible for every trade. Past or backtested results
 do not guarantee future performance.
 
-© 2026 Pollux Quantitative Research — V-Prime 3.0 (Phase 18).
+© 2026 Pollux Quantitative Research — V-Prime 3.0 (Phase 20).
 ```
 
 ## FILE: requirements.txt

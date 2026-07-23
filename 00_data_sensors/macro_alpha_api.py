@@ -320,6 +320,104 @@ class MacroAlphaSensor:
             logger.debug("Insider data unavailable for %s; neutral.", ticker)
             return 0
 
+    # ------------------------------------ Institutional consensus (proxy) --
+    # Placeholder for future web scraper targeting Fundsmith / Amundi public
+    # 13F-equivalent holdings. Hardcoded top European blue-chips for now.
+    TOP_INSTITUTIONAL_HOLDINGS: set[str] = {
+        "MC.PA", "OR.PA", "RMS.PA", "AI.PA", "SAN.PA", "TTE.PA", "BNP.PA",
+        "AIR.PA", "SU.PA", "EL.PA", "KER.PA", "CS.PA", "DG.PA", "DSY.PA",
+        "SAF.PA", "STLAP.PA", "HO.PA", "ENGI.PA", "CAP.PA", "BN.PA",
+        "ASML.AS", "SAP.DE", "SIE.DE", "ALV.DE", "DTE.DE", "ADS.DE",
+        "NESN.SW", "NOVN.SW", "ROG.SW", "AZN.L",
+    }
+
+    def get_institutional_consensus(self, ticker: str) -> bool:
+        """Return True if ticker is in the institutional quality proxy set.
+
+        Placeholder for future web scraper targeting Fundsmith/Amundi public
+        13F-equivalent holdings.
+        """
+        return ticker in self.TOP_INSTITUTIONAL_HOLDINGS
+
+    def get_insider_buy_cluster(self, ticker: str) -> int:
+        """Count recent buy-side insider declarations (0, 1, 2+).
+
+        Used by the Phase 20 conviction scorer (≥2 → 20 pts, ==1 → 10 pts).
+        Cascades AMF → FMP → yfinance; returns 0 on total failure.
+        """
+        # --- AMF -----------------------------------------------------------
+        if AmfInsiderScraper is not None:
+            try:
+                isin = issuer = None
+                if BoursoramaScraper is not None:
+                    try:
+                        profile = BoursoramaScraper().get_instrument_profile(ticker)
+                        if profile:
+                            isin = profile.get("isin")
+                            issuer = profile.get("name")
+                    except Exception:  # noqa: BLE001
+                        pass
+                amf_df = AmfInsiderScraper().get_recent_declarations(
+                    ticker, isin=isin, issuer=issuer
+                )
+                if amf_df is not None and not amf_df.empty and "Transaction" in amf_df:
+                    text = amf_df["Transaction"].astype(str).str.lower()
+                    buys = int(
+                        text.str.contains("achat|acquisition|buy|purchase").sum()
+                    )
+                    if buys > 0:
+                        return min(buys, 5)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("AMF buy-cluster failed for %s: %s", ticker, exc)
+
+        # --- FMP -----------------------------------------------------------
+        api_key = os.getenv("FMP_API_KEY")
+        if api_key:
+            symbol = ticker.split(".")[0]
+            url = (
+                "https://financialmodelingprep.com/api/v4/insider-trading"
+                f"?symbol={symbol}&apikey={api_key}"
+            )
+            try:
+                resp = requests.get(url, timeout=10)
+                if resp.status_code == 200:
+                    payload = resp.json()
+                    buys = 0
+                    if isinstance(payload, list):
+                        for row in payload[:40]:
+                            if not isinstance(row, dict):
+                                continue
+                            ttype = str(
+                                row.get("transactionType")
+                                or row.get("acquistionOrDisposition")
+                                or row.get("type")
+                                or ""
+                            ).casefold()
+                            if ttype in (
+                                "a", "acquisition", "purchase", "buy", "p-purchase"
+                            ) or "acqui" in ttype or "buy" in ttype or "purchase" in ttype:
+                                buys += 1
+                    if buys > 0:
+                        return min(buys, 5)
+            except Exception:  # noqa: BLE001
+                logger.debug("FMP buy-cluster failed for %s.", ticker)
+
+        # --- yfinance ------------------------------------------------------
+        try:
+            tx = yf.Ticker(ticker).insider_transactions
+            if tx is None or not isinstance(tx, pd.DataFrame) or tx.empty:
+                return 0
+            text_col = next(
+                (c for c in ("Text", "Transaction") if c in tx.columns), None
+            )
+            if text_col is None:
+                return 0
+            recent = tx.head(20)[text_col].astype(str).str.lower()
+            buys = int(recent.str.contains("buy|purchase").sum())
+            return min(buys, 5) if buys > 0 else 0
+        except Exception:  # noqa: BLE001
+            return 0
+
     # -------------------------------------------------- Polymarket ----------
     def get_polymarket_sentiment(self, query: str) -> float:
         """Best-effort Polymarket YES probability for a macro query.

@@ -220,11 +220,12 @@ def _sector_for_ticker(ticker: str) -> str:
 
 
 def render_pending_trade_cards(pending_df: pd.DataFrame, portfolio_obj) -> None:
-    """Rich cards for PENDING Discord signals (sizing / ATR risk / sector)."""
+    """Rich cards for PENDING Discord/Streamlit signals (sizing / ATR / approve)."""
     if pending_df is None or pending_df.empty:
         st.info(
-            "Aucun signal en attente. Soit le marche n'offre pas de setup MRE, "
-            "soit un veto (VIX / macro / liquidite) a tout bloque."
+            "Aucun signal en attente. Soit le marche n'offre pas de setup "
+            "ensemble (conviction < 65), soit un veto (VIX / macro / liquidite) "
+            "a tout bloque."
         )
         return
     if render_signal_card is None:
@@ -235,9 +236,40 @@ def render_pending_trade_cards(pending_df: pd.DataFrame, portfolio_obj) -> None:
     sizer = PeaSizer(_ROOT / "config") if PeaSizer is not None else None
     prices = get_last_prices(tuple(str(t) for t in pending_df["ticker"].tolist()))
 
+    # Score gradient table (65–75 amber, 76–100 neon)
+    score_colors = []
+    for s in pending_df["score"].tolist():
+        try:
+            sc = float(s or 0)
+        except (TypeError, ValueError):
+            sc = 0.0
+        if sc >= 76:
+            score_colors.append(_NEON)
+        elif sc >= 65:
+            score_colors.append(_AMBER)
+        else:
+            score_colors.append(_MUTED)
+    disp = pd.DataFrame({
+        "Titre": [format_name(t) for t in pending_df["ticker"]],
+        "Score": [f"{float(s or 0):.0f}" for s in pending_df["score"]],
+        "Type": pending_df["signal_type"],
+        "Date": [str(x)[:16] for x in pending_df["created_at"]],
+    })
+    st.plotly_chart(
+        dark_table(
+            disp.head(12),
+            height=min(280, 56 + 28 * min(12, len(disp))),
+            font_color_map={"Score": score_colors[: len(disp)]},
+            col_widths=[2.2, 0.7, 0.8, 1.2],
+        ),
+        width="stretch",
+        key="gen_pending_score_table",
+    )
+
     for _, row in pending_df.head(8).iterrows():
         ticker = str(row.get("ticker", ""))
         score = float(row.get("score") or 0)
+        sig_id = str(row.get("id") or "")
         qty = row.get("target_qty")
         try:
             qty_i = int(qty) if qty is not None and str(qty) not in ("", "None", "nan") else None
@@ -285,6 +317,40 @@ def render_pending_trade_cards(pending_df: pd.DataFrame, portfolio_obj) -> None:
             ),
             unsafe_allow_html=True,
         )
+        # Command Center: native Streamlit approve / reject (complements Discord)
+        if sig_id:
+            b1, b2, _ = st.columns([1, 1, 2])
+            with b1:
+                if st.button(
+                    "Approuver",
+                    type="primary",
+                    key=f"approve_{sig_id[:12]}",
+                    help="Met à jour SQLite → APPROVED (pas d'ordre broker).",
+                ):
+                    ok = PortfolioDB(db_path=_SQLITE_PATH).update_signal_status(
+                        sig_id, "APPROVED", "Streamlit Command Center approve"
+                    )
+                    if ok:
+                        st.success(f"{format_name(ticker)} → APPROVED")
+                        st.cache_data.clear()
+                        st.rerun()
+                    else:
+                        st.warning("Mise à jour SQLite échouée.")
+            with b2:
+                if st.button(
+                    "Rejeter",
+                    key=f"reject_{sig_id[:12]}",
+                    help="Met à jour SQLite → REJECTED.",
+                ):
+                    ok = PortfolioDB(db_path=_SQLITE_PATH).update_signal_status(
+                        sig_id, "REJECTED", "Streamlit Command Center reject"
+                    )
+                    if ok:
+                        st.info(f"{format_name(ticker)} → REJECTED")
+                        st.cache_data.clear()
+                        st.rerun()
+                    else:
+                        st.warning("Mise à jour SQLite échouée.")
 
 
 # =============================================================================
@@ -998,9 +1064,161 @@ def get_normalized_prices(
         return pd.DataFrame()
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def load_morning_briefing() -> dict:
+    """Load Phase 19 morning Zeitgeist JSON (graceful empty on miss)."""
+    try:
+        from newsletter_api import NewsletterSensor
+
+        data = NewsletterSensor.read_briefing()
+        return data or {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def get_conviction_axes(ticker: str) -> dict:
+    """Four-axis ensemble conviction for radar chart (Exploration)."""
+    try:
+        from technical_scorer import SignalGenerator
+        from duckdb_manager import TimeSeriesDB
+
+        db = TimeSeriesDB()
+        hist = db.get_historical_prices(ticker, days=300)
+        if hist is None or hist.empty:
+            return {}
+        return SignalGenerator().evaluate(ticker, hist)
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def render_conviction_radar(conv: dict, ticker: str) -> go.Figure:
+    """Plotly polar radar for Mean Reversion / Volume / Insiders / Institutional."""
+    cats = ["Mean Reversion", "Volume", "Insiders", "Institutional"]
+    vals = [
+        float(conv.get("mean_reversion") or 0),
+        float(conv.get("volume_breakout") or 0),
+        float(conv.get("insider") or 0),
+        float(conv.get("institutional") or 0),
+    ]
+    # Close the polygon
+    cats_c = cats + [cats[0]]
+    vals_c = vals + [vals[0]]
+    fig = go.Figure()
+    fig.add_trace(go.Scatterpolar(
+        r=vals_c,
+        theta=cats_c,
+        fill="toself",
+        name=ticker,
+        line=dict(color=_NEON, width=2),
+        fillcolor="rgba(0,255,0,0.12)",
+    ))
+    fig.update_layout(
+        polar=dict(
+            bgcolor="#050505",
+            radialaxis=dict(
+                visible=True, range=[0, 35],
+                gridcolor="#333", tickfont=dict(color=_MUTED, size=10),
+            ),
+            angularaxis=dict(
+                gridcolor="#333", tickfont=dict(color=_WHITE, size=11),
+            ),
+        ),
+        paper_bgcolor="#050505",
+        plot_bgcolor="#050505",
+        font=dict(color=_WHITE),
+        margin=dict(l=40, r=40, t=40, b=40),
+        height=320,
+        showlegend=False,
+        title=dict(
+            text=f"Conviction {float(conv.get('total') or 0):.0f}/100",
+            font=dict(color=_CYAN, size=13),
+        ),
+    )
+    return fig
+
+
+def simulate_buy_what_if(
+    portfolio_obj, ticker: str, notional_eur: float = 1000.0
+) -> dict:
+    """What-if: impact of buying ``notional_eur`` on cash / sector / rough corr."""
+    prices = get_last_prices((ticker,))
+    px = float(prices.get(ticker) or 0)
+    cash = float(portfolio_obj.cash_available)
+    equity = float(portfolio_obj.total_equity) or 1.0
+    sector = _sector_for_ticker(ticker) or "Unknown"
+    qty = int(notional_eur // px) if px > 0 else 0
+    cost = qty * px
+    cash_after = cash - cost
+
+    # Current sector weight
+    sec_now = 0.0
+    for p in portfolio_obj.positions:
+        if _sector_for_ticker(p.ticker) == sector:
+            sec_now += float(p.qty_shares) * float(
+                prices.get(p.ticker) or getattr(p, "avg_price", 0) or 0
+            )
+    sec_now_pct = 100.0 * sec_now / equity
+    sec_after_pct = 100.0 * (sec_now + cost) / (equity)  # approx same equity
+
+    # Rough max abs correlation vs held names (DuckDB closes if available)
+    max_corr = None
+    try:
+        from duckdb_manager import TimeSeriesDB
+
+        db = TimeSeriesDB()
+        cand = db.get_historical_prices(ticker, days=90)
+        if cand is not None and not cand.empty and "Close" in cand.columns:
+            cser = cand["Close"].pct_change().dropna()
+            corrs = []
+            for p in portfolio_obj.positions:
+                if p.ticker == ticker:
+                    continue
+                other = db.get_historical_prices(p.ticker, days=90)
+                if other is None or other.empty:
+                    continue
+                oser = other["Close"].pct_change().dropna()
+                joined = pd.concat([cser, oser], axis=1, join="inner").dropna()
+                if len(joined) < 20:
+                    continue
+                corrs.append(float(joined.iloc[:, 0].corr(joined.iloc[:, 1])))
+            if corrs:
+                max_corr = max(corrs, key=lambda x: abs(x))
+    except Exception:  # noqa: BLE001
+        max_corr = None
+
+    return {
+        "qty": qty,
+        "price": px,
+        "cost": cost,
+        "cash_before": cash,
+        "cash_after": cash_after,
+        "sector": sector,
+        "sector_pct_before": sec_now_pct,
+        "sector_pct_after": sec_after_pct,
+        "max_corr": max_corr,
+        "affordable": qty >= 1 and cost <= cash,
+    }
+
+
 @st.cache_data(ttl=1800, show_spinner=False)
 def get_recent_news(symbol: str, limit: int = 6) -> list[dict]:
-    """Fetch recent news: Boursorama first (rich), then yfinance fallback."""
+    """Fetch recent news: Boursorama → Google News RSS → Yahoo Finance."""
+    collected: list[dict] = []
+    seen_titles: set[str] = set()
+
+    def _push(title: str, link: str, date: str, provider: str) -> None:
+        key = (title or "").strip().casefold()
+        if not key or key in seen_titles:
+            return
+        seen_titles.add(key)
+        collected.append({
+            "title": title.strip(),
+            "link": link or "#",
+            "date": date or "Recent",
+            "provider": provider,
+        })
+
     # --- Primary: Boursorama scraper ----------------------------------------
     try:
         scrapers_dir = _ROOT / "00_data_sensors" / "scrapers"
@@ -1013,57 +1231,86 @@ def get_recent_news(symbol: str, limit: int = 6) -> list[dict]:
         if items:
             sentiment = (profile or {}).get("sentiment") or "Unknown"
             elig = ",".join((profile or {}).get("eligibility") or []) or "?"
-            out = []
-            for n in items[:limit]:
-                out.append({
-                    "title": n.get("title", ""),
-                    "link": n.get("link") or "#",
-                    "date": n.get("date") or "Recent",
-                    "provider": (
-                        f"Boursorama · {n.get('provider') or 'local'} · "
-                        f"sentiment {sentiment} · elig {elig}"
-                    ),
-                })
-            return out
-        # Legacy title-only fallback from get_retail_sentiment_and_news
-        bourso = BoursoramaScraper().get_retail_sentiment_and_news(symbol)
-        headlines = (bourso or {}).get("news") or []
-        if headlines:
+            for n in items:
+                _push(
+                    n.get("title", ""),
+                    n.get("link") or "#",
+                    n.get("date") or "Recent",
+                    f"Boursorama · {n.get('provider') or 'local'} · "
+                    f"sentiment {sentiment} · elig {elig}",
+                )
+        else:
+            bourso = BoursoramaScraper().get_retail_sentiment_and_news(symbol)
+            headlines = (bourso or {}).get("news") or []
             sentiment = (bourso or {}).get("sentiment") or "Unknown"
-            return [
-                {
-                    "title": title,
-                    "link": "#",
-                    "date": "Recent",
-                    "provider": f"Boursorama · sentiment {sentiment}",
-                }
-                for title in headlines[:limit]
-            ]
+            for title in headlines:
+                _push(title, "#", "Recent", f"Boursorama · sentiment {sentiment}")
     except Exception:  # noqa: BLE001
         pass
 
+    # --- Google News + European press RSS (FR) ------------------------------
+    if len(collected) < limit:
+        try:
+            import urllib.parse
+            import urllib.request
+            import xml.etree.ElementTree as ET
+
+            name = short_name(symbol)
+            queries = [
+                f"{symbol} OR {name} when:7d",
+                f"{name} (bourse OR CAC OR PEA) when:7d",
+                f"{name} site:lesechos.fr OR site:latribune.fr OR site:reuters.com when:14d",
+            ]
+            for q in queries:
+                if len(collected) >= limit:
+                    break
+                url = (
+                    "https://news.google.com/rss/search?"
+                    + urllib.parse.urlencode({
+                        "q": q, "hl": "fr", "gl": "FR", "ceid": "FR:fr",
+                    })
+                )
+                req = urllib.request.Request(
+                    url,
+                    headers={"User-Agent": "PEA-Sniper-Terminal/1.0"},
+                )
+                with urllib.request.urlopen(req, timeout=8) as resp:
+                    root = ET.fromstring(resp.read())
+                for item in root.findall(".//item")[:8]:
+                    title = (item.findtext("title") or "").strip()
+                    link = (item.findtext("link") or "#").strip()
+                    pub = (item.findtext("pubDate") or "")[:16]
+                    source = item.find("source")
+                    src = (source.text if source is not None else None) or "Google News"
+                    _push(title, link, pub or "Recent", f"Google News · {src}")
+        except Exception:  # noqa: BLE001
+            pass
+
     # --- Fallback: yfinance -------------------------------------------------
-    try:
-        raw = yf.Ticker(symbol).news or []
-        items = []
-        for n in raw[:limit]:
-            content = n.get("content", n)
-            title = content.get("title") or n.get("title") or ""
-            link = (
-                content.get("clickThroughUrl", {}).get("url")
-                or content.get("canonicalUrl", {}).get("url")
-                or n.get("link")
-                or "#"
-            )
-            date_str = content.get("pubDate") or content.get("displayTime") or ""
-            provider = (content.get("provider") or {}).get("displayName", "")
-            if title:
-                items.append({"title": title, "link": link,
-                              "date": (date_str or "")[:10] or "Recent",
-                              "provider": provider or "Yahoo Finance"})
-        return items
-    except Exception:  # noqa: BLE001
-        return []
+    if len(collected) < limit:
+        try:
+            raw = yf.Ticker(symbol).news or []
+            for n in raw:
+                content = n.get("content", n)
+                title = content.get("title") or n.get("title") or ""
+                link = (
+                    content.get("clickThroughUrl", {}).get("url")
+                    or content.get("canonicalUrl", {}).get("url")
+                    or n.get("link")
+                    or "#"
+                )
+                date_str = content.get("pubDate") or content.get("displayTime") or ""
+                provider = (content.get("provider") or {}).get("displayName", "")
+                _push(
+                    title, link, (date_str or "")[:10] or "Recent",
+                    provider or "Yahoo Finance",
+                )
+                if len(collected) >= limit:
+                    break
+        except Exception:  # noqa: BLE001
+            pass
+
+    return collected[:limit]
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
@@ -2721,6 +2968,27 @@ with tab_gen:
                    help="PEA = actions entieres. Sous ce montant, pas de Core.")
 
     st.markdown("---")
+    # --- Phase 19: Morning Zeitgeist (newsletters) --------------------------
+    st.markdown("#### 🗞️ Morning Zeitgeist (Thèmes des Newsletters)")
+    briefing = load_morning_briefing()
+    zg = (briefing or {}).get("zeitgeist") or "Indisponible"
+    headlines = (briefing or {}).get("headlines") or []
+    gen_at = (briefing or {}).get("generated_at") or ""
+    st.markdown(
+        f"<div class='info-text'><b style='color:{_CYAN};'>Narratifs macro "
+        f"(LLM)</b>"
+        + (f" · <span style='color:{_MUTED};'>{str(gen_at)[:19]} UTC</span>"
+           if gen_at else "")
+        + f"<br><div style='white-space:pre-wrap;margin-top:8px;color:#E8E8E8;"
+        f"line-height:1.55;'>{zg}</div></div>",
+        unsafe_allow_html=True,
+    )
+    with st.expander(f"Voir les {len(headlines)} titres sources", expanded=False):
+        if headlines:
+            st.markdown("\n".join(f"- {h}" for h in headlines))
+        else:
+            st.caption("Aucun titre (IMAP / whitelist / briefing pas encore tourné).")
+
     recos = build_recommendations(portfolio, pending_gen, vix, regime or {})
     g1, g2 = st.columns([1.15, 1])
     with g1:
@@ -2810,7 +3078,7 @@ with tab_gen:
     st.markdown("#### ⚡ Signaux & Registre")
     col1, col2 = st.columns(2)
     with col1:
-        st.markdown("##### En attente (Discord) — cartes de trade")
+        st.markdown("##### En attente (Command Center) — cartes de trade")
         pending = pending_gen
         render_pending_trade_cards(pending, portfolio)
     with col2:
@@ -3360,6 +3628,66 @@ with tab_mkt:
         f"{build_ta_explanation(ind, alpha)}</div>",
         unsafe_allow_html=True,
     )
+
+    # Phase 20: Conviction radar + what-if simulator
+    rc1, rc2 = st.columns([1.1, 1])
+    with rc1:
+        st.markdown("#### 📡 Conviction Score (Ensemble)")
+        conv = get_conviction_axes(selected)
+        if conv and float(conv.get("total") or 0) > 0:
+            st.plotly_chart(
+                render_conviction_radar(conv, selected),
+                width="stretch",
+                key=f"explore_conviction_radar_{selected}",
+            )
+            factors = conv.get("factors") or []
+            if factors:
+                st.caption(" · ".join(factors))
+        else:
+            st.caption(
+                "Conviction nulle / historique insuffisant "
+                "(besoin SMA200 + axes alt-data)."
+            )
+    with rc2:
+        st.markdown("#### 🧪 Simulateur (What-If)")
+        st.markdown(
+            "<div class='info-text'>Impact théorique d'un achat de "
+            "<b>1000 €</b> avant qu'un signal ne soit généré — cash, "
+            "poids sectoriel, corrélation max vs positions.</div>",
+            unsafe_allow_html=True,
+        )
+        if st.button(
+            "Simuler un achat de 1000€",
+            key=f"whatif_1000_{selected}",
+            type="primary",
+        ):
+            sim = simulate_buy_what_if(portfolio, selected, 1000.0)
+            if not sim.get("affordable"):
+                st.warning(
+                    f"Pas assez de cash ou cours trop élevé "
+                    f"(cash {sim['cash_before']:,.0f} € · "
+                    f"cours {sim['price']:,.2f} €)."
+                )
+            else:
+                corr_txt = (
+                    f"{sim['max_corr']:+.2f}"
+                    if sim.get("max_corr") is not None else "n/a"
+                )
+                st.markdown(
+                    f"<div class='metric-box cyan'>"
+                    f"<div class='metric-title'>WHAT-IF 1000 €</div>"
+                    f"<div class='metric-value'>{sim['qty']} × "
+                    f"{sim['price']:,.2f} € = {sim['cost']:,.0f} €</div>"
+                    f"<div class='metric-sub sub-muted'>"
+                    f"Cash {sim['cash_before']:,.0f} → "
+                    f"<b style='color:{_AMBER};'>{sim['cash_after']:,.0f} €</b>"
+                    f"<br>Secteur {sim['sector']}: "
+                    f"{sim['sector_pct_before']:.1f}% → "
+                    f"<b>{sim['sector_pct_after']:.1f}%</b>"
+                    f"<br>Corr. max vs book: {corr_txt}"
+                    f"</div></div>",
+                    unsafe_allow_html=True,
+                )
 
     # Full-width TradingView chart
     chart_html = f"""

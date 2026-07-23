@@ -1,17 +1,18 @@
-# PEA Sniper Terminal — V-Prime 3.0 (Phase 18)
+# PEA Sniper Terminal — V-Prime 3.0 (Phase 20)
 
 > **Sovereign execution. Kinetic risk management. Absolute quantitative transparency.**
 
 Zero-leverage quantitative **decision support** for a personal French **PEA**
 (Plan d'Épargne en Actions). The stack ingests market data, runs a deterministic
 quant engine, filters every idea through a multi-layer risk cascade, then surfaces
-highly curated proposals to a **Discord Copilot** for **manual** execution. A
-Bloomberg-inspired **Streamlit** terminal is the day-to-day command center
-(Mission Control, equity curve, rich trade cards, log viewer).
+highly curated proposals to a **Discord Copilot** and the **Streamlit Command Center**
+for **manual** execution. A Bloomberg-inspired **Streamlit** terminal is the
+day-to-day command center (Mission Control, equity curve, rich trade cards,
+morning Zeitgeist, log viewer).
 
 **The system never sends orders to a broker.** Maths decides *what* is worth
-considering; AI only *explains* (rationale, news score, weekly CIO digest).
-**This is not investment advice.**
+considering; AI only *explains* (rationale, news score, weekly CIO digest,
+newsletter Zeitgeist). **This is not investment advice.**
 
 Repo: [github.com/Polluxgnr/Peatrading](https://github.com/Polluxgnr/Peatrading)
 
@@ -53,7 +54,8 @@ Repo: [github.com/Polluxgnr/Peatrading](https://github.com/Polluxgnr/Peatrading)
    audit log, **daily equity curve** (`portfolio_history`).
 5. **Zero crash tolerance.** A failed pass logs `CRITICAL` and writes a red
    pipeline heartbeat; the daemon keeps running for the next slot.
-6. **Manual execution.** You always have the last word (Discord approve / revoke).
+6. **Manual execution.** You always have the last word (Discord **or** Streamlit
+   Approuver / Rejeter → SQLite).
 7. **Personal portfolio demo, not a SaaS fleet.** Observability is detailed and
    copy-friendly, but deliberately human-scale (rotating local logs, Mission Control).
 
@@ -63,15 +65,15 @@ Repo: [github.com/Polluxgnr/Peatrading](https://github.com/Polluxgnr/Peatrading)
 
 | Layer | What it does (why it exists) |
 |------|------------------------------|
-| **Data** | OHLCV → DuckDB; VIX/VSTOXX; Put/Call; insiders **AMF→FMP→Yahoo**; Polymarket Gamma; Bourso profile/news (best-effort) |
-| **Quant** | Mean-reversion exhaustion: RSI below threshold + Close&gt;SMA200 + Close&gt;SMA5 + EPS&gt;0 |
+| **Data** | OHLCV → DuckDB; VIX/VSTOXX; Put/Call; insiders **AMF→FMP→Yahoo**; Polymarket Gamma; Bourso + **Google News / Yahoo** news; **newsletter IMAP** (whitelist) |
+| **Quant** | **Ensemble conviction (0–100)**: Mean Reversion ≤35 + Volume Breakout ≤25 + Insider cluster ≤20 + Institutional proxy ≤20 — emit if ≥65 |
 | **Core/Satellite** | Smart DCA on `CW8.PA` (more aggressive under SMA200); satellites capped ~30% equity |
-| **Risk cascade** | VIX panic, macro veto, **earnings blackout**, max satellite lines, **ADV € floor**, sector, correlation, vol-parity sizing |
+| **Risk cascade** | VIX panic, **EPS &lt; 0**, macro veto, **earnings blackout**, max satellite lines, **ADV € floor**, sector, correlation, vol-parity sizing |
 | **Exits** | **Daily** ATR stop (`price < entry − 2.5×ATR14`); **monthly** +20% profit-shave |
-| **Memory** | SQLite equity curve + shared `equity_metrics` (max DD, CAGR, Sharpe, Sortino) — same maths for a future backtester |
-| **AI (explain only)** | Trade rationale, news sentiment, weekly digest, geo brief |
-| **UI** | Mission Control + Discord + Streamlit (**decision funnel waterfall**, trade cards, equity curve, Logs) |
-| **Ops** | Paris daemon, seed CLI, wallet editor, RevocationEngine, rotating logs, CI pytest |
+| **Memory** | SQLite equity curve + shared `equity_metrics` + `morning_briefing.json` Zeitgeist |
+| **AI (explain only)** | Trade rationale, news sentiment, weekly digest, geo brief, **morning newsletter Zeitgeist** |
+| **UI** | Mission Control + Discord + Streamlit (**Command Center approve**, decision funnel, conviction radar, what-if 1000€) |
+| **Ops** | Paris daemon (incl. **08:25 briefing**), walk-forward scaffold, seed CLI, CI pytest |
 
 ---
 
@@ -88,20 +90,21 @@ Capital is split so the PEA stays diversified even when stock-picking is quiet:
   Also capped by `MAX_POSITIONS_TOTAL` so the 30% budget is not fragmented into
   too many tiny lines.
 
-### 2. Satellite signal (Mean-Reversion Exhaustion)
+### 2. Satellite signal (Ensemble Conviction — Phase 20)
 
-A raw BUY fires only when **all** of these hold (`technical_scorer.py`):
+`SignalGenerator.evaluate` scores four axes (**total 100**). A raw BUY is emitted
+only when **conviction ≥ 65**. Hard vetoes (VIX, **EPS &lt; 0**) stay on the
+Orchestrator — scoring runs after an idea is worth evaluating on price/alt-data.
 
-| Filter | Rule | Intent |
-|--------|------|--------|
-| Trend | `Close > SMA200` | Only pullbacks inside an uptrend |
-| Exhaustion | `RSI(14) < RSI_OVERSOLD_THRESHOLD` (default 30) | Oversold stretch |
-| Momentum | `Close > SMA5` | Avoid catching falling knives |
-| Quality | trailing `EPS > 0` | Skip loss-making hype |
+| Axis | Max | Rule |
+|------|-----|------|
+| Mean Reversion | 35 | RSI&lt;30 + Close&gt;SMA200 → 35; RSI&lt;40 + Close&gt;SMA200 → 15 |
+| Volume Breakout | 25 | Close = 50d high **and** Volume &gt; 2× ADV20 |
+| Insider Clustering | 20 | Buy-cluster ≥2 → 20; ==1 → 10 (`get_insider_buy_cluster`) |
+| Institutional Quality | 20 | Ticker in hardcoded EU blue-chip proxy set |
 
-The continuous score (0–100) maps how deep the RSI is; the dashboard shows a
-**Tier A / B / C** label so you can rank conviction without treating the score
-as a black box (Tier A ≥ 90, Tier B ≥ 75).
+The continuous score (0–100) is the sum of axes; the dashboard colours PENDING
+scores (**amber 65–75**, **neon 76–100**) and shows a polar radar in Exploration.
 
 ### 3. Risk cascade (order matters — cheap checks first)
 
@@ -109,6 +112,7 @@ Implemented in `signal_priority_cascade.py`:
 
 0. Live price exists  
 1. **VIX panic** — if V2TX/VIX &gt; `VIX_PANIC_THRESHOLD`, freeze **new satellite buys** (Core DCA still runs)  
+1b. **EPS &lt; 0** — quality veto (Orchestrator)  
 2. **Macro veto** — blackout window before ECB/CPI/NFP (`macro_calendar.yaml`)  
 2b. **Earnings / dividend blackout** — per ticker (`earnings_calendar.yaml` + `EARNINGS_BLACKOUT_DAYS`)  
 2c. **Max satellite positions** — `MAX_POSITIONS_TOTAL`  
@@ -214,6 +218,8 @@ is git-ignored.
 | `seed_account.py` | Seed / reset PEA cash & positions |
 | `tools/build_llm_dump.py` | Regenerate `PROJECT_FULL_DUMP_FOR_LLM.md` |
 | `tools/sync_universe_from_bourso.py` | Refresh PEA universe YAML |
+| `00_data_sensors/newsletter_api.py` | IMAP headlines + LLM morning Zeitgeist |
+| `02_quant_engine/walk_forward_backtester.py` | Walk-forward equity scaffold on DuckDB |
 | `experiments/newsletter_ingest/` | Yahoo Mail IMAP sandbox → local JSON only |
 | `tests/` | pytest foundations (sizing, equity metrics, cards, dedupe) |
 | `.github/workflows/ci.yml` | CI on push/PR |
@@ -306,10 +312,12 @@ python seed_account.py --show
 
 python main_scheduler.py --now          # full analysis pass
 python main_scheduler.py --weekly       # CIO digest now
+python main_scheduler.py --briefing     # newsletter Zeitgeist now
 python main_scheduler.py --atr-stops    # daily ATR evaluation now
 python main_scheduler.py --rebalance    # monthly profit-shave now
 python main_scheduler.py                # daemon (Paris schedule)
 
+python 02_quant_engine/walk_forward_backtester.py --start 2020-01-01
 python run_discord.py
 .\run_dashboard.ps1
 
@@ -341,42 +349,36 @@ real Bloomberg conventions and easier on long sessions than green-everywhere.
 
 | Tab | Content |
 |-----|---------|
-| **General & Signaux** | Adaptive multi-horizon suggestion (MICRO→FULL), Core card, geo brief, **Entonnoir de décision (waterfall 7J/30J)**, **rich PENDING trade cards**, news, ledger |
+| **General & Signaux** | Adaptive suggestion, **Morning Zeitgeist**, geo brief, **Entonnoir de décision**, **Command Center Approuver/Rejeter**, conviction-coloured PENDING scores, news, ledger |
 | **Portefeuille** | Equity curve + **Sharpe/DD/CAGR/Sortino**, sunburst, positions, wallet editor → SQLite |
-| **Exploration** | Liquid scan, ticker dossier, TA, **valorisation / zone d'achat**, **perf annuelle 10 ans**, news, insiders AMF→FMP→YF, Polymarket |
+| **Exploration** | Liquid scan, ticker dossier, TA, **conviction radar**, **what-if 1000€**, valorisation / zone d'achat, perf annuelle 10 ans, news (Bourso/Google/Yahoo), insiders AMF→FMP→YF, Polymarket |
 | **Univers** | Full list + average sector performance |
 | **Architecture & Logs** | Living docs + **log file picker / tail / copy** |
 
-### Rich trade cards (what you see before approving on Discord)
+### Rich trade cards (what you see before approving)
 
 For each PENDING BUY the card shows:
 
-1. **Tier A/B/C** + score  
+1. **Conviction score** (colour: amber 65–75 / neon 76–100) + Tier label  
 2. **Sizing rationale** — Kelly fraction, measured vol + vol factor, ticket €, weight % of equity  
 3. **R-style risk** — max € / % equity loss if the **2.5×ATR** stop is hit  
 4. **Sector impact** — e.g. Luxury 18% → 23% (cap 25%), not just pass/fail  
+5. **Streamlit Approuver / Rejeter** — updates SQLite instantly (complements Discord)  
 
 ---
 
 ## Experiments / sandboxes
 
-### `experiments/newsletter_ingest/` (Yahoo Mail → local JSON)
+### `experiments/newsletter_ingest/` + production `NewsletterSensor`
 
-**Isolated** from `00_`–`05_` (no cross-imports, no SQLite/DuckDB writes).
+Sandbox CLI remains under `experiments/newsletter_ingest/`. **Production** lives in
+`00_data_sensors/newsletter_api.py` (`NewsletterSensor`): read-only IMAP → whitelist
+→ deduped headlines → OpenRouter Zeitgeist → `database/morning_briefing.json`.
 
-1. Yahoo 2FA → generate an **app password** (not your main password)  
-2. `cp experiments/newsletter_ingest/.env.example experiments/newsletter_ingest/.env`  
-3. Create a Yahoo folder/label (e.g. `Finance`) and filter newsletters into it  
-4. Run:
+Scheduler: **08:25 Paris** (`python main_scheduler.py --briefing` to run now).
+Secrets: `YAHOO_MAIL_USER` / `YAHOO_MAIL_APP_PASSWORD` (+ `OPENROUTER_API_KEY`).
 
-```bash
-python experiments/newsletter_ingest/run_ingest.py --folder Finance --limit 20
-python experiments/newsletter_ingest/run_ingest.py --dry-run --limit 5
-```
-
-Output: `experiments/newsletter_ingest/output/ingest_*.json`. IMAP is
-**read-only** (no delete/move). After manual validation on real digests, headlines
-can later feed `news_sentiment_llm.py` — that wiring is **out of scope** until you decide.
+Whitelist includes Café de la Bourse, Le monde d'après, Plan Cash, Brief.*, TLDR, etc.
 
 ---
 
@@ -413,9 +415,10 @@ Alternatives: systemd (`Restart=always` on `main_scheduler.py`) or cron for
 
 | Job | When (Europe/Paris) | Action |
 |-----|---------------------|--------|
-| Analysis | 09:00, 13:30, 17:10 weekdays | Full pipeline → Discord + heartbeat |
+| **Morning briefing** | **08:25** | Newsletter IMAP → LLM Zeitgeist → `morning_briefing.json` |
 | ATR stops | 08:35 weekdays | Dynamic ATR SELLs → webhook |
 | Profit-shave | Probe 08:30 (acts on the **1st**) | +20% trim → webhook |
+| Analysis | 09:00, 13:30, 17:10 weekdays | Full pipeline → Discord + heartbeat |
 | Weekly report | Friday 18:00 | Historian → webhook |
 
 Weekends: analysis / ATR skipped automatically.
@@ -428,7 +431,7 @@ Prioritized for a **validated personal PEA process**, not feature theatre.
 Broker import must **diff** vs SQLite (never blind overwrite). Prefer official/API
 sources over furtive HTML scraping.
 
-### Done (Phase 15–16)
+### Done (Phase 15–20)
 
 | Item | Notes |
 |------|-------|
@@ -440,18 +443,19 @@ sources over furtive HTML scraping.
 | Mission Control + trade cards + logs | Operator UX |
 | **Decision funnel waterfall + rejection pie** | ✅ Phase 17 — 7J/30J audit-log analytics in General |
 | **Valuation + 10y annual returns** | ✅ Phase 18 — Exploration (buy zone, P/E, P/B, **1M/1Y**, annual bars) |
-| **Newsletter sender whitelist** | ✅ Phase 18 — IMAP skips non-listed From addresses |
+| **Newsletter whitelist + Zeitgeist** | ✅ Phase 19 — `NewsletterSensor` + 08:25 job + dashboard |
+| **Ensemble conviction scoring** | ✅ Phase 20 — 4 axes, emit ≥65; radar + Command Center approve |
+| **What-if 1000€ + walk-forward scaffold** | ✅ Exploration simulator + `walk_forward_backtester.py` |
 | pytest + GitHub Actions CI | Expand coverage over time |
-| Newsletter IMAP sandbox | Manual validation before any prod hook |
 
 ### Next (highest leverage)
 
 | Item | Why |
 |------|-----|
-| **Walk-forward backtester** | Turns “system that runs” into “strategy with evidence”; reuse `equity_metrics` |
-| **Broker CSV diff import** | Kill wallet drift without erasing manual fixes |
+| Richer walk-forward (full Orchestrator + costs) | Validate RSI / conviction weights on PEA universe |
+| Fundsmith/Amundi holdings scraper | Replace institutional proxy set |
+| Broker CSV diff import | Keep SQLite honest vs reality |
 | Fill **earnings_calendar** (Euronext / API) | Blackout already coded |
-| Signal **funnel waterfall** + rejection pie | ✅ Phase 17 — General tab (`get_funnel_metrics`, audit logs + `_classify`) |
 | Relative strength / 52w / analyst drift | Post-backtester calibration knobs |
 
 ### Later
@@ -490,4 +494,4 @@ Decision-support and educational tool only. **No automated execution. No financi
 advice.** You are solely responsible for every trade. Past or backtested results
 do not guarantee future performance.
 
-© 2026 Pollux Quantitative Research — V-Prime 3.0 (Phase 18).
+© 2026 Pollux Quantitative Research — V-Prime 3.0 (Phase 20).

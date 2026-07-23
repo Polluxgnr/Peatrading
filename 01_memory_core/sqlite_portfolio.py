@@ -315,6 +315,48 @@ class PortfolioDB:
             logger.exception("Failed to log signal %s.", signal.id)
             raise
 
+    def update_signal_status(
+        self, signal_id: str, status: str, reason_suffix: str | None = None
+    ) -> bool:
+        """Update a signal's lifecycle status in ``audit_logs`` (Command Center).
+
+        Args:
+            signal_id: Primary key of the audit row.
+            status: New status (e.g. ``APPROVED``, ``REVOKED``, ``REJECTED``).
+            reason_suffix: Optional text appended to the existing reason.
+
+        Returns:
+            bool: ``True`` if a row was updated.
+        """
+        try:
+            with self._connect() as conn:
+                if reason_suffix:
+                    cur = conn.execute(
+                        """
+                        UPDATE audit_logs
+                        SET status = ?,
+                            reason = COALESCE(reason, '') || ?
+                        WHERE id = ?;
+                        """,
+                        (status, f" | {reason_suffix}", signal_id),
+                    )
+                else:
+                    cur = conn.execute(
+                        "UPDATE audit_logs SET status = ? WHERE id = ?;",
+                        (status, signal_id),
+                    )
+                updated = cur.rowcount > 0
+            if updated:
+                logger.info(
+                    "Signal %s status → %s (Streamlit / Command Center).",
+                    signal_id[:8],
+                    status,
+                )
+            return updated
+        except sqlite3.Error:
+            logger.exception("Failed to update signal %s status.", signal_id)
+            raise
+
     def fetch_signals_by_status(
         self, statuses: list[str], limit: int | None = None
     ) -> list[dict]:

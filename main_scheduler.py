@@ -48,6 +48,7 @@ from duckdb_manager import TimeSeriesDB  # noqa: E402
 from sqlite_portfolio import PortfolioDB  # noqa: E402
 from market_prices_api import MarketDataFetcher  # noqa: E402
 from macro_alpha_api import MacroAlphaSensor  # noqa: E402
+from newsletter_api import run_morning_briefing_sync  # noqa: E402
 from technical_scorer import SignalGenerator  # noqa: E402
 from smart_dca_engine import SmartDcaCore  # noqa: E402
 from monthly_rebalancer import PortfolioRebalancer  # noqa: E402
@@ -67,6 +68,7 @@ _TIMEZONE = "Europe/Paris"
 _PASS_TIMES = ("09:00", "13:30", "17:10")
 _WEEKLY_REPORT_TIME = "18:00"     # Friday CIO digest.
 _MONTHLY_CHECK_TIME = "08:30"     # Daily probe; profit-shave acts only on the 1st.
+_MORNING_BRIEFING_TIME = "08:25"  # Newsletter Zeitgeist before market open.
 _ATR_STOP_CHECK_TIME = "08:35"    # Daily ATR stop evaluation (weekdays via loop).
 _LOOKBACK_DAYS = 400  # ~270 trading days -> enough for SMA-200.
 
@@ -518,21 +520,50 @@ def run_monthly_rebalance() -> None:
         logger.critical("Monthly rebalance FAILED: %s", exc, exc_info=True)
 
 
+def run_morning_briefing() -> None:
+    """08:25 Paris: IMAP newsletter headlines → LLM Zeitgeist → JSON file.
+
+    Strictly read-only IMAP. Failures write an Indisponible briefing so the
+    dashboard never crashes.
+    """
+    started = time.perf_counter()
+    logger.info("=== Morning briefing (newsletter Zeitgeist) starting ===")
+    try:
+        result = run_morning_briefing_sync(folder=os.getenv("NEWSLETTER_IMAP_FOLDER", "Finance"))
+        n = len(result.get("headlines") or [])
+        logger.info(
+            "=== Morning briefing done in %.1fs (%d headlines) ===",
+            time.perf_counter() - started,
+            n,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.critical("Morning briefing FAILED: %s", exc, exc_info=True)
+        try:
+            from newsletter_api import NewsletterSensor
+
+            NewsletterSensor().write_briefing("Indisponible", [])
+        except Exception:  # noqa: BLE001
+            pass
+
+
 def _schedule_passes() -> None:
     """Register all periodic jobs in Europe/Paris time."""
     for pass_time in _PASS_TIMES:
         schedule.every().day.at(pass_time, _TIMEZONE).do(run_analysis_pass)
     # Weekly CIO digest: Friday 18:00 Paris.
     schedule.every().friday.at(_WEEKLY_REPORT_TIME, _TIMEZONE).do(run_weekly_report)
+    # Morning newsletter Zeitgeist (before monthly probe / ATR stops).
+    schedule.every().day.at(_MORNING_BRIEFING_TIME, _TIMEZONE).do(run_morning_briefing)
     # Monthly profit-shave: probe daily, act only on the 1st (guarded inside).
     schedule.every().day.at(_MONTHLY_CHECK_TIME, _TIMEZONE).do(run_monthly_rebalance)
     # Daily ATR stops (weekdays guarded inside).
     schedule.every().day.at(_ATR_STOP_CHECK_TIME, _TIMEZONE).do(run_daily_atr_stops)
     logger.info(
-        "Scheduled: passes at %s; weekly report Fri %s; monthly probe %s; "
-        "ATR stops %s (%s).",
+        "Scheduled: passes at %s; weekly report Fri %s; morning briefing %s; "
+        "monthly probe %s; ATR stops %s (%s).",
         ", ".join(_PASS_TIMES),
         _WEEKLY_REPORT_TIME,
+        _MORNING_BRIEFING_TIME,
         _MONTHLY_CHECK_TIME,
         _ATR_STOP_CHECK_TIME,
         _TIMEZONE,
@@ -564,6 +595,11 @@ def main() -> None:
         action="store_true",
         help="Run daily ATR stop-loss evaluation now.",
     )
+    parser.add_argument(
+        "--briefing",
+        action="store_true",
+        help="Run morning newsletter Zeitgeist now, then exit.",
+    )
     args = parser.parse_args()
 
     if args.now:
@@ -574,6 +610,11 @@ def main() -> None:
     if args.weekly:
         logger.info("--weekly: generating the weekly report now.")
         run_weekly_report()
+        return
+
+    if args.briefing:
+        logger.info("--briefing: running morning Zeitgeist now.")
+        run_morning_briefing()
         return
 
     if args.atr_stops:

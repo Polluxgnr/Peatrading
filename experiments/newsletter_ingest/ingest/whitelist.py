@@ -10,6 +10,7 @@ from typing import FrozenSet
 
 # Exact email addresses allowed (case-insensitive match on extracted address).
 ALLOWED_SENDERS: FrozenSet[str] = frozenset({
+    # Phase 18 core digests
     "dan@tldrnewsletter.com",
     "luc@the-nbs.fr",
     "thevccorner@substack.com",
@@ -20,6 +21,10 @@ ALLOWED_SENDERS: FrozenSet[str] = frozenset({
     "newsletter@thedeepview.co",
     "laura@lbkconsulting.fr",
     "hello@brief.science",
+    # FR / PEA-oriented additions
+    "contact@cafedelabourse.com",
+    "charlessterlings@substack.com",
+    "plancash@substack.com",
 })
 
 _EMAIL_RE = re.compile(r"[\w.+-]+@[\w.-]+\.\w+", re.IGNORECASE)
