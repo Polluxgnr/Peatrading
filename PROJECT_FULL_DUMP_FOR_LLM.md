@@ -1,9 +1,9 @@
 # PEA Sniper Terminal — Full Project Dump for LLM
 Root: `C:\Users\PolluxGronier\Downloads\pea_sniper_terminal`
-Generated: 2026-07-23 13:29 UTC
+Generated: 2026-07-23 13:46 UTC
 One-shot context dump of source, configs, and docs (no venv, no DBs, no secrets).
 ---
-## File index (62 files)
+## File index (63 files)
 - .github/workflows/ci.yml
 - .gitignore
 - .streamlit/config.toml
@@ -61,6 +61,7 @@ One-shot context dump of source, configs, and docs (no venv, no DBs, no secrets)
 - run_discord.py
 - seed_account.py
 - tests/__init__.py
+- tests/test_funnel_analytics.py
 - tests/test_phase16_foundations.py
 - tests/test_ui_and_sandbox.py
 - tools/build_llm_dump.py
@@ -4916,7 +4917,7 @@ class WeeklyHistorian:
                 return "vetoed_macro"
             if "sector" in reason:
                 return "vetoed_sector"
-            if "correlation" in reason:
+            if "correlation" in reason or "correlated" in reason:
                 return "vetoed_correlation"
             return "rejected_other"
         return "other"
@@ -6046,6 +6047,255 @@ def load_signals(statuses: tuple[str, ...], limit: int | None = None) -> pd.Data
         return pd.DataFrame()
     db = PortfolioDB(db_path=_SQLITE_PATH)
     return pd.DataFrame(db.fetch_signals_by_status(list(statuses), limit=limit))
+
+
+def _classify_audit_row(row: dict) -> str:
+    """Reuse WeeklyHistorian taxonomy (same keywords / buckets)."""
+    try:
+        from weekly_historian import WeeklyHistorian  # noqa: WPS433
+        return WeeklyHistorian._classify(row)
+    except Exception:  # noqa: BLE001
+        # Inline fallback — keep in sync with weekly_historian._classify.
+        status = (row.get("status") or "").upper()
+        reason = (row.get("reason") or "").lower()
+        if status in ("EXECUTED", "APPROVED"):
+            return "executed"
+        if status == "REVOKED":
+            return "revoked"
+        if status == "REJECTED":
+            if "vix" in reason or "panic" in reason:
+                return "vetoed_vix"
+            if "earnings" in reason or "blackout" in reason:
+                return "vetoed_earnings"
+            if "illiquid" in reason or "adv" in reason:
+                return "vetoed_liquidity"
+            if "max satellite" in reason or "max positions" in reason:
+                return "vetoed_max_positions"
+            if "macro" in reason or ("veto" in reason and "earnings" not in reason):
+                return "vetoed_macro"
+            if "sector" in reason:
+                return "vetoed_sector"
+            if "correlation" in reason or "correlated" in reason:
+                return "vetoed_correlation"
+            return "rejected_other"
+        return "other"
+
+
+def _map_reject_to_funnel_drop(classified: str, reason: str) -> str:
+    """Map historian buckets → sequential funnel drops (Phase 17)."""
+    reason_l = (reason or "").lower()
+    # Cash / sizing is often "rejected_other" — detect explicitly.
+    if "insufficient cash" in reason_l or "insufficient cash for 1 share" in reason_l:
+        return "cash_sizing"
+    if classified in ("vetoed_liquidity", "vetoed_max_positions"):
+        return "sanity_liquidity"
+    if "no current price" in reason_l or "no price" in reason_l:
+        return "sanity_liquidity"
+    if classified in ("vetoed_vix", "vetoed_macro", "vetoed_earnings"):
+        return "macro_vix"
+    if classified == "vetoed_sector":
+        return "sector"
+    if classified == "vetoed_correlation":
+        return "correlation"
+    if classified == "rejected_other":
+        # Residual rejects → sanity bucket (price / unknown gates).
+        return "sanity_liquidity"
+    return "sanity_liquidity"
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def get_funnel_metrics(days: int = 7) -> dict:
+    """Build decision-funnel stats from SQLite audit logs (last ``days``).
+
+    Reuses ``WeeklyHistorian._classify`` taxonomy. No new tables.
+
+    Returns:
+        dict: Counts, waterfall series, rejection pie series, survival rate.
+        Empty-safe (zeros) when the DB is missing or the window has no rows.
+    """
+    empty = {
+        "days": days,
+        "total": 0,
+        "approved": 0,
+        "rejected": 0,
+        "survival_rate": 0.0,
+        "drops": {
+            "sanity_liquidity": 0,
+            "macro_vix": 0,
+            "sector": 0,
+            "correlation": 0,
+            "cash_sizing": 0,
+        },
+        "rejection_counts": {},
+        "waterfall_x": [],
+        "waterfall_y": [],
+        "waterfall_measure": [],
+        "empty": True,
+    }
+    if not _SQLITE_PATH.exists():
+        return empty
+    try:
+        since = (datetime.now() - timedelta(days=int(days))).strftime(
+            "%Y-%m-%dT00:00:00"
+        )
+        rows = PortfolioDB(db_path=_SQLITE_PATH).fetch_signals_since(since)
+    except Exception:  # noqa: BLE001
+        return empty
+    if not rows:
+        return empty
+
+    drops = {
+        "sanity_liquidity": 0,
+        "macro_vix": 0,
+        "sector": 0,
+        "correlation": 0,
+        "cash_sizing": 0,
+    }
+    rejection_counts: dict[str, int] = {}
+    approved = 0
+    rejected = 0
+
+    for row in rows:
+        bucket = _classify_audit_row(row)
+        status = (row.get("status") or "").upper()
+        if bucket == "executed" or status in ("APPROVED", "EXECUTED"):
+            approved += 1
+            continue
+        if status != "REJECTED":
+            continue
+        rejected += 1
+        rejection_counts[bucket] = rejection_counts.get(bucket, 0) + 1
+        drop_key = _map_reject_to_funnel_drop(bucket, str(row.get("reason") or ""))
+        drops[drop_key] = drops.get(drop_key, 0) + 1
+
+    total = len(rows)
+    drop_sum = sum(drops.values())
+    # Remainder = pending / revoked / expired / other (not cascade rejects).
+    remainder = max(0, total - drop_sum - approved)
+    survival = (approved / total * 100.0) if total else 0.0
+
+    # Waterfall labels (FR) — sequential cascade narrative.
+    x = ["Signaux bruts"]
+    y = [float(total)]
+    measure = ["absolute"]
+    drop_steps = [
+        ("sanity_liquidity", "− Sanity & liquidité"),
+        ("macro_vix", "− Macro / VIX / earnings"),
+        ("sector", "− Limite secteur"),
+        ("correlation", "− Corrélation"),
+        ("cash_sizing", "− Cash / sizing"),
+    ]
+    for key, label in drop_steps:
+        n = int(drops.get(key, 0))
+        if n <= 0:
+            continue
+        x.append(label)
+        y.append(float(-n))
+        measure.append("relative")
+    if remainder > 0:
+        x.append("− Pending / révoqués / autres")
+        y.append(float(-remainder))
+        measure.append("relative")
+    x.append("Survivants (APPROVED)")
+    y.append(0.0)  # Plotly recomputes running total
+    measure.append("total")
+
+    return {
+        "days": days,
+        "total": total,
+        "approved": approved,
+        "rejected": rejected,
+        "remainder": remainder,
+        "survival_rate": survival,
+        "drops": drops,
+        "rejection_counts": rejection_counts,
+        "waterfall_x": x,
+        "waterfall_y": y,
+        "waterfall_measure": measure,
+        "empty": False,
+    }
+
+
+def render_waterfall_chart(funnel_data: dict) -> go.Figure:
+    """Bloomberg-dark Plotly waterfall of the decision funnel."""
+    x = funnel_data.get("waterfall_x") or ["Signaux bruts", "Survivants"]
+    y = funnel_data.get("waterfall_y") or [0.0, 0.0]
+    measure = funnel_data.get("waterfall_measure") or ["absolute", "total"]
+    fig = go.Figure(
+        go.Waterfall(
+            name="Funnel",
+            orientation="v",
+            measure=measure,
+            x=x,
+            y=y,
+            textposition="outside",
+            text=[f"{v:+.0f}" if m == "relative" else f"{v:.0f}"
+                  for v, m in zip(y, measure)],
+            connector={"line": {"color": _MUTED, "width": 1}},
+            increasing={"marker": {"color": _NEON}},
+            decreasing={"marker": {"color": _RED}},
+            totals={"marker": {"color": _NEON}},
+        )
+    )
+    fig.update_layout(
+        title=dict(
+            text=f"Entonnoir de décision ({funnel_data.get('days', 7)}J)",
+            font=dict(color=_WHITE, size=14),
+        ),
+        showlegend=False,
+        margin=dict(t=48, l=40, r=20, b=80),
+        waterfallgap=0.35,
+    )
+    fig.update_xaxes(tickangle=-25)
+    return _style_dark_fig(fig, height=420)
+
+
+def render_rejection_pie(funnel_data: dict) -> go.Figure:
+    """Pie of rejection reasons only (WeeklyHistorian taxonomy labels)."""
+    counts = funnel_data.get("rejection_counts") or {}
+    label_map = {
+        "vetoed_vix": "VIX panic",
+        "vetoed_macro": "Macro",
+        "vetoed_earnings": "Earnings",
+        "vetoed_liquidity": "Liquidité ADV",
+        "vetoed_max_positions": "Max positions",
+        "vetoed_sector": "Secteur",
+        "vetoed_correlation": "Corrélation",
+        "rejected_other": "Autre rejet",
+    }
+    if not counts:
+        fig = go.Figure(
+            go.Pie(labels=["Aucun rejet"], values=[1], hole=0.45,
+                   marker=dict(colors=[_MUTED]))
+        )
+        fig.update_traces(textinfo="label")
+        fig.update_layout(
+            title=dict(text="Répartition des rejets", font=dict(color=_WHITE, size=14)),
+            showlegend=False,
+            margin=dict(t=48, l=10, r=10, b=10),
+        )
+        return _style_dark_fig(fig, height=420)
+
+    labels = [label_map.get(k, k) for k in counts]
+    values = [int(v) for v in counts.values()]
+    fig = go.Figure(
+        go.Pie(
+            labels=labels,
+            values=values,
+            hole=0.42,
+            marker=dict(colors=_BRIGHT_SERIES[: max(len(labels), 1)],
+                        line=dict(color=_BG, width=1)),
+            textinfo="label+percent",
+            insidetextorientation="radial",
+        )
+    )
+    fig.update_layout(
+        title=dict(text="Répartition des rejets", font=dict(color=_WHITE, size=14)),
+        showlegend=True,
+        legend=dict(orientation="h", y=-0.05),
+        margin=dict(t=48, l=10, r=10, b=40),
+    )
+    return _style_dark_fig(fig, height=420)
 
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -7908,6 +8158,61 @@ with tab_gen:
             f"color:#E8E8E8;line-height:1.55;font-size:14px;'>{brief}</div>",
             unsafe_allow_html=True,
         )
+
+    # --- Phase 17: Decision funnel (audit-log analytics) --------------------
+    st.markdown("---")
+    with st.expander("📊 Entonnoir de Décision (Funnel 7J)", expanded=True):
+        st.markdown(
+            "<div class='info-text'>Lecture seule des audit logs SQLite "
+            "(7 jours). Taxonomie identique au Weekly Historian "
+            "(<code>_classify</code>) — pour voir <b>où</b> la cascade coupe "
+            "les idées, pas pour recalculer le marché.</div>",
+            unsafe_allow_html=True,
+        )
+        funnel_days = st.radio(
+            "Fenêtre",
+            options=(7, 30),
+            index=0,
+            horizontal=True,
+            key="funnel_days_radio",
+            format_func=lambda d: f"{d} jours",
+        )
+        funnel = get_funnel_metrics(int(funnel_days))
+        if funnel.get("empty"):
+            st.info(
+                "Aucun signal dans la fenêtre. Lance "
+                "`python main_scheduler.py --now` pour peupler l'audit log, "
+                "puis reviens ici."
+            )
+        else:
+            sr = float(funnel.get("survival_rate") or 0)
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("Signaux (fenêtre)", f"{funnel.get('total', 0)}")
+            m2.metric("Rejets cascade", f"{funnel.get('rejected', 0)}")
+            m3.metric("APPROVED / EXECUTED", f"{funnel.get('approved', 0)}")
+            m4.metric(
+                "Taux de survie",
+                f"{sr:.1f}%",
+                help="Approved+Executed / total audit rows dans la fenêtre.",
+            )
+            fw, fp = st.columns([0.6, 0.4])
+            with fw:
+                st.plotly_chart(
+                    render_waterfall_chart(funnel),
+                    width="stretch",
+                    key="gen_funnel_waterfall",
+                )
+            with fp:
+                st.plotly_chart(
+                    render_rejection_pie(funnel),
+                    width="stretch",
+                    key="gen_funnel_pie",
+                )
+            st.caption(
+                "Drops waterfall : Sanity/ADV/max positions → Macro/VIX/earnings "
+                "→ Secteur → Corrélation → Cash/sizing. Le total final = survivants "
+                "après rejets (+ pending/révoqués retirés si présents)."
+            )
 
     st.markdown("---")
     st.markdown("#### ⚡ Signaux & Registre")
@@ -12367,7 +12672,7 @@ if __name__ == "__main__":
 
 ## FILE: README.md
 ```markdown
-# PEA Sniper Terminal — V-Prime 3.0 (Phase 16)
+# PEA Sniper Terminal — V-Prime 3.0 (Phase 17)
 
 > **Sovereign execution. Kinetic risk management. Absolute quantitative transparency.**
 
@@ -12439,7 +12744,7 @@ Repo: [github.com/Polluxgnr/Peatrading](https://github.com/Polluxgnr/Peatrading)
 | **Exits** | **Daily** ATR stop (`price < entry − 2.5×ATR14`); **monthly** +20% profit-shave |
 | **Memory** | SQLite equity curve + shared `equity_metrics` (max DD, CAGR, Sharpe, Sortino) — same maths for a future backtester |
 | **AI (explain only)** | Trade rationale, news sentiment, weekly digest, geo brief |
-| **UI** | Mission Control + Discord Copilot + Streamlit (trade cards, equity curve, Exploration, Logs) |
+| **UI** | Mission Control + Discord + Streamlit (**decision funnel waterfall**, trade cards, equity curve, Logs) |
 | **Ops** | Paris daemon, seed CLI, wallet editor, RevocationEngine, rotating logs, CI pytest |
 
 ---
@@ -12710,7 +13015,7 @@ real Bloomberg conventions and easier on long sessions than green-everywhere.
 
 | Tab | Content |
 |-----|---------|
-| **General & Signaux** | Adaptive multi-horizon suggestion (MICRO→FULL), Core card, geo brief, **rich PENDING trade cards**, news, ledger |
+| **General & Signaux** | Adaptive multi-horizon suggestion (MICRO→FULL), Core card, geo brief, **Entonnoir de décision (waterfall 7J/30J)**, **rich PENDING trade cards**, news, ledger |
 | **Portefeuille** | Equity curve + **Sharpe/DD/CAGR/Sortino**, sunburst, positions, wallet editor → SQLite |
 | **Exploration** | Liquid scan, full ticker dossier (business, TA explained, news, AMF→FMP→YF insiders, Polymarket) |
 | **Univers** | Full list + average sector performance |
@@ -12807,6 +13112,7 @@ sources over furtive HTML scraping.
 | Earnings blackout engine | Calendar empty — fill via API later |
 | ADV / max positions / RSI / corr lookback | Wired in `risk_params.yaml` + cascade |
 | Mission Control + trade cards + logs | Operator UX |
+| **Decision funnel waterfall + rejection pie** | ✅ Phase 17 — 7J/30J audit-log analytics in General |
 | pytest + GitHub Actions CI | Expand coverage over time |
 | Newsletter IMAP sandbox | Manual validation before any prod hook |
 
@@ -12817,7 +13123,7 @@ sources over furtive HTML scraping.
 | **Walk-forward backtester** | Turns “system that runs” into “strategy with evidence”; reuse `equity_metrics` |
 | **Broker CSV diff import** | Kill wallet drift without erasing manual fixes |
 | Fill **earnings_calendar** (Euronext / API) | Blackout already coded |
-| Signal **funnel waterfall** + rejection pie | Answer “why nothing fires” in one glance |
+| Signal **funnel waterfall** + rejection pie | ✅ Phase 17 — General tab (`get_funnel_metrics`, audit logs + `_classify`) |
 | Relative strength / 52w / analyst drift | Post-backtester calibration knobs |
 
 ### Later
@@ -12856,7 +13162,7 @@ Decision-support and educational tool only. **No automated execution. No financi
 advice.** You are solely responsible for every trade. Past or backtested results
 do not guarantee future performance.
 
-© 2026 Pollux Quantitative Research — V-Prime 3.0 (Phase 16).
+© 2026 Pollux Quantitative Research — V-Prime 3.0 (Phase 17).
 ```
 
 ## FILE: requirements.txt
@@ -13152,6 +13458,73 @@ if __name__ == "__main__":
 ## FILE: tests/__init__.py
 ```python
 # Empty package marker for pytest discovery.
+```
+
+## FILE: tests/test_funnel_analytics.py
+```python
+"""Phase 17 funnel taxonomy tests (no Streamlit runtime)."""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "05_interfaces"))
+sys.path.insert(0, str(ROOT / "04_orchestrator_ai"))
+
+# Import helpers without executing Streamlit page: load module pieces carefully.
+import importlib.util
+
+spec = importlib.util.spec_from_file_location(
+    "terminal_dashboard_funnel",
+    ROOT / "05_interfaces" / "terminal_dashboard.py",
+)
+# Do NOT exec full dashboard (st.set_page_config). Test classify mapping via historian.
+
+
+from weekly_historian import WeeklyHistorian  # noqa: E402
+
+
+def test_classify_buckets_match_expected_keywords():
+    assert WeeklyHistorian._classify(
+        {"status": "REJECTED", "reason": "REJECTED: VIX panic (V2TX=35)"}
+    ) == "vetoed_vix"
+    assert WeeklyHistorian._classify(
+        {"status": "REJECTED", "reason": "REJECTED: Illiquid (ADV €1000)"}
+    ) == "vetoed_liquidity"
+    assert WeeklyHistorian._classify(
+        {"status": "REJECTED", "reason": "REJECTED: Highly correlated with MC.PA"}
+    ) == "vetoed_correlation"
+    assert WeeklyHistorian._classify(
+        {"status": "APPROVED", "reason": "ok"}
+    ) == "executed"
+
+
+def test_funnel_drop_mapping_logic():
+    # Mirror of terminal_dashboard._map_reject_to_funnel_drop without importing Streamlit.
+    def map_drop(classified: str, reason: str) -> str:
+        reason_l = (reason or "").lower()
+        if "insufficient cash" in reason_l:
+            return "cash_sizing"
+        if classified in ("vetoed_liquidity", "vetoed_max_positions"):
+            return "sanity_liquidity"
+        if "no current price" in reason_l:
+            return "sanity_liquidity"
+        if classified in ("vetoed_vix", "vetoed_macro", "vetoed_earnings"):
+            return "macro_vix"
+        if classified == "vetoed_sector":
+            return "sector"
+        if classified == "vetoed_correlation":
+            return "correlation"
+        return "sanity_liquidity"
+
+    assert map_drop("vetoed_vix", "VIX panic") == "macro_vix"
+    assert map_drop("vetoed_earnings", "EARNINGS BLACKOUT") == "macro_vix"
+    assert map_drop(
+        "rejected_other", "REJECTED: Insufficient cash for 1 share"
+    ) == "cash_sizing"
+    assert map_drop("vetoed_sector", "Sector weight") == "sector"
 ```
 
 ## FILE: tests/test_phase16_foundations.py

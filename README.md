@@ -1,4 +1,4 @@
-# PEA Sniper Terminal — V-Prime 3.0 (Phase 16)
+# PEA Sniper Terminal — V-Prime 3.0 (Phase 17)
 
 > **Sovereign execution. Kinetic risk management. Absolute quantitative transparency.**
 
@@ -70,7 +70,7 @@ Repo: [github.com/Polluxgnr/Peatrading](https://github.com/Polluxgnr/Peatrading)
 | **Exits** | **Daily** ATR stop (`price < entry − 2.5×ATR14`); **monthly** +20% profit-shave |
 | **Memory** | SQLite equity curve + shared `equity_metrics` (max DD, CAGR, Sharpe, Sortino) — same maths for a future backtester |
 | **AI (explain only)** | Trade rationale, news sentiment, weekly digest, geo brief |
-| **UI** | Mission Control + Discord Copilot + Streamlit (trade cards, equity curve, Exploration, Logs) |
+| **UI** | Mission Control + Discord + Streamlit (**decision funnel waterfall**, trade cards, equity curve, Logs) |
 | **Ops** | Paris daemon, seed CLI, wallet editor, RevocationEngine, rotating logs, CI pytest |
 
 ---
@@ -341,7 +341,7 @@ real Bloomberg conventions and easier on long sessions than green-everywhere.
 
 | Tab | Content |
 |-----|---------|
-| **General & Signaux** | Adaptive multi-horizon suggestion (MICRO→FULL), Core card, geo brief, **rich PENDING trade cards**, news, ledger |
+| **General & Signaux** | Adaptive multi-horizon suggestion (MICRO→FULL), Core card, geo brief, **Entonnoir de décision (waterfall 7J/30J)**, **rich PENDING trade cards**, news, ledger |
 | **Portefeuille** | Equity curve + **Sharpe/DD/CAGR/Sortino**, sunburst, positions, wallet editor → SQLite |
 | **Exploration** | Liquid scan, full ticker dossier (business, TA explained, news, AMF→FMP→YF insiders, Polymarket) |
 | **Univers** | Full list + average sector performance |
@@ -438,6 +438,7 @@ sources over furtive HTML scraping.
 | Earnings blackout engine | Calendar empty — fill via API later |
 | ADV / max positions / RSI / corr lookback | Wired in `risk_params.yaml` + cascade |
 | Mission Control + trade cards + logs | Operator UX |
+| **Decision funnel waterfall + rejection pie** | ✅ Phase 17 — 7J/30J audit-log analytics in General |
 | pytest + GitHub Actions CI | Expand coverage over time |
 | Newsletter IMAP sandbox | Manual validation before any prod hook |
 
@@ -448,7 +449,7 @@ sources over furtive HTML scraping.
 | **Walk-forward backtester** | Turns “system that runs” into “strategy with evidence”; reuse `equity_metrics` |
 | **Broker CSV diff import** | Kill wallet drift without erasing manual fixes |
 | Fill **earnings_calendar** (Euronext / API) | Blackout already coded |
-| Signal **funnel waterfall** + rejection pie | Answer “why nothing fires” in one glance |
+| Signal **funnel waterfall** + rejection pie | ✅ Phase 17 — General tab (`get_funnel_metrics`, audit logs + `_classify`) |
 | Relative strength / 52w / analyst drift | Post-backtester calibration knobs |
 
 ### Later
@@ -487,4 +488,4 @@ Decision-support and educational tool only. **No automated execution. No financi
 advice.** You are solely responsible for every trade. Past or backtested results
 do not guarantee future performance.
 
-© 2026 Pollux Quantitative Research — V-Prime 3.0 (Phase 16).
+© 2026 Pollux Quantitative Research — V-Prime 3.0 (Phase 17).

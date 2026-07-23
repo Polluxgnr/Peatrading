@@ -74,7 +74,7 @@ class WeeklyHistorian:
                 return "vetoed_macro"
             if "sector" in reason:
                 return "vetoed_sector"
-            if "correlation" in reason:
+            if "correlation" in reason or "correlated" in reason:
                 return "vetoed_correlation"
             return "rejected_other"
         return "other"
