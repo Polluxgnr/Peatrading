@@ -1,6 +1,6 @@
 # PEA Sniper Terminal — Full Project Dump for LLM
 Root: `C:\Users\PolluxGronier\Downloads\pea_sniper_terminal`
-Generated: 2026-07-23 14:41 UTC
+Generated: 2026-07-23 14:47 UTC
 One-shot context dump of source, configs, and docs (no venv, no DBs, no secrets).
 ---
 ## File index (68 files)
@@ -7300,9 +7300,156 @@ def load_morning_briefing() -> dict:
         return {}
 
 
+def morning_briefing_is_live(briefing: dict | None) -> bool:
+    """True when scheduler wrote a usable Zeitgeist (not the placeholder)."""
+    if not briefing:
+        return False
+    zg = str(briefing.get("zeitgeist") or "").strip()
+    if not zg or zg.casefold().startswith("indisponible"):
+        return False
+    # Prefer a real generated_at from the morning job.
+    if briefing.get("generated_at"):
+        return True
+    return bool(briefing.get("headlines"))
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def get_strategy_fingerprint(ticker: str) -> dict:
+    """Four strategy axes scored 0–100 for the Exploration radar.
+
+    Axes (dashboard UI — complementary to the engine conviction weights):
+      Mean Reversion · Momentum · Quality/Value · Insider Confidence
+    """
+    out = {
+        "Mean Reversion": 0.0,
+        "Momentum": 0.0,
+        "Quality/Value": 0.0,
+        "Insider Confidence": 0.0,
+    }
+    ind = get_indicators(ticker) or {}
+    rsi = ind.get("rsi")
+    close = ind.get("close")
+    sma5 = ind.get("sma5")
+    sma50 = ind.get("sma50")
+    sma200 = ind.get("sma200")
+
+    # Mean Reversion — oversold stretch (RSI)
+    if rsi is not None:
+        if rsi < 25:
+            out["Mean Reversion"] = 100.0
+        elif rsi < 30:
+            out["Mean Reversion"] = 90.0
+        elif rsi < 40:
+            out["Mean Reversion"] = 55.0
+        elif rsi < 50:
+            out["Mean Reversion"] = 25.0
+        else:
+            out["Mean Reversion"] = max(0.0, 15.0 - (rsi - 50) * 0.3)
+
+    # Momentum — price above short/medium SMAs
+    mom = 0.0
+    if close is not None and sma5 is not None and close > sma5:
+        mom += 45.0
+    if close is not None and sma50 is not None and close > sma50:
+        mom += 35.0
+    if close is not None and sma200 is not None and close > sma200:
+        mom += 20.0
+    out["Momentum"] = min(100.0, mom)
+
+    # Quality/Value — EPS > 0 and/or reasonable trailing P/E
+    try:
+        val = get_valuation_metrics(ticker) or {}
+    except Exception:  # noqa: BLE001
+        val = {}
+    pe = val.get("trailing_pe")
+    qv = 0.0
+    if pe is not None and pe > 0:
+        qv += 50.0
+        if pe <= 15:
+            qv += 50.0
+        elif pe <= 25:
+            qv += 30.0
+        elif pe <= 35:
+            qv += 15.0
+    else:
+        # Soft EPS proxy via ensemble helper when PE missing
+        try:
+            from technical_scorer import SignalGenerator
+
+            if SignalGenerator().is_profitable(ticker):
+                qv += 55.0
+        except Exception:  # noqa: BLE001
+            pass
+    out["Quality/Value"] = min(100.0, qv)
+
+    # Insider Confidence — net buys
+    alpha = get_alpha_signals(ticker) or {}
+    ins = int(alpha.get("insider") or 0)
+    if ins >= 1:
+        out["Insider Confidence"] = 85.0
+    elif ins <= -1:
+        out["Insider Confidence"] = 10.0
+    else:
+        out["Insider Confidence"] = 35.0
+
+    return out
+
+
+def render_strategy_radar(fingerprint: dict, ticker: str):
+    """Dark Bloomberg-style polar radar via plotly.express.line_polar (0–100)."""
+    cats = [
+        "Mean Reversion",
+        "Momentum",
+        "Quality/Value",
+        "Insider Confidence",
+    ]
+    vals = [float(fingerprint.get(c) or 0) for c in cats]
+    df = pd.DataFrame({"axis": cats, "score": vals})
+    fig = pex.line_polar(
+        df,
+        r="score",
+        theta="axis",
+        line_close=True,
+        range_r=[0, 100],
+    )
+    fig.update_traces(
+        fill="toself",
+        line_color=_CYAN,
+        fillcolor="rgba(0, 229, 255, 0.18)",
+        marker=dict(color=_NEON, size=7),
+    )
+    fig.update_layout(
+        paper_bgcolor=_BG,
+        plot_bgcolor=_BG,
+        font=dict(family="Courier New", color=_WHITE, size=11),
+        polar=dict(
+            bgcolor="#050505",
+            radialaxis=dict(
+                visible=True,
+                range=[0, 100],
+                gridcolor="#333",
+                tickfont=dict(color=_MUTED, size=9),
+            ),
+            angularaxis=dict(
+                gridcolor="#333",
+                tickfont=dict(color=_WHITE, size=11),
+            ),
+        ),
+        margin=dict(l=50, r=50, t=48, b=40),
+        height=380,
+        showlegend=False,
+        title=dict(
+            text=f"Empreinte — {short_name(ticker)}",
+            font=dict(color=_CYAN, size=13),
+        ),
+    )
+    return fig
+
+
+# Back-compat aliases (engine conviction axes still used elsewhere if needed)
 @st.cache_data(ttl=900, show_spinner=False)
 def get_conviction_axes(ticker: str) -> dict:
-    """Four-axis ensemble conviction for radar chart (Exploration)."""
+    """Engine ensemble axes (points) — optional companion to strategy radar."""
     try:
         from technical_scorer import SignalGenerator
         from duckdb_manager import TimeSeriesDB
@@ -7317,7 +7464,7 @@ def get_conviction_axes(ticker: str) -> dict:
 
 
 def render_conviction_radar(conv: dict, ticker: str) -> go.Figure:
-    """Plotly polar radar for Mean Reversion / Volume / Insiders / Institutional."""
+    """Legacy engine radar (kept for compatibility). Prefer strategy radar."""
     cats = ["Mean Reversion", "Volume", "Insiders", "Institutional"]
     vals = [
         float(conv.get("mean_reversion") or 0),
@@ -7325,7 +7472,6 @@ def render_conviction_radar(conv: dict, ticker: str) -> go.Figure:
         float(conv.get("insider") or 0),
         float(conv.get("institutional") or 0),
     ]
-    # Close the polygon
     cats_c = cats + [cats[0]]
     vals_c = vals + [vals[0]]
     fig = go.Figure()
@@ -7348,18 +7494,67 @@ def render_conviction_radar(conv: dict, ticker: str) -> go.Figure:
                 gridcolor="#333", tickfont=dict(color=_WHITE, size=11),
             ),
         ),
-        paper_bgcolor="#050505",
-        plot_bgcolor="#050505",
+        paper_bgcolor=_BG,
+        plot_bgcolor=_BG,
         font=dict(color=_WHITE),
         margin=dict(l=40, r=40, t=40, b=40),
         height=320,
         showlegend=False,
-        title=dict(
-            text=f"Conviction {float(conv.get('total') or 0):.0f}/100",
-            font=dict(color=_CYAN, size=13),
-        ),
     )
     return fig
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def get_universe_screener_tags(tickers: tuple[str, ...]) -> dict:
+    """Map ticker → short technical tag string for the Univers dark table."""
+    tags: dict[str, str] = {}
+    if not tickers:
+        return tags
+    try:
+        from duckdb_manager import TimeSeriesDB
+        from technical_scorer import SignalGenerator
+
+        db = TimeSeriesDB()
+        gen = SignalGenerator()
+        for ticker in tickers:
+            parts: list[str] = []
+            try:
+                hist = db.get_historical_prices(ticker, days=220)
+                if hist is None or hist.empty or len(hist) < 50:
+                    tags[ticker] = "—"
+                    continue
+                enriched = gen.calculate_indicators(hist)
+                last = enriched.iloc[-1]
+                close = float(last["Close"])
+                rsi = last.get("RSI_14")
+                sma200 = last.get("SMA_200")
+                sma5 = last.get("SMA_5")
+                if rsi is not None and not pd.isna(rsi) and float(rsi) < 30:
+                    parts.append("🔥 OVERSOLD")
+                if (
+                    sma200 is not None
+                    and not pd.isna(sma200)
+                    and close > float(sma200)
+                ):
+                    parts.append("📈 UPTREND")
+                if (
+                    sma5 is not None
+                    and not pd.isna(sma5)
+                    and close > float(sma5)
+                    and rsi is not None
+                    and not pd.isna(rsi)
+                    and float(rsi) > 55
+                ):
+                    parts.append("⚡ MOM")
+                if sma200 is not None and not pd.isna(sma200) and close < float(sma200):
+                    parts.append("📉 DOWNTREND")
+            except Exception:  # noqa: BLE001
+                pass
+            tags[ticker] = " · ".join(parts) if parts else "—"
+    except Exception:  # noqa: BLE001
+        for ticker in tickers:
+            tags[ticker] = "—"
+    return tags
 
 
 def simulate_buy_what_if(
@@ -9056,6 +9251,44 @@ with tab_gen:
         unsafe_allow_html=True,
     )
 
+    # --- Phase 19: Morning Briefing (Zeitgeist) — top of General ------------
+    st.markdown("#### 🗞️ Morning Briefing (Zeitgeist)")
+    briefing = load_morning_briefing()
+    if not morning_briefing_is_live(briefing):
+        st.caption("Briefing matinal non disponible aujourd'hui.")
+    else:
+        zg = str(briefing.get("zeitgeist") or "").strip()
+        headlines = briefing.get("headlines") or []
+        gen_at = str(briefing.get("generated_at") or "")[:19]
+        # Split LLM bullets into metric boxes when possible
+        bullets = [
+            ln.strip(" •-\t")
+            for ln in zg.replace("\r", "").split("\n")
+            if ln.strip() and ln.strip()[0] in "•-*–—0123456789"
+        ]
+        if not bullets:
+            bullets = [zg]
+        cols = st.columns(min(5, max(1, len(bullets[:5]))))
+        for i, bullet in enumerate(bullets[:5]):
+            with cols[i]:
+                st.markdown(
+                    metric_box(
+                        f"Thème {i + 1}",
+                        bullet[:90] + ("…" if len(bullet) > 90 else ""),
+                        sub="newsletter Zeitgeist",
+                        accent="cyan" if i % 2 == 0 else "amber",
+                        help_text="Narratif macro extrait des newsletters overnight.",
+                    ),
+                    unsafe_allow_html=True,
+                )
+        if gen_at:
+            st.caption(f"Généré {gen_at} UTC · {len(headlines)} titre(s) source")
+        with st.expander("Voir les sources (Newsletters)", expanded=False):
+            if headlines:
+                st.markdown("\n".join(f"- {h}" for h in headlines))
+            else:
+                st.caption("Aucun titre source dans le JSON.")
+
     held_tickers = [p.ticker for p in positions]
     blue_chips = ["MC.PA", "OR.PA", "AI.PA", "RMS.PA", "SAN.PA",
                   "TTE.PA", "BNP.PA", "AIR.PA", _CORE_TICKER]
@@ -9192,27 +9425,6 @@ with tab_gen:
                    help="PEA = actions entieres. Sous ce montant, pas de Core.")
 
     st.markdown("---")
-    # --- Phase 19: Morning Zeitgeist (newsletters) --------------------------
-    st.markdown("#### 🗞️ Morning Zeitgeist (Thèmes des Newsletters)")
-    briefing = load_morning_briefing()
-    zg = (briefing or {}).get("zeitgeist") or "Indisponible"
-    headlines = (briefing or {}).get("headlines") or []
-    gen_at = (briefing or {}).get("generated_at") or ""
-    st.markdown(
-        f"<div class='info-text'><b style='color:{_CYAN};'>Narratifs macro "
-        f"(LLM)</b>"
-        + (f" · <span style='color:{_MUTED};'>{str(gen_at)[:19]} UTC</span>"
-           if gen_at else "")
-        + f"<br><div style='white-space:pre-wrap;margin-top:8px;color:#E8E8E8;"
-        f"line-height:1.55;'>{zg}</div></div>",
-        unsafe_allow_html=True,
-    )
-    with st.expander(f"Voir les {len(headlines)} titres sources", expanded=False):
-        if headlines:
-            st.markdown("\n".join(f"- {h}" for h in headlines))
-        else:
-            st.caption("Aucun titre (IMAP / whitelist / briefing pas encore tourné).")
-
     recos = build_recommendations(portfolio, pending_gen, vix, regime or {})
     g1, g2 = st.columns([1.15, 1])
     with g1:
@@ -9853,65 +10065,46 @@ with tab_mkt:
         unsafe_allow_html=True,
     )
 
-    # Phase 20: Conviction radar + what-if simulator
-    rc1, rc2 = st.columns([1.1, 1])
-    with rc1:
-        st.markdown("#### 📡 Conviction Score (Ensemble)")
-        conv = get_conviction_axes(selected)
-        if conv and float(conv.get("total") or 0) > 0:
-            st.plotly_chart(
-                render_conviction_radar(conv, selected),
-                width="stretch",
-                key=f"explore_conviction_radar_{selected}",
+    # What-if simulator (Command Center) — radar lives below Phase 18 valuation
+    st.markdown("#### 🧪 Simulateur (What-If)")
+    st.markdown(
+        "<div class='info-text'>Impact théorique d'un achat de "
+        "<b>1000 €</b> avant qu'un signal ne soit généré — cash, "
+        "poids sectoriel, corrélation max vs positions.</div>",
+        unsafe_allow_html=True,
+    )
+    if st.button(
+        "Simuler un achat de 1000€",
+        key=f"whatif_1000_{selected}",
+        type="primary",
+    ):
+        sim = simulate_buy_what_if(portfolio, selected, 1000.0)
+        if not sim.get("affordable"):
+            st.warning(
+                f"Pas assez de cash ou cours trop élevé "
+                f"(cash {sim['cash_before']:,.0f} € · "
+                f"cours {sim['price']:,.2f} €)."
             )
-            factors = conv.get("factors") or []
-            if factors:
-                st.caption(" · ".join(factors))
         else:
-            st.caption(
-                "Conviction nulle / historique insuffisant "
-                "(besoin SMA200 + axes alt-data)."
+            corr_txt = (
+                f"{sim['max_corr']:+.2f}"
+                if sim.get("max_corr") is not None else "n/a"
             )
-    with rc2:
-        st.markdown("#### 🧪 Simulateur (What-If)")
-        st.markdown(
-            "<div class='info-text'>Impact théorique d'un achat de "
-            "<b>1000 €</b> avant qu'un signal ne soit généré — cash, "
-            "poids sectoriel, corrélation max vs positions.</div>",
-            unsafe_allow_html=True,
-        )
-        if st.button(
-            "Simuler un achat de 1000€",
-            key=f"whatif_1000_{selected}",
-            type="primary",
-        ):
-            sim = simulate_buy_what_if(portfolio, selected, 1000.0)
-            if not sim.get("affordable"):
-                st.warning(
-                    f"Pas assez de cash ou cours trop élevé "
-                    f"(cash {sim['cash_before']:,.0f} € · "
-                    f"cours {sim['price']:,.2f} €)."
-                )
-            else:
-                corr_txt = (
-                    f"{sim['max_corr']:+.2f}"
-                    if sim.get("max_corr") is not None else "n/a"
-                )
-                st.markdown(
-                    f"<div class='metric-box cyan'>"
-                    f"<div class='metric-title'>WHAT-IF 1000 €</div>"
-                    f"<div class='metric-value'>{sim['qty']} × "
-                    f"{sim['price']:,.2f} € = {sim['cost']:,.0f} €</div>"
-                    f"<div class='metric-sub sub-muted'>"
-                    f"Cash {sim['cash_before']:,.0f} → "
-                    f"<b style='color:{_AMBER};'>{sim['cash_after']:,.0f} €</b>"
-                    f"<br>Secteur {sim['sector']}: "
-                    f"{sim['sector_pct_before']:.1f}% → "
-                    f"<b>{sim['sector_pct_after']:.1f}%</b>"
-                    f"<br>Corr. max vs book: {corr_txt}"
-                    f"</div></div>",
-                    unsafe_allow_html=True,
-                )
+            st.markdown(
+                f"<div class='metric-box cyan'>"
+                f"<div class='metric-title'>WHAT-IF 1000 €</div>"
+                f"<div class='metric-value'>{sim['qty']} × "
+                f"{sim['price']:,.2f} € = {sim['cost']:,.0f} €</div>"
+                f"<div class='metric-sub sub-muted'>"
+                f"Cash {sim['cash_before']:,.0f} → "
+                f"<b style='color:{_AMBER};'>{sim['cash_after']:,.0f} €</b>"
+                f"<br>Secteur {sim['sector']}: "
+                f"{sim['sector_pct_before']:.1f}% → "
+                f"<b>{sim['sector_pct_after']:.1f}%</b>"
+                f"<br>Corr. max vs book: {corr_txt}"
+                f"</div></div>",
+                unsafe_allow_html=True,
+            )
 
     # Full-width TradingView chart
     chart_html = f"""
@@ -10122,6 +10315,41 @@ with tab_mkt:
             f"moyenne {ann['Return_Pct'].mean():+.1f}% / an (arithmétique)."
         )
 
+    # --- Phase 20 UI: Multi-strategy fingerprint radar (below Phase 18) ----
+    st.markdown("---")
+    st.markdown("#### 🕸️ Empreinte Multi-Stratégies (Radar)")
+    st.markdown(
+        "<div class='info-text'>Quatre axes normalisés <b>0–100</b> : "
+        "Mean Reversion (RSI), Momentum (Close vs SMA5/50/200), "
+        "Quality/Value (P/E / EPS), Insider Confidence. "
+        "Lecture visuelle Bloomberg — pas un ordre automatique.</div>",
+        unsafe_allow_html=True,
+    )
+    with st.spinner("Calcul empreinte…"):
+        fingerprint = get_strategy_fingerprint(selected)
+    if fingerprint and any(float(v) > 0 for v in fingerprint.values()):
+        st.plotly_chart(
+            render_strategy_radar(fingerprint, selected),
+            width="stretch",
+            key=f"explore_strategy_radar_{selected}",
+        )
+        mcols = st.columns(4)
+        for i, (axis, score) in enumerate(fingerprint.items()):
+            with mcols[i]:
+                st.markdown(
+                    metric_box(
+                        axis,
+                        f"{float(score):.0f}",
+                        sub="/ 100",
+                        accent="cyan" if float(score) >= 60 else (
+                            "amber" if float(score) >= 35 else "muted"
+                        ),
+                    ),
+                    unsafe_allow_html=True,
+                )
+    else:
+        st.caption("Empreinte indisponible (indicateurs / valorisation manquants).")
+
     # News — full width, 2 columns (not a cramped side panel)
     st.markdown(f"#### 📰 Actualites — {short_name(selected)}")
     news = get_recent_news(selected, limit=8)
@@ -10305,12 +10533,48 @@ with tab_uni:
         view = universe_df if not sector_filter else \
             universe_df[universe_df["Sector"].isin(sector_filter)]
         view = view.sort_values(["Sector", "Ticker"])
+        # Screener tags from DuckDB technicals (cap for responsiveness)
+        tag_cap = 80
+        tag_tickers = tuple(view["Ticker"].head(tag_cap).tolist())
+        with st.spinner("Tags techniques (OVERSOLD / UPTREND)…"):
+            tag_map = get_universe_screener_tags(tag_tickers)
+        tags_col = []
+        for i, t in enumerate(view["Ticker"].tolist()):
+            if i < tag_cap:
+                tags_col.append(tag_map.get(t, "—"))
+            else:
+                tags_col.append("…")
         disp = pd.DataFrame({
-            "Titre": view["Name"], "Ticker": view["Ticker"],
+            "Titre": view["Name"],
+            "Ticker": view["Ticker"],
             "Secteur": view["Sector"],
+            "Tags": tags_col,
         })
-        st.plotly_chart(dark_table(disp, height=400,
-                                   col_widths=[2, 1, 1.5]), width="stretch")
+        tag_colors = []
+        for t in tags_col:
+            if "OVERSOLD" in t:
+                tag_colors.append(_AMBER)
+            elif "UPTREND" in t:
+                tag_colors.append(_NEON)
+            elif "DOWNTREND" in t:
+                tag_colors.append(_RED)
+            else:
+                tag_colors.append(_MUTED)
+        st.plotly_chart(
+            dark_table(
+                disp.head(120),
+                height=400,
+                font_color_map={"Tags": tag_colors[:120]},
+                col_widths=[2, 1, 1.3, 2.2],
+            ),
+            width="stretch",
+            key="uni_screener_tags_table",
+        )
+        if len(view) > tag_cap:
+            st.caption(
+                f"Tags calculés sur les {tag_cap} premiers titres affichés "
+                f"(filtre un secteur pour scorer le reste)."
+            )
 
 # --- Tab: Architecture & Documentation --------------------------------------
 with tab_arch:

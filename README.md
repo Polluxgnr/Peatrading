@@ -349,10 +349,10 @@ real Bloomberg conventions and easier on long sessions than green-everywhere.
 
 | Tab | Content |
 |-----|---------|
-| **General & Signaux** | Adaptive suggestion, **Morning Zeitgeist**, geo brief, **Entonnoir de décision**, **Command Center Approuver/Rejeter**, conviction-coloured PENDING scores, news, ledger |
+| **General & Signaux** | **Morning Briefing (Zeitgeist)** en tête, suggestion adaptative, geo brief, **Entonnoir de décision**, **Command Center Approuver/Rejeter**, scores conviction, news, ledger |
 | **Portefeuille** | Equity curve + **Sharpe/DD/CAGR/Sortino**, sunburst, positions, wallet editor → SQLite |
-| **Exploration** | Liquid scan, ticker dossier, TA, **conviction radar**, **what-if 1000€**, valorisation / zone d'achat, perf annuelle 10 ans, news (Bourso/Google/Yahoo), insiders AMF→FMP→YF, Polymarket |
-| **Univers** | Full list + average sector performance |
+| **Exploration** | Liquid scan, ticker dossier, TA, what-if 1000€, **valorisation / zone d'achat**, **perf annuelle 10 ans**, **Empreinte Multi-Stratégies (radar 0–100)**, news, insiders, Polymarket |
+| **Univers** | Full list + perf sectorielle + **Tags** techniques (OVERSOLD / UPTREND) |
 | **Architecture & Logs** | Living docs + **log file picker / tail / copy** |
 
 ### Rich trade cards (what you see before approving)
