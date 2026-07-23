@@ -1038,8 +1038,9 @@ def build_recommendations(
             recos.append({
                 "prio": 1,
                 "title": f"Stop-loss candidat {format_name(p.ticker)}",
-                "why": (f"PnL latent {pnl:+.1f}% sous le seuil -10%. "
-                        "Le rebalancer mensuel proposera une vente 100%."),
+                "why": (f"PnL latent {pnl:+.1f}% (perte). "
+                        "Le rebalancer mensuel sort a 100% si le cours casse "
+                        "avg_entry - 2.5×ATR(14)."),
             })
         if pnl >= 20:
             recos.append({
@@ -2704,22 +2705,22 @@ with tab_mkt:
     else:
         st.caption("Aucune actualite majeure recente pour cet actif.")
 
-    # Insiders — honest about AMF
+    # Insiders — AMF first (official), then FMP, then Yahoo
     st.markdown("---")
     st.markdown("#### 🕵️ Activite des dirigeants (insiders)")
     st.markdown(
-        "<div class='info-text'><b>Source prioritaire : Yahoo Finance</b>. "
-        "AMF BDIF est tente en secours mais est souvent inaccessible "
-        "(WAF / HTTP 500) — un coupe-circuit coupe les retries pour ne pas "
-        "spammer les logs. Un achat net massif = signal de confiance interne, "
-        "pas un ordre automatique. Couverture tres variable sur les .PA.</div>",
+        "<div class='info-text'><b>Cascade stricte : AMF BDIF → FMP → Yahoo</b>. "
+        "L'AMF est la source legale officielle FR. Si BDIF est bloque (WAF / "
+        "HTTP 500), le terminal bascule sur Financial Modeling Prep "
+        "(<code>FMP_API_KEY</code>), puis yfinance. Un achat net massif = "
+        "signal de confiance interne, pas un ordre automatique.</div>",
         unsafe_allow_html=True,
     )
     insider_df = get_insider_data(selected)
     if insider_df.empty:
         st.warning(
             f"Aucune transaction insider pour {format_name(selected)}. "
-            "Yahoo n'a souvent rien sur les mid-caps .PA ; AMF BDIF reste bloque."
+            "AMF/FMP/Yahoo n'ont rien renvoye (couverture variable sur .PA)."
         )
     else:
         src_note = ""
@@ -2909,9 +2910,10 @@ quotidiennes** (heure de Paris), uniquement les **jours de bourse** :
 | **TradingView** | Graphiques + jauge TA (UI only) | Widgets |
 | **Polymarket Gamma** | Probabilites macro (contexte) | Live, no auth |
 | **Boursorama** | Profil PEA/SRD, consensus, news (best-effort) | Scraper fragile |
-| **AMF BDIF** | Declarations dirigeants | Souvent **WAF/HTTP 500** — circuit breaker + fallback Yahoo |
+| **AMF BDIF** | Declarations dirigeants (**primaire**) | Officiel FR ; WAF/HTTP 500 possible → FMP → Yahoo |
+| **FMP** | Insiders fallback (`FMP_API_KEY`) | Secondaire |
 | **OpenRouter** | Sentiment news + briefing geo (explique, ne decide pas) | Optionnel |
-| **SQLite + DuckDB** | Portfolio / audit / OHLCV | Local |
+| **SQLite + DuckDB** | Portfolio / audit / equity curve / OHLCV | Local |
 
 ---
 
@@ -2920,7 +2922,7 @@ quotidiennes** (heure de Paris), uniquement les **jours de bourse** :
 | Onglet | Contenu |
 |--------|---------|
 | **General & Signaux** | Suggestion adaptative **multi-horizon**, explication cash, fiche ETF Core, reco, geo, registre, news du mois |
-| **Portefeuille** | Allocation + editeur wallet (SQLite) |
+| **Portefeuille** | Equity curve + allocation + editeur wallet (SQLite) |
 | **Exploration** | Scan liquide top/flop + trajectoires, fiche ticker (dossier entreprise, TA expliquee, news, insiders, Polymarket) |
 | **Univers** | Liste PEA + **perf moyenne par secteur** (horizon reglable) |
 | **Architecture** | Cette page |
@@ -2960,7 +2962,7 @@ L'IA **n'approuve jamais** un trade. Discord = copilot manuel.
 | Budget satellite | Max ~30% equity |
 | Secteur / ligne | Max ~25% / ~15% (assoupli en MICRO) |
 | VIX panic | Bloque nouveaux satellites |
-| Stop / shave | −10% exit / +20% trim 20% |
+| Stop / shave | ATR dynamique (2.5×ATR14) exit / +20% trim 20% |
 | Execution | Discord only |
 
 ---
@@ -2968,11 +2970,13 @@ L'IA **n'approuve jamais** un trade. Discord = copilot manuel.
 ### 🖥️ Architecture technique
 
 ```
-yfinance / VIX / (Bourso|AMF best-effort)
+AMF → FMP → yfinance / VIX / Bourso best-effort
         → SignalGenerator + SmartDCA
         → CorrelationFirewall + PeaSizer + MacroVeto
+        → Monthly ATR rebalancer
         → Discord Copilot
-        → SQLite  ↔  Streamlit Dashboard
+        → SQLite (portfolio + equity curve)  ↔  Streamlit Dashboard
+        → DuckDB (OHLCV)
 ```
 
 Le dashboard lit l'etat en continu. L'editeur de wallet peut ecrire

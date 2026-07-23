@@ -1,8 +1,9 @@
 # PEA Sniper Terminal — Full Project Dump for LLM
-Root: C:\Users\PolluxGronier\Downloads\pea_sniper_terminal
-Updated dump for LLM one-shot context.
+Root: `C:\Users\PolluxGronier\Downloads\pea_sniper_terminal`
+Generated: 2026-07-23 13:06 UTC
+One-shot context dump of source, configs, and docs (no venv, no DBs, no secrets).
 ---
-## File index (44 files)
+## File index (45 files)
 - .gitignore
 - .streamlit/config.toml
 - 00_data_sensors/__init__.py
@@ -45,12 +46,13 @@ Updated dump for LLM one-shot context.
 - run_dashboard.ps1
 - run_discord.py
 - seed_account.py
+- tools/build_llm_dump.py
 - tools/build_universe.py
 - tools/sync_universe_from_bourso.py
 
 ---
 ## FILE: .gitignore
-`text
+```text
 # --- Secrets & config ---
 config/api_keys.env
 *.env
@@ -90,10 +92,10 @@ Thumbs.db
 # --- Logs & data dumps ---
 *.log
 data/
-`
----
+```
+
 ## FILE: .streamlit/config.toml
-`toml
+```toml
 # Force a pure-black "Bloomberg terminal" dark theme so native widgets
 # (st.dataframe grid, st.metric, inputs) never render on a white background.
 [theme]
@@ -119,21 +121,21 @@ serverAddress = "localhost"
 # (see docker-compose.yml dashboard service) — containers have no display.
 headless = false
 port = 8501
-`
----
-## FILE: 00_data_sensors/__init__.py
-`python
+```
 
-`
----
+## FILE: 00_data_sensors/__init__.py
+```python
+
+```
+
 ## FILE: 00_data_sensors/macro_alpha_api.py
-`python
+```python
 """Alternative-data / macro alpha sensors for PEA Sniper Terminal V-Prime.
 
 This module turns qualitative market signals into hard numbers the deterministic
 engine can act on:
 
-  * European volatility (VSTOXX / `\`\^V2TX`\`\) as an emergency "panic" gauge.
+  * European volatility (VSTOXX / ``^V2TX``) as an emergency "panic" gauge.
   * Options Put/Call volume ratio (contrarian fear gauge).
   * Insider net buying/selling direction.
   * A Polymarket geopolitical-probability placeholder.
@@ -143,6 +145,7 @@ neutral value and logs the reason, so the daemon never crashes on a data outage.
 """
 
 import logging
+import os
 import sys
 import time
 from functools import wraps
@@ -150,6 +153,7 @@ from pathlib import Path
 from typing import Callable
 
 import pandas as pd
+import requests
 import yfinance as yf
 
 # Optional French scrapers (isolated; failures must never crash the daemon).
@@ -227,7 +231,7 @@ class MacroAlphaSensor:
         """Store fallbacks used when live data is unavailable.
 
         Args:
-            neutral_vix: VIX value returned when `\`\^V2TX`\`\ cannot be fetched.
+            neutral_vix: VIX value returned when ``^V2TX`` cannot be fetched.
         """
         self.neutral_vix = float(neutral_vix)
 
@@ -246,7 +250,7 @@ class MacroAlphaSensor:
     def get_european_vix(self) -> float:
         """Fetch the current market volatility (VSTOXX, VIX proxy fallback).
 
-        Tries `\`\^V2TX`\`\ (Euro Stoxx 50 Volatility) first, then `\`\^VIX`\`\ as a
+        Tries ``^V2TX`` (Euro Stoxx 50 Volatility) first, then ``^VIX`` as a
         correlated proxy if VSTOXX is unavailable on Yahoo.
 
         Returns:
@@ -303,52 +307,48 @@ class MacroAlphaSensor:
 
     # ------------------------------------------------------ Insider signal --
     def get_insider_activity(self, ticker: str) -> int:
-        """Return the net direction of recent insider transactions.
+        """Return net insider direction: AMF first, then FMP, then yfinance.
 
-        Prefers yfinance (reliable). AMF BDIF is attempted only while its
-        process-wide circuit breaker is closed (often trips on HTTP 500/WAF).
+        Cascade (strict):
+            1. ``AmfInsiderScraper`` (official French BDIF)
+            2. Financial Modeling Prep ``/api/v4/insider-trading``
+            3. ``yfinance.insider_transactions``
         """
-        yf_dir = self._insider_from_yfinance(ticker)
-        if yf_dir != 0:
-            return yf_dir
-
-        if AmfInsiderScraper is None:
-            return 0
-        try:
-            from amf_scraper import amf_available  # noqa: WPS433
-            if not amf_available():
-                return 0
-        except Exception:  # noqa: BLE001
-            pass
-
-        isin = None
-        issuer = None
-        if BoursoramaScraper is not None:
+        # --- 1) AMF BDIF (primary) ------------------------------------------
+        if AmfInsiderScraper is not None:
             try:
-                profile = BoursoramaScraper().get_instrument_profile(ticker)
-                if profile:
-                    isin = profile.get("isin")
-                    issuer = profile.get("name")
-            except Exception as exc:  # noqa: BLE001
-                logger.debug("Bourso profile enrich failed for %s: %s", ticker, exc)
-
-        try:
-            amf_df = AmfInsiderScraper().get_recent_declarations(
-                ticker, isin=isin, issuer=issuer
-            )
-            if amf_df is not None and not amf_df.empty:
-                direction = self._score_amf_declarations(amf_df)
-                logger.info(
-                    "%s insider activity (AMF): %+d from %d row(s).",
-                    ticker, direction, len(amf_df),
+                isin = None
+                issuer = None
+                if BoursoramaScraper is not None:
+                    try:
+                        profile = BoursoramaScraper().get_instrument_profile(ticker)
+                        if profile:
+                            isin = profile.get("isin")
+                            issuer = profile.get("name")
+                    except Exception as exc:  # noqa: BLE001
+                        logger.debug(
+                            "Bourso profile enrich failed for %s: %s", ticker, exc
+                        )
+                amf_df = AmfInsiderScraper().get_recent_declarations(
+                    ticker, isin=isin, issuer=issuer
                 )
-                return direction
-        except Exception as exc:  # noqa: BLE001
-            logger.debug(
-                "AMF insider scrape failed for %s (%s); keeping yfinance.",
-                ticker, exc,
-            )
-        return 0
+                if amf_df is not None and not amf_df.empty:
+                    direction = self._score_amf_declarations(amf_df)
+                    logger.info(
+                        "%s insider activity (AMF): %+d from %d row(s).",
+                        ticker, direction, len(amf_df),
+                    )
+                    return direction
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("AMF insider scrape failed for %s: %s", ticker, exc)
+
+        # --- 2) FMP (secondary) ---------------------------------------------
+        fmp_dir = self._insider_from_fmp(ticker)
+        if fmp_dir is not None:
+            return fmp_dir
+
+        # --- 3) yfinance (tertiary) -----------------------------------------
+        return self._insider_from_yfinance(ticker)
 
     @staticmethod
     def _score_amf_declarations(df: pd.DataFrame) -> int:
@@ -361,8 +361,69 @@ class MacroAlphaSensor:
         net = buys - sells
         return 1 if net > 0 else (-1 if net < 0 else 0)
 
+    def _insider_from_fmp(self, ticker: str) -> int | None:
+        """FMP insider-trading net direction (+1 / -1 / 0), or None on failure.
+
+        Returns:
+            int: Scored direction when FMP returns a usable payload.
+            None: Missing key, HTTP error, or empty/invalid response — caller
+                should fall through to yfinance.
+        """
+        api_key = os.getenv("FMP_API_KEY")
+        if not api_key:
+            logger.debug("FMP_API_KEY unset; skipping FMP insider for %s.", ticker)
+            return None
+        # FMP expects US-style symbols; strip .PA/.AS suffix as best-effort.
+        symbol = ticker.split(".")[0]
+        url = (
+            "https://financialmodelingprep.com/api/v4/insider-trading"
+            f"?symbol={symbol}&apikey={api_key}"
+        )
+        try:
+            resp = requests.get(url, timeout=10)
+            if resp.status_code != 200:
+                logger.debug(
+                    "FMP insider HTTP %s for %s.", resp.status_code, ticker
+                )
+                return None
+            payload = resp.json()
+            if not isinstance(payload, list) or not payload:
+                return None
+            buys = 0
+            sells = 0
+            for row in payload[:40]:
+                if not isinstance(row, dict):
+                    continue
+                ttype = str(
+                    row.get("transactionType")
+                    or row.get("acquistionOrDisposition")
+                    or row.get("type")
+                    or ""
+                ).casefold()
+                # FMP uses A/D codes or free text.
+                if ttype in ("a", "acquisition", "purchase", "buy", "p-purchase"):
+                    buys += 1
+                elif ttype in ("d", "disposition", "sale", "sell", "s-sale"):
+                    sells += 1
+                elif "acqui" in ttype or "buy" in ttype or "purchase" in ttype:
+                    buys += 1
+                elif "dispos" in ttype or "sale" in ttype or "sell" in ttype:
+                    sells += 1
+            if buys == 0 and sells == 0:
+                return None
+            net = buys - sells
+            direction = 1 if net > 0 else (-1 if net < 0 else 0)
+            logger.info(
+                "%s insider activity (FMP): buys=%d sells=%d -> %+d.",
+                ticker, buys, sells, direction,
+            )
+            return direction
+        except Exception:  # noqa: BLE001
+            logger.debug("FMP insider unavailable for %s; falling through.", ticker)
+            return None
+
     def _insider_from_yfinance(self, ticker: str) -> int:
-        """Original yfinance insider net-direction logic (fallback)."""
+        """yfinance insider net-direction logic (tertiary fallback)."""
         try:
             tx = yf.Ticker(ticker).insider_transactions
             if tx is None or not isinstance(tx, pd.DataFrame) or tx.empty:
@@ -396,7 +457,7 @@ class MacroAlphaSensor:
         """Best-effort Polymarket YES probability for a macro query.
 
         Tries the public Gamma API search; falls back to a deterministic stub
-        so callers always get a float in `\`\[0, 1]`\`\.
+        so callers always get a float in ``[0, 1]``.
         """
         try:
             import json
@@ -438,14 +499,14 @@ if __name__ == "__main__":
     print("Put/Call ASML.AS   :", sensor.get_put_call_ratio("ASML.AS"))
     print("Insider MC.PA      :", sensor.get_insider_activity("MC.PA"))
     print("Polymarket stub    :", sensor.get_polymarket_sentiment("recession 2026"))
-`
----
+```
+
 ## FILE: 00_data_sensors/market_prices_api.py
-`python
+```python
 """Market data ingestion for PEA Sniper Terminal V-Prime.
 
-Fetches daily OHLCV via the official `\`\yfinance`\`\ API (no scraping), flattens
-the multi-ticker response into the schema expected by `\`\TimeSeriesDB`\`\
+Fetches daily OHLCV via the official ``yfinance`` API (no scraping), flattens
+the multi-ticker response into the schema expected by ``TimeSeriesDB``
 (Phase 2), and feeds it into DuckDB.
 
 This is a pure ingestion layer: no indicator math, risk, or trading logic.
@@ -473,9 +534,9 @@ class MarketDataFetcher:
     ) -> pd.DataFrame:
         """Download and flatten daily OHLCV for a batch of tickers.
 
-        All tickers are downloaded in a single batched `\`\yf.download`\`\ call to
+        All tickers are downloaded in a single batched ``yf.download`` call to
         avoid rate limits. The multi-index response is flattened into the
-        columns `\`\Ticker, Date, Open, High, Low, Close, Volume`\`\.
+        columns ``Ticker, Date, Open, High, Low, Close, Volume``.
 
         Args:
             tickers: List of Yahoo Finance ticker symbols.
@@ -528,7 +589,7 @@ class MarketDataFetcher:
         (flat columns) response shapes.
 
         Args:
-            raw: Raw DataFrame returned by `\`\yf.download`\`\.
+            raw: Raw DataFrame returned by ``yf.download``.
             tickers: The originally requested tickers (used for the single case).
 
         Returns:
@@ -569,7 +630,7 @@ class MarketDataFetcher:
             flat: Flat OHLCV DataFrame.
 
         Returns:
-            pd.DataFrame: Cleaned data sorted by `\`\Ticker`\`\ then `\`\Date`\`\.
+            pd.DataFrame: Cleaned data sorted by ``Ticker`` then ``Date``.
         """
         cleaned_frames: List[pd.DataFrame] = []
         for ticker, group in flat.groupby("Ticker", sort=False):
@@ -597,15 +658,15 @@ class MarketDataFetcher:
     def update_database(
         self, db_manager: Any, tickers: List[str], lookback_days: int = 252
     ) -> bool:
-        """Fetch OHLCV and upsert it into a `\`\TimeSeriesDB`\`\ instance.
+        """Fetch OHLCV and upsert it into a ``TimeSeriesDB`` instance.
 
         Args:
-            db_manager: A Phase 2 `\`\TimeSeriesDB`\`\ (must expose `\`\upsert_ohlcv`\`\).
+            db_manager: A Phase 2 ``TimeSeriesDB`` (must expose ``upsert_ohlcv``).
             tickers: Ticker symbols to ingest.
             lookback_days: Calendar days of history to request (default 252).
 
         Returns:
-            bool: `\`\True`\`\ on success, `\`\False`\`\ if any exception occurred.
+            bool: ``True`` on success, ``False`` if any exception occurred.
         """
         try:
             df = self.fetch_daily_ohlcv(tickers, lookback_days=lookback_days)
@@ -638,10 +699,10 @@ if __name__ == "__main__":
     print("--- Columns:", list(frame.columns))
     print("--- Tickers:", sorted(frame["Ticker"].unique()) if not frame.empty else [])
     print(frame.tail(10).to_string(index=False))
-`
----
+```
+
 ## FILE: 00_data_sensors/scrapers/__init__.py
-`python
+```python
 """French-market scrapers (AMF BDIF + Boursorama).
 
 Isolated from the clean yfinance API layer. Every public method is antifragile.
@@ -660,10 +721,10 @@ __all__ = [
     "bourso_slug_to_yahoo",
     "yahoo_to_bourso_slug",
 ]
-`
----
+```
+
 ## FILE: 00_data_sensors/scrapers/_http.py
-`python
+```python
 """Shared HTTP helpers for fragile French-market scrapers."""
 
 from __future__ import annotations
@@ -714,7 +775,7 @@ def safe_get(
     expect_json: bool = False,
     quiet: bool = False,
 ) -> requests.Response | None:
-    """GET with stealth headers. Returns `\`\None`\`\ on any failure (never raises)."""
+    """GET with stealth headers. Returns ``None`` on any failure (never raises)."""
     log = logger.debug if quiet else logger.warning
     try:
         rate_limit()
@@ -736,13 +797,13 @@ def safe_get(
     except Exception as exc:  # noqa: BLE001
         log("Scraper GET failed for %s: %s", url, exc)
         return None
-`
----
+```
+
 ## FILE: 00_data_sensors/scrapers/amf_scraper.py
-`python
+```python
 """AMF BDIF insider-declaration scraper (antifragile, multi-source).
 
-Primary: AMF BDIF public search API (`\`\/api/v1/informations`\`\).
+Primary: AMF BDIF public search API (``/api/v1/informations``).
 Secondary: enrich with ISIN from Boursorama profile when available.
 Any failure returns an empty DataFrame so callers fall back to yfinance.
 """
@@ -843,10 +904,10 @@ class AmfInsiderScraper:
         """Return recent insider declarations as a DataFrame.
 
         Columns when available:
-        `\`\Date, Insider, Transaction, Value, Volume, Price, Title, ISIN, Source`\`\.
+        ``Date, Insider, Transaction, Value, Volume, Price, Title, ISIN, Source``.
 
         Args:
-            ticker: Yahoo symbol (e.g. `\`\MC.PA`\`\).
+            ticker: Yahoo symbol (e.g. ``MC.PA``).
             isin: Optional ISIN (from Boursorama profile) to refine search.
             issuer: Optional company name override.
         """
@@ -1025,10 +1086,10 @@ class AmfInsiderScraper:
                 "Source": "AMF BDIF",
             })
         return rows
-`
----
+```
+
 ## FILE: 00_data_sensors/scrapers/bourso_scraper.py
-`python
+```python
 """Boursorama scraper — news, consensus, PEA flags, and PEA universe harvest.
 
 Antifragile: any HTTP block / DOM change returns empty structures so callers
@@ -1111,7 +1172,7 @@ def yahoo_to_bourso_slug(ticker: str) -> str | None:
 
 
 def bourso_slug_to_yahoo(slug: str) -> str | None:
-    """Map a Boursorama slug (`\`\1rPMC`\`\) to a Yahoo ticker (`\`\MC.PA`\`\)."""
+    """Map a Boursorama slug (``1rPMC``) to a Yahoo ticker (``MC.PA``)."""
     slug = (slug or "").strip()
     for prefix, suffix in (
         ("1rP", ".PA"), ("1rA", ".AS"), ("1rB", ".BR"), ("1rL", ".LS"),
@@ -1132,7 +1193,7 @@ class BoursoramaScraper:
     def get_retail_sentiment_and_news(self, ticker: str) -> dict:
         """Fetch news + soft sentiment (backward-compatible wrapper).
 
-        Returns a dict with at least `\`\news`\`\ (list[str]) and `\`\sentiment`\`\.
+        Returns a dict with at least ``news`` (list[str]) and ``sentiment``.
         Extra keys (consensus, eligibility, ISIN…) are included when available.
         """
         profile = self.get_instrument_profile(ticker)
@@ -1218,11 +1279,11 @@ class BoursoramaScraper:
     ) -> list[dict[str, str]]:
         """Scrape Bourso's *Eligibilité PEA* filtered listings across markets.
 
-        Uses `\`\quotation_az_filter[peaEligibility]=1`\`\ (the real PEA checkbox
+        Uses ``quotation_az_filter[peaEligibility]=1`` (the real PEA checkbox
         on the cotations page), plus the dedicated PEA-PME market list.
 
         Returns:
-            list[dict]: `\`\{slug, name, yahoo, market, pea_pme}`\`\ rows (deduped).
+            list[dict]: ``{slug, name, yahoo, market, pea_pme}`` rows (deduped).
         """
         found: dict[str, dict[str, str]] = {}
         markets = list(_PEA_MARKETS)
@@ -1496,15 +1557,15 @@ class BoursoramaScraper:
             return value
         except Exception:  # noqa: BLE001
             return value
-`
----
-## FILE: 01_memory_core/__init__.py
-`python
+```
 
-`
----
+## FILE: 01_memory_core/__init__.py
+```python
+
+```
+
 ## FILE: 01_memory_core/data_models.py
-`python
+```python
 """Strict data contracts for PEA Sniper Terminal V-Prime.
 
 This module defines the Pydantic V2 models that flow between every layer of the
@@ -1563,7 +1624,7 @@ class Position(BaseModel):
     """A single open holding in the PEA portfolio.
 
     Attributes:
-        ticker: Yahoo Finance ticker symbol (e.g. `\`\MC.PA`\`\).
+        ticker: Yahoo Finance ticker symbol (e.g. ``MC.PA``).
         qty_shares: Number of whole shares held. PEA forbids fractional shares.
         avg_entry_price: Volume-weighted average entry price in EUR.
         current_price: Latest known market price in EUR.
@@ -1584,7 +1645,7 @@ class Position(BaseModel):
         """Current market value of the position in EUR.
 
         Returns:
-            float: `\`\current_price * qty_shares`\`\.
+            float: ``current_price * qty_shares``.
         """
         return self.current_price * self.qty_shares
 
@@ -1594,8 +1655,8 @@ class Position(BaseModel):
         """Unrealized profit/loss as a fraction of the entry price.
 
         Returns:
-            float: `\`\(current_price - avg_entry_price) / avg_entry_price`\`\.
-                A value of `\`\0.10`\`\ represents a +10% unrealized gain.
+            float: ``(current_price - avg_entry_price) / avg_entry_price``.
+                A value of ``0.10`` represents a +10% unrealized gain.
         """
         return (self.current_price - self.avg_entry_price) / self.avg_entry_price
 
@@ -1624,8 +1685,8 @@ class PortfolioState(BaseModel):
             sector_name: Sector to measure (case-insensitive match).
 
         Returns:
-            float: Sector market value divided by `\`\total_equity`\`\. Returns
-                `\`\0.0`\`\ when total equity is zero to avoid division errors.
+            float: Sector market value divided by ``total_equity``. Returns
+                ``0.0`` when total equity is zero to avoid division errors.
         """
         if self.total_equity <= 0:
             return 0.0
@@ -1666,10 +1727,10 @@ class Signal(BaseModel):
     )
     created_at: datetime = Field(default_factory=_utcnow)
     reason: str = Field(default="", description="Explanation for the UI.")
-`
----
+```
+
 ## FILE: 01_memory_core/duckdb_manager.py
-`python
+```python
 """DuckDB time-series engine for PEA Sniper Terminal V-Prime.
 
 DuckDB stores heavy OHLCV history and serves fast columnar reads to the quant
@@ -1707,7 +1768,7 @@ class TimeSeriesDB:
 
         Args:
             db_path: Optional custom path to the DuckDB file. Defaults to
-                `\`\<project_root>/database/timeseries.duckdb`\`\.
+                ``<project_root>/database/timeseries.duckdb``.
         """
         self.db_path: Path = Path(db_path) if db_path else _DEFAULT_DB_PATH
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1733,9 +1794,9 @@ class TimeSeriesDB:
             conn.close()
 
     def init_db(self) -> None:
-        """Create the `\`\ohlcv_data`\`\ table if it does not already exist.
+        """Create the ``ohlcv_data`` table if it does not already exist.
 
-        A composite primary key on `\`\(ticker, date)`\`\ enforces one row per
+        A composite primary key on ``(ticker, date)`` enforces one row per
         ticker per day and enables efficient upserts.
         """
         try:
@@ -1763,8 +1824,8 @@ class TimeSeriesDB:
         """Insert or replace OHLCV rows from a DataFrame.
 
         Args:
-            df: DataFrame with columns `\`\Ticker`\`\, `\`\Date`\`\, `\`\Open`\`\, `\`\High`\`\,
-                `\`\Low`\`\, `\`\Close`\`\ and `\`\Volume`\`\ (typically from yfinance).
+            df: DataFrame with columns ``Ticker``, ``Date``, ``Open``, ``High``,
+                ``Low``, ``Close`` and ``Volume`` (typically from yfinance).
 
         Returns:
             int: The number of rows submitted for upsert.
@@ -1811,15 +1872,15 @@ class TimeSeriesDB:
             raise
 
     def get_historical_prices(self, ticker: str, days: int = 252) -> pd.DataFrame:
-        """Fetch the most recent `\`\days`\`\ of OHLCV for a ticker, chronologically.
+        """Fetch the most recent ``days`` of OHLCV for a ticker, chronologically.
 
         Args:
             ticker: The ticker symbol to query.
             days: Number of most-recent trading days to return (default 252).
 
         Returns:
-            pd.DataFrame: Columns `\`\Ticker`\`\, `\`\Date`\`\, `\`\Open`\`\, `\`\High`\`\,
-            `\`\Low`\`\, `\`\Close`\`\, `\`\Volume`\`\ sorted ascending by date and ready
+            pd.DataFrame: Columns ``Ticker``, ``Date``, ``Open``, ``High``,
+            ``Low``, ``Close``, ``Volume`` sorted ascending by date and ready
             for pandas-ta. Empty DataFrame (with correct columns) if none found.
         """
         try:
@@ -1855,10 +1916,10 @@ class TimeSeriesDB:
         except duckdb.Error:
             logger.exception("Failed to fetch historical prices for %s.", ticker)
             raise
-`
----
+```
+
 ## FILE: 01_memory_core/sqlite_portfolio.py
-`python
+```python
 """SQLite state manager for PEA Sniper Terminal V-Prime.
 
 This module owns application state persistence: the current PEA account
@@ -1877,6 +1938,8 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator, Optional
+
+import pandas as pd
 
 # The module directory name starts with a digit, so it is not importable as a
 # normal package. Adding this file's directory to sys.path lets us import the
@@ -1904,7 +1967,7 @@ class PortfolioDB:
 
         Args:
             db_path: Optional custom path to the SQLite file. Defaults to
-                `\`\<project_root>/database/portfolio.db`\`\.
+                ``<project_root>/database/portfolio.db``.
         """
         self.db_path: Path = Path(db_path) if db_path else _DEFAULT_DB_PATH
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1915,7 +1978,7 @@ class PortfolioDB:
         """Yield a SQLite connection, committing on success and always closing.
 
         Yields:
-            sqlite3.Connection: A connection with `\`\Row`\`\ factory and foreign
+            sqlite3.Connection: A connection with ``Row`` factory and foreign
             keys enabled.
 
         Raises:
@@ -1935,9 +1998,9 @@ class PortfolioDB:
             conn.close()
 
     def init_db(self) -> None:
-        """Create the `\`\account_state`\`\, `\`\positions`\`\ and `\`\audit_logs`\`\ tables.
+        """Create the ``account_state``, ``positions`` and ``audit_logs`` tables.
 
-        The operation is idempotent (`\`\IF NOT EXISTS`\`\).
+        The operation is idempotent (``IF NOT EXISTS``).
         """
         try:
             with self._connect() as conn:
@@ -1973,6 +2036,15 @@ class PortfolioDB:
                         score        REAL NOT NULL,
                         reason       TEXT,
                         created_at   TEXT NOT NULL
+                    );
+                    """
+                )
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS portfolio_history (
+                        date    TEXT PRIMARY KEY,
+                        equity  REAL NOT NULL,
+                        cash    REAL NOT NULL
                     );
                     """
                 )
@@ -2030,8 +2102,8 @@ class PortfolioDB:
     def update_portfolio(self, state: PortfolioState) -> None:
         """Persist a full portfolio snapshot.
 
-        Upserts the single `\`\account_state`\`\ row (id=1) and fully refreshes the
-        `\`\positions`\`\ table to match `\`\state.positions`\`\.
+        Upserts the single ``account_state`` row (id=1) and fully refreshes the
+        ``positions`` table to match ``state.positions``.
 
         Args:
             state: The portfolio snapshot to persist.
@@ -2076,6 +2148,23 @@ class PortfolioDB:
                         for p in state.positions
                     ],
                 )
+
+                # Daily equity curve snapshot (one row per calendar day).
+                day_key = (
+                    state.last_updated.date().isoformat()
+                    if hasattr(state.last_updated, "date")
+                    else str(state.last_updated)[:10]
+                )
+                conn.execute(
+                    """
+                    INSERT INTO portfolio_history (date, equity, cash)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(date) DO UPDATE SET
+                        equity = excluded.equity,
+                        cash   = excluded.cash;
+                    """,
+                    (day_key, float(state.total_equity), float(state.cash_available)),
+                )
             logger.info(
                 "Portfolio updated: equity=%.2f cash=%.2f positions=%d",
                 state.total_equity,
@@ -2086,11 +2175,33 @@ class PortfolioDB:
             logger.exception("Failed to update portfolio.")
             raise
 
+    def get_equity_curve(self) -> pd.DataFrame:
+        """Return the daily equity curve sorted by date ascending.
+
+        Returns:
+            pd.DataFrame: Columns ``date``, ``equity``, ``cash``. Empty if none.
+        """
+        try:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    "SELECT date, equity, cash FROM portfolio_history "
+                    "ORDER BY date ASC;"
+                ).fetchall()
+            if not rows:
+                return pd.DataFrame(columns=["date", "equity", "cash"])
+            return pd.DataFrame(
+                [{"date": r["date"], "equity": r["equity"], "cash": r["cash"]}
+                 for r in rows]
+            )
+        except sqlite3.Error:
+            logger.exception("Failed to read portfolio_history.")
+            return pd.DataFrame(columns=["date", "equity", "cash"])
+
     def log_signal(self, signal: Signal) -> None:
-        """Insert a signal or update its lifecycle state in `\`\audit_logs`\`\.
+        """Insert a signal or update its lifecycle state in ``audit_logs``.
 
         Args:
-            signal: The signal to record. Upsert key is `\`\signal.id`\`\.
+            signal: The signal to record. Upsert key is ``signal.id``.
         """
         try:
             with self._connect() as conn:
@@ -2132,13 +2243,13 @@ class PortfolioDB:
         """Read audit-log rows matching one or more statuses (read-only).
 
         Args:
-            statuses: Status values to include (e.g. `\`\["PENDING"]`\`\ or
-                `\`\["EXECUTED", "REVOKED"]`\`\).
+            statuses: Status values to include (e.g. ``["PENDING"]`` or
+                ``["EXECUTED", "REVOKED"]``).
             limit: Optional maximum number of rows (most recent first).
 
         Returns:
-            list[dict]: Rows with keys `\`\id, ticker, signal_type, status,
-            score, reason, created_at`\`\, ordered by `\`\created_at`\`\ descending.
+            list[dict]: Rows with keys ``id, ticker, signal_type, status,
+            score, reason, created_at``, ordered by ``created_at`` descending.
         """
         if not statuses:
             return []
@@ -2168,12 +2279,12 @@ class PortfolioDB:
 
         Args:
             since_iso: Lower bound as an ISO-8601 string (e.g.
-                `\`\"2026-07-08T00:00:00+00:00"`\`\). Comparison is lexical, which
+                ``"2026-07-08T00:00:00+00:00"``). Comparison is lexical, which
                 is correct for zero-padded ISO timestamps.
 
         Returns:
-            list[dict]: Rows with keys `\`\id, ticker, signal_type, status,
-            score, reason, created_at`\`\, ordered by `\`\created_at`\`\ descending.
+            list[dict]: Rows with keys ``id, ticker, signal_type, status,
+            score, reason, created_at``, ordered by ``created_at`` descending.
         """
         query = (
             "SELECT id, ticker, signal_type, status, score, reason, created_at "
@@ -2188,27 +2299,27 @@ class PortfolioDB:
         except sqlite3.Error:
             logger.exception("Failed to fetch signals since %s.", since_iso)
             raise
-`
----
-## FILE: 02_quant_engine/__init__.py
-`python
+```
 
-`
----
+## FILE: 02_quant_engine/__init__.py
+```python
+
+```
+
 ## FILE: 02_quant_engine/smart_dca_engine.py
-`python
+```python
 """Smart DCA core engine for PEA Sniper Terminal V-Prime (Phase 10).
 
 The Core/Satellite model parks the bulk of capital in a broad MSCI World PEA ETF
-(`\`\CW8.PA`\`\) and accumulates it with a *Smart* Dollar-Cost-Averaging rule:
+(``CW8.PA``) and accumulates it with a *Smart* Dollar-Cost-Averaging rule:
 
-  * When `\`\CW8`\`\ trades **below** its 200-day SMA (market crash / fear), the
+  * When ``CW8`` trades **below** its 200-day SMA (market crash / fear), the
     engine raises the target core weight and buys more aggressively.
   * When it trades **above** the SMA (overheated / calm), it keeps the standard
     target weight and drips capital in more slowly.
 
 This module is pure math: it reads price history and config, and returns a
-`\`\Signal`\`\ for the Core ETF. It never writes to any database or calls an LLM.
+``Signal`` for the Core ETF. It never writes to any database or calls an LLM.
 """
 
 import logging
@@ -2240,11 +2351,11 @@ class SmartDcaCore:
     """Recommends Core ETF accumulation via a regime-aware Smart DCA rule."""
 
     def __init__(self, config_path: str | Path | None = None) -> None:
-        """Load core allocation parameters from `\`\risk_params.yaml`\`\.
+        """Load core allocation parameters from ``risk_params.yaml``.
 
         Args:
-            config_path: Path to the `\`\config`\`\ directory (or a risk_params
-                YAML file). Defaults to `\`\<project_root>/config`\`\.
+            config_path: Path to the ``config`` directory (or a risk_params
+                YAML file). Defaults to ``<project_root>/config``.
         """
         risk = self._load_risk_params(config_path)
         self.core_ticker: str = str(risk.get("CORE_TICKER", "CW8.PA"))
@@ -2289,13 +2400,13 @@ class SmartDcaCore:
         """Produce a Smart-DCA accumulation signal for the Core ETF.
 
         Args:
-            db_manager: Phase 2 `\`\TimeSeriesDB`\`\ exposing
-                `\`\get_historical_prices(ticker, days)`\`\.
+            db_manager: Phase 2 ``TimeSeriesDB`` exposing
+                ``get_historical_prices(ticker, days)``.
             current_cash: Uninvested cash available in EUR.
             total_equity: Total account value in EUR.
 
         Returns:
-            Signal: A BUY signal for the Core ETF. `\`\target_qty`\`\ is the whole
+            Signal: A BUY signal for the Core ETF. ``target_qty`` is the whole
             number of shares to accumulate this pass (0 if none warranted or
             data is missing).
         """
@@ -2404,14 +2515,14 @@ if __name__ == "__main__":
                                      np.linspace(260.0, 170.0, 60)]))
     s2 = core.evaluate_cw8(_MockDB(crash), current_cash=8000.0, total_equity=20000.0)
     print(f"  score={s2.score:.0f} qty={s2.target_qty}\n  {s2.reason}")
-`
----
+```
+
 ## FILE: 02_quant_engine/technical_scorer.py
-`python
+```python
 """Quantitative signal engine for PEA Sniper Terminal V-Prime.
 
 Reads OHLCV history from DuckDB, computes technical indicators via the
-pandas-ta accessor, and emits raw `\`\Signal`\`\ objects from purely mathematical
+pandas-ta accessor, and emits raw ``Signal`` objects from purely mathematical
 rules (Mean-Reversion Exhaustion).
 
 This module is 100% math: no LLMs, no APIs, no risk/portfolio/broker logic.
@@ -2432,8 +2543,8 @@ try:  # yfinance is only needed for the optional Quality (EPS) filter.
 except Exception:  # noqa: BLE001 - keep the pure-math engine importable offline.
     yf = None  # type: ignore[assignment]
 
-# pandas-ta registers the `\`\.ta`\`\ DataFrame accessor on import. The classic
-# fork is used because upstream `\`\pandas_ta`\`\ 0.4.x pulls in numba (no wheel
+# pandas-ta registers the ``.ta`` DataFrame accessor on import. The classic
+# fork is used because upstream ``pandas_ta`` 0.4.x pulls in numba (no wheel
 # for Python 3.13 / arm64) and 0.3.x breaks on numpy 2.x.
 try:  # pragma: no cover - environment-dependent import.
     import pandas_ta as ta  # noqa: F401
@@ -2463,11 +2574,11 @@ class SignalGenerator:
 
         Args:
             df: Chronologically-sorted OHLCV for ONE ticker. Must contain a
-                `\`\Close`\`\ column.
+                ``Close`` column.
 
         Returns:
-            pd.DataFrame: A copy of `\`\df`\`\ with `\`\SMA_50`\`\, `\`\SMA_200`\`\ and
-            `\`\RSI_14`\`\ columns appended.
+            pd.DataFrame: A copy of ``df`` with ``SMA_50``, ``SMA_200`` and
+            ``RSI_14`` columns appended.
         """
         out = df.copy()
         close = out["Close"]
@@ -2487,7 +2598,7 @@ class SignalGenerator:
             rsi_value: The RSI(14) reading.
 
         Returns:
-            float: Score in [60, 100] when `\`\rsi_value < 30`\`\; otherwise 0.0.
+            float: Score in [60, 100] when ``rsi_value < 30``; otherwise 0.0.
             Returns 0.0 for NaN input.
         """
         if rsi_value is None or pd.isna(rsi_value):
@@ -2506,8 +2617,8 @@ class SignalGenerator:
             ticker: Yahoo Finance ticker symbol.
 
         Returns:
-            float | None: Trailing EPS, or `\`\None`\`\ if it cannot be determined
-            (network error, missing field). `\`\None`\`\ means "unknown -> allow".
+            float | None: Trailing EPS, or ``None`` if it cannot be determined
+            (network error, missing field). ``None`` means "unknown -> allow".
         """
         if yf is None:
             return None
@@ -2531,7 +2642,7 @@ class SignalGenerator:
             ticker: Ticker to check.
 
         Returns:
-            bool: `\`\False`\`\ only when EPS is known and negative.
+            bool: ``False`` only when EPS is known and negative.
         """
         eps = self._trailing_eps(ticker)
         if eps is None:
@@ -2547,19 +2658,19 @@ class SignalGenerator:
     ) -> List[Signal]:
         """Evaluate each ticker and emit raw Mean-Reversion Exhaustion signals.
 
-        Rule (BUY): the most recent bar has `\`\Close > SMA_200`\`\ (long-term
-        uptrend) AND `\`\RSI_14 < 30`\`\ (short-term oversold pullback), refined by:
+        Rule (BUY): the most recent bar has ``Close > SMA_200`` (long-term
+        uptrend) AND ``RSI_14 < 30`` (short-term oversold pullback), refined by:
 
           * Quality filter (Phase 11): the company must be profitable (EPS > 0).
           * Momentum filter (Phase 11): do not catch falling knives — require
-            `\`\Close > SMA_5`\`\ so the pullback is already stabilizing.
+            ``Close > SMA_5`` so the pullback is already stabilizing.
 
         Args:
-            db_manager: A Phase 2 `\`\TimeSeriesDB`\`\ exposing
-                `\`\get_historical_prices(ticker, days)`\`\.
+            db_manager: A Phase 2 ``TimeSeriesDB`` exposing
+                ``get_historical_prices(ticker, days)``.
             tickers: Ticker symbols to evaluate.
-            apply_quality_filter: Skip loss-making companies when `\`\True`\`\.
-            apply_momentum_filter: Require `\`\Close > SMA_5`\`\ when `\`\True`\`\.
+            apply_quality_filter: Skip loss-making companies when ``True``.
+            apply_momentum_filter: Require ``Close > SMA_5`` when ``True``.
 
         Returns:
             List[Signal]: PENDING BUY signals for tickers meeting all rules.
@@ -2693,22 +2804,22 @@ if __name__ == "__main__":
         print(f"  {s.id[:8]} {s.ticker} {s.signal_type.value} "
               f"score={s.score:.1f} status={s.status.value}")
         print(f"  reason: {s.reason}")
-`
----
-## FILE: 03_risk_portfolio/__init__.py
-`python
+```
 
-`
----
+## FILE: 03_risk_portfolio/__init__.py
+```python
+
+```
+
 ## FILE: 03_risk_portfolio/correlation_firewall.py
-`python
+```python
 """Correlation Firewall for PEA Sniper Terminal V-Prime.
 
 Intercepts candidate signals and vetoes them when they would over-concentrate
 the portfolio, either by sector weight or by price correlation with existing
 holdings (Pearson, 60-day window).
 
-Read-only layer: it reads `\`\PortfolioState`\`\ and YAML config, and never writes
+Read-only layer: it reads ``PortfolioState`` and YAML config, and never writes
 to any database. It does not mutate signals here (sizing does that in Phase 5.2).
 """
 
@@ -2749,8 +2860,8 @@ class CorrelationFirewall:
         """Load risk limits and the ticker->sector map.
 
         Args:
-            config_path: Path to the `\`\config`\`\ directory (or a risk_params
-                YAML file). Defaults to `\`\<project_root>/config`\`\.
+            config_path: Path to the ``config`` directory (or a risk_params
+                YAML file). Defaults to ``<project_root>/config``.
         """
         config_dir = self._resolve_config_dir(config_path)
         risk = self._load_yaml(config_dir / "risk_params.yaml")
@@ -2797,19 +2908,19 @@ class CorrelationFirewall:
         return mapping
 
     def get_sector(self, ticker: str) -> str:
-        """Return the sector for a ticker, or `\`\"UNKNOWN"`\`\ if unmapped."""
+        """Return the sector for a ticker, or ``"UNKNOWN"`` if unmapped."""
         return self.ticker_sectors.get(ticker, "UNKNOWN")
 
     def check_sector_limit(self, ticker: str, portfolio: PortfolioState) -> bool:
-        """Check whether buying `\`\ticker`\`\ keeps its sector within limits.
+        """Check whether buying ``ticker`` keeps its sector within limits.
 
         Args:
             ticker: Candidate ticker.
             portfolio: Current portfolio snapshot.
 
         Returns:
-            bool: `\`\True`\`\ if the projected sector weight is within
-            `\`\MAX_SECTOR_WEIGHT_PCT`\`\; `\`\False`\`\ (veto) otherwise.
+            bool: ``True`` if the projected sector weight is within
+            ``MAX_SECTOR_WEIGHT_PCT``; ``False`` (veto) otherwise.
         """
         if portfolio.total_equity <= 0:
             logger.warning("Total equity is zero; vetoing %s on sector check.", ticker)
@@ -2845,16 +2956,16 @@ class CorrelationFirewall:
     def check_vix_panic(self, vix_level: float) -> bool:
         """Emergency market-wide brake based on European volatility (VSTOXX).
 
-        When `\`\vix_level`\`\ exceeds `\`\VIX_PANIC_THRESHOLD`\`\ the market is in panic
+        When ``vix_level`` exceeds ``VIX_PANIC_THRESHOLD`` the market is in panic
         mode and all *new satellite* stock-picking buys must be blocked. Core
         Smart-DCA accumulation is handled separately and is intentionally NOT
         gated by this check (buy the fear on the broad ETF).
 
         Args:
-            vix_level: Current `\`\^V2TX`\`\ level (e.g. 34.0).
+            vix_level: Current ``^V2TX`` level (e.g. 34.0).
 
         Returns:
-            bool: `\`\True`\`\ if satellite buying is allowed, `\`\False`\`\ (VETO) if
+            bool: ``True`` if satellite buying is allowed, ``False`` (VETO) if
             the market is in panic.
         """
         if vix_level is None:
@@ -2881,11 +2992,11 @@ class CorrelationFirewall:
         Args:
             ticker: Candidate ticker.
             portfolio: Current portfolio snapshot.
-            db_manager: A `\`\TimeSeriesDB`\`\ exposing `\`\get_historical_prices`\`\.
+            db_manager: A ``TimeSeriesDB`` exposing ``get_historical_prices``.
 
         Returns:
-            tuple[bool, str]: `\`\(True, msg)`\`\ if safe or the portfolio is empty;
-            `\`\(False, msg)`\`\ naming the first holding that breaches the limit.
+            tuple[bool, str]: ``(True, msg)`` if safe or the portfolio is empty;
+            ``(False, msg)`` naming the first holding that breaches the limit.
         """
         holdings = [p.ticker for p in portfolio.positions if p.ticker != ticker]
         if not holdings:
@@ -2981,22 +3092,23 @@ if __name__ == "__main__":
                      positions=[saf, orp], last_updated=datetime.now(timezone.utc))
     ok, msg = fw.check_correlation("AIR.PA", portfolio2, _MockDB())
     print(f"AIR.PA correlation check -> {ok}: {msg}")
-`
----
+```
+
 ## FILE: 03_risk_portfolio/monthly_rebalancer.py
-`python
-"""Monthly portfolio rebalancer for PEA Sniper Terminal V-Prime (Phase 12).
+```python
+"""Monthly portfolio rebalancer for PEA Sniper Terminal V-Prime (Phase 12/15).
 
 Adds mechanical, emotionless housekeeping trades so the operator does not have to
 babysit winners and losers:
 
   * Profit shaving: trim a fixed slice of any satellite winner above +20% PnL.
-  * Hard stop-loss: fully exit any satellite position below -10% PnL.
+  * Dynamic ATR stop-loss: fully exit any satellite whose price trades below
+    ``avg_entry - 2.5 * ATR_14`` (replaces the static -10% rule).
 
 The Core ETF (Smart-DCA accumulation vehicle) is deliberately excluded — it is
 meant to be held and averaged into, not shaved or stopped out.
 
-Pure logic: reads a `\`\PortfolioState`\`\ and config, returns `\`\SELL`\`\ signals. It
+Pure logic: reads a ``PortfolioState`` and config, returns ``SELL`` signals. It
 never writes to a database or touches a broker.
 """
 
@@ -3005,9 +3117,16 @@ import math
 import os
 import sys
 from pathlib import Path
-from typing import List
+from typing import Any, List, Optional
 
+import pandas as pd
 import yaml
+
+# pandas-ta registers the ``.ta`` DataFrame accessor on import.
+try:
+    import pandas_ta as ta  # noqa: F401
+except ImportError:  # pragma: no cover - classic fork on some envs
+    import pandas_ta_classic as ta  # noqa: F401
 
 _CORE_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "01_memory_core"
@@ -3021,18 +3140,30 @@ logger = logging.getLogger(__name__)
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _DEFAULT_CONFIG_DIR = _PROJECT_ROOT / "config"
 
+# Multiplier applied to ATR_14 for the dynamic stop distance.
+_ATR_STOP_MULT = 2.5
+_ATR_LENGTH = 14
+_OHLCV_LOOKBACK = 60
+
 
 class PortfolioRebalancer:
-    """Generates mechanical SELL signals for profit-taking and stop-losses."""
+    """Generates mechanical SELL signals for profit-taking and ATR stop-losses."""
 
-    def __init__(self, config_path: str | Path | None = None) -> None:
-        """Load rebalancing thresholds from `\`\risk_params.yaml`\`\.
+    def __init__(
+        self,
+        config_path: str | Path | None = None,
+        timeseries_db: Any | None = None,
+    ) -> None:
+        """Load rebalancing thresholds from ``risk_params.yaml``.
 
         Args:
-            config_path: Path to the `\`\config`\`\ directory (or a risk_params
-                YAML file). Defaults to `\`\<project_root>/config`\`\.
+            config_path: Path to the ``config`` directory (or a risk_params
+                YAML file). Defaults to ``<project_root>/config``.
+            timeseries_db: Optional ``TimeSeriesDB`` used to fetch OHLCV for
+                ATR-based stop-loss calculation.
         """
         risk = self._load_risk_params(config_path)
+        self.timeseries_db = timeseries_db
         self.core_ticker: str = str(risk.get("CORE_TICKER", "CW8.PA"))
         self.profit_trigger: float = float(
             risk.get("REBALANCE_PROFIT_TRIGGER_PCT", 20.0)
@@ -3040,14 +3171,15 @@ class PortfolioRebalancer:
         self.profit_shave: float = float(
             risk.get("REBALANCE_PROFIT_SHAVE_PCT", 0.20)
         )
-        self.stop_trigger: float = float(
-            risk.get("REBALANCE_STOPLOSS_TRIGGER_PCT", -10.0)
+        self.atr_stop_mult: float = float(
+            risk.get("REBALANCE_ATR_STOP_MULT", _ATR_STOP_MULT)
         )
         logger.debug(
-            "Rebalancer loaded: profit>+%.0f%% shave %.0f%%, stop<%.0f%% (core=%s).",
+            "Rebalancer loaded: profit>+%.0f%% shave %.0f%%, ATR stop %.1fx "
+            "(core=%s).",
             self.profit_trigger,
             self.profit_shave * 100,
-            self.stop_trigger,
+            self.atr_stop_mult,
             self.core_ticker,
         )
 
@@ -3064,14 +3196,58 @@ class PortfolioRebalancer:
         with open(path, "r", encoding="utf-8") as fh:
             return yaml.safe_load(fh)
 
+    def _latest_atr14(self, ticker: str) -> Optional[float]:
+        """Return the latest ATR_14 from DuckDB OHLCV, or None if unavailable."""
+        if self.timeseries_db is None:
+            logger.debug("No timeseries_db; cannot compute ATR for %s.", ticker)
+            return None
+        try:
+            hist = self.timeseries_db.get_historical_prices(
+                ticker, days=_OHLCV_LOOKBACK
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("Failed to fetch OHLCV for ATR on %s.", ticker)
+            return None
+        if hist is None or hist.empty or len(hist) < _ATR_LENGTH + 1:
+            logger.debug(
+                "Insufficient OHLCV for ATR on %s (%s rows).",
+                ticker,
+                0 if hist is None else len(hist),
+            )
+            return None
+        try:
+            work = hist.copy()
+            for col in ("Open", "High", "Low", "Close"):
+                if col not in work.columns:
+                    return None
+                work[col] = pd.to_numeric(work[col], errors="coerce")
+            atr = work.ta.atr(
+                high=work["High"],
+                low=work["Low"],
+                close=work["Close"],
+                length=_ATR_LENGTH,
+            )
+            if atr is None:
+                return None
+            if isinstance(atr, pd.DataFrame):
+                atr = atr.iloc[:, 0]
+            val = float(atr.dropna().iloc[-1])
+            if not math.isfinite(val) or val <= 0:
+                return None
+            return val
+        except Exception:  # noqa: BLE001
+            logger.exception("ATR_14 calculation failed for %s.", ticker)
+            return None
+
     def generate_rebalance_signals(
         self, portfolio: PortfolioState
     ) -> List[Signal]:
         """Produce mechanical SELL signals from the current portfolio.
 
         Rules (satellite positions only):
-            * `\`\unrealized_pnl_pct`\`\ > +20% -> SELL 20% of the shares (shave).
-            * `\`\unrealized_pnl_pct`\`\ < -10% -> SELL 100% of the shares (stop).
+            * ``unrealized_pnl_pct`` > +20% -> SELL 20% of the shares (shave).
+            * Losing position (``unrealized_pnl_pct`` < 0) whose
+              ``current_price < avg_entry - 2.5 * ATR_14`` -> SELL 100%.
 
         Args:
             portfolio: Current portfolio snapshot.
@@ -3089,29 +3265,42 @@ class PortfolioRebalancer:
 
             pnl_pct = pos.unrealized_pnl_pct * 100.0
 
-            # --- Hard stop-loss: full exit -----------------------------------
-            if pnl_pct < self.stop_trigger:
-                signals.append(
-                    Signal(
-                        ticker=pos.ticker,
-                        signal_type=SignalType.SELL,
-                        status=SignalStatus.PENDING,
-                        score=100.0,
-                        target_qty=pos.qty_shares,
-                        reason=(
-                            f"STOP-LOSS: {pos.ticker} at {pnl_pct:+.1f}% "
-                            f"(< {self.stop_trigger:.0f}%). Full exit of "
-                            f"{pos.qty_shares} share(s)."
-                        ),
+            # --- Dynamic ATR stop-loss: full exit on volatility breach ------
+            if pnl_pct < 0:
+                atr14 = self._latest_atr14(pos.ticker)
+                if atr14 is not None:
+                    stop_level = pos.avg_entry_price - (
+                        self.atr_stop_mult * atr14
                     )
-                )
-                logger.info(
-                    "Rebalance STOP-LOSS %s (%.1f%%): sell all %d.",
-                    pos.ticker,
-                    pnl_pct,
-                    pos.qty_shares,
-                )
-                continue
+                    if pos.current_price < stop_level:
+                        signals.append(
+                            Signal(
+                                ticker=pos.ticker,
+                                signal_type=SignalType.SELL,
+                                status=SignalStatus.PENDING,
+                                score=100.0,
+                                target_qty=pos.qty_shares,
+                                reason=(
+                                    f"ATR STOP-LOSS: {pos.ticker} at "
+                                    f"{pos.current_price:.2f} < "
+                                    f"entry {pos.avg_entry_price:.2f} - "
+                                    f"{self.atr_stop_mult:.1f}*ATR14 "
+                                    f"({atr14:.2f}) = {stop_level:.2f} "
+                                    f"(PnL {pnl_pct:+.1f}%). Full exit of "
+                                    f"{pos.qty_shares} share(s)."
+                                ),
+                            )
+                        )
+                        logger.info(
+                            "Rebalance ATR-STOP %s: price=%.2f stop=%.2f "
+                            "ATR14=%.2f — sell all %d.",
+                            pos.ticker,
+                            pos.current_price,
+                            stop_level,
+                            atr14,
+                            pos.qty_shares,
+                        )
+                        continue
 
             # --- Profit shaving: trim a slice of the winner ------------------
             if pnl_pct > self.profit_trigger:
@@ -3168,7 +3357,7 @@ if __name__ == "__main__":
             # Winner (+25%) -> profit shave.
             Position(ticker="MC.PA", qty_shares=10, avg_entry_price=100.0,
                      current_price=125.0, sector="Luxury"),
-            # Loser (-12%) -> full stop-loss.
+            # Loser without DuckDB -> ATR stop skipped (no timeseries_db).
             Position(ticker="STLAP.PA", qty_shares=8, avg_entry_price=20.0,
                      current_price=17.6, sector="Auto"),
             # Small mover (+3%) -> untouched.
@@ -3186,17 +3375,17 @@ if __name__ == "__main__":
     print(f"\nGenerated {len(out)} rebalance signal(s):")
     for s in out:
         print(f"  {s.ticker} {s.signal_type.value} qty={s.target_qty}\n    {s.reason}")
-`
----
+```
+
 ## FILE: 03_risk_portfolio/pea_position_sizer.py
-`python
+```python
 """PEA position sizer for PEA Sniper Terminal V-Prime.
 
 Converts an approved signal into an integer number of shares, respecting the
 PEA's no-fractional-shares rule, the per-position cap, Half-Kelly scaling by
 conviction score, and available cash.
 
-Read-only layer: reads `\`\PortfolioState`\`\ and YAML config. It never writes to
+Read-only layer: reads ``PortfolioState`` and YAML config. It never writes to
 any database; it only computes an integer quantity for the caller to apply.
 """
 
@@ -3230,11 +3419,11 @@ class PeaSizer:
     """
 
     def __init__(self, config_path: str | Path | None = None) -> None:
-        """Load sizing parameters from `\`\risk_params.yaml`\`\.
+        """Load sizing parameters from ``risk_params.yaml``.
 
         Args:
-            config_path: Path to the `\`\config`\`\ directory (or a risk_params
-                YAML file). Defaults to `\`\<project_root>/config`\`\.
+            config_path: Path to the ``config`` directory (or a risk_params
+                YAML file). Defaults to ``<project_root>/config``.
         """
         risk = self._load_risk_params(config_path)
         self.kelly_fraction: float = float(risk["KELLY_FRACTION"])
@@ -3278,13 +3467,13 @@ class PeaSizer:
     def _volatility_factor(self, historical_volatility: float | None) -> float:
         """Return an inverse-volatility scaling factor.
 
-        Uses volatility parity relative to `\`\VOLATILITY_REFERENCE`\`\: an asset at
+        Uses volatility parity relative to ``VOLATILITY_REFERENCE``: an asset at
         the reference vol scales by 1.0, one at twice the reference by 0.5, and
-        a very calm asset is capped at `\`\VOLATILITY_MAX_FACTOR`\`\.
+        a very calm asset is capped at ``VOLATILITY_MAX_FACTOR``.
 
         Args:
             historical_volatility: Annualized stdev of returns (e.g. 0.25), or
-                `\`\None`\`\/non-positive for neutral (no scaling).
+                ``None``/non-positive for neutral (no scaling).
 
         Returns:
             float: Multiplier applied to the base target cash.
@@ -3304,12 +3493,12 @@ class PeaSizer:
         """Compute the integer share quantity for a satellite signal.
 
         Steps:
-            1. `\`\max_alloc = total_equity * MAX_SINGLE_POSITION_PCT`\`\
-            2. `\`\target_cash = max_alloc * (score / 100) * KELLY_FRACTION`\`\
-            3. Scale `\`\target_cash`\`\ by the inverse-volatility parity factor.
-            4. Cap `\`\target_cash`\`\ so total satellite exposure stays within
-               `\`\SATELLITE_MAX_BUDGET_PCT`\`\ of equity.
-            5. `\`\qty = floor(target_cash / current_price)`\`\ (no fractions).
+            1. ``max_alloc = total_equity * MAX_SINGLE_POSITION_PCT``
+            2. ``target_cash = max_alloc * (score / 100) * KELLY_FRACTION``
+            3. Scale ``target_cash`` by the inverse-volatility parity factor.
+            4. Cap ``target_cash`` so total satellite exposure stays within
+               ``SATELLITE_MAX_BUDGET_PCT`` of equity.
+            5. ``qty = floor(target_cash / current_price)`` (no fractions).
             6. Clamp to available cash if the notional would exceed it.
 
         Args:
@@ -3317,7 +3506,7 @@ class PeaSizer:
             portfolio: Current portfolio snapshot (equity + cash).
             current_price: Latest price per share in EUR.
             historical_volatility: Annualized stdev of the asset's returns used
-                for volatility parity. `\`\None`\`\ disables vol scaling.
+                for volatility parity. ``None`` disables vol scaling.
 
         Returns:
             int: Whole number of shares to buy (0 if nothing is affordable).
@@ -3413,22 +3602,22 @@ if __name__ == "__main__":
     # target ~1125 EUR but only 300 cash ; floor(300/180)=1
     qty3 = sizer.calculate_target_qty(sig3, poor, current_price=180.0)
     print(f"ASML.AS @180 EUR, cash 300 -> {qty3} shares (expected 1)")
-`
----
-## FILE: 04_orchestrator_ai/__init__.py
-`python
+```
 
-`
----
+## FILE: 04_orchestrator_ai/__init__.py
+```python
+
+```
+
 ## FILE: 04_orchestrator_ai/macro_veto.py
-`python
+```python
 """Macro Veto Engine for PEA Sniper Terminal V-Prime.
 
 Blocks new offensive signals when a high-impact macro event (ECB/FED decision,
 CPI, NFP) falls within a configurable window. Running this cheap check before
 the heavy correlation math keeps the cascade CPU-efficient.
 
-Pure logical routing: no LLMs, no APIs. All paths use `\`\pathlib`\`\ for
+Pure logical routing: no LLMs, no APIs. All paths use ``pathlib`` for
 cross-platform compatibility (Windows x64/ARM and Linux).
 """
 
@@ -3458,8 +3647,8 @@ class MacroVetoEngine:
         """Load the veto window and the macro calendar.
 
         Args:
-            config_dir: Path to the `\`\config`\`\ directory. Defaults to
-                `\`\<project_root>/config`\`\.
+            config_dir: Path to the ``config`` directory. Defaults to
+                ``<project_root>/config``.
         """
         config_path = Path(config_dir) if config_dir else _DEFAULT_CONFIG_DIR
 
@@ -3485,10 +3674,10 @@ class MacroVetoEngine:
 
     @staticmethod
     def _parse_calendar(raw: dict) -> Dict[dt.date, str]:
-        """Normalize raw YAML into a `\`\date -> name`\`\ mapping.
+        """Normalize raw YAML into a ``date -> name`` mapping.
 
-        Accepts either a top-level `\`\events:`\`\ mapping or a bare `\`\date: name`\`\
-        mapping. Date keys may be `\`\datetime.date`\`\ (parsed by PyYAML) or ISO
+        Accepts either a top-level ``events:`` mapping or a bare ``date: name``
+        mapping. Date keys may be ``datetime.date`` (parsed by PyYAML) or ISO
         strings.
         """
         events = raw.get("events", raw) if isinstance(raw, dict) else {}
@@ -3504,17 +3693,17 @@ class MacroVetoEngine:
         return parsed
 
     def check_veto(self, target_date: dt.date) -> Tuple[bool, str]:
-        """Check whether a trade on `\`\target_date`\`\ must be vetoed.
+        """Check whether a trade on ``target_date`` must be vetoed.
 
-        A veto applies when an event is scheduled on `\`\target_date`\`\ or within
-        the next `\`\veto_days_before`\`\ days.
+        A veto applies when an event is scheduled on ``target_date`` or within
+        the next ``veto_days_before`` days.
 
         Args:
             target_date: The date the trade would be placed.
 
         Returns:
-            tuple[bool, str]: `\`\(True, reason)`\`\ if vetoed, else
-            `\`\(False, "Clear")`\`\.
+            tuple[bool, str]: ``(True, reason)`` if vetoed, else
+            ``(False, "Clear")``.
         """
         if isinstance(target_date, dt.datetime):
             target_date = target_date.date()
@@ -3547,15 +3736,15 @@ if __name__ == "__main__":
     for d in ("2026-07-14", "2026-07-15", "2026-07-16", "2026-07-25"):
         vetoed, msg = engine.check_veto(dt.date.fromisoformat(d))
         print(f"{d}: vetoed={vetoed} -> {msg}")
-`
----
+```
+
 ## FILE: 04_orchestrator_ai/news_sentiment_llm.py
-`python
+```python
 """News sentiment scorer for PEA Sniper Terminal V-Prime (Phase 11).
 
 Turns unstructured news headlines into a single hard number the deterministic
 engine can use. The LLM is constrained to act as a quantitative NLP model and
-MUST return only an integer in `\`\[-100, +100]`\`\ — no prose, no explanation.
+MUST return only an integer in ``[-100, +100]`` — no prose, no explanation.
 
 This keeps the pipeline emotionless: the model never decides trades, it only
 compresses text into a scalar sentiment feature.
@@ -3626,8 +3815,8 @@ class NewsSentimentScorer:
             news_headlines: Recent headline strings.
 
         Returns:
-            float: Sentiment in `\`\[-100.0, +100.0]`\`\ (negative = bearish,
-            positive = bullish). Returns `\`\0.0`\`\ (neutral) if there is no data
+            float: Sentiment in ``[-100.0, +100.0]`` (negative = bearish,
+            positive = bullish). Returns ``0.0`` (neutral) if there is no data
             or the API is unavailable.
         """
         headlines = [h.strip() for h in (news_headlines or []) if h and h.strip()]
@@ -3688,17 +3877,17 @@ if __name__ == "__main__":
     ]
     result = asyncio.run(scorer.analyze_news("TEST.PA", demo))
     print("Live sentiment (0 if no API key):", result)
-`
----
+```
+
 ## FILE: 04_orchestrator_ai/revocation_engine.py
-`python
+```python
 """Revocation Engine for PEA Sniper Terminal V-Prime.
 
 Implements the Anti-Stale logic re-run at each daily pass (09:00, 13:30, 17:10):
 a signal is REVOKED if the price drifts too far from the emission price, or
 EXPIRED once it outlives its validity window.
 
-Pure logical routing: no LLMs, no APIs. All paths use `\`\pathlib`\`\.
+Pure logical routing: no LLMs, no APIs. All paths use ``pathlib``.
 """
 
 import logging
@@ -3731,11 +3920,11 @@ class RevocationEngine:
     """
 
     def __init__(self, config_dir: str | Path | None = None) -> None:
-        """Load the signal validity window from `\`\risk_params.yaml`\`\.
+        """Load the signal validity window from ``risk_params.yaml``.
 
         Args:
-            config_dir: Path to the `\`\config`\`\ directory. Defaults to
-                `\`\<project_root>/config`\`\.
+            config_dir: Path to the ``config`` directory. Defaults to
+                ``<project_root>/config``.
         """
         config_path = Path(config_dir) if config_dir else _DEFAULT_CONFIG_DIR
         risk = self._load_yaml(config_path / "risk_params.yaml")
@@ -3761,7 +3950,7 @@ class RevocationEngine:
             original_price: Price at the moment the signal was emitted.
 
         Returns:
-            Signal: The same signal object, with updated `\`\status`\`\/`\`\reason`\`\.
+            Signal: The same signal object, with updated ``status``/``reason``.
         """
         # Rule 1 - Price drift (revocation takes precedence over expiry).
         if original_price and original_price > 0:
@@ -3827,10 +4016,10 @@ if __name__ == "__main__":
                 reason="Mean-reversion setup")
     s3 = engine.evaluate_signal(s3, current_price=100.5, original_price=100.0)
     print(f"status={s3.status.value} | reason='{s3.reason}'")
-`
----
+```
+
 ## FILE: 04_orchestrator_ai/signal_priority_cascade.py
-`python
+```python
 """Signal Priority Cascade for PEA Sniper Terminal V-Prime.
 
 The strict conductor. Raw signals flow through an ordered, CPU-optimal cascade:
@@ -3842,9 +4031,9 @@ The strict conductor. Raw signals flow through an ordered, CPU-optimal cascade:
     4. Correlation       (heavy Pearson math — only if still alive)
     5. PEA sizing        (integer shares vs available cash)
 
-This is the ONLY module that finalizes a signal's `\`\status`\`\, `\`\target_qty`\`\
-and `\`\reason`\`\. Pure logical routing: no LLMs, no APIs. All paths use
-`\`\pathlib`\`\/`\`\os.path`\`\ for cross-platform compatibility.
+This is the ONLY module that finalizes a signal's ``status``, ``target_qty``
+and ``reason``. Pure logical routing: no LLMs, no APIs. All paths use
+``pathlib``/``os.path`` for cross-platform compatibility.
 """
 
 import logging
@@ -3881,11 +4070,11 @@ class SignalOrchestrator:
         """Initialize the sub-engines that make up the cascade.
 
         Args:
-            config_dir: Path to the `\`\config`\`\ directory. Defaults to
-                `\`\<project_root>/config`\`\.
-            portfolio_db: Optional `\`\PortfolioDB`\`\ (state is passed explicitly to
-                `\`\process_raw_signals`\`\; kept for symmetry/future use).
-            timeseries_db: A `\`\TimeSeriesDB`\`\ used by the correlation firewall.
+            config_dir: Path to the ``config`` directory. Defaults to
+                ``<project_root>/config``.
+            portfolio_db: Optional ``PortfolioDB`` (state is passed explicitly to
+                ``process_raw_signals``; kept for symmetry/future use).
+            timeseries_db: A ``TimeSeriesDB`` used by the correlation firewall.
         """
         config_path = Path(config_dir) if config_dir else _DEFAULT_CONFIG_DIR
         self.config_dir = config_path
@@ -3906,14 +4095,14 @@ class SignalOrchestrator:
         return signal
 
     def _historical_volatility(self, ticker: str, days: int = 60) -> float | None:
-        """Annualized stdev of daily returns for a ticker (or `\`\None`\`\).
+        """Annualized stdev of daily returns for a ticker (or ``None``).
 
         Args:
             ticker: Ticker to measure.
             days: Lookback window in trading days.
 
         Returns:
-            float | None: Annualized volatility (e.g. 0.28), or `\`\None`\`\ when
+            float | None: Annualized volatility (e.g. 0.28), or ``None`` when
             history is unavailable.
         """
         if self.timeseries_db is None:
@@ -3943,12 +4132,12 @@ class SignalOrchestrator:
             raw_signals: PENDING signals from the quant engine.
             portfolio: Current portfolio snapshot.
             current_prices: Mapping of ticker -> latest price (EUR).
-            vix_level: Optional current European VIX (`\`\^V2TX`\`\). When above the
+            vix_level: Optional current European VIX (``^V2TX``). When above the
                 panic threshold, ALL new satellite buys are vetoed.
 
         Returns:
             List[Signal]: The same signals, each finalized as APPROVED or
-            REJECTED with an explanatory reason (and `\`\target_qty`\`\ when
+            REJECTED with an explanatory reason (and ``target_qty`` when
             approved).
         """
         today = datetime.now(timezone.utc).date()
@@ -4087,10 +4276,10 @@ if __name__ == "__main__":
     orch.macro_veto.calendar = {}
     _show("Cascade on a macro-CLEAR day",
           orch.process_raw_signals([s.model_copy() for s in raw], portfolio, prices))
-`
----
+```
+
 ## FILE: 04_orchestrator_ai/weekly_historian.py
-`python
+```python
 """Weekly Historian for PEA Sniper Terminal V-Prime (Phase 12).
 
 Every Friday the system "steps back" and writes a hedge-fund-style weekly digest
@@ -4218,9 +4407,9 @@ class WeeklyHistorian:
         """Generate the weekly CIO digest.
 
         Args:
-            portfolio_db: A `\`\PortfolioDB`\`\ exposing `\`\fetch_signals_since`\`\ and
-                `\`\get_portfolio_state`\`\.
-            explainer: Optional `\`\NarrativeExplainer`\`\ (unused directly; kept for
+            portfolio_db: A ``PortfolioDB`` exposing ``fetch_signals_since`` and
+                ``get_portfolio_state``.
+            explainer: Optional ``NarrativeExplainer`` (unused directly; kept for
                 interface compatibility — the shared OpenRouter client is used).
 
         Returns:
@@ -4301,15 +4490,15 @@ if __name__ == "__main__":
     report = asyncio.run(hist.generate_weekly_report(_MockDB()))
     print("\n===== WEEKLY REPORT =====\n")
     print(report)
-`
----
-## FILE: 05_interfaces/__init__.py
-`python
+```
 
-`
----
+## FILE: 05_interfaces/__init__.py
+```python
+
+```
+
 ## FILE: 05_interfaces/discord_copilot.py
-`python
+```python
 """Discord Copilot for PEA Sniper Terminal V-Prime.
 
 Pushes interactive trade alerts to Discord and waits for the human to approve
@@ -4357,7 +4546,7 @@ _RED = discord.Color.from_str("#FF3B30")
 class TradeActionView(discord.ui.View):
     """Interactive Approve/Reject buttons attached to a trade alert.
 
-    Approving persists the trade to SQLite via the provided `\`\PortfolioDB`\`\.
+    Approving persists the trade to SQLite via the provided ``PortfolioDB``.
     Both callbacks immediately edit the message so Discord never shows a stuck
     "thinking" state.
     """
@@ -4373,7 +4562,7 @@ class TradeActionView(discord.ui.View):
 
         Args:
             signal: The approved signal this alert represents.
-            portfolio_db: A `\`\PortfolioDB`\`\ used to persist an execution.
+            portfolio_db: A ``PortfolioDB`` used to persist an execution.
             current_price: Price per share used to compute the cash outlay.
             timeout: Seconds before the buttons auto-disable (default 1h).
         """
@@ -4517,8 +4706,8 @@ class DiscordCopilot(discord.Client):
         """Initialize the client with a portfolio DB and an LLM explainer.
 
         Args:
-            portfolio_db: A `\`\PortfolioDB`\`\ for persisting executions.
-            explainer: A `\`\NarrativeExplainer`\`\ (created if not provided).
+            portfolio_db: A ``PortfolioDB`` for persisting executions.
+            explainer: A ``NarrativeExplainer`` (created if not provided).
         """
         intents = discord.Intents.default()
         super().__init__(intents=intents)
@@ -4563,11 +4752,11 @@ class DiscordCopilot(discord.Client):
         Args:
             signal: The approved, sized signal.
             portfolio: Current portfolio snapshot (for LLM context).
-            explainer: Optional explainer override (defaults to `\`\self.explainer`\`\).
+            explainer: Optional explainer override (defaults to ``self.explainer``).
             current_price: Price per share used for execution accounting.
 
         Returns:
-            discord.Message | None: The sent message, or `\`\None`\`\ if the channel
+            discord.Message | None: The sent message, or ``None`` if the channel
             could not be resolved.
         """
         explainer = explainer or self.explainer
@@ -4587,17 +4776,17 @@ class DiscordCopilot(discord.Client):
         message = await channel.send(embed=embed, view=view)
         logger.info("Alert sent for %s to channel %s.", signal.ticker, self.channel_id)
         return message
-`
----
+```
+
 ## FILE: 05_interfaces/llm_explainer.py
-`python
+```python
 """LLM narrative explainer for PEA Sniper Terminal V-Prime.
 
-Wraps OpenRouter (async, via `\`\aiohttp`\`\) to turn an already-approved,
-already-sized `\`\Signal`\`\ into a short, human-readable rationale for Discord.
+Wraps OpenRouter (async, via ``aiohttp``) to turn an already-approved,
+already-sized ``Signal`` into a short, human-readable rationale for Discord.
 
-STRICT: the LLM has ZERO decision power. It only produces the `\`\explanation`\`\
-string. It never reads or writes `\`\status`\`\, `\`\target_qty`\`\ or any math.
+STRICT: the LLM has ZERO decision power. It only produces the ``explanation``
+string. It never reads or writes ``status``, ``target_qty`` or any math.
 
 .env requirements (config/api_keys.env):
     OPENROUTER_API_KEY   - required; without it the fallback string is used.
@@ -4648,15 +4837,15 @@ async def openrouter_chat(
     historian) so the HTTP/auth/error handling lives in exactly one place.
 
     Args:
-        messages: OpenAI-style `\`\[{"role", "content"}, ...]`\`\ message list.
-        api_key: OpenRouter API key; `\`\None`\`\ short-circuits to `\`\None`\`\.
+        messages: OpenAI-style ``[{"role", "content"}, ...]`` message list.
+        api_key: OpenRouter API key; ``None`` short-circuits to ``None``.
         model: Model slug to query.
         max_tokens: Upper bound on the completion length.
         temperature: Sampling temperature.
         timeout_s: Total request timeout in seconds.
 
     Returns:
-        str | None: The assistant message content, or `\`\None`\`\ on any failure.
+        str | None: The assistant message content, or ``None`` on any failure.
     """
     if not api_key:
         return None
@@ -4807,10 +4996,10 @@ if __name__ == "__main__":
         print("\nExplanation:\n", text)
 
     asyncio.run(_demo())
-`
----
+```
+
 ## FILE: 05_interfaces/terminal_dashboard.py
-`python
+```python
 """Web Terminal (Streamlit dashboard) for PEA Sniper Terminal V-Prime.
 
 BLOOMBERG TERMINAL EDITION - command center on a pure-black, high-contrast UI.
@@ -4818,10 +5007,10 @@ BLOOMBERG TERMINAL EDITION - command center on a pure-black, high-contrast UI.
 Design rules enforced here:
   * Pure black background (#050505); text in white / neon-green / amber / cyan.
   * No white dataframes: every table is a colour-coded
-    `\`\plotly.graph_objects.Table`\`\ (black cells, neon/red text), backed by a
-    forced dark theme via `\`\.streamlit/config.toml`\`\.
-  * Every metric carries a plain-language explanation (`\`\help=`\`\ / HTML title).
-  * Raw tickers are always shown as "Full Name (TICKER)" via `\`\format_name`\`\.
+    ``plotly.graph_objects.Table`` (black cells, neon/red text), backed by a
+    forced dark theme via ``.streamlit/config.toml``.
+  * Every metric carries a plain-language explanation (``help=`` / HTML title).
+  * Raw tickers are always shown as "Full Name (TICKER)" via ``format_name``.
 
 Features: TradingView ticker tape, top HUD, Risk/Macro HUD, General & Signaux
 (adaptive portfolio suggestion, news, geo brief, signal ledger), portfolio +
@@ -4916,7 +5105,7 @@ TICKER_NAMES: dict[str, str] = {
 
 
 def format_name(ticker: str) -> str:
-    """Return `\`\"Full Name (TICKER)"`\`\ when known, else the raw ticker."""
+    """Return ``"Full Name (TICKER)"`` when known, else the raw ticker."""
     name = TICKER_NAMES.get(ticker)
     return f"{name} ({ticker})" if name else ticker
 
@@ -5008,11 +5197,11 @@ def dark_table(display_df: pd.DataFrame, height: int | None = None,
     Args:
         display_df: Pre-formatted (string) columns to display.
         height: Fixed pixel height (Plotly tables scroll when rows overflow).
-        font_color_map: Optional `\`\{column: [per-row colors]}`\`\ overrides.
+        font_color_map: Optional ``{column: [per-row colors]}`` overrides.
         col_widths: Optional relative column widths.
 
     Returns:
-        go.Figure: A dark table figure ready for `\`\st.plotly_chart`\`\.
+        go.Figure: A dark table figure ready for ``st.plotly_chart``.
     """
     headers = list(display_df.columns)
     n = len(display_df)
@@ -5065,7 +5254,7 @@ def load_universe() -> pd.DataFrame:
     """Load the full tradable universe as a DataFrame.
 
     Returns:
-        pd.DataFrame: Columns `\`\Ticker`\`\, `\`\Name`\`\, `\`\Sector`\`\ (empty on error).
+        pd.DataFrame: Columns ``Ticker``, ``Name``, ``Sector`` (empty on error).
     """
     try:
         with open(_UNIVERSE_PATH, "r", encoding="utf-8") as fh:
@@ -5090,6 +5279,14 @@ def load_portfolio_state():
     if not _SQLITE_PATH.exists():
         return None
     return PortfolioDB(db_path=_SQLITE_PATH).get_portfolio_state()
+
+
+@st.cache_data(ttl=60)
+def load_equity_curve() -> pd.DataFrame:
+    """Load the daily equity curve from SQLite (cached 60s)."""
+    if not _SQLITE_PATH.exists():
+        return pd.DataFrame(columns=["date", "equity", "cash"])
+    return PortfolioDB(db_path=_SQLITE_PATH).get_equity_curve()
 
 
 @st.cache_data(ttl=60)
@@ -5395,8 +5592,72 @@ def get_alpha_signals(ticker: str) -> dict:
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def get_insider_data(ticker: str) -> pd.DataFrame:
-    """Fetch insider transactions: yfinance first, AMF only if circuit closed."""
-    # --- Primary: yfinance (AMF BDIF is usually WAF-blocked from this host) --
+    """Fetch insider transactions: AMF BDIF -> FMP -> yfinance."""
+    # --- 1) AMF BDIF (official French legal source) --------------------------
+    try:
+        scrapers_dir = _ROOT / "00_data_sensors" / "scrapers"
+        if str(scrapers_dir) not in sys.path:
+            sys.path.insert(0, str(scrapers_dir))
+        from amf_scraper import AmfInsiderScraper  # noqa: WPS433
+
+        profile: dict = {}
+        try:
+            profile = get_bourso_profile(ticker)
+        except Exception:  # noqa: BLE001
+            profile = {}
+        amf = AmfInsiderScraper().get_recent_declarations(
+            ticker,
+            isin=profile.get("isin"),
+            issuer=profile.get("name"),
+        )
+        if amf is not None and not amf.empty:
+            out = amf.head(25).copy()
+            if "Source" not in out.columns:
+                out["Source"] = "AMF BDIF"
+            return out.reset_index(drop=True)
+    except Exception:  # noqa: BLE001
+        pass
+
+    # --- 2) FMP (secondary) --------------------------------------------------
+    try:
+        import os
+        import requests
+
+        api_key = os.getenv("FMP_API_KEY")
+        if api_key:
+            symbol = ticker.split(".")[0]
+            url = (
+                "https://financialmodelingprep.com/api/v4/insider-trading"
+                f"?symbol={symbol}&apikey={api_key}"
+            )
+            resp = requests.get(url, timeout=10)
+            if resp.status_code == 200:
+                payload = resp.json()
+                if isinstance(payload, list) and payload:
+                    rows = []
+                    for row in payload[:25]:
+                        if not isinstance(row, dict):
+                            continue
+                        rows.append({
+                            "Insider": row.get("reportingName")
+                            or row.get("ownerName")
+                            or "",
+                            "Transaction": row.get("transactionType")
+                            or row.get("acquistionOrDisposition")
+                            or "",
+                            "Shares": row.get("securitiesTransacted")
+                            or row.get("shares"),
+                            "Value": row.get("value") or row.get("price"),
+                            "Date": row.get("transactionDate")
+                            or row.get("filingDate"),
+                            "Source": "FMP",
+                        })
+                    if rows:
+                        return pd.DataFrame(rows)
+    except Exception:  # noqa: BLE001
+        pass
+
+    # --- 3) yfinance (tertiary) ----------------------------------------------
     try:
         raw = yf.Ticker(ticker).insider_transactions
         if isinstance(raw, pd.DataFrame) and not raw.empty:
@@ -5414,30 +5675,6 @@ def get_insider_data(ticker: str) -> pd.DataFrame:
                 if "Shares" in out.columns:
                     out["Shares"] = pd.to_numeric(out["Shares"], errors="coerce")
                 return out.head(25).reset_index(drop=True)
-    except Exception:  # noqa: BLE001
-        pass
-
-    # --- Optional AMF (skipped once circuit opens after HTTP 500) ------------
-    try:
-        scrapers_dir = _ROOT / "00_data_sensors" / "scrapers"
-        if str(scrapers_dir) not in sys.path:
-            sys.path.insert(0, str(scrapers_dir))
-        from amf_scraper import AmfInsiderScraper, amf_available  # noqa: WPS433
-
-        if not amf_available():
-            return pd.DataFrame()
-        profile: dict = {}
-        try:
-            profile = get_bourso_profile(ticker)
-        except Exception:  # noqa: BLE001
-            profile = {}
-        amf = AmfInsiderScraper().get_recent_declarations(
-            ticker,
-            isin=profile.get("isin"),
-            issuer=profile.get("name"),
-        )
-        if amf is not None and not amf.empty:
-            return amf.head(25).reset_index(drop=True)
     except Exception:  # noqa: BLE001
         pass
     return pd.DataFrame()
@@ -5477,7 +5714,7 @@ def heuristic_news_score(title: str) -> int:
 def score_news_with_llm(ticker: str, title: str) -> int:
     """Score a single headline (-100..+100), LLM first then keyword fallback.
 
-    Cache key is `\`\(ticker, title)`\`\ — reloading does not re-bill OpenRouter.
+    Cache key is ``(ticker, title)`` — reloading does not re-bill OpenRouter.
     """
     if not title or not title.strip():
         return 0
@@ -5803,8 +6040,9 @@ def build_recommendations(
             recos.append({
                 "prio": 1,
                 "title": f"Stop-loss candidat {format_name(p.ticker)}",
-                "why": (f"PnL latent {pnl:+.1f}% sous le seuil -10%. "
-                        "Le rebalancer mensuel proposera une vente 100%."),
+                "why": (f"PnL latent {pnl:+.1f}% (perte). "
+                        "Le rebalancer mensuel sort a 100% si le cours casse "
+                        "avg_entry - 2.5×ATR(14)."),
             })
         if pnl >= 20:
             recos.append({
@@ -6511,7 +6749,7 @@ portfolio = load_portfolio_state()
 if portfolio is None:
     st.warning(
         "\u26A0\uFE0F En attente de l'initialisation des bases de donn\u00e9es "
-        "par le Main Scheduler... (lancez `\py main_scheduler.py --now`\)"
+        "par le Main Scheduler... (lancez `py main_scheduler.py --now`)"
     )
     st.stop()
 
@@ -6644,8 +6882,8 @@ with st.sidebar:
               help="Horodatage de la derniere passe du Main Scheduler ayant "
                    "actualise les cours et l'equity.")
     st.caption(
-        "Amorcer le capital :\n\n`\python seed_account.py --cash 10000`\\n\n"
-        "Lancer une passe :\n\n`\python main_scheduler.py --now`\"
+        "Amorcer le capital :\n\n`python seed_account.py --cash 10000`\n\n"
+        "Lancer une passe :\n\n`python main_scheduler.py --now`"
     )
     if auto_refresh:
         st.caption(f"\u23F1\uFE0F Auto-refresh dans {refresh_secs}s")
@@ -6987,6 +7225,53 @@ with tab_pf:
         "(voir suggestion dans General).</div>",
         unsafe_allow_html=True,
     )
+
+    # --- Equity curve (top of Portefeuille) ---------------------------------
+    st.markdown("#### 📈 Courbe de Performance (Equity Curve)")
+    eq_curve = load_equity_curve()
+    if eq_curve is None or eq_curve.empty or "equity" not in eq_curve.columns:
+        st.info(
+            "Pas encore d'historique d'equity. La courbe se construit a chaque "
+            "``update_portfolio`` (snapshot journalier dans ``portfolio_history``)."
+        )
+    else:
+        eq = eq_curve.copy()
+        eq["date"] = pd.to_datetime(eq["date"], errors="coerce")
+        eq = eq.dropna(subset=["date", "equity"]).sort_values("date")
+        if eq.empty:
+            st.info("Historique equity vide apres nettoyage.")
+        else:
+            y_min = float(eq["equity"].min())
+            y_max = float(eq["equity"].max())
+            pad = max((y_max - y_min) * 0.08, abs(y_max) * 0.01, 1.0)
+            fig_eq = pex.area(
+                eq,
+                x="date",
+                y="equity",
+                labels={"date": "Date", "equity": "Equity (€)"},
+            )
+            fig_eq.update_traces(
+                line=dict(color="#00FF00", width=2),
+                fill="tozeroy",
+                fillcolor="rgba(0, 255, 0, 0.25)",
+            )
+            fig_eq.update_layout(
+                paper_bgcolor=_BG,
+                plot_bgcolor=_BG,
+                font=dict(family="Courier New", color=_WHITE),
+                margin=dict(t=20, l=40, r=20, b=40),
+                height=320,
+                xaxis=dict(gridcolor="#222", showgrid=True),
+                yaxis=dict(
+                    gridcolor="#222",
+                    showgrid=True,
+                    range=[y_min - pad, y_max + pad],
+                    title="Equity (€)",
+                ),
+                showlegend=False,
+            )
+            st.plotly_chart(fig_eq, width="stretch", key="pf_equity_curve")
+
     if not positions:
         st.info("⏸️ Le portefeuille est actuellement 100% en "
                 "liquidites. Aucune position ouverte : le capital attend une "
@@ -7422,22 +7707,22 @@ with tab_mkt:
     else:
         st.caption("Aucune actualite majeure recente pour cet actif.")
 
-    # Insiders — honest about AMF
+    # Insiders — AMF first (official), then FMP, then Yahoo
     st.markdown("---")
     st.markdown("#### 🕵️ Activite des dirigeants (insiders)")
     st.markdown(
-        "<div class='info-text'><b>Source prioritaire : Yahoo Finance</b>. "
-        "AMF BDIF est tente en secours mais est souvent inaccessible "
-        "(WAF / HTTP 500) — un coupe-circuit coupe les retries pour ne pas "
-        "spammer les logs. Un achat net massif = signal de confiance interne, "
-        "pas un ordre automatique. Couverture tres variable sur les .PA.</div>",
+        "<div class='info-text'><b>Cascade stricte : AMF BDIF → FMP → Yahoo</b>. "
+        "L'AMF est la source legale officielle FR. Si BDIF est bloque (WAF / "
+        "HTTP 500), le terminal bascule sur Financial Modeling Prep "
+        "(<code>FMP_API_KEY</code>), puis yfinance. Un achat net massif = "
+        "signal de confiance interne, pas un ordre automatique.</div>",
         unsafe_allow_html=True,
     )
     insider_df = get_insider_data(selected)
     if insider_df.empty:
         st.warning(
             f"Aucune transaction insider pour {format_name(selected)}. "
-            "Yahoo n'a souvent rien sur les mid-caps .PA ; AMF BDIF reste bloque."
+            "AMF/FMP/Yahoo n'ont rien renvoye (couverture variable sur .PA)."
         )
     else:
         src_note = ""
@@ -7603,7 +7888,7 @@ with tab_arch:
     st.markdown("""
 ### ⏰ L'Horloge (Scheduler)
 
-Le daemon (`\main_scheduler.py`\) tourne en continu et declenche **3 passes
+Le daemon (`main_scheduler.py`) tourne en continu et declenche **3 passes
 quotidiennes** (heure de Paris), uniquement les **jours de bourse** :
 
 | Heure | Role |
@@ -7614,7 +7899,7 @@ quotidiennes** (heure de Paris), uniquement les **jours de bourse** :
 
 - **Week-end** : pause. **Vendredi 18:00** : Weekly Historian (Discord).
 - **1er du mois** : Monthly Rebalancer (prise de profit / stop-loss).
-- Force manuelle : `\python main_scheduler.py --now`\
+- Force manuelle : `python main_scheduler.py --now`
 
 ---
 
@@ -7623,13 +7908,14 @@ quotidiennes** (heure de Paris), uniquement les **jours de bourse** :
 | Source | Usage | Statut |
 |--------|--------|--------|
 | **yfinance** | OHLCV, calendrier, insiders, news fallback | Primaire |
-| **VIX / VSTOXX** | Coupe-circuit panic (`\VIX_PANIC_THRESHOLD`\) | `\^V2TX`\ puis `\^VIX`\ |
+| **VIX / VSTOXX** | Coupe-circuit panic (`VIX_PANIC_THRESHOLD`) | `^V2TX` puis `^VIX` |
 | **TradingView** | Graphiques + jauge TA (UI only) | Widgets |
 | **Polymarket Gamma** | Probabilites macro (contexte) | Live, no auth |
 | **Boursorama** | Profil PEA/SRD, consensus, news (best-effort) | Scraper fragile |
-| **AMF BDIF** | Declarations dirigeants | Souvent **WAF/HTTP 500** — circuit breaker + fallback Yahoo |
+| **AMF BDIF** | Declarations dirigeants (**primaire**) | Officiel FR ; WAF/HTTP 500 possible → FMP → Yahoo |
+| **FMP** | Insiders fallback (`FMP_API_KEY`) | Secondaire |
 | **OpenRouter** | Sentiment news + briefing geo (explique, ne decide pas) | Optionnel |
-| **SQLite + DuckDB** | Portfolio / audit / OHLCV | Local |
+| **SQLite + DuckDB** | Portfolio / audit / equity curve / OHLCV | Local |
 
 ---
 
@@ -7638,13 +7924,13 @@ quotidiennes** (heure de Paris), uniquement les **jours de bourse** :
 | Onglet | Contenu |
 |--------|---------|
 | **General & Signaux** | Suggestion adaptative **multi-horizon**, explication cash, fiche ETF Core, reco, geo, registre, news du mois |
-| **Portefeuille** | Allocation + editeur wallet (SQLite) |
+| **Portefeuille** | Equity curve + allocation + editeur wallet (SQLite) |
 | **Exploration** | Scan liquide top/flop + trajectoires, fiche ticker (dossier entreprise, TA expliquee, news, insiders, Polymarket) |
 | **Univers** | Liste PEA + **perf moyenne par secteur** (horizon reglable) |
 | **Architecture** | Cette page |
 
 Mode **MICRO** (ex. 100 €) : 1 part liquide + gros cash buffer — le Core
-(`\CW8.PA`\) cote trop cher pour une part entiere. Ce n'est pas une erreur :
+(`CW8.PA`) cote trop cher pour une part entiere. Ce n'est pas une erreur :
 c'est de l'optionalite jusqu'au prochain depot.
 
 ---
@@ -7653,7 +7939,7 @@ c'est de l'optionalite jusqu'au prochain depot.
 
 **Core / Satellite** :
 
-1. **Smart DCA Core** (`\CW8.PA`\) — plus agressif sous SMA200 (peur).
+1. **Smart DCA Core** (`CW8.PA`) — plus agressif sous SMA200 (peur).
 2. **Satellite MRE** — BUY seulement si **toutes** les conditions :
    - RSI(14) < 30
    - Close > SMA200
@@ -7663,7 +7949,7 @@ c'est de l'optionalite jusqu'au prochain depot.
    - Budget satellite / secteur / correlation OK
    - Sizing : Half-Kelly × parite de volatilite × floor PEA
 3. **RevocationEngine** — a chaque passe, les signaux PENDING trop vieux
-   (`\SIGNAL_VALIDITY_HOURS`\) ou en drift prix >3% passent REVOKED/EXPIRED
+   (`SIGNAL_VALIDITY_HOURS`) ou en drift prix >3% passent REVOKED/EXPIRED
    avant l'alerte Discord.
 
 L'IA **n'approuve jamais** un trade. Discord = copilot manuel.
@@ -7678,20 +7964,22 @@ L'IA **n'approuve jamais** un trade. Discord = copilot manuel.
 | Budget satellite | Max ~30% equity |
 | Secteur / ligne | Max ~25% / ~15% (assoupli en MICRO) |
 | VIX panic | Bloque nouveaux satellites |
-| Stop / shave | −10% exit / +20% trim 20% |
+| Stop / shave | ATR dynamique (2.5×ATR14) exit / +20% trim 20% |
 | Execution | Discord only |
 
 ---
 
 ### 🖥️ Architecture technique
 
-`\`\`\
-yfinance / VIX / (Bourso|AMF best-effort)
+``​`
+AMF → FMP → yfinance / VIX / Bourso best-effort
         → SignalGenerator + SmartDCA
         → CorrelationFirewall + PeaSizer + MacroVeto
+        → Monthly ATR rebalancer
         → Discord Copilot
-        → SQLite  ↔  Streamlit Dashboard
-`\`\`\
+        → SQLite (portfolio + equity curve)  ↔  Streamlit Dashboard
+        → DuckDB (OHLCV)
+``​`
 
 Le dashboard lit l'etat en continu. L'editeur de wallet peut ecrire
 cash/positions. Les ordres restent Discord + scheduler.
@@ -7712,15 +8000,15 @@ if auto_refresh:
 
     _time.sleep(int(refresh_secs))
     st.rerun()
-`
----
+```
+
 ## FILE: config/api_keys.env.example
-`example
+```text
 # =============================================================================
 # PEA Sniper Terminal V-Prime - Secrets template
 # -----------------------------------------------------------------------------
-# Copy this file to `\config/api_keys.env`\ and fill in real values.
-# `\config/api_keys.env`\ is git-ignored and must NEVER be committed.
+# Copy this file to `config/api_keys.env` and fill in real values.
+# `config/api_keys.env` is git-ignored and must NEVER be committed.
 # =============================================================================
 
 # Discord bot token (Discord Developer Portal -> Bot -> Reset Token).
@@ -7740,10 +8028,17 @@ OPENROUTER_API_KEY=sk-or-your_openrouter_key_here
 
 # Optional: OpenRouter model slug used for explanations (defaults below).
 OPENROUTER_MODEL=mistralai/mistral-7b-instruct
-`
----
+
+# Financial Modeling Prep (https://site.financialmodelingprep.com/developer/docs).
+# Secondary insider-trading fallback after AMF BDIF.
+FMP_API_KEY=your_fmp_api_key_here
+
+# EOD Historical Data (https://eodhistoricaldata.com/) — optional market data.
+EODHD_API_KEY=your_eodhd_api_key_here
+```
+
 ## FILE: config/macro_calendar.yaml
-`yaml
+```yaml
 # =============================================================================
 # PEA Sniper Terminal V-Prime - Macro Event Calendar (dummy / seed data)
 # -----------------------------------------------------------------------------
@@ -7761,10 +8056,10 @@ events:
   2026-07-31: "US Non-Farm Payrolls (NFP)"
   2026-08-13: "US CPI"
   2026-09-17: "FED Rate Decision"
-`
----
+```
+
 ## FILE: config/pea_universe.yaml
-`yaml
+```yaml
 # PEA Sniper Terminal V-Prime - investable universe
 # Synced from Boursorama Eligibilité PEA filter (tools/sync_universe_from_bourso.py).
 # Extra flags: srd=true (liquid SRD), pea_pme=true.
@@ -9666,10 +9961,10 @@ universe:
   - ticker: VLTSA.PA
     name: Voltalia
     srd: true
-`
----
+```
+
 ## FILE: config/risk_params.yaml
-`yaml
+```yaml
 # =============================================================================
 # PEA Sniper Terminal V-Prime - Institutional Risk Parameters
 # -----------------------------------------------------------------------------
@@ -9715,14 +10010,16 @@ VOLATILITY_REFERENCE: 0.20       # Baseline annualized vol for parity scaling.
 VOLATILITY_MAX_FACTOR: 1.5       # Cap on inverse-volatility up-scaling.
 VIX_PANIC_THRESHOLD: 30.0        # V2TX above this vetoes new satellite buys.
 
-# --- Rebalancing (Phase 12) -------------------------------------------------
+# --- Rebalancing (Phase 12 / 15) --------------------------------------------
 REBALANCE_PROFIT_SHAVE_PCT: 0.20   # Trim 20% of a winner above +20% PnL.
 REBALANCE_PROFIT_TRIGGER_PCT: 20.0 # Profit-shave trigger (unrealized %).
-REBALANCE_STOPLOSS_TRIGGER_PCT: -10.0  # Full exit below this unrealized %.
-`
----
+# Dynamic ATR stop: exit if price < avg_entry - REBALANCE_ATR_STOP_MULT * ATR_14.
+# (Static -10% stop removed in Phase 15.)
+REBALANCE_ATR_STOP_MULT: 2.5
+```
+
 ## FILE: docker-compose.yml
-`yaml
+```yaml
 # PEA Sniper Terminal V-Prime - fleet.
 #   daemon    : always-on backend (scheduled analysis, weekly report, rebalance)
 #   dashboard : Streamlit command center on :8501
@@ -9779,10 +10076,10 @@ services:
   #     - ./database:/app/database
   #     - ./config:/app/config
   #   command: ["python", "run_discord.py"]
-`
----
+```
+
 ## FILE: Dockerfile
-`dockerfile
+```text
 # PEA Sniper Terminal V-Prime - single image, two roles (daemon + dashboard).
 # Python 3.11 (x64) is required: streamlit's pyarrow has no 3.13/arm64 wheel.
 FROM python:3.11-slim
@@ -9812,10 +10109,10 @@ EXPOSE 8501
 
 # Default role is the daemon; docker-compose overrides the command for the UI.
 CMD ["python", "main_scheduler.py"]
-`
----
+```
+
 ## FILE: main_scheduler.py
-`python
+```python
 """Root daemon scheduler for PEA Sniper Terminal V-Prime.
 
 Ties the whole pipeline together and runs it on the multi-pass European market
@@ -9825,8 +10122,8 @@ schedule (09:00, 13:30, 17:10 Paris time, weekdays only):
     VIX, correlation, sizing) -> revoke/expire PENDING -> Discord alerts.
 
 Design rules honoured here:
-  * Async/sync bridge: the synchronous `\`\schedule`\`\ job runs the async pipeline
-    via `\`\asyncio.run`\`\.
+  * Async/sync bridge: the synchronous ``schedule`` job runs the async pipeline
+    via ``asyncio.run``.
   * Zero crash tolerance: every pass is wrapped so a data outage or locked DB
     logs CRITICAL and the daemon keeps running for the next pass.
   * Timezone awareness: schedule times are pinned to Europe/Paris; weekends are
@@ -9888,7 +10185,7 @@ _LOOKBACK_DAYS = 400  # ~270 trading days -> enough for SMA-200.
 
 
 def _core_ticker() -> str:
-    """Read the Core ETF ticker from `\`\risk_params.yaml`\`\ (default CW8.PA)."""
+    """Read the Core ETF ticker from ``risk_params.yaml`` (default CW8.PA)."""
     try:
         with open(_RISK_PATH, "r", encoding="utf-8") as fh:
             risk = yaml.safe_load(fh) or {}
@@ -9904,7 +10201,7 @@ async def _post_webhook(content: str) -> bool:
         content: The message body.
 
     Returns:
-        bool: `\`\True`\`\ if every chunk posted with a 2xx status.
+        bool: ``True`` if every chunk posted with a 2xx status.
     """
     url = os.getenv("DISCORD_WEBHOOK_URL")
     if not url:
@@ -9929,7 +10226,7 @@ async def _post_webhook(content: str) -> bool:
 
 
 def _load_universe_tickers() -> list[str]:
-    """Read the tradable tickers from `\`\config/pea_universe.yaml`\`\.
+    """Read the tradable tickers from ``config/pea_universe.yaml``.
 
     Returns:
         list[str]: All tickers across every sector (empty on failure).
@@ -10229,7 +10526,9 @@ async def run_monthly_rebalance_async() -> None:
     """Generate mechanical rebalance SELLs and push them for manual approval."""
     pdb = PortfolioDB()
     pdb.init_db()
-    rebalancer = PortfolioRebalancer(_CONFIG_DIR)
+    tsdb = TimeSeriesDB()
+    tsdb.init_db()
+    rebalancer = PortfolioRebalancer(_CONFIG_DIR, timeseries_db=tsdb)
 
     portfolio = pdb.get_portfolio_state()
     sells = rebalancer.generate_rebalance_signals(portfolio)
@@ -10345,397 +10644,307 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-`
----
+```
+
 ## FILE: README.md
-`markdown
-# 🛡️ PEA Sniper Terminal — V-Prime 3.0
+```markdown
+# PEA Sniper Terminal — V-Prime 3.0
 
 > **Sovereign execution. Kinetic risk management. Absolute quantitative transparency.**
 
-An institutional-grade, **zero-leverage** quantitative decision-support system built
-strictly for the French **PEA** (Plan d'Épargne en Actions). It ingests market data,
-runs a deterministic quant engine, filters signals through a multi-layer risk cascade,
-and pushes highly-curated trade proposals to a **Discord Copilot** for **manual**
-execution. A **Streamlit terminal** (Bloomberg-style) gives you a full command center.
+Zero-leverage quantitative **decision support** for the French **PEA**. Market data →
+deterministic quant engine → multi-layer risk cascade → **Discord Copilot** for
+**manual** execution. A Bloomberg-style **Streamlit** terminal is the command center.
 
-The system **never sends orders to a broker**. Every trade is executed by you.
-The maths decides *what* is worth considering; the AI only *explains* it in plain
-language. **This is not investment advice.**
+The system **never sends orders to a broker**. Maths decides *what* is worth
+considering; AI only *explains*. **Not investment advice.**
 
 ---
 
 ## Table of contents
 
 1. [Philosophy](#-philosophy)
-2. [What it does (feature map)](#-what-it-does-feature-map)
-3. [The strategy in depth](#-the-strategy-in-depth)
+2. [Feature map](#-feature-map)
+3. [Strategy](#-strategy)
 4. [Architecture](#-architecture)
 5. [Module reference](#-module-reference)
-6. [Which APIs actually work](#-which-apis-actually-work)
+6. [APIs that work](#-apis-that-work)
 7. [Installation](#-installation)
 8. [Configuration](#-configuration)
 9. [Usage](#-usage)
-10. [The dashboard](#-the-dashboard)
+10. [Dashboard](#-dashboard)
 11. [Deployment](#-deployment)
-12. [Scheduling reference](#-scheduling-reference)
-13. [Troubleshooting](#-troubleshooting)
-14. [Disclaimer](#-disclaimer)
+12. [Scheduling](#-scheduling)
+13. [Roadmap / future improvements](#-roadmap--future-improvements)
+14. [Troubleshooting](#-troubleshooting)
+15. [Disclaimer](#-disclaimer)
 
 ---
 
-## 🧭 Philosophy
+## Philosophy
 
-1. **No fractional shares.** PEA-legal sizing always uses `\math.floor`\.
-2. **Math first, AI second.** LLMs have **zero** decision power. They only (a) explain
-   an already-decided trade, (b) compress news into a **number** (‑100…+100), and
-   (c) write a weekly narrative. They never generate or approve a trade.
-3. **API-first, scrapers best-effort.** Primary market data is `\yfinance`\ +
-   TradingView widgets + Polymarket Gamma. Optional French enrichments
-   (Boursorama profile/news, AMF BDIF insiders) are **best-effort scrapers** with
-   circuit-breakers and Yahoo fallbacks — AMF BDIF is often WAF-blocked (HTTP 500).
-4. **Separation of state.** DuckDB for heavy time-series (OHLCV); SQLite for
-   application state (portfolio, positions, immutable audit log).
-5. **Zero crash tolerance.** Every scheduled pass is wrapped so a data outage or a
-   locked DB logs `\CRITICAL`\ and the daemon survives for the next pass.
-6. **Manual execution.** You always have the last word — via a Discord button.
+1. **No fractional shares.** PEA sizing always uses `math.floor`.
+2. **Math first, AI second.** LLMs never generate or approve trades — they explain,
+   score news (−100…+100), and write the weekly digest.
+3. **Official sources first.** Insider cascade is **AMF BDIF → FMP → yfinance**.
+   Market OHLCV stays on `yfinance` → DuckDB. Scrapers are best-effort with
+   circuit-breakers (AMF BDIF is often WAF-blocked).
+4. **Split state.** DuckDB = OHLCV; SQLite = portfolio, audit log, **equity curve**.
+5. **Zero crash tolerance.** A failed pass logs `CRITICAL`; the daemon keeps running.
+6. **Manual execution.** You always have the last word (Discord buttons).
 
 ---
 
-## 🚀 What it does (feature map)
+## Feature map
 
 | Layer | Capability |
 |------|------------|
-| **Data** | OHLCV (`\yfinance`\ → DuckDB), VIX/VSTOXX, Put/Call, insiders (Yahoo; AMF best-effort), Polymarket Gamma, Bourso profile/news |
-| **Quant** | Mean-Reversion Exhaustion (RSI<30 + Close>SMA200 + Close>SMA5), quality EPS>0 |
-| **Core/Satellite** | Smart DCA on `\CW8.PA`\, regime-aware under SMA200 |
-| **Risk** | Macro veto, correlation firewall, sector/line caps, vol-parity sizing, 30% satellite budget, VIX panic brake |
-| **Rebalance** | Monthly profit-shave (+20%→trim 20%) and stop (−10%→full exit) |
-| **AI (explain only)** | Trade rationale, news sentiment, weekly CIO digest, geo briefing |
-| **Interfaces** | Discord Copilot, Streamlit terminal (General multi-horizon, Exploration, Universe sector perfs) |
-| **Ops** | Daemon scheduler (Paris), seed CLI, wallet editor, **RevocationEngine** on PENDING |
+| **Data** | OHLCV → DuckDB; VIX/VSTOXX; Put/Call; insiders **AMF→FMP→Yahoo**; Polymarket Gamma; Bourso profile/news |
+| **Quant** | Mean-reversion exhaustion (RSI&lt;30 + Close&gt;SMA200 + Close&gt;SMA5), EPS&gt;0 |
+| **Core/Satellite** | Smart DCA on `CW8.PA`, regime-aware under SMA200 |
+| **Risk** | Macro veto, correlation firewall, sector/line caps, vol-parity sizing, 30% satellite budget, VIX panic |
+| **Rebalance** | Monthly: +20% profit-shave; **dynamic ATR stop** (`price < entry − 2.5×ATR14`) |
+| **Memory** | Daily `portfolio_history` equity curve in SQLite |
+| **AI (explain only)** | Trade rationale, news sentiment, weekly CIO digest, geo brief |
+| **UI** | Discord Copilot + Streamlit (multi-horizon, equity curve, Exploration, Universe) |
+| **Ops** | Paris daemon, seed CLI, wallet editor, RevocationEngine on PENDING |
 
 ---
 
-## 📐 The strategy in depth
+## Strategy
 
-### 1. Core / Satellite allocation
-Capital is split in two:
+### 1. Core / Satellite
+- **Core (≈70–75%)** — `CW8.PA` via Smart DCA: more aggressive below SMA200, drip above.
+- **Satellite (≤30%)** — EU stock-picking under `SATELLITE_MAX_BUDGET_PCT`.
 
-- **Core (up to 70–75%)** — accumulated on a broad **MSCI World PEA ETF** (`\CW8.PA`\)
-  via **Smart DCA**: when `\CW8`\ trades **below** its 200-day SMA (fear/crash), the
-  engine raises the target weight to 75% and buys a larger tranche; **above** the SMA
-  it drips a smaller tranche at a 70% target. *(`\02_quant_engine/smart_dca_engine.py`\)*
-- **Satellite (≤30%)** — individual EU stock-picking, hard-capped so the total
-  non-core exposure never exceeds `\SATELLITE_MAX_BUDGET_PCT`\ of equity.
+### 2. Satellite signal (all must hold)
+Trend `Close > SMA200` · Exhaustion `RSI(14) < 30` · Quality `EPS > 0` · Momentum `Close > SMA5`.
 
-### 2. Satellite signal generation
-A signal fires only when **all** conditions hold *(`\02_quant_engine/technical_scorer.py`\)*:
+### 3. Risk cascade (cheap checks first)
+1. Live price exists  
+2. VIX panic (`V2TX/VIX > 30`) freezes **new satellite buys** (Core still DCAs)  
+3. Macro event blackout  
+4. Sector / correlation caps  
+5. Vol-parity sizing → whole shares → cash + satellite budget clamp  
 
-- **Trend:** `\Close > SMA200`\ (long-term uptrend).
-- **Exhaustion:** `\RSI(14) < 30`\ (oversold pullback → mean-reversion setup).
-- **Quality:** trailing `\EPS > 0`\ (no loss-making hype stocks).
-- **Momentum:** `\Close > SMA5`\ (pullback already stabilising — no falling knives).
+### 4. Monthly rebalance
+- **Profit-shave:** satellite &gt; +20% → SELL 20%.  
+- **ATR stop:** losing satellite with `current < avg_entry − 2.5×ATR(14)` → SELL 100%.  
+- Core ETF excluded.
 
-### 3. Risk cascade (order matters — cheapest checks first)
-*(`\04_orchestrator_ai/signal_priority_cascade.py`\)*
-
-1. **Price sanity** — a live price must exist.
-2. **VIX panic brake** — if `\V2TX/VIX > 30`\, **all new satellite buys are frozen**
-   (Core DCA still accumulates — you buy the fear on the broad ETF).
-3. **Macro veto** — blocks trades within N days of a known macro event (ECB, CPI…).
-4. **Sector cap** — projected sector weight must stay under `\MAX_SECTOR_WEIGHT_PCT`\.
-5. **Correlation firewall** — Pearson vs each holding must stay under the limit.
-6. **Volatility-parity sizing** — `\target_cash`\ is scaled **inversely to volatility**
-   (a 40%-vol name gets half the allocation of a 20%-vol name), then floored to whole
-   shares and clamped by cash and the 30% satellite budget.
-
-### 4. Monthly rebalance *(`\03_risk_portfolio/monthly_rebalancer.py`\)*
-On the 1st of each month:
-- **Profit-shave:** any satellite winner above **+20%** → SELL 20% of the shares.
-- **Stop-loss:** any satellite position below **‑10%** → SELL 100%.
-- The Core ETF is deliberately excluded (it is meant to be held & averaged).
-
-### 5. AI as a post-hoc analyst
-- **Trade explainer** — 2–3 sentence rationale for an approved trade.
-- **News sentiment** — the LLM is forced to output a single integer **‑100…+100**;
-  garbage/prose is neutralised to 0. *(`\04_orchestrator_ai/news_sentiment_llm.py`\)*
-- **Weekly Historian** — every Friday 18:00 Paris, aggregates 7 days of audit logs
-  (vetoes, executions, equity/cash) into a hedge-fund-style CIO digest and posts it to
-  a Discord webhook. *(`\04_orchestrator_ai/weekly_historian.py`\)*
+### 5. AI as analyst only
+Trade explainer · news → integer score · Friday CIO digest → Discord webhook.
 
 ---
 
-## 🏗️ Architecture
+## Architecture
 
-`\`\`\
+``​`
                        ┌──────────────────────────────────────┐
                        │            main_scheduler.py          │
-                       │  (Paris time: 09:00 / 13:30 / 17:10)  │
+                       │  (Paris: 09:00 / 13:30 / 17:10)       │
                        └───────────────┬──────────────────────┘
-                                       │ orchestrates each pass
    00_data_sensors        01/02              03_risk_portfolio        04_orchestrator_ai
  ┌───────────────┐   ┌──────────────┐   ┌───────────────────────┐   ┌────────────────────┐
- │ market_prices │──▶│ DuckDB (OHLCV)│──▶│ correlation_firewall  │──▶│ signal_priority_    │
- │ macro_alpha   │   │ technical_    │   │ pea_position_sizer    │   │ cascade (conductor)│
- │ (VIX,P/C,ins) │   │ scorer (RSI)  │   │ monthly_rebalancer    │   │ macro_veto         │
- └───────────────┘   │ smart_dca     │   │ (VIX brake, budgets)  │   │ news_sentiment_llm │
-                     └──────────────┘   └───────────────────────┘   │ weekly_historian   │
-                                                                     └─────────┬──────────┘
-   01_memory_core (SQLite state + audit log)                                   │ approved / revoked
- ┌───────────────────────────────────────┐                                    ▼
- │ sqlite_portfolio  ·  data_models       │◀───────────── 05_interfaces ───────────────┐
- └───────────────────────────────────────┘        Discord Copilot · Streamlit terminal │
-                                                    · llm_explainer · webhooks           │
-                                                   └─────────────────────────────────────┘
-`\`\`\
+ │ market_prices │──▶│ DuckDB OHLCV │──▶│ correlation_firewall  │──▶│ signal_priority_    │
+ │ macro_alpha   │   │ technical_   │   │ pea_position_sizer    │   │ cascade + macro     │
+ │ AMF→FMP→YF    │   │ scorer+DCA   │   │ monthly ATR rebalancer│   │ revocation / LLM    │
+ └───────────────┘   └──────────────┘   └───────────────────────┘   └─────────┬──────────┘
+   SQLite: portfolio · audit · equity curve                                   ▼
+                                      Discord Copilot · Streamlit terminal
+``​`
 
-**Data flow per pass:** `\fetch (yfinance → DuckDB)`\ → `\VIX read`\ → `\quant signals`\
-→ `\mark-to-market portfolio`\ → `\risk cascade (+vol sizing, VIX/macro/sector/corr)`\
-→ `\Smart-DCA core`\ → `\audit log (SQLite)`\ → `\Discord alerts`\.
+**Per pass:** fetch → VIX → signals → mark-to-market (+ equity snapshot) → risk cascade
+→ Smart-DCA → audit → Discord. **1st of month:** ATR/profit rebalance SELLs.
 
 ---
 
-## 📚 Module reference
+## Module reference
 
 | Path | Responsibility |
 |------|----------------|
-| `\00_data_sensors/market_prices_api.py`\ | Batch OHLCV download → DuckDB |
-| `\00_data_sensors/macro_alpha_api.py`\ | `\MacroAlphaSensor`\: VIX, Put/Call, insider (Yahoo→AMF), Polymarket Gamma |
-| `\01_memory_core/data_models.py`\ | Pydantic v2 contracts (`\Signal`\, `\Position`\, `\PortfolioState`\) |
-| `\01_memory_core/duckdb_manager.py`\ | `\TimeSeriesDB`\ — OHLCV storage & queries |
-| `\01_memory_core/sqlite_portfolio.py`\ | `\PortfolioDB`\ — account/positions/audit log |
-| `\02_quant_engine/technical_scorer.py`\ | `\SignalGenerator`\ — indicators, MRE rule + quality/momentum filters |
-| `\02_quant_engine/smart_dca_engine.py`\ | `\SmartDcaCore`\ — regime-aware Core ETF DCA |
-| `\03_risk_portfolio/correlation_firewall.py`\ | `\CorrelationFirewall`\ — sector cap, Pearson, `\check_vix_panic`\ |
-| `\03_risk_portfolio/pea_position_sizer.py`\ | `\PeaSizer`\ — Half-Kelly + volatility parity + satellite budget |
-| `\03_risk_portfolio/monthly_rebalancer.py`\ | `\PortfolioRebalancer`\ — profit-shave & stop-loss SELLs |
-| `\04_orchestrator_ai/macro_veto.py`\ | `\MacroVetoEngine`\ — macro-event blackout |
-| `\04_orchestrator_ai/signal_priority_cascade.py`\ | `\SignalOrchestrator`\ — the conductor |
-| `\04_orchestrator_ai/revocation_engine.py`\ | Cancels stale/invalidated signals |
-| `\04_orchestrator_ai/news_sentiment_llm.py`\ | `\NewsSentimentScorer`\ — news → integer score |
-| `\04_orchestrator_ai/weekly_historian.py`\ | `\WeeklyHistorian`\ — weekly CIO digest |
-| `\05_interfaces/llm_explainer.py`\ | `\NarrativeExplainer`\ + shared `\openrouter_chat`\ client |
-| `\05_interfaces/discord_copilot.py`\ | Discord bot: alerts + approve/revoke buttons |
-| `\05_interfaces/terminal_dashboard.py`\ | Streamlit command center |
-| `\main_scheduler.py`\ | Daemon: daily passes, weekly report, monthly rebalance |
-| `\seed_account.py`\ | CLI to seed/reset the PEA account |
-| `\run_discord.py`\ | Entrypoint for the Discord bot |
+| `00_data_sensors/market_prices_api.py` | Batch OHLCV → DuckDB |
+| `00_data_sensors/macro_alpha_api.py` | VIX, Put/Call, insiders (**AMF→FMP→YF**), Polymarket |
+| `00_data_sensors/scrapers/amf_scraper.py` | Official AMF BDIF insider scrape + 12h circuit |
+| `01_memory_core/sqlite_portfolio.py` | Portfolio, audit log, **`portfolio_history` equity curve** |
+| `01_memory_core/duckdb_manager.py` | OHLCV store (feeds ATR) |
+| `02_quant_engine/technical_scorer.py` | MRE signals + quality/momentum |
+| `02_quant_engine/smart_dca_engine.py` | Regime-aware Core DCA |
+| `03_risk_portfolio/monthly_rebalancer.py` | Profit-shave + **2.5×ATR14** stops |
+| `03_risk_portfolio/pea_position_sizer.py` | Half-Kelly × vol parity × PEA floor |
+| `03_risk_portfolio/correlation_firewall.py` | Sector/Pearson + VIX panic |
+| `04_orchestrator_ai/*` | Cascade, macro veto, revocation, sentiment, historian |
+| `05_interfaces/terminal_dashboard.py` | Streamlit command center |
+| `05_interfaces/discord_copilot.py` | Alerts + approve/revoke |
+| `main_scheduler.py` | Daemon: passes, weekly, monthly |
+| `tools/build_llm_dump.py` | Regenerate `PROJECT_FULL_DUMP_FOR_LLM.md` |
+| `tools/sync_universe_from_bourso.py` | Refresh PEA universe YAML |
 
 ---
 
-## 🔌 Which APIs actually work
+## APIs that work
 
 | Source | Status | Notes |
 |--------|--------|-------|
-| **yfinance OHLCV** | ✅ Works | Primary market data (batch download → DuckDB). |
-| **European VIX `\^V2TX`\** | ⚠️ **Delisted on Yahoo** | The sensor tries `\^V2TX`\ first, then automatically falls back to **`\^VIX`\** (US VIX, strongly correlated) as a panic proxy. Swap in a paid VSTOXX feed if you have one. |
-| **`\^VIX`\ (fallback)** | ✅ Works | Reliable on Yahoo (~16 at time of writing). |
-| **Options Put/Call** | ⚠️ Partial | `\yfinance`\ option chains exist for many US names but are **sparse for EU tickers**; the sensor returns `\1.0`\ (neutral) when unavailable. |
-| **Insider transactions** | ⚠️ Partial | Available for some names; returns `\0`\ (neutral) when missing. |
-| **Polymarket** | 🔧 Stub | Deterministic placeholder in `\[0,1]`\, ready to wire to the free CLOB API. |
-| **OpenRouter (LLM)** | ✅ Works | Needs `\OPENROUTER_API_KEY`\. Used for explanations, sentiment, weekly report. Falls back gracefully when absent. |
-| **TradingView widgets** | ✅ Works | Ticker tape, advanced chart, technical-analysis gauge (client-side embeds). |
-| **Yahoo news** | ✅ Works | Powers the Radar news feed and the sentiment input. |
+| **yfinance OHLCV** | Works | Primary market data → DuckDB |
+| **`^V2TX` / `^VIX`** | Partial | VSTOXX often delisted on Yahoo → falls back to US VIX |
+| **AMF BDIF** | Fragile | Official FR insiders; WAF/HTTP 500 common → circuit + fallbacks |
+| **FMP insider API** | Optional | Needs `FMP_API_KEY`; secondary after AMF |
+| **yfinance insiders** | Tertiary | Sparse on many `.PA` names |
+| **Options Put/Call** | Partial | Sparse for EU → neutral `1.0` |
+| **Polymarket Gamma** | Live | Macro context only |
+| **OpenRouter** | Optional | Explanations / sentiment / weekly report |
+| **TradingView / Yahoo news** | Works | UI embeds + radar |
 
-> **Key takeaway:** the system is designed to **degrade gracefully**. Any dead/missing
-> source returns a neutral value and logs the reason — the daemon never crashes.
+Graceful degradation: missing sources return **neutral** values; the daemon does not crash.
 
 ---
 
-## ⚙️ Installation
+## Installation
 
-> **Important:** Streamlit depends on `\pyarrow`\, which has **no prebuilt wheel for
-> Python 3.13 / arm64**. Use **Python 3.11 or 3.12 (x64)** for the dashboard. The
-> backend/daemon runs fine on 3.11–3.13.
+> Streamlit needs `pyarrow` → use **Python 3.11 or 3.12 x64** (`venv_x64`).
 
-`\`\`\bash
-# 1. Clone
-git clone <your-repo-url> pea_sniper_terminal
+``​`bash
+git clone https://github.com/Polluxgnr/Peatrading.git pea_sniper_terminal
 cd pea_sniper_terminal
 
-# 2. Create an x64 Python 3.11 virtual environment
 python3.11 -m venv venv_x64
-# Windows PowerShell:
-venv_x64\Scripts\Activate.ps1
-# Linux/macOS:
-source venv_x64/bin/activate
+# Windows:  venv_x64\Scripts\Activate.ps1
+# Unix:     source venv_x64/bin/activate
 
-# 3. Install dependencies
 pip install --upgrade pip
 pip install -r requirements.txt
 
-# 4. Configure secrets
 cp config/api_keys.env.example config/api_keys.env
-#   → edit config/api_keys.env with your real keys
-`\`\`\
+# edit secrets
+``​`
 
 ---
 
-## 🔧 Configuration
+## Configuration
 
-### `\config/api_keys.env`\ (secrets — git-ignored)
+### `config/api_keys.env` (git-ignored)
 
 | Variable | Required | Purpose |
 |----------|----------|---------|
-| `\DISCORD_TOKEN`\ | for bot | Discord bot token (Copilot with buttons). |
-| `\DISCORD_CHANNEL_ID`\ | for bot | Channel where alerts are posted. |
-| `\DISCORD_WEBHOOK_URL`\ | for daemon | Weekly report + monthly rebalance notifications (no bot process needed). |
-| `\OPENROUTER_API_KEY`\ | optional | Enables LLM explanations/sentiment/report. |
-| `\OPENROUTER_MODEL`\ | optional | Defaults to `\mistralai/mistral-7b-instruct`\. |
+| `DISCORD_TOKEN` / `DISCORD_CHANNEL_ID` | bot | Copilot with buttons |
+| `DISCORD_WEBHOOK_URL` | daemon | Weekly + monthly notifications |
+| `OPENROUTER_API_KEY` / `OPENROUTER_MODEL` | optional | LLM explain / sentiment |
+| `FMP_API_KEY` | optional | Secondary insider source |
+| `EODHD_API_KEY` | optional | Reserved for paid market data |
 
-### `\config/risk_params.yaml`\ (the rulebook)
+### `config/risk_params.yaml`
 
-| Group | Keys |
-|-------|------|
-| **Sizing** | `\KELLY_FRACTION`\, `\MAX_SINGLE_POSITION_PCT`\, `\MAX_SECTOR_WEIGHT_PCT`\, `\MAX_ALLOCATION_PER_DAY_PCT`\ |
-| **Circuit breakers** | `\DAILY_MAX_LOSS_PCT`\, `\WEEKLY_MAX_LOSS_PCT`\, `\MONTHLY_MAX_LOSS_PCT`\ |
-| **Correlation** | `\MAX_CORRELATION_TO_PORTFOLIO`\, `\MAX_CORRELATION_SAME_SECTOR`\ |
-| **Signals** | `\SIGNAL_BUY_THRESHOLD`\, `\SIGNAL_SELL_THRESHOLD`\, `\MACRO_VETO_DAYS_BEFORE`\ |
-| **Core/Satellite** | `\CORE_TICKER`\, `\CORE_TARGET_PCT`\, `\CORE_CRASH_TARGET_PCT`\, `\CORE_DCA_MAX_TRANCHE_PCT`\, `\SATELLITE_MAX_BUDGET_PCT`\ |
-| **Volatility/VIX** | `\VOLATILITY_REFERENCE`\, `\VOLATILITY_MAX_FACTOR`\, `\VIX_PANIC_THRESHOLD`\ |
-| **Rebalance** | `\REBALANCE_PROFIT_TRIGGER_PCT`\, `\REBALANCE_PROFIT_SHAVE_PCT`\, `\REBALANCE_STOPLOSS_TRIGGER_PCT`\ |
+Sizing · circuit breakers · correlation · Core/Satellite · VIX ·  
+`REBALANCE_PROFIT_*` · **`REBALANCE_ATR_STOP_MULT`** (default `2.5`).
 
-### `\config/pea_universe.yaml`\
-~80 PEA-eligible EU/EEA tickers grouped by sector. Add/remove entries freely; the
-sector map feeds the correlation firewall and the dashboard.
+### `config/pea_universe.yaml`
+
+~600 PEA-eligible Euronext names by sector (synced via Bourso tools). Feeds firewall + dashboard.
 
 ---
 
-## 🕹️ Usage
+## Usage
 
-`\`\`\bash
-# 0. Seed your capital (once) — e.g. a 10,000 EUR PEA, 100% cash:
-python seed_account.py --cash 10000
-
-#    Seed with existing holdings (TICKER:QTY:AVG[:SECTOR]):
-python seed_account.py --cash 8000 --position MC.PA:3:620:Luxury
-#    Inspect current state:
+``​`bash
+python seed_account.py --cash 10000          # seed once
 python seed_account.py --show
-#    Reset everything:
-python seed_account.py --cash 25000 --reset
-
-# 1. Run ONE analysis pass immediately (great for testing):
-python main_scheduler.py --now
-
-# 2. Run the weekly report now (posts to DISCORD_WEBHOOK_URL):
+python main_scheduler.py --now               # one pass
 python main_scheduler.py --weekly
-
-# 3. Run the monthly rebalancer now (ignores the 1st-of-month guard):
-python main_scheduler.py --rebalance
-
-# 4. Start the daemon (loops forever, Paris schedule):
-python main_scheduler.py
-
-# 5. Launch the Discord Copilot bot:
+python main_scheduler.py --rebalance         # ATR / shave now
+python main_scheduler.py                     # daemon
 python run_discord.py
-
-# 6. Launch the Streamlit terminal:
-venv_x64\Scripts\streamlit run 05_interfaces/terminal_dashboard.py
-#    → open http://localhost:8501
-`\`\`\
+.\run_dashboard.ps1                          # Streamlit (auto-open)
+python tools/build_llm_dump.py               # refresh LLM dump
+``​`
 
 ---
 
-## 🖥️ The dashboard
+## Dashboard
 
-Launch (auto-opens browser):
-
-`\`\`\powershell
-.\run_dashboard.ps1
-`\`\`\
-
-Bloomberg-style black UI. Tabs:
-
-| Tab | What you get |
-|-----|----------------|
-| **General & Signaux** | Adaptive **multi-horizon** portfolio suggestion (MICRO→FULL), explicit *why 1 share + cash*, Core ETF card, geo brief, Discord ledger, **biggest news of the month** |
-| **Portefeuille** | Sunburst + positions + **wallet editor** (writes SQLite) |
-| **Exploration** | Liquid scan top/flop + trajectories (no more fake 0% rows), full ticker dossier (business, catalysts, risk events), TA explained, news, insiders, Polymarket with clickable links |
-| **Univers Complet** | Universe table + **average sector performance** with selectable timeframe |
-| **Architecture** | Living docs (matches the code) |
-
-**Sidebar:** auto-refresh, cache clear, system status.
+| Tab | Content |
+|-----|---------|
+| **General & Signaux** | Adaptive multi-horizon suggestion (MICRO→FULL), Core card, geo, ledger, month news |
+| **Portefeuille** | **Equity curve**, sunburst, positions, wallet editor → SQLite |
+| **Exploration** | Liquid scan, ticker dossier, TA explain, news, insiders (AMF→FMP→YF), Polymarket |
+| **Univers** | Full list + sector average performance |
+| **Architecture** | Living docs (matches code) |
 
 ---
 
-## 🐳 Deployment
+## Deployment
 
-Two containers: the **daemon** (backend, always-on) and the **dashboard**
-(Streamlit UI). Both share the `\database/`\ volume and `\config/`\.
-
-`\`\`\bash
-# 1. Prepare secrets
-cp config/api_keys.env.example config/api_keys.env   # then edit it
-
-# 2. Build & launch the fleet
+``​`bash
+cp config/api_keys.env.example config/api_keys.env
 docker compose up -d --build
-
-# 3. Access
-#    Dashboard: http://<server-ip>:8501
-#    Logs:      docker compose logs -f daemon
-#               docker compose logs -f dashboard
-
-# 4. Seed capital inside the container (once)
+# Dashboard :8501 · logs: docker compose logs -f daemon
 docker compose exec daemon python seed_account.py --cash 10000
+``​`
 
-# 5. Stop
-docker compose down
-`\`\`\
-
-### Alternatives
-
-- **systemd** (bare-metal daemon): create a unit that runs
-  `\.../venv_x64/bin/python main_scheduler.py`\ with `\Restart=always`\.
-- **cron** (if you prefer not to keep a process alive): call
-  `\python main_scheduler.py --now`\ at 09:00/13:30/17:10 and
-  `\--weekly`\ / `\--rebalance`\ on their schedules.
+Or systemd / cron calling `main_scheduler.py --now` / `--weekly` / `--rebalance`.
 
 ---
 
-## ⏱️ Scheduling reference
+## Scheduling
 
 | Job | When (Europe/Paris) | Action |
 |-----|---------------------|--------|
-| Analysis pass | 09:00, 13:30, 17:10 (weekdays) | Full pipeline → Discord alerts |
-| Weekly report | Friday 18:00 | Historian digest → webhook |
-| Monthly rebalance | Daily probe 08:30 (acts only on the 1st) | Profit-shave / stop-loss SELLs → webhook |
-
-Weekends are skipped automatically for analysis passes.
+| Analysis | 09:00, 13:30, 17:10 weekdays | Full pipeline → Discord |
+| Weekly report | Friday 18:00 | Historian → webhook |
+| Monthly rebalance | Probe 08:30 (acts on the 1st) | ATR stop / profit-shave → webhook |
 
 ---
 
-## 🩺 Troubleshooting
+## Roadmap / future improvements
+
+Prioritized ideas that fit the current architecture:
+
+| Priority | Idea | Why |
+|----------|------|-----|
+| **P0** | **Daily ATR stop check** (not only 1st of month) | Volatility stops should not wait 30 days |
+| **P0** | **pytest + CI** on cascade, sizer, AMF/FMP cascade, ATR edge cases | Regressions are silent today |
+| **P1** | **Equity metrics** on the curve (max DD, CAGR, Sharpe, cash %) | Curve alone is not enough to judge process |
+| **P1** | **Read-only broker import** (CSV / Boursorama / Degiro) | Kill manual wallet drift |
+| **P1** | **Walk-forward backtester** on DuckDB OHLCV | Validate MRE + ATR params before live capital |
+| **P2** | **Paid VSTOXX** (or Stooq/EODHD) instead of `^VIX` proxy | Panic brake should be European |
+| **P2** | **AMF resilience** (ISIN cache, retry jitter, optional proxy) | Keep official source usable more often |
+| **P2** | **Earnings / dividend blackout** in macro calendar | Avoid event-driven gaps on satellites |
+| **P3** | **Multi-core ETF** rotation (CW8 / EWLD / ESE / PAEEM) | Regime-aware core, still PEA-legal |
+| **P3** | **Intraday tape + Discord digest** of veto reasons | Operator learning loop |
+| **P3** | **Position-level trailing ATR** after +20% shave | Lock gains without fixed % |
+| **P3** | Wire **EODHD** for EU fundamentals when Yahoo is thin | Better EPS / quality filter |
+
+Non-goals (keep out of scope): auto-broker execution, leverage, US penny universe, LLM-as-trader.
+
+---
+
+## Troubleshooting
 
 | Symptom | Fix |
 |---------|-----|
-| Dashboard shows "En attente de l'initialisation…" | Seed: `\python seed_account.py --cash 10000`\ (or 100). |
-| `\run_dashboard.ps1`\ parse error on `\--server.*`\ | Use the single-line launcher in repo (no broken backticks). |
-| `\pyarrow`\/`\streamlit`\ install fails | Python **3.11/3.12 x64** (`\venv_x64`\). |
-| VIX always 15.0 / `\^V2TX`\ 404 | Falls back to `\^VIX`\ — threshold is still `\VIX_PANIC_THRESHOLD`\. |
-| AMF BDIF HTTP 500 | Expected; circuit opens **12h** then retries; Yahoo insiders used. |
-| Worst perf shows `\0.00%`\ / pennies | Liquid blue-chip scan only; filter price ≥ 2 €. Clear cache. |
-| `\AttributeError: float has no attribute bar`\ | Fixed (`\plotly.express`\ aliased `\pex`\ — was shadowed by price var `\px`\). |
-| Browser opens twice | Fixed: `\run_dashboard.ps1`\ no longer double-opens URL. |
-| Duplicate news blocks | Merged into one Actualites section. |
-| No LLM text / sentiment = 0 | Set `\OPENROUTER_API_KEY`\ in `\config/api_keys.env`\. |
-| Weekly report not sent | Set `\DISCORD_WEBHOOK_URL`\. |
-| All BUYs "insufficient cash" | Seed capital, or cash < 1 share price. |
+| Dashboard « En attente… » | `python seed_account.py --cash 10000` |
+| Empty equity curve | Appears after `update_portfolio` / wallet save / pipeline pass |
+| `pyarrow` / Streamlit fail | Python **3.11/3.12 x64** |
+| VIX stuck / `^V2TX` 404 | Falls back to `^VIX` |
+| AMF HTTP 500 | Expected; FMP then Yahoo; circuit resets after ~12h |
+| No FMP insiders | Set `FMP_API_KEY` in `api_keys.env` |
+| ATR stop never fires | Need DuckDB history (`--now` fetch) + losing position |
+| LLM / weekly silent | `OPENROUTER_API_KEY` / `DISCORD_WEBHOOK_URL` |
+| Cash too small for CW8 | MICRO mode: 1 liquid share + cash runway (by design) |
 
 ---
 
-## ⚠️ Disclaimer
+## Disclaimer
 
-This software is a **decision-support and educational tool**. It performs **no
-automated execution** and constitutes **no financial advice**. Markets carry risk;
-you are solely responsible for every trade you place. Past/backtested performance
-does not guarantee future results.
+Decision-support and educational tool only. **No automated execution. No financial
+advice.** You are solely responsible for every trade. Past results do not guarantee
+future performance.
 
-© 2026 Pollux Quantitative Research — V-Prime 3.0.
-`
----
+© 2026 Pollux Quantitative Research — V-Prime 3.0 (Phase 15).
+```
+
 ## FILE: requirements.txt
-`text
+```text
 # PEA Sniper Terminal V-Prime - Python 3.11+
 # Phase 1 only needs pydantic + pyyaml; the rest is pinned for the roadmap.
 
@@ -10756,8 +10965,8 @@ feedparser>=6.0
 # --- Quant engine (Phase 4) ---
 pandas>=2.1
 numpy>=2.0
-# pandas-ta-classic is the numpy-2.x / numba-free provider of the `\.ta`\
-# accessor. Upstream `\pandas-ta`\ 0.4.x requires numba (no py3.13/arm64 wheel).
+# pandas-ta-classic is the numpy-2.x / numba-free provider of the `.ta`
+# accessor. Upstream `pandas-ta` 0.4.x requires numba (no py3.13/arm64 wheel).
 pandas-ta-classic>=0.6.0
 
 # --- Interfaces (Phases 7-8) ---
@@ -10773,10 +10982,10 @@ schedule>=1.2
 
 # --- Dev / tests ---
 pytest>=8.0
-`
----
+```
+
 ## FILE: run_dashboard.ps1
-`powershell
+```powershell
 # Launch PEA Sniper Terminal dashboard.
 # Streamlit opens the browser itself when headless=false — do NOT also Start-Process
 # (that caused a double browser tab).
@@ -10792,10 +11001,10 @@ if (-not (Test-Path $py)) {
 
 Write-Host "Starting PEA Sniper Terminal on http://localhost:8501 ..." -ForegroundColor Green
 & $py run "05_interfaces/terminal_dashboard.py" --server.headless false --browser.gatherUsageStats false --server.port 8501
-`
----
+```
+
 ## FILE: run_discord.py
-`python
+```python
 """Entry point to launch the PEA Sniper Terminal Discord Copilot.
 
 Usage:
@@ -10804,8 +11013,8 @@ Usage:
     2. Run:  py run_discord.py
 
 This starts the bot and keeps it connected. Actual signal alerts are pushed by
-the scheduler (Phase 9) calling `\`\copilot.send_signal_alert(...)`\`\. For a quick
-manual smoke test, pass --demo to post one fake alert on `\`\on_ready`\`\.
+the scheduler (Phase 9) calling ``copilot.send_signal_alert(...)``. For a quick
+manual smoke test, pass --demo to post one fake alert on ``on_ready``.
 """
 
 import asyncio
@@ -10889,10 +11098,10 @@ def _attach_demo(copilot: "DiscordCopilot") -> None:
 
 if __name__ == "__main__":
     main()
-`
----
+```
+
 ## FILE: seed_account.py
-`python
+```python
 """Account seeding CLI for PEA Sniper Terminal V-Prime.
 
 Bootstraps (or resets) the SQLite portfolio so the daemon, sizer and dashboard
@@ -10929,7 +11138,7 @@ logger = logging.getLogger("seed_account")
 
 
 def _parse_position(spec: str) -> Position:
-    """Parse a `\`\TICKER:QTY:AVG_PRICE[:SECTOR]`\`\ string into a Position."""
+    """Parse a ``TICKER:QTY:AVG_PRICE[:SECTOR]`` string into a Position."""
     parts = spec.split(":")
     if len(parts) < 3:
         raise argparse.ArgumentTypeError(
@@ -11022,13 +11231,151 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-`
----
+```
+
+## FILE: tools/build_llm_dump.py
+```python
+#!/usr/bin/env python3
+"""Regenerate PROJECT_FULL_DUMP_FOR_LLM.md for one-shot LLM context.
+
+Usage (from repo root):
+    python tools/build_llm_dump.py
+"""
+
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+OUT = ROOT / "PROJECT_FULL_DUMP_FOR_LLM.md"
+
+SKIP_DIRS = {
+    ".git",
+    "venv_x64",
+    "venv",
+    ".venv",
+    "__pycache__",
+    ".pytest_cache",
+    "node_modules",
+    ".cursor",
+    "database",
+    "mcps",
+    "agent-transcripts",
+    "terminals",
+}
+
+EXTS = {
+    ".py",
+    ".yaml",
+    ".yml",
+    ".toml",
+    ".md",
+    ".txt",
+    ".ps1",
+    ".json",
+    ".ini",
+    ".cfg",
+}
+
+NAME_ALLOW = {
+    "Dockerfile",
+    "docker-compose.yml",
+    "requirements.txt",
+    "api_keys.env.example",
+    ".gitignore",
+}
+
+# Never embed the dump inside itself, or huge generated noise.
+SKIP_FILES = {
+    "PROJECT_FULL_DUMP_FOR_LLM.md",
+}
+
+
+def _lang(path: Path) -> str:
+    return {
+        ".py": "python",
+        ".yaml": "yaml",
+        ".yml": "yaml",
+        ".toml": "toml",
+        ".md": "markdown",
+        ".txt": "text",
+        ".ps1": "powershell",
+        ".json": "json",
+        ".ini": "ini",
+        ".cfg": "ini",
+    }.get(path.suffix.lower(), "text")
+
+
+def _should_include(path: Path) -> bool:
+    if path.name in SKIP_FILES:
+        return False
+    if any(part in SKIP_DIRS for part in path.parts):
+        return False
+    if path.name in NAME_ALLOW:
+        return True
+    if path.suffix.lower() in EXTS:
+        # Prefer the example secrets file only (never real .env).
+        if path.suffix.lower() == ".env" or path.name.endswith(".env"):
+            return path.name.endswith(".env.example")
+        return True
+    return False
+
+
+def collect_files() -> list[Path]:
+    files: list[Path] = []
+    for path in sorted(ROOT.rglob("*")):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(ROOT)
+        if _should_include(rel):
+            files.append(rel)
+    return files
+
+
+def main() -> None:
+    files = collect_files()
+    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    lines: list[str] = [
+        "# PEA Sniper Terminal — Full Project Dump for LLM",
+        f"Root: `{ROOT}`",
+        f"Generated: {stamp}",
+        "One-shot context dump of source, configs, and docs (no venv, no DBs, no secrets).",
+        "---",
+        f"## File index ({len(files)} files)",
+    ]
+    for rel in files:
+        lines.append(f"- {rel.as_posix()}")
+    lines.append("")
+    lines.append("---")
+
+    for rel in files:
+        abs_path = ROOT / rel
+        try:
+            text = abs_path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            text = abs_path.read_text(encoding="utf-8", errors="replace")
+        # Fence safety: close any accidental triple-backticks in source.
+        safe = text.replace("``​`", "``\u200b`")
+        lines.append(f"## FILE: {rel.as_posix()}")
+        lines.append(f"``​`{_lang(rel)}")
+        lines.append(safe.rstrip() + "\n``​`")
+        lines.append("")
+
+    OUT.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+    size_kb = OUT.stat().st_size / 1024
+    print(f"Wrote {OUT.name}: {len(files)} files, {size_kb:.0f} KB")
+
+
+if __name__ == "__main__":
+    main()
+```
+
 ## FILE: tools/build_universe.py
-`python
+```python
 """Universe builder for PEA Sniper Terminal V-Prime.
 
-Writes `\`\config/pea_universe.yaml`\`\ from a CURATED, authoritative map of
+Writes ``config/pea_universe.yaml`` from a CURATED, authoritative map of
 Euronext Paris tickers (correctness > automation: yfinance search often returns
 low-liquidity foreign listings for French blue chips). Every ticker is validated
 against Yahoo Finance before being written, and any symbol that no longer returns
@@ -11299,13 +11646,13 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-`
----
-## FILE: tools/sync_universe_from_bourso.py
-`python
-"""Sync `\`\config/pea_universe.yaml`\`\ from Boursorama's PEA eligibility filter.
+```
 
-Harvests `\`\quotation_az_filter[peaEligibility]=1`\`\ across SRD / compartments /
+## FILE: tools/sync_universe_from_bourso.py
+```python
+"""Sync ``config/pea_universe.yaml`` from Boursorama's PEA eligibility filter.
+
+Harvests ``quotation_az_filter[peaEligibility]=1`` across SRD / compartments /
 PEA-PME, maps Bourso slugs to Yahoo tickers, validates live prices, and merges
 into the existing universe (keeps known sectors/names when possible).
 
@@ -11539,5 +11886,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-`
----
+```
