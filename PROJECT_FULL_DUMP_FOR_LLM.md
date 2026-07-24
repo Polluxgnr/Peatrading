@@ -1,6 +1,6 @@
 # PEA Sniper Terminal — Full Project Dump for LLM
 Root: `C:\Users\PolluxGronier\Downloads\pea_sniper_terminal`
-Generated: 2026-07-24 09:01 UTC
+Generated: 2026-07-24 09:03 UTC
 One-shot context dump of source, configs, and docs (no venv, no DBs, no secrets).
 ---
 ## File index (68 files)
@@ -629,7 +629,10 @@ class MacroAlphaSensor:
             resp = requests.get(
                 url,
                 headers={
-                    "User-Agent": "PEA-Sniper-Terminal/1.0",
+                    "User-Agent": (
+                        "Mozilla/5.0 (compatible; PEA-Sniper-Terminal/1.0; "
+                        "+https://github.com/Polluxgnr/Peatrading)"
+                    ),
                     "Accept": "application/json",
                 },
                 verify=False,
@@ -6216,11 +6219,10 @@ class NarrativeExplainer:
 
         blob = "\n".join(f"- {h}" for h in cleaned[:12])
         system_prompt = (
-            f"Tu es un analyste financier. Voici les derniers gros titres pour "
-            f"{ticker}. Fais une synthèse approfondie en 3 étapes : "
-            "1. Résumé de la situation. 2. Impact sur les fondamentaux. "
-            "3. Sentiment du marché. Rends le tout lisible avec des puces. "
-            "Pas de blabla."
+            f"Tu es un analyste senior chez un fonds PEA. Synthétise ces "
+            f"actualités pour {ticker} en 3 parties claires : "
+            "1. Enjeu principal. 2. Impact sur la valorisation. "
+            "3. Verdict/Sentiment global. Format : puces concises en français."
         )
         content = await openrouter_chat(
             messages=[
@@ -7405,6 +7407,94 @@ def get_deep_news_analysis(ticker: str, headlines: tuple[str, ...]) -> str:
         return f"Analyse IA indisponible ({exc})."
 
 
+@st.cache_data(ttl=86400, show_spinner=False)
+def get_deep_news_synthesis(ticker: str, headlines: tuple[str, ...]) -> str:
+    """Alias used by Exploration (same 24h cache key family as analysis)."""
+    return get_deep_news_analysis(ticker, headlines)
+
+
+def summarize_insider_activity(df: pd.DataFrame) -> dict:
+    """Aggregate buy/sell counts, shares and notional from an insider frame."""
+    empty = {
+        "n_buys": 0,
+        "n_sells": 0,
+        "buy_shares": 0.0,
+        "sell_shares": 0.0,
+        "buy_value": 0.0,
+        "sell_value": 0.0,
+        "net_shares": 0.0,
+        "net_value": 0.0,
+        "source": "",
+        "signal": "Neutre / données insuffisantes",
+        "tone": "muted",
+    }
+    if df is None or df.empty:
+        return empty
+    n_buys = n_sells = 0
+    buy_shares = sell_shares = 0.0
+    buy_value = sell_value = 0.0
+    for _, row in df.iterrows():
+        tx = str(row.get("Transaction") or row.get("Title") or "").casefold()
+        shares = pd.to_numeric(row.get("Shares"), errors="coerce")
+        value = pd.to_numeric(row.get("Value"), errors="coerce")
+        shares_f = float(shares) if pd.notna(shares) else 0.0
+        value_f = float(value) if pd.notna(value) else 0.0
+        is_buy = any(
+            k in tx
+            for k in ("achat", "acquisition", "buy", "purchase", "p-purchase")
+        )
+        is_sell = any(
+            k in tx
+            for k in ("vente", "cession", "sell", "sale", "dispos")
+        )
+        if is_buy and not is_sell:
+            n_buys += 1
+            buy_shares += abs(shares_f)
+            buy_value += abs(value_f)
+        elif is_sell and not is_buy:
+            n_sells += 1
+            sell_shares += abs(shares_f)
+            sell_value += abs(value_f)
+    net_shares = buy_shares - sell_shares
+    net_value = buy_value - sell_value
+    source = ""
+    if "Source" in df.columns and len(df):
+        source = str(df["Source"].iloc[0])
+    if n_buys > n_sells and n_buys >= 1:
+        signal = (
+            f"🟢 Signal de confiance : {n_buys} achat(s) de dirigeants détecté(s)"
+            + (f" (Volume : {buy_value:,.0f} €)" if buy_value > 0 else "")
+        )
+        tone = "green"
+    elif n_sells > n_buys and n_sells >= 1:
+        signal = (
+            f"🔴 Signal de prudence : {n_sells} vente(s) de dirigeants"
+            + (f" (Volume : {sell_value:,.0f} €)" if sell_value > 0 else "")
+        )
+        tone = "red"
+    elif n_buys or n_sells:
+        signal = (
+            f"🟡 Activité mixte : {n_buys} achat(s) / {n_sells} vente(s)"
+        )
+        tone = "amber"
+    else:
+        signal = "Neutre / classification transaction indisponible"
+        tone = "muted"
+    return {
+        "n_buys": n_buys,
+        "n_sells": n_sells,
+        "buy_shares": buy_shares,
+        "sell_shares": sell_shares,
+        "buy_value": buy_value,
+        "sell_value": sell_value,
+        "net_shares": net_shares,
+        "net_value": net_value,
+        "source": source,
+        "signal": signal,
+        "tone": tone,
+    }
+
+
 def morning_briefing_is_live(briefing: dict | None) -> bool:
     """True when scheduler wrote a usable Zeitgeist (not the placeholder)."""
     if not briefing:
@@ -7851,16 +7941,17 @@ def get_bourso_profile(ticker: str) -> dict:
 
 
 def _tv_symbol(ticker: str) -> str:
-    """Map a Yahoo ticker to a TradingView exchange:symbol string.
+    """Map a Yahoo ticker to a TradingView ``EXCHANGE:SYMBOL`` string.
 
-    Uses standard TV prefixes (EPA/EAM/…) — ``EURONEXT:KER`` often fails and
-    the embed silently falls back to AAPL.
+    Euronext Paris/Amsterdam use the ``EURONEXT:`` prefix (capitalized).
     """
+    if not ticker:
+        return "EURONEXT:CAC40"
     mapping = {
-        ".PA": "EPA",
-        ".AS": "EAM",
-        ".BR": "EBR",
-        ".LS": "ELI",
+        ".PA": "EURONEXT",
+        ".AS": "EURONEXT",
+        ".BR": "EURONEXT",
+        ".LS": "EURONEXT",
         ".DE": "XETR",
         ".MC": "BME",
         ".MI": "MIL",
@@ -7871,8 +7962,8 @@ def _tv_symbol(ticker: str) -> str:
     }
     for suffix, exch in mapping.items():
         if ticker.endswith(suffix):
-            return f"{exch}:{ticker[: -len(suffix)]}"
-    return ticker
+            return f"{exch}:{ticker[: -len(suffix)].upper()}"
+    return ticker.upper()
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -10215,9 +10306,10 @@ with tab_mkt:
     dossier = get_ticker_dossier(selected)
     logo_url = get_company_logo(selected)
     logo_html = (
-        f"<img src='{logo_url}' alt='logo' width='36' height='36' "
-        f"style='border-radius:6px;vertical-align:middle;margin-right:10px;"
-        f"background:#111;object-fit:contain;' "
+        f"<img src='{logo_url}' alt='logo' height='40' "
+        f"style='height:40px;width:auto;max-width:48px;border-radius:6px;"
+        f"vertical-align:middle;margin-right:12px;background:#111;"
+        f"object-fit:contain;' "
         f"onerror=\"this.style.display='none'\" />"
         if logo_url else ""
     )
@@ -10385,6 +10477,7 @@ with tab_mkt:
     </div>
     """
     components.html(chart_html, height=640)
+    st.caption(f"TradingView symbol injecté : `{tv}`")
 
     # TA widget + SMAs under chart
     tw1, tw2 = st.columns([1, 1])
@@ -10611,7 +10704,7 @@ with tab_mkt:
     else:
         st.caption("Empreinte indisponible (indicateurs / valorisation manquants).")
 
-    # News — deep LLM analysis (daily cache) + raw headlines list
+    # News — deep LLM synthesis (24h cache) + raw headlines (no heuristic pills)
     st.markdown(f"#### 📰 Actualites — {short_name(selected)}")
     news = get_recent_news(selected, limit=8)
     if news:
@@ -10621,10 +10714,10 @@ with tab_mkt:
             if str(n.get("title") or "").strip()
         )
         with st.expander(
-            "🧠 Analyse IA approfondie (Actualisée ce jour)", expanded=True
+            "🧠 Synthèse IA de l'Actualité (Mise à jour 24h)", expanded=True
         ):
             with st.spinner("Synthèse OpenRouter (cache 24h)…"):
-                deep = get_deep_news_analysis(selected, headlines_tuple)
+                deep = get_deep_news_synthesis(selected, headlines_tuple)
             st.markdown(
                 f"<div class='info-text' style='white-space:pre-wrap;'>{deep}</div>",
                 unsafe_allow_html=True,
@@ -10642,28 +10735,50 @@ with tab_mkt:
     else:
         st.caption("Aucune actualite majeure recente pour cet actif.")
 
-    # Insiders — AMF first (official), then FMP, then Yahoo
+    # --- AMF / Insider deep module ------------------------------------------
     st.markdown("---")
-    st.markdown("#### 🕵️ Activite des dirigeants (insiders)")
+    st.markdown("#### 🕵️ Activité des dirigeants (insiders) — module AMF")
     st.markdown(
         "<div class='info-text'><b>Cascade stricte : AMF BDIF → FMP → Yahoo</b>. "
-        "L'AMF est la source legale officielle FR. Si BDIF est bloque (WAF / "
-        "HTTP 500), le terminal bascule sur Financial Modeling Prep "
-        "(<code>FMP_API_KEY</code>), puis yfinance. Un achat net massif = "
-        "signal de confiance interne, pas un ordre automatique.</div>",
+        "Synthèse nette achats/ventes (12 mois approximatifs selon la source). "
+        "Signal de confiance interne — <b>pas un ordre automatique</b>.</div>",
         unsafe_allow_html=True,
     )
     insider_df = get_insider_data(selected)
     if insider_df.empty:
         st.warning(
             f"Aucune transaction insider pour {format_name(selected)}. "
-            "AMF/FMP/Yahoo n'ont rien renvoye (couverture variable sur .PA)."
+            "AMF/FMP/Yahoo n'ont rien renvoyé (couverture variable sur .PA)."
+        )
+        st.markdown(
+            "[🔍 Rechercher sur le BDIF Officiel AMF](https://bdif.amf-france.org/)"
         )
     else:
-        src_note = ""
-        if "Source" in insider_df.columns and len(insider_df):
-            src_note = f" · Source: {insider_df['Source'].iloc[0]}"
-        st.caption(f"{len(insider_df)} declaration(s){src_note}")
+        summary = summarize_insider_activity(insider_df)
+        accent = {
+            "green": _NEON,
+            "red": _RED,
+            "amber": _AMBER,
+            "muted": _MUTED,
+        }.get(summary.get("tone") or "muted", _MUTED)
+        st.markdown(
+            f"<div style='background:#0A0A0A;padding:14px 16px;margin-bottom:10px;"
+            f"border:1px solid #2A2A2A;border-left:4px solid {accent};"
+            f"font-family:Courier New,monospace;'>"
+            f"<div style='color:{_CYAN};font-size:11px;letter-spacing:1.5px;'>"
+            f"AMF / INSIDERS · {(summary.get('source') or 'multi-source')}</div>"
+            f"<div style='color:{_WHITE};font-size:15px;margin-top:8px;"
+            f"line-height:1.45;'>{summary.get('signal')}</div>"
+            f"<div style='color:{_MUTED};font-size:12px;margin-top:8px;'>"
+            f"Net actions : {summary.get('net_shares', 0):+,.0f} · "
+            f"Net valeur : {summary.get('net_value', 0):+,.0f} € · "
+            f"Achats {summary.get('n_buys', 0)} / Ventes {summary.get('n_sells', 0)}"
+            f"</div></div>",
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            "[🔍 Rechercher sur le BDIF Officiel AMF](https://bdif.amf-france.org/)"
+        )
         disp_cols = {}
         for src, dst in (("Insider", "Insider"), ("Position", "Poste"),
                          ("Transaction", "Transaction"), ("Title", "Titre"),
@@ -10699,9 +10814,13 @@ with tab_mkt:
                     colors.append(_WHITE)
             font_map = {"Transaction": colors}
         st.plotly_chart(
-            dark_table(disp, height=min(420, 44 + 30 * max(len(disp), 1)),
-                       font_color_map=font_map),
+            dark_table(
+                disp,
+                height=min(420, 44 + 30 * max(len(disp), 1)),
+                font_color_map=font_map,
+            ),
             width="stretch",
+            key=f"explore_insider_table_{selected}",
         )
 
     # Polymarket — real section

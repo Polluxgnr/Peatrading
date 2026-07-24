@@ -441,7 +441,10 @@ class MacroAlphaSensor:
             resp = requests.get(
                 url,
                 headers={
-                    "User-Agent": "PEA-Sniper-Terminal/1.0",
+                    "User-Agent": (
+                        "Mozilla/5.0 (compatible; PEA-Sniper-Terminal/1.0; "
+                        "+https://github.com/Polluxgnr/Peatrading)"
+                    ),
                     "Accept": "application/json",
                 },
                 verify=False,
