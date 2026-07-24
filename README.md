@@ -349,9 +349,9 @@ real Bloomberg conventions and easier on long sessions than green-everywhere.
 
 | Tab | Content |
 |-----|---------|
-| **General & Signaux** | **Morning Briefing (Zeitgeist)** en tête, suggestion adaptative, geo brief, **Entonnoir de décision**, **Command Center Approuver/Rejeter**, scores conviction, news, ledger |
+| **General & Signaux** | Morning Briefing, suggestion + expanders, ranking **[HORS BUDGET]**, **Pépites**, geo brief, funnel, Command Center |
 | **Portefeuille** | Equity curve + **Sharpe/DD/CAGR/Sortino**, sunburst, positions, wallet editor → SQLite |
-| **Exploration** | Liquid scan, ticker dossier, TA, what-if 1000€, **valorisation / zone d'achat**, **perf annuelle 10 ans**, **Empreinte Multi-Stratégies (radar 0–100)**, news, insiders, Polymarket |
+| **Exploration** | Dossier + **logo Clearbit**, TA, what-if, valorisation, 10y, radar, **analyse IA news 24h**, insiders, Polymarket |
 | **Univers** | Full list + perf sectorielle + **Tags** techniques (OVERSOLD / UPTREND) |
 | **Architecture & Logs** | Living docs + **log file picker / tail / copy** |
 
