@@ -1,6 +1,6 @@
 # PEA Sniper Terminal — Full Project Dump for LLM
 Root: `C:\Users\PolluxGronier\Downloads\pea_sniper_terminal`
-Generated: 2026-07-24 05:08 UTC
+Generated: 2026-07-24 09:00 UTC
 One-shot context dump of source, configs, and docs (no venv, no DBs, no secrets).
 ---
 ## File index (68 files)
@@ -6193,6 +6193,50 @@ class NarrativeExplainer:
         )
         return content or _FALLBACK
 
+    async def analyze_ticker_news_deep(
+        self, ticker: str, headlines: list[str]
+    ) -> str:
+        """Deep FR news brief for a ticker (3-step synthesis).
+
+        Args:
+            ticker: Yahoo ticker (e.g. ``KER.PA``).
+            headlines: Raw headline strings (deduped by the caller).
+
+        Returns:
+            str: Markdown-ish bullet analysis, or a graceful FR fallback.
+        """
+        cleaned = [str(h).strip() for h in (headlines or []) if str(h).strip()]
+        if not cleaned:
+            return "Aucune actualité récente à analyser pour ce titre."
+        if not self.api_key:
+            return (
+                "Analyse IA indisponible (OPENROUTER_API_KEY manquante). "
+                "Les titres bruts restent listés ci-dessous."
+            )
+
+        blob = "\n".join(f"- {h}" for h in cleaned[:12])
+        system_prompt = (
+            f"Tu es un analyste financier. Voici les derniers gros titres pour "
+            f"{ticker}. Fais une synthèse approfondie en 3 étapes : "
+            "1. Résumé de la situation. 2. Impact sur les fondamentaux. "
+            "3. Sentiment du marché. Rends le tout lisible avec des puces. "
+            "Pas de blabla."
+        )
+        content = await openrouter_chat(
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": blob},
+            ],
+            api_key=self.api_key,
+            model=self.model,
+            max_tokens=420,
+            temperature=0.3,
+        )
+        return content or (
+            "Analyse IA indisponible pour le moment. "
+            "Réessaie plus tard ou vérifie OpenRouter."
+        )
+
 
 if __name__ == "__main__":
     import asyncio
@@ -7321,6 +7365,44 @@ def load_morning_briefing() -> dict:
         return data or {}
     except Exception:  # noqa: BLE001
         return {}
+
+
+@st.cache_data(ttl=604800, show_spinner=False)
+def get_company_logo(ticker: str) -> str:
+    """Clearbit logo URL from Yahoo ``website`` domain (empty string on fail)."""
+    if not ticker:
+        return ""
+    try:
+        from urllib.parse import urlparse
+
+        info = yf.Ticker(ticker).info or {}
+        website = str(info.get("website") or "").strip()
+        if not website:
+            return ""
+        if "://" not in website:
+            website = "https://" + website
+        host = (urlparse(website).hostname or "").lower()
+        if host.startswith("www."):
+            host = host[4:]
+        if not host or "." not in host:
+            return ""
+        return f"https://logo.clearbit.com/{host}"
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def get_deep_news_analysis(ticker: str, headlines: tuple[str, ...]) -> str:
+    """Daily-cached deep LLM news brief for a ticker (Phase 22)."""
+    try:
+        from llm_explainer import NarrativeExplainer
+
+        explainer = NarrativeExplainer()
+        return asyncio.run(
+            explainer.analyze_ticker_news_deep(ticker, list(headlines or ()))
+        )
+    except Exception as exc:  # noqa: BLE001
+        return f"Analyse IA indisponible ({exc})."
 
 
 def morning_briefing_is_live(briefing: dict | None) -> bool:
@@ -8468,15 +8550,22 @@ def build_ta_explanation(ind: dict, alpha: dict | None = None) -> str:
 
 @st.cache_data(ttl=600, show_spinner=False)
 def score_ticker_opportunity(ticker: str, budget: float, vix: float) -> dict:
-    """Score an affordable PEA name via Phase 20 strategy fingerprint (0–100)."""
+    """Score a PEA name via Phase 20 strategy fingerprint (0–100).
+
+    Expensive names stay ranked; ``affordable`` flags cash fit instead of hiding.
+    """
     prices = get_last_prices((ticker,))
     px = prices.get(ticker)
-    if not px or px <= 0 or px > budget * 0.98:
+    if not px or px <= 0:
         return {
             "ticker": ticker, "price": px or 0.0, "score": 0,
-            "reco": "INACCESSIBLE", "why": "Prix hors budget ou indisponible.",
+            "reco": "INACCESSIBLE", "why": "Cours indisponible.",
             "kind": "?", "rsi": None, "vs_sma200": None, "weight_pct": 0.0,
+            "affordable": False,
         }
+
+    budget = float(budget or 0.0)
+    affordable = bool(budget > 0 and px <= budget)
 
     dossier = get_ticker_dossier(ticker)
     is_etf = bool(dossier.get("is_etf") or ticker in (
@@ -8491,16 +8580,13 @@ def score_ticker_opportunity(ticker: str, budget: float, vix: float) -> dict:
     base_score = mr * 0.35 + mom * 0.25 + qv * 0.20 + ins * 0.20
     if is_etf:
         base_score += 15.0  # diversification bonus (esp. MICRO)
-    if vix > _VIX_PANIC:
-        if not is_etf:
-            base_score -= 20.0
-        # ETFs: no panic penalty (safe haven relative to single names)
+    if vix > _VIX_PANIC and not is_etf:
+        base_score -= 20.0
 
-    # Soft cash-fit nudge (does not override ensemble)
-    weight = px / budget * 100 if budget else 100.0
-    if 8 <= weight <= 45:
+    weight = (px / budget * 100.0) if budget > 0 else 100.0
+    if affordable and 8 <= weight <= 45:
         base_score += 5.0
-    elif weight > 70 and not is_etf:
+    elif weight > 70 and not is_etf and affordable:
         base_score -= 8.0
 
     score = int(max(0, min(100, round(base_score))))
@@ -8529,7 +8615,12 @@ def score_ticker_opportunity(ticker: str, budget: float, vix: float) -> dict:
         why_bits.append("ETF +15 diversif.")
     if vix > _VIX_PANIC and not is_etf:
         why_bits.append(f"VIX panic −20 (VIX={vix:.1f})")
-    why_bits.append(f"1 part ≈ {weight:.0f}% cash")
+    if affordable:
+        why_bits.append(f"1 part ≈ {weight:.0f}% cash")
+    else:
+        why_bits.append(
+            f"HORS BUDGET (1 part={px:,.0f} € > cash {budget:,.0f} €)"
+        )
 
     ind = get_indicators(ticker) or {}
     rsi = ind.get("rsi")
@@ -8549,24 +8640,61 @@ def score_ticker_opportunity(ticker: str, budget: float, vix: float) -> dict:
         "rsi": rsi,
         "vs_sma200": vs200,
         "weight_pct": weight,
+        "affordable": affordable,
     }
 
 
 @st.cache_data(ttl=600, show_spinner=False)
 def rank_affordable_alternatives(budget: float, vix: float) -> list[dict]:
-    """Rank PEA ETFs + liquid stocks affordable with current cash."""
+    """Rank PEA ETFs + liquid stocks (expensive names kept, flagged)."""
     universe = [
         # Low-fee / PEA ETFs first (CW8 often unaffordable in MICRO)
         "EWLD.PA", "PAEEM.PA", "ESE.PA", "C50.PA", "PE500.PA", _CORE_TICKER,
         # Liquid large/mid caps
         "STLAP.PA", "ORA.PA", "ENGI.PA", "VIE.PA", "GLE.PA", "ACA.PA",
         "SAN.PA", "TTE.PA", "BNP.PA", "RNO.PA", "SGO.PA", "CAP.PA",
-        "AIR.PA", "HO.PA", "ML.PA", "BN.PA", "PUB.PA",
+        "AIR.PA", "HO.PA", "ML.PA", "BN.PA", "PUB.PA", "MC.PA", "OR.PA",
+        "KER.PA", "RMS.PA", "AI.PA",
     ]
     rows = [score_ticker_opportunity(t, budget, vix) for t in universe]
-    rows = [r for r in rows if r["reco"] != "INACCESSIBLE" and r["price"] > 0]
+    rows = [r for r in rows if r.get("price", 0) > 0]
     rows.sort(key=lambda r: r["score"], reverse=True)
     return rows
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def get_momentum_pepites(limit: int = 5) -> list[dict]:
+    """High-vol momentum names: vol_ann > 35 and Close > SMA50."""
+    watch = (
+        "STLAP.PA", "RNO.PA", "AIR.PA", "HO.PA", "CAP.PA", "DSY.PA",
+        "KER.PA", "MC.PA", "OR.PA", "PUB.PA", "ML.PA", "ALO.PA",
+        "GLE.PA", "ACA.PA", "BNP.PA", "SAN.PA", "ENGI.PA", "VIE.PA",
+        "SGO.PA", "TTE.PA", "SAF.PA", "EL.PA",
+    )
+    rows: list[dict] = []
+    for t in watch:
+        ind = get_indicators(t) or {}
+        vol = ind.get("vol_ann")
+        close = ind.get("close")
+        sma50 = ind.get("sma50")
+        rsi = ind.get("rsi")
+        if vol is None or close is None or sma50 is None:
+            continue
+        if float(vol) <= 35 or float(close) <= float(sma50):
+            continue
+        rows.append({
+            "ticker": t,
+            "vol_ann": float(vol),
+            "rsi": float(rsi) if rsi is not None else None,
+            "close": float(close),
+            "sma50": float(sma50),
+            "gap_sma50": (float(close) / float(sma50) - 1.0) * 100.0,
+        })
+    rows.sort(
+        key=lambda r: (r["vol_ann"], r["gap_sma50"], -(r["rsi"] or 50)),
+        reverse=True,
+    )
+    return rows[: max(1, limit)]
 
 
 def suggest_adaptive_portfolio(
@@ -9208,6 +9336,19 @@ with st.sidebar:
         st.cache_data.clear()
         st.rerun()
     st.markdown("---")
+    st.markdown("### 🔎 Commande `<GO>`")
+    _go_raw = st.text_input(
+        "Ticker",
+        value=st.session_state.get("go_ticker", ""),
+        placeholder="KER.PA",
+        label_visibility="collapsed",
+        key="go_cmd_input",
+    )
+    _go_click = st.button("GO → Exploration", type="primary", width="stretch")
+    if st.button("Ledger signaux", width="stretch"):
+        st.session_state["scroll_to_ledger"] = True
+    st.caption("Passe : `python main_scheduler.py --now`")
+    st.markdown("---")
     st.markdown("### \U0001F4CA Etat Systeme")
     st.metric("Univers", f"{len(universe_df)} titres",
               help="Nombre total d'actions/ETF eligibles PEA suivis par le bot.")
@@ -9220,6 +9361,16 @@ with st.sidebar:
     )
     if auto_refresh:
         st.caption(f"\u23F1\uFE0F Auto-refresh dans {refresh_secs}s")
+
+if _go_click and _go_raw.strip():
+    tok = _go_raw.strip().upper().replace("<GO>", "").replace("GO", "").strip()
+    if tok and not tok.endswith((".PA", ".AS", ".DE", ".MI", ".BR")) and "." not in tok:
+        cand = f"{tok}.PA"
+    else:
+        cand = tok
+    st.session_state["focus_ticker"] = cand
+    st.session_state["go_ticker"] = cand
+    st.toast(f"Fiche → {cand} (onglet Exploration)", icon="🔎")
 
 st.write("---")
 
@@ -9275,36 +9426,6 @@ st.markdown(
 """,
     unsafe_allow_html=True,
 )
-
-# Bloomberg-style <TICKER> <GO> — jump to Exploration dossier
-mc1, mc2, mc3, mc4 = st.columns([2.2, 0.7, 1.2, 1.2])
-with mc1:
-    _go_raw = st.text_input(
-        "Commande",
-        value=st.session_state.get("go_ticker", ""),
-        placeholder="MC.PA  <GO>  — fiche titre dans Exploration",
-        label_visibility="collapsed",
-        key="go_cmd_input",
-    )
-with mc2:
-    _go_click = st.button("GO", type="primary", width="stretch")
-with mc3:
-    if st.button("Ledger signaux", width="stretch"):
-        st.session_state["scroll_to_ledger"] = True
-with mc4:
-    st.caption("Passe manuelle : `python main_scheduler.py --now`")
-
-if _go_click and _go_raw.strip():
-    # Accept "MC.PA", "MC", "mc.pa GO"
-    tok = _go_raw.strip().upper().replace("<GO>", "").replace("GO", "").strip()
-    if tok and not tok.endswith((".PA", ".AS", ".DE", ".MI", ".BR")) and "." not in tok:
-        # Heuristic: French blue-chips default to .PA
-        cand = f"{tok}.PA"
-    else:
-        cand = tok
-    st.session_state["focus_ticker"] = cand
-    st.session_state["go_ticker"] = cand
-    st.toast(f"Fiche → {cand} (onglet Exploration)", icon="🔎")
 
 # =============================================================================
 # Tabs
@@ -9381,12 +9502,27 @@ with tab_gen:
 
     st.markdown("#### 🎯 Meilleur portefeuille suggere (adaptatif)")
     st.markdown(
-        f"<div class='eli5'>{suggestion.get('summary', '')}<br><br>"
-        f"<b style='color:{_AMBER};'>Pourquoi ce mode ({suggestion.get('mode')}) :</b> "
-        f"{suggestion.get('mode_why', '')}<br><br>"
-        f"{suggestion.get('cash_explain', '')}</div>",
+        f"<div class='eli5'>{suggestion.get('summary', '')}</div>",
         unsafe_allow_html=True,
     )
+    with st.expander("💡 Lire le détail de la stratégie", expanded=False):
+        st.markdown(
+            f"<div class='info-text'>"
+            f"<b style='color:{_AMBER};'>Pourquoi ce mode "
+            f"({suggestion.get('mode')}) :</b><br>"
+            f"{suggestion.get('mode_why', '')}<br><br>"
+            f"{suggestion.get('cash_explain', '')}</div>",
+            unsafe_allow_html=True,
+        )
+        with st.expander("📖 Comprendre cette recommandation", expanded=False):
+            st.caption(
+                "Le résumé reste visible ci-dessus. Ici : justification du mode "
+                "(MICRO/STARTER/…) et lecture cash / runway (court_why)."
+            )
+            st.markdown(
+                f"**mode_why:** {suggestion.get('mode_why', '—')}\n\n"
+                f"**cash_explain / court_why:** {suggestion.get('cash_explain', '—')}"
+            )
     sug_lines = suggestion.get("lines") or []
     if sug_lines:
         sdisp = pd.DataFrame([{
@@ -9425,7 +9561,10 @@ with tab_gen:
             "Type": a.get("kind", "?"),
             "Cours": f"{a['price']:,.2f} €",
             "Score": f"{a['score']}/100",
-            "Reco": a.get("reco", ""),
+            "Reco": (
+                f"{a.get('reco', '')}"
+                + ("" if a.get("affordable", True) else " [HORS BUDGET]")
+            ),
             "RSI": f"{a['rsi']:.0f}" if a.get("rsi") is not None else "—",
             "vs SMA200": (
                 f"{a['vs_sma200']:+.1f}%" if a.get("vs_sma200") is not None else "—"
@@ -9435,25 +9574,56 @@ with tab_gen:
         } for i, a in enumerate(alts)])
         reco_colors = []
         for a in alts:
-            r = a.get("reco")
-            reco_colors.append(
-                _NEON if r == "ACHETER" else
-                _AMBER if r == "SURVEILLER" else
-                _CYAN if r == "ATTENDRE" else _RED
-            )
+            if not a.get("affordable", True):
+                reco_colors.append(_MUTED)
+            else:
+                r = a.get("reco")
+                reco_colors.append(
+                    _NEON if r == "ACHETER" else
+                    _AMBER if r == "SURVEILLER" else
+                    _CYAN if r == "ATTENDRE" else _RED
+                )
         st.plotly_chart(
             dark_table(
                 adisp,
                 height=min(560, 64 + 36 * len(adisp)),
                 font_color_map={"Reco": reco_colors, "Score": reco_colors},
-                # Give "Pourquoi" the lion's share so ensemble reasons aren't clipped.
-                col_widths=[0.4, 1.5, 0.55, 0.7, 0.65, 0.9, 0.5, 0.75, 0.7, 3.6],
+                col_widths=[0.4, 1.5, 0.55, 0.7, 0.65, 1.2, 0.5, 0.75, 0.7, 3.4],
             ),
             width="stretch",
             key="gen_alternatives_ranking_table",
         )
+        # Phase 22: high-vol momentum pepites
+        st.markdown("#### 🚀 Pépites (Forte Volatilité & Momentum)")
+        st.markdown(
+            "<div class='info-text'>Filtre liquide : <b>vol annualisée &gt; 35%</b> "
+            "et <b>Close &gt; SMA50</b>. Ce n'est pas un ordre — juste un radar "
+            "de titres « chauds » à croiser avec l'empreinte.</div>",
+            unsafe_allow_html=True,
+        )
+        pepites = get_momentum_pepites(limit=5)
+        if pepites:
+            pdisp = pd.DataFrame([{
+                "Titre": format_name(p["ticker"]),
+                "Vol": f"{p['vol_ann']:.0f}%",
+                "RSI": f"{p['rsi']:.0f}" if p.get("rsi") is not None else "—",
+                "vs SMA50": f"{p['gap_sma50']:+.1f}%",
+                "Cours": f"{p['close']:,.2f} €",
+            } for p in pepites])
+            st.plotly_chart(
+                dark_table(
+                    pdisp,
+                    height=min(240, 56 + 34 * len(pdisp)),
+                    font_color_map={"Vol": [_AMBER] * len(pdisp)},
+                    col_widths=[2.2, 0.8, 0.7, 0.9, 1.0],
+                ),
+                width="stretch",
+                key="gen_pepites_table",
+            )
+        else:
+            st.caption("Aucune pépite sur le panier liquide (vol/SMA50).")
     else:
-        st.caption("Aucune alternative liquide sous ton cash actuel.")
+        st.caption("Aucune alternative liquide avec cours disponible.")
 
     horizons = suggestion.get("horizons") or {}
     if horizons:
@@ -9466,7 +9636,8 @@ with tab_gen:
                 key="gen_horizon_radio",
             )
             hz = horizons.get(h_choice) or {}
-            st.markdown(hz.get("why", ""), unsafe_allow_html=True)
+            with st.expander("📖 Comprendre cette recommandation", expanded=False):
+                st.markdown(hz.get("why", ""), unsafe_allow_html=True)
             hlines = hz.get("lines") or []
             if hlines:
                 hdf = pd.DataFrame([{
@@ -9516,12 +9687,11 @@ with tab_gen:
             st.markdown(
                 f"<div style='background:#0A0A0A;padding:10px 12px;margin-bottom:8px;"
                 f"border-left:4px solid {accent};border:1px solid #222;'>"
-                f"<b style='color:{_WHITE};'>{r['title']}</b>"
-                f"<div style='color:#D0D0D0;font-size:13px;margin-top:6px;"
-                f"line-height:1.4;'><b style='color:{_AMBER};'>Justification :</b> "
-                f"{r['why']}</div></div>",
+                f"<b style='color:{_WHITE};'>{r['title']}</b></div>",
                 unsafe_allow_html=True,
             )
+            with st.expander("📖 Comprendre cette recommandation", expanded=False):
+                st.markdown(r.get("why", "—"))
     with g2:
         st.markdown("#### 🌍 Briefing geopolitique / macro")
         with st.spinner("Briefing macro…"):
@@ -10043,8 +10213,17 @@ with tab_mkt:
     tv = _tv_symbol(selected)
 
     dossier = get_ticker_dossier(selected)
+    logo_url = get_company_logo(selected)
+    logo_html = (
+        f"<img src='{logo_url}' alt='logo' width='36' height='36' "
+        f"style='border-radius:6px;vertical-align:middle;margin-right:10px;"
+        f"background:#111;object-fit:contain;' "
+        f"onerror=\"this.style.display='none'\" />"
+        if logo_url else ""
+    )
     st.markdown(
-        f"<div class='eli5'><b style='color:{_CYAN};'>Qui est {dossier.get('name')} ?</b><br>"
+        f"<div class='eli5'>{logo_html}"
+        f"<b style='color:{_CYAN};'>Qui est {dossier.get('name')} ?</b><br>"
         f"{dossier.get('summary', '')}<br>"
         f"<span style='color:{_MUTED};'>"
         f"Secteur: {dossier.get('sector') or 'n/a'} · "
@@ -10052,15 +10231,16 @@ with tab_mkt:
         f"{' · ETF' if dossier.get('is_etf') else ''}</span></div>",
         unsafe_allow_html=True,
     )
-    cat1, cat2 = st.columns(2)
-    with cat1:
-        st.markdown("**News / catalyseurs qui aideraient**")
-        for c in dossier.get("catalysts") or []:
-            st.markdown(f"- {c}")
-    with cat2:
-        st.markdown("**Evenements a surveiller (ne pas vouloir)**")
-        for r in dossier.get("risk_events") or []:
-            st.markdown(f"- {r}")
+    with st.expander("📖 Catalyseurs & risques (dossier)", expanded=False):
+        cat1, cat2 = st.columns(2)
+        with cat1:
+            st.markdown("**News / catalyseurs qui aideraient**")
+            for c in dossier.get("catalysts") or []:
+                st.markdown(f"- {c}")
+        with cat2:
+            st.markdown("**Evenements a surveiller (ne pas vouloir)**")
+            for r in dossier.get("risk_events") or []:
+                st.markdown(f"- {r}")
 
     ind = get_indicators(selected)
     alpha = get_alpha_signals(selected)
@@ -10431,25 +10611,34 @@ with tab_mkt:
     else:
         st.caption("Empreinte indisponible (indicateurs / valorisation manquants).")
 
-    # News — full width, 2 columns (not a cramped side panel)
+    # News — deep LLM analysis (daily cache) + raw headlines list
     st.markdown(f"#### 📰 Actualites — {short_name(selected)}")
     news = get_recent_news(selected, limit=8)
     if news:
-        score_toggle = st.checkbox(
-            "Scorer l'impact (IA + mots-cles)",
-            value=True,
-            key="explore_score_news",
+        headlines_tuple = tuple(
+            str(n.get("title") or "").strip()
+            for n in news
+            if str(n.get("title") or "").strip()
         )
-        if score_toggle:
-            with st.spinner("Notation…"):
-                scores = [score_news_with_llm(selected, n["title"]) for n in news]
-        else:
-            scores = [heuristic_news_score(n["title"]) for n in news]
-        ranked = sorted(zip(news, scores), key=lambda x: abs(x[1] or 0), reverse=True)
-        ncol1, ncol2 = st.columns(2)
-        for i, (n, sc) in enumerate(ranked):
-            with (ncol1 if i % 2 == 0 else ncol2):
-                render_news_card(selected, n, sc)
+        with st.expander(
+            "🧠 Analyse IA approfondie (Actualisée ce jour)", expanded=True
+        ):
+            with st.spinner("Synthèse OpenRouter (cache 24h)…"):
+                deep = get_deep_news_analysis(selected, headlines_tuple)
+            st.markdown(
+                f"<div class='info-text' style='white-space:pre-wrap;'>{deep}</div>",
+                unsafe_allow_html=True,
+            )
+        with st.expander("Voir les titres sources", expanded=False):
+            for n in news:
+                title = n.get("title") or ""
+                link = n.get("link") or "#"
+                provider = n.get("provider") or ""
+                st.markdown(
+                    f"- [{title}]({link}) "
+                    f"<span style='color:#888;font-size:12px;'>{provider}</span>",
+                    unsafe_allow_html=True,
+                )
     else:
         st.caption("Aucune actualite majeure recente pour cet actif.")
 
@@ -15055,7 +15244,7 @@ if __name__ == "__main__":
 
 ## FILE: README.md
 ```markdown
-# PEA Sniper Terminal — V-Prime 3.0 (Phase 21)
+# PEA Sniper Terminal — V-Prime 3.0 (Phase 22)
 
 > **Sovereign execution. Kinetic risk management. Absolute quantitative transparency.**
 
@@ -15504,6 +15693,7 @@ sources over furtive HTML scraping.
 | **Ensemble conviction scoring** | ✅ Phase 20 — 4 axes, emit ≥65; radar + Command Center approve |
 | **What-if 1000€ + walk-forward scaffold** | ✅ Exploration simulator + `walk_forward_backtester.py` |
 | **Terminal polish (TV / zone / ranking / Polymarket)** | ✅ Phase 21 — EPA: ticker map, flat buy-zone fix, fingerprint ranking, SSL-tolerant Gamma |
+| **Smart UX + deep news + logos + pépites** | ✅ Phase 22 — expanders, Clearbit logos, LLM news 24h cache, HORS BUDGET ranking |
 | pytest + GitHub Actions CI | Expand coverage over time |
 
 ### Next (highest leverage)
@@ -15552,7 +15742,7 @@ Decision-support and educational tool only. **No automated execution. No financi
 advice.** You are solely responsible for every trade. Past or backtested results
 do not guarantee future performance.
 
-© 2026 Pollux Quantitative Research — V-Prime 3.0 (Phase 21).
+© 2026 Pollux Quantitative Research — V-Prime 3.0 (Phase 22).
 ```
 
 ## FILE: requirements.txt

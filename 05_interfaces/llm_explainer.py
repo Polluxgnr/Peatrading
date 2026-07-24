@@ -178,6 +178,50 @@ class NarrativeExplainer:
         )
         return content or _FALLBACK
 
+    async def analyze_ticker_news_deep(
+        self, ticker: str, headlines: list[str]
+    ) -> str:
+        """Deep FR news brief for a ticker (3-step synthesis).
+
+        Args:
+            ticker: Yahoo ticker (e.g. ``KER.PA``).
+            headlines: Raw headline strings (deduped by the caller).
+
+        Returns:
+            str: Markdown-ish bullet analysis, or a graceful FR fallback.
+        """
+        cleaned = [str(h).strip() for h in (headlines or []) if str(h).strip()]
+        if not cleaned:
+            return "Aucune actualité récente à analyser pour ce titre."
+        if not self.api_key:
+            return (
+                "Analyse IA indisponible (OPENROUTER_API_KEY manquante). "
+                "Les titres bruts restent listés ci-dessous."
+            )
+
+        blob = "\n".join(f"- {h}" for h in cleaned[:12])
+        system_prompt = (
+            f"Tu es un analyste financier. Voici les derniers gros titres pour "
+            f"{ticker}. Fais une synthèse approfondie en 3 étapes : "
+            "1. Résumé de la situation. 2. Impact sur les fondamentaux. "
+            "3. Sentiment du marché. Rends le tout lisible avec des puces. "
+            "Pas de blabla."
+        )
+        content = await openrouter_chat(
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": blob},
+            ],
+            api_key=self.api_key,
+            model=self.model,
+            max_tokens=420,
+            temperature=0.3,
+        )
+        return content or (
+            "Analyse IA indisponible pour le moment. "
+            "Réessaie plus tard ou vérifie OpenRouter."
+        )
+
 
 if __name__ == "__main__":
     import asyncio
