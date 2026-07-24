@@ -1,6 +1,6 @@
 # PEA Sniper Terminal — Full Project Dump for LLM
 Root: `C:\Users\PolluxGronier\Downloads\pea_sniper_terminal`
-Generated: 2026-07-24 09:03 UTC
+Generated: 2026-07-24 09:06 UTC
 One-shot context dump of source, configs, and docs (no venv, no DBs, no secrets).
 ---
 ## File index (68 files)
@@ -6219,10 +6219,11 @@ class NarrativeExplainer:
 
         blob = "\n".join(f"- {h}" for h in cleaned[:12])
         system_prompt = (
-            f"Tu es un analyste senior chez un fonds PEA. Synthétise ces "
-            f"actualités pour {ticker} en 3 parties claires : "
-            "1. Enjeu principal. 2. Impact sur la valorisation. "
-            "3. Verdict/Sentiment global. Format : puces concises en français."
+            f"Tu es un analyste financier senior. Voici les derniers gros titres "
+            f"pour {ticker}. Fais une analyse approfondie en 3 étapes claires : "
+            "1. Résumé des enjeux. 2. Impact sur la valorisation/fondamentaux. "
+            "3. Verdict de marché. Explique ton raisonnement. Sois précis, "
+            "professionnel et structure avec des puces."
         )
         content = await openrouter_chat(
             messages=[
@@ -7817,7 +7818,11 @@ def simulate_buy_what_if(
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def get_recent_news(symbol: str, limit: int = 6) -> list[dict]:
-    """Fetch recent news: Boursorama → Google News RSS → Yahoo Finance."""
+    """Fetch diverse news: always merge Boursorama + Google News + Yahoo.
+
+    Sources are concatenated then deduped by title (case-insensitive). Never
+    short-circuits after Boursorama alone — diversity first.
+    """
     collected: list[dict] = []
     seen_titles: set[str] = set()
 
@@ -7833,7 +7838,7 @@ def get_recent_news(symbol: str, limit: int = 6) -> list[dict]:
             "provider": provider,
         })
 
-    # --- Primary: Boursorama scraper ----------------------------------------
+    # --- Boursorama ---------------------------------------------------------
     try:
         scrapers_dir = _ROOT / "00_data_sensors" / "scrapers"
         if str(scrapers_dir) not in sys.path:
@@ -7862,67 +7867,61 @@ def get_recent_news(symbol: str, limit: int = 6) -> list[dict]:
     except Exception:  # noqa: BLE001
         pass
 
-    # --- Google News + European press RSS (FR) ------------------------------
-    if len(collected) < limit:
-        try:
-            import urllib.parse
-            import urllib.request
-            import xml.etree.ElementTree as ET
+    # --- Google News + European press RSS (always attempted) ----------------
+    try:
+        import urllib.parse
+        import urllib.request
+        import xml.etree.ElementTree as ET
 
-            name = short_name(symbol)
-            queries = [
-                f"{symbol} OR {name} when:7d",
-                f"{name} (bourse OR CAC OR PEA) when:7d",
-                f"{name} site:lesechos.fr OR site:latribune.fr OR site:reuters.com when:14d",
-            ]
-            for q in queries:
-                if len(collected) >= limit:
-                    break
-                url = (
-                    "https://news.google.com/rss/search?"
-                    + urllib.parse.urlencode({
-                        "q": q, "hl": "fr", "gl": "FR", "ceid": "FR:fr",
-                    })
-                )
-                req = urllib.request.Request(
-                    url,
-                    headers={"User-Agent": "PEA-Sniper-Terminal/1.0"},
-                )
-                with urllib.request.urlopen(req, timeout=8) as resp:
-                    root = ET.fromstring(resp.read())
-                for item in root.findall(".//item")[:8]:
-                    title = (item.findtext("title") or "").strip()
-                    link = (item.findtext("link") or "#").strip()
-                    pub = (item.findtext("pubDate") or "")[:16]
-                    source = item.find("source")
-                    src = (source.text if source is not None else None) or "Google News"
-                    _push(title, link, pub or "Recent", f"Google News · {src}")
-        except Exception:  # noqa: BLE001
-            pass
+        name = short_name(symbol)
+        queries = [
+            f"{symbol} OR {name} when:7d",
+            f"{name} (bourse OR CAC OR PEA) when:7d",
+            f"{name} site:lesechos.fr OR site:latribune.fr OR site:reuters.com when:14d",
+        ]
+        for q in queries:
+            url = (
+                "https://news.google.com/rss/search?"
+                + urllib.parse.urlencode({
+                    "q": q, "hl": "fr", "gl": "FR", "ceid": "FR:fr",
+                })
+            )
+            req = urllib.request.Request(
+                url,
+                headers={"User-Agent": "PEA-Sniper-Terminal/1.0"},
+            )
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                root = ET.fromstring(resp.read())
+            for item in root.findall(".//item")[:8]:
+                title = (item.findtext("title") or "").strip()
+                link = (item.findtext("link") or "#").strip()
+                pub = (item.findtext("pubDate") or "")[:16]
+                source = item.find("source")
+                src = (source.text if source is not None else None) or "Google News"
+                _push(title, link, pub or "Recent", f"Google News · {src}")
+    except Exception:  # noqa: BLE001
+        pass
 
-    # --- Fallback: yfinance -------------------------------------------------
-    if len(collected) < limit:
-        try:
-            raw = yf.Ticker(symbol).news or []
-            for n in raw:
-                content = n.get("content", n)
-                title = content.get("title") or n.get("title") or ""
-                link = (
-                    content.get("clickThroughUrl", {}).get("url")
-                    or content.get("canonicalUrl", {}).get("url")
-                    or n.get("link")
-                    or "#"
-                )
-                date_str = content.get("pubDate") or content.get("displayTime") or ""
-                provider = (content.get("provider") or {}).get("displayName", "")
-                _push(
-                    title, link, (date_str or "")[:10] or "Recent",
-                    provider or "Yahoo Finance",
-                )
-                if len(collected) >= limit:
-                    break
-        except Exception:  # noqa: BLE001
-            pass
+    # --- Yahoo Finance (always attempted) -----------------------------------
+    try:
+        raw = yf.Ticker(symbol).news or []
+        for n in raw:
+            content = n.get("content", n)
+            title = content.get("title") or n.get("title") or ""
+            link = (
+                content.get("clickThroughUrl", {}).get("url")
+                or content.get("canonicalUrl", {}).get("url")
+                or n.get("link")
+                or "#"
+            )
+            date_str = content.get("pubDate") or content.get("displayTime") or ""
+            provider = (content.get("provider") or {}).get("displayName", "")
+            _push(
+                title, link, (date_str or "")[:10] or "Recent",
+                provider or "Yahoo Finance",
+            )
+    except Exception:  # noqa: BLE001
+        pass
 
     return collected[:limit]
 
@@ -8656,7 +8655,7 @@ def score_ticker_opportunity(ticker: str, budget: float, vix: float) -> dict:
         }
 
     budget = float(budget or 0.0)
-    affordable = bool(budget > 0 and px <= budget)
+    affordable = bool(budget > 0 and px <= budget * 0.98)
 
     dossier = get_ticker_dossier(ticker)
     is_etf = bool(dossier.get("is_etf") or ticker in (
@@ -9290,7 +9289,7 @@ _tape_html = f"""
   <div class="tradingview-widget-container__widget"></div>
   <script type="text/javascript"
     src="https://s3.tradingview.com/external-embedding/embed-widget-ticker-tape.js" async>
-  {{"symbols":[{_tape_symbols}],"showSymbolLogo":true,"colorTheme":"dark",
+  {{"symbols":[{_tape_symbols}],"showSymbolLogo":false,"colorTheme":"dark",
    "isTransparent":true,"displayMode":"adaptive","locale":"fr"}}
   </script>
 </div>
@@ -9427,15 +9426,6 @@ with st.sidebar:
         st.cache_data.clear()
         st.rerun()
     st.markdown("---")
-    st.markdown("### 🔎 Commande `<GO>`")
-    _go_raw = st.text_input(
-        "Ticker",
-        value=st.session_state.get("go_ticker", ""),
-        placeholder="KER.PA",
-        label_visibility="collapsed",
-        key="go_cmd_input",
-    )
-    _go_click = st.button("GO → Exploration", type="primary", width="stretch")
     if st.button("Ledger signaux", width="stretch"):
         st.session_state["scroll_to_ledger"] = True
     st.caption("Passe : `python main_scheduler.py --now`")
@@ -9452,16 +9442,6 @@ with st.sidebar:
     )
     if auto_refresh:
         st.caption(f"\u23F1\uFE0F Auto-refresh dans {refresh_secs}s")
-
-if _go_click and _go_raw.strip():
-    tok = _go_raw.strip().upper().replace("<GO>", "").replace("GO", "").strip()
-    if tok and not tok.endswith((".PA", ".AS", ".DE", ".MI", ".BR")) and "." not in tok:
-        cand = f"{tok}.PA"
-    else:
-        cand = tok
-    st.session_state["focus_ticker"] = cand
-    st.session_state["go_ticker"] = cand
-    st.toast(f"Fiche → {cand} (onglet Exploration)", icon="🔎")
 
 st.write("---")
 
@@ -9540,7 +9520,8 @@ with tab_gen:
 
     # --- Phase 19: Morning Briefing (Zeitgeist) — top of General ------------
     st.markdown("#### 🗞️ Morning Briefing (Zeitgeist)")
-    briefing = load_morning_briefing()
+    with st.spinner("Synchronisation du Morning Briefing..."):
+        briefing = load_morning_briefing()
     if not morning_briefing_is_live(briefing):
         st.caption("Briefing matinal non disponible aujourd'hui.")
     else:
@@ -9685,7 +9666,7 @@ with tab_gen:
             key="gen_alternatives_ranking_table",
         )
         # Phase 22: high-vol momentum pepites
-        st.markdown("#### 🚀 Pépites (Forte Volatilité & Momentum)")
+        st.markdown("#### 🚀 Pépites (Forte Volatilité & Croissance)")
         st.markdown(
             "<div class='info-text'>Filtre liquide : <b>vol annualisée &gt; 35%</b> "
             "et <b>Close &gt; SMA50</b>. Ce n'est pas un ordre — juste un radar "
@@ -10704,32 +10685,36 @@ with tab_mkt:
     else:
         st.caption("Empreinte indisponible (indicateurs / valorisation manquants).")
 
-    # News — deep LLM synthesis (24h cache) + raw headlines (no heuristic pills)
+    # News — deep LLM synthesis (24h cache) + raw multi-source headlines
     st.markdown(f"#### 📰 Actualites — {short_name(selected)}")
-    news = get_recent_news(selected, limit=8)
+    news = get_recent_news(selected, limit=10)
     if news:
         headlines_tuple = tuple(
             str(n.get("title") or "").strip()
             for n in news
             if str(n.get("title") or "").strip()
         )
-        with st.expander(
-            "🧠 Synthèse IA de l'Actualité (Mise à jour 24h)", expanded=True
-        ):
-            with st.spinner("Synthèse OpenRouter (cache 24h)…"):
-                deep = get_deep_news_synthesis(selected, headlines_tuple)
-            st.markdown(
-                f"<div class='info-text' style='white-space:pre-wrap;'>{deep}</div>",
-                unsafe_allow_html=True,
-            )
-        with st.expander("Voir les titres sources", expanded=False):
+        with st.spinner("Analyse approfondie par l'IA en cours..."):
+            deep = get_deep_news_synthesis(selected, headlines_tuple)
+        st.markdown(
+            f"<div style='background:#0A0A0A;padding:16px;margin-bottom:12px;"
+            f"border:1px solid #2A2A2A;border-left:4px solid {_CYAN};"
+            f"color:#E8E8E8;line-height:1.55;font-size:14px;white-space:pre-wrap;'>"
+            f"<div style='color:{_CYAN};font-size:11px;letter-spacing:1.5px;"
+            f"margin-bottom:8px;'>🧠 SYNTHÈSE IA · CACHE 24H</div>"
+            f"{deep}</div>",
+            unsafe_allow_html=True,
+        )
+        with st.expander("Titres sources (Boursorama / Google / Yahoo)", expanded=False):
             for n in news:
                 title = n.get("title") or ""
                 link = n.get("link") or "#"
                 provider = n.get("provider") or ""
+                date = n.get("date") or ""
                 st.markdown(
-                    f"- [{title}]({link}) "
-                    f"<span style='color:#888;font-size:12px;'>{provider}</span>",
+                    f"- [{title}]({link})  \n"
+                    f"  <span style='color:#888;font-size:12px;'>"
+                    f"{provider} · {date}</span>",
                     unsafe_allow_html=True,
                 )
     else:

@@ -201,10 +201,11 @@ class NarrativeExplainer:
 
         blob = "\n".join(f"- {h}" for h in cleaned[:12])
         system_prompt = (
-            f"Tu es un analyste senior chez un fonds PEA. Synthétise ces "
-            f"actualités pour {ticker} en 3 parties claires : "
-            "1. Enjeu principal. 2. Impact sur la valorisation. "
-            "3. Verdict/Sentiment global. Format : puces concises en français."
+            f"Tu es un analyste financier senior. Voici les derniers gros titres "
+            f"pour {ticker}. Fais une analyse approfondie en 3 étapes claires : "
+            "1. Résumé des enjeux. 2. Impact sur la valorisation/fondamentaux. "
+            "3. Verdict de marché. Explique ton raisonnement. Sois précis, "
+            "professionnel et structure avec des puces."
         )
         content = await openrouter_chat(
             messages=[
