@@ -418,6 +418,12 @@ st.markdown(
     .mission-title {{ color:{_CYAN}; font-size:11px; letter-spacing:2px;
         text-transform:uppercase; margin-bottom:8px; }}
     .go-row input {{ font-family:'Courier New',monospace !important; }}
+
+    /* Primary buttons: black text on Streamlit's bright primary fill */
+    button[kind="primary"] p {{ color: #000000 !important; font-weight: 800; }}
+    div[data-testid="stButton"] button[kind="primary"] {{
+        font-weight: 800;
+    }}
 </style>
 """,
     unsafe_allow_html=True,
@@ -467,7 +473,7 @@ def dark_table(display_df: pd.DataFrame, height: int | None = None,
             values=[display_df[c].tolist() for c in headers],
             fill_color=_BG,
             font=dict(color=col_colors, size=12, family="Courier New"),
-            align="left", line_color=_GRID, height=30,
+            align="left", line_color=_GRID, height=36,
         ),
     )])
     fig.update_layout(
@@ -894,6 +900,12 @@ def get_valuation_metrics(ticker: str) -> dict:
             buy_low = target_low * 0.92 if buy_low is None else buy_low
         elif w52_low is not None:
             buy_high = w52_low * 1.08
+
+        # Flat band fallback: Yahoo often omits targetLow → identical bounds.
+        if buy_high is not None and buy_low is not None and buy_high <= buy_low * 1.01:
+            buy_high = buy_low * 1.05
+        if buy_low is not None and buy_high is None:
+            buy_high = buy_low * 1.05
 
         # Trailing 1M / 1Y returns from daily history (robust empty on failure).
         ret_1m = None
@@ -1522,10 +1534,24 @@ def get_bourso_profile(ticker: str) -> dict:
 
 
 def _tv_symbol(ticker: str) -> str:
-    """Map a Yahoo ticker to a TradingView exchange:symbol string."""
-    mapping = {".PA": "EURONEXT", ".AS": "EURONEXT", ".BR": "EURONEXT",
-               ".LS": "EURONEXT", ".DE": "XETR", ".MC": "BME", ".MI": "MIL",
-               ".HE": "OMXHEX", ".IR": "EURONEXTDUBLIN"}
+    """Map a Yahoo ticker to a TradingView exchange:symbol string.
+
+    Uses standard TV prefixes (EPA/EAM/…) — ``EURONEXT:KER`` often fails and
+    the embed silently falls back to AAPL.
+    """
+    mapping = {
+        ".PA": "EPA",
+        ".AS": "EAM",
+        ".BR": "EBR",
+        ".LS": "ELI",
+        ".DE": "XETR",
+        ".MC": "BME",
+        ".MI": "MIL",
+        ".HE": "OMXHEX",
+        ".IR": "EURONEXTDUBLIN",
+        ".SW": "SIX",
+        ".L": "LSE",
+    }
     for suffix, exch in mapping.items():
         if ticker.endswith(suffix):
             return f"{exch}:{ticker[: -len(suffix)]}"
@@ -2207,87 +2233,42 @@ def build_ta_explanation(ind: dict, alpha: dict | None = None) -> str:
 
 @st.cache_data(ttl=600, show_spinner=False)
 def score_ticker_opportunity(ticker: str, budget: float, vix: float) -> dict:
-    """Score an affordable PEA name for MICRO/STARTER suggestions (0-100)."""
+    """Score an affordable PEA name via Phase 20 strategy fingerprint (0–100)."""
     prices = get_last_prices((ticker,))
     px = prices.get(ticker)
     if not px or px <= 0 or px > budget * 0.98:
         return {
             "ticker": ticker, "price": px or 0.0, "score": 0,
             "reco": "INACCESSIBLE", "why": "Prix hors budget ou indisponible.",
-            "kind": "?", "rsi": None, "vs_sma200": None,
+            "kind": "?", "rsi": None, "vs_sma200": None, "weight_pct": 0.0,
         }
-    ind = get_indicators(ticker) or {}
+
     dossier = get_ticker_dossier(ticker)
     is_etf = bool(dossier.get("is_etf") or ticker in (
         _CORE_TICKER, "EWLD.PA", "PAEEM.PA", "ESE.PA", "C50.PA", "PE500.PA",
     ))
-    score = 40.0
-    reasons: list[str] = []
-    rsi = ind.get("rsi")
-    close = ind.get("close") or px
-    sma5, sma200 = ind.get("sma5"), ind.get("sma200")
-    vol = ind.get("vol_ann")
+    fingerprint = get_strategy_fingerprint(ticker) or {}
+    mr = float(fingerprint.get("Mean Reversion") or 0)
+    mom = float(fingerprint.get("Momentum") or 0)
+    qv = float(fingerprint.get("Quality/Value") or 0)
+    ins = float(fingerprint.get("Insider Confidence") or 0)
 
+    base_score = mr * 0.35 + mom * 0.25 + qv * 0.20 + ins * 0.20
     if is_etf:
-        score += 18
-        reasons.append("ETF = diversification (mieux qu'1 action seule en MICRO)")
-    else:
-        score += 4
-        reasons.append("Action individuelle — risque titre concentre")
+        base_score += 15.0  # diversification bonus (esp. MICRO)
+    if vix > _VIX_PANIC:
+        if not is_etf:
+            base_score -= 20.0
+        # ETFs: no panic penalty (safe haven relative to single names)
 
-    if rsi is not None:
-        if rsi < 30:
-            score += 22
-            reasons.append(f"RSI {rsi:.0f} survendu (setup MRE)")
-        elif rsi < 45:
-            score += 12
-            reasons.append(f"RSI {rsi:.0f} plutot calme")
-        elif rsi > 70:
-            score -= 18
-            reasons.append(f"RSI {rsi:.0f} surachete — eviter d'acheter")
-        else:
-            score += 4
-            reasons.append(f"RSI {rsi:.0f} neutre")
-
-    vs200 = None
-    if sma200 and close:
-        vs200 = (close / sma200 - 1) * 100
-        if close > sma200:
-            score += 14
-            reasons.append(f"Au-dessus SMA200 ({vs200:+.1f}%)")
-        else:
-            score -= 8 if not is_etf else 2
-            reasons.append(f"Sous SMA200 ({vs200:+.1f}%)")
-
-    if sma5 and close:
-        if close > sma5:
-            score += 8
-            reasons.append("Momentum court terme OK (Close>SMA5)")
-        else:
-            score -= 6
-            reasons.append("Momentum faible (Close<SMA5)")
-
-    if vol is not None:
-        if vol > 45 and not is_etf:
-            score -= 10
-            reasons.append(f"Vol elevee ({vol:.0f}%)")
-        elif vol < 25:
-            score += 4
-
-    # Prefer leaving cash runway (cost 8–45% of budget).
-    weight = px / budget * 100 if budget else 100
+    # Soft cash-fit nudge (does not override ensemble)
+    weight = px / budget * 100 if budget else 100.0
     if 8 <= weight <= 45:
-        score += 10
-        reasons.append(f"1 part = {weight:.0f}% du cash — laisse un runway")
-    elif weight > 70:
-        score -= 12
-        reasons.append(f"1 part = {weight:.0f}% — trop concentre")
+        base_score += 5.0
+    elif weight > 70 and not is_etf:
+        base_score -= 8.0
 
-    if vix > _VIX_PANIC and not is_etf:
-        score -= 20
-        reasons.append("VIX panic — privilegier ETF/cash")
-
-    score = int(max(0, min(100, round(score))))
+    score = int(max(0, min(100, round(base_score))))
     if score >= 72:
         reco = "ACHETER"
     elif score >= 55:
@@ -2297,12 +2278,38 @@ def score_ticker_opportunity(ticker: str, budget: float, vix: float) -> dict:
     else:
         reco = "EVITER"
 
+    axes = {
+        "Mean Reversion": mr,
+        "Momentum": mom,
+        "Quality/Value": qv,
+        "Insider Confidence": ins,
+    }
+    top_name, top_val = max(axes.items(), key=lambda kv: kv[1])
+    why_bits = [
+        f"Empreinte {score}/100 (MR {mr:.0f} · Mom {mom:.0f} · "
+        f"Q/V {qv:.0f} · Ins {ins:.0f})",
+        f"Axe dominant: {top_name} ({top_val:.0f}/100)",
+    ]
+    if is_etf:
+        why_bits.append("ETF +15 diversif.")
+    if vix > _VIX_PANIC and not is_etf:
+        why_bits.append(f"VIX panic −20 (VIX={vix:.1f})")
+    why_bits.append(f"1 part ≈ {weight:.0f}% cash")
+
+    ind = get_indicators(ticker) or {}
+    rsi = ind.get("rsi")
+    close = ind.get("close") or px
+    sma200 = ind.get("sma200")
+    vs200 = None
+    if sma200 and close:
+        vs200 = (close / sma200 - 1) * 100
+
     return {
         "ticker": ticker,
         "price": float(px),
         "score": score,
         "reco": reco,
-        "why": " · ".join(reasons[:4]),
+        "why": " · ".join(why_bits),
         "kind": "ETF" if is_etf else "Action",
         "rsi": rsi,
         "vs_sma200": vs200,
@@ -2528,6 +2535,50 @@ def suggest_adaptive_portfolio(
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
+@st.cache_data(ttl=86400, show_spinner=False)
+def _french_dossier_summary(ticker: str, name: str, english: str) -> str:
+    """Translate/compress Yahoo longBusinessSummary to 3 short FR sentences.
+
+    Falls back to the English snippet if OpenRouter is unavailable — never blocks.
+    """
+    text = (english or "").strip()
+    if not text:
+        return ""
+    # Already looks French enough — keep as-is.
+    fr_markers = (" est ", " une ", " des ", " société", " groupe", " dans ")
+    if sum(1 for m in fr_markers if m in text.casefold()) >= 2:
+        return text[:700]
+    api_key = None
+    try:
+        import os
+        api_key = os.getenv("OPENROUTER_API_KEY")
+    except Exception:  # noqa: BLE001
+        api_key = None
+    if not api_key:
+        return text[:700]
+    try:
+        from llm_explainer import openrouter_chat
+
+        prompt = (
+            f"Traduis et synthétise en français, exactement 3 phrases courtes, "
+            f"le profil de {name} ({ticker}) pour un investisseur PEA. "
+            f"Pas de blabla, pas d'anglais.\n\n{text[:1200]}"
+        )
+        out = asyncio.run(openrouter_chat(
+            [
+                {"role": "system", "content": "Tu es un rédacteur financier FR concis."},
+                {"role": "user", "content": prompt},
+            ],
+            api_key=api_key,
+            max_tokens=220,
+            temperature=0.2,
+        ))
+        cleaned = (out or "").strip()
+        return cleaned[:700] if cleaned else text[:700]
+    except Exception:  # noqa: BLE001
+        return text[:700]
+
+
 def get_ticker_dossier(ticker: str) -> dict:
     """Company identity + catalysts + risk events (yfinance + heuristics)."""
     out: dict = {
@@ -2553,7 +2604,7 @@ def get_ticker_dossier(ticker: str) -> dict:
         "ETF" in name.upper() or "UCITS" in name.upper() or ticker == _CORE_TICKER
     )
     if summary:
-        out["summary"] = summary
+        out["summary"] = _french_dossier_summary(ticker, name, summary)
     elif out["is_etf"] or ticker == _CORE_TICKER:
         out["summary"] = (
             f"{name} est un ETF eligible PEA. Il replique un indice large "
@@ -2669,18 +2720,31 @@ def get_polymarket_macro(limit: int = 8) -> list[dict]:
     """Fetch live macro-relevant Polymarket events (Gamma API, no auth)."""
     try:
         import json
-        import urllib.request
+
+        import requests as _req
+        import urllib3
+
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
         url = (
             "https://gamma-api.polymarket.com/events?"
             "active=true&closed=false&order=volume24hr&ascending=false&limit=50"
         )
-        req = urllib.request.Request(
+        resp = _req.get(
             url,
-            headers={"User-Agent": "PEA-Sniper-Terminal/1.0", "Accept": "application/json"},
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (compatible; PEA-Sniper-Terminal/1.0; "
+                    "+https://github.com/Polluxgnr/Peatrading)"
+                ),
+                "Accept": "application/json",
+            },
+            verify=False,
+            timeout=10,
         )
-        with urllib.request.urlopen(req, timeout=8) as resp:
-            events = json.loads(resp.read().decode("utf-8"))
+        if resp.status_code != 200:
+            return []
+        events = resp.json()
         if not isinstance(events, list):
             return []
 
@@ -3113,8 +3177,9 @@ with tab_gen:
     st.markdown("##### Classement des alternatives achetable (score 0–100)")
     st.markdown(
         "<div class='info-text'>ETF PEA (EWLD, PAEEM, ESE, C50…) vs actions "
-        "liquides. Score = RSI + tendance SMA200 + momentum + fit cash + "
-        "bonus diversification ETF. <b>ACHETER / SURVEILLER / ATTENDRE / EVITER</b>. "
+        "liquides. Score = <b>empreinte multi-stratégies</b> "
+        "(MR 35% + Mom 25% + Q/V 20% + Insiders 20%) + bonus ETF / pénalité VIX. "
+        "<b>ACHETER / SURVEILLER / ATTENDRE / EVITER</b>. "
         "Toujours 1 part max en MICRO + cash runway.</div>",
         unsafe_allow_html=True,
     )
@@ -3131,7 +3196,7 @@ with tab_gen:
                 f"{a['vs_sma200']:+.1f}%" if a.get("vs_sma200") is not None else "—"
             ),
             "Poids 1 part": f"{a.get('weight_pct', 0):.0f}%",
-            "Pourquoi": str(a.get("why", ""))[:110],
+            "Pourquoi": str(a.get("why", ""))[:180],
         } for i, a in enumerate(alts)])
         reco_colors = []
         for a in alts:
@@ -3142,9 +3207,13 @@ with tab_gen:
                 _CYAN if r == "ATTENDRE" else _RED
             )
         st.plotly_chart(
-            dark_table(adisp, height=min(520, 56 + 32 * len(adisp)),
-                       font_color_map={"Reco": reco_colors, "Score": reco_colors},
-                       col_widths=[0.5, 2.0, 0.7, 0.8, 0.8, 1.0, 0.6, 0.9, 0.8, 2.4]),
+            dark_table(
+                adisp,
+                height=min(560, 64 + 36 * len(adisp)),
+                font_color_map={"Reco": reco_colors, "Score": reco_colors},
+                # Give "Pourquoi" the lion's share so ensemble reasons aren't clipped.
+                col_widths=[0.4, 1.5, 0.55, 0.7, 0.65, 0.9, 0.5, 0.75, 0.7, 3.6],
+            ),
             width="stretch",
             key="gen_alternatives_ranking_table",
         )
@@ -3882,10 +3951,11 @@ with tab_mkt:
                 unsafe_allow_html=True,
             )
 
-    # Full-width TradingView chart
+    # Full-width TradingView chart (unique container id per ticker → no AAPL sticky)
+    _tv_cid = f"tv_chart_explore_{selected.replace('.', '_').replace(':', '_')}"
     chart_html = f"""
     <div class="tradingview-widget-container" style="height:620px;width:100%">
-      <div id="tv_chart_explore" style="height:620px;width:100%"></div>
+      <div id="{_tv_cid}" style="height:620px;width:100%"></div>
       <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
       <script type="text/javascript">
         new TradingView.widget({{
@@ -3894,7 +3964,7 @@ with tab_mkt:
           "locale": "fr", "enable_publishing": false,
           "hide_side_toolbar": false, "allow_symbol_change": true,
           "studies": ["RSI@tv-basicstudies", "MASimple@tv-basicstudies"],
-          "container_id": "tv_chart_explore"
+          "container_id": "{_tv_cid}"
         }});
       </script>
     </div>

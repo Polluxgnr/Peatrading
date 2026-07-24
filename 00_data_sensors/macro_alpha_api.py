@@ -428,17 +428,28 @@ class MacroAlphaSensor:
         try:
             import json
             import urllib.parse
-            import urllib.request
+
+            import urllib3
+
+            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
             q = urllib.parse.quote(query[:80])
-            url = f"https://gamma-api.polymarket.com/public-search?q={q}&limit_per_type=3"
-            req = urllib.request.Request(
-                url,
-                headers={"User-Agent": "PEA-Sniper-Terminal/1.0",
-                         "Accept": "application/json"},
+            url = (
+                "https://gamma-api.polymarket.com/public-search"
+                f"?q={q}&limit_per_type=3"
             )
-            with urllib.request.urlopen(req, timeout=6) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
+            resp = requests.get(
+                url,
+                headers={
+                    "User-Agent": "PEA-Sniper-Terminal/1.0",
+                    "Accept": "application/json",
+                },
+                verify=False,
+                timeout=8,
+            )
+            if resp.status_code != 200:
+                raise ValueError(f"Polymarket HTTP {resp.status_code}")
+            data = resp.json()
             events = (data or {}).get("events") or []
             for ev in events:
                 markets = ev.get("markets") or []

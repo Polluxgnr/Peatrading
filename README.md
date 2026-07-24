@@ -1,4 +1,4 @@
-# PEA Sniper Terminal — V-Prime 3.0 (Phase 20)
+# PEA Sniper Terminal — V-Prime 3.0 (Phase 21)
 
 > **Sovereign execution. Kinetic risk management. Absolute quantitative transparency.**
 
@@ -446,6 +446,7 @@ sources over furtive HTML scraping.
 | **Newsletter whitelist + Zeitgeist** | ✅ Phase 19 — `NewsletterSensor` + 08:25 job + dashboard |
 | **Ensemble conviction scoring** | ✅ Phase 20 — 4 axes, emit ≥65; radar + Command Center approve |
 | **What-if 1000€ + walk-forward scaffold** | ✅ Exploration simulator + `walk_forward_backtester.py` |
+| **Terminal polish (TV / zone / ranking / Polymarket)** | ✅ Phase 21 — EPA: ticker map, flat buy-zone fix, fingerprint ranking, SSL-tolerant Gamma |
 | pytest + GitHub Actions CI | Expand coverage over time |
 
 ### Next (highest leverage)
@@ -494,4 +495,4 @@ Decision-support and educational tool only. **No automated execution. No financi
 advice.** You are solely responsible for every trade. Past or backtested results
 do not guarantee future performance.
 
-© 2026 Pollux Quantitative Research — V-Prime 3.0 (Phase 20).
+© 2026 Pollux Quantitative Research — V-Prime 3.0 (Phase 21).
