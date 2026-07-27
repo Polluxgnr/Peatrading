@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import re
+from datetime import datetime
 from typing import Any
 from urllib.parse import urljoin
 
@@ -370,6 +371,8 @@ class BoursoramaScraper:
                 )
                 if dm:
                     date = dm.group(0)
+            if not date or str(date).strip().lower() == "recent":
+                date = datetime.now().strftime("%Y-%m-%d %H:%M")
             provider = ""
             if parent is not None:
                 pm = re.search(
@@ -382,7 +385,7 @@ class BoursoramaScraper:
             items.append({
                 "title": title,
                 "link": urljoin(_BOURSO_BASE, href),
-                "date": date or "Recent",
+                "date": date,
                 "provider": provider or "Boursorama",
             })
             if len(items) >= limit:

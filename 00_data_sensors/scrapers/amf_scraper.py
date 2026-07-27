@@ -1,8 +1,8 @@
-"""AMF BDIF insider-declaration scraper (antifragile, multi-source).
+"""AMF insider-declaration scraper (antifragile, multi-source).
 
-Primary: AMF BDIF public search API (``/api/v1/informations``).
-Secondary: enrich with ISIN from Boursorama profile when available.
-Any failure returns an empty DataFrame so callers fall back to yfinance.
+Primary: Opendatasoft explore v2.1 + BDIF ``/back/api/v1`` (``RechercheTexte``).
+Fallback: legacy BDIF ``/api/v1`` (WAF-prone, 12h circuit) then callers use FMP/YF.
+Any failure returns an empty DataFrame so callers fall back gracefully.
 """
 
 from __future__ import annotations
@@ -109,37 +109,36 @@ class AmfInsiderScraper:
             issuer: Optional company name override.
         """
         self.last_error = None
-        if not amf_available():
-            self.last_error = _AMF_CIRCUIT_REASON or "circuit open"
-            return pd.DataFrame()
         try:
-            rate_limit(0.4, 1.0)
-            # Skip homepage probe — API 500 is enough to trip the breaker.
+            rate_limit(0.2, 0.6)
             name = issuer or _issuer_name(ticker)
-            rows = self._search_bdif(name, isin=isin)
+
+            # 1) Opendatasoft / public structured API first (no API key).
+            rows = self._search_ods_api(name)
+            if not rows and isin:
+                rows = self._search_ods_api(isin.split("_")[0])
+
+            # 2) BDIF fallback (legacy + /back API).
+            if not rows and amf_available():
+                rows = self._search_bdif(name, isin=isin)
             if not rows and isin and amf_available():
                 rows = self._search_bdif(isin.split("_")[0], isin=isin)
 
-            if not amf_available():
-                self.last_error = _AMF_CIRCUIT_REASON
-                return pd.DataFrame()
-
             if not rows:
-                self.last_error = self.last_error or "no BDIF rows"
+                self.last_error = self.last_error or "no AMF/ODS rows"
                 logger.debug(
-                    "AMF BDIF empty for %s (%s / %s).", ticker, name, isin
+                    "AMF empty for %s (%s / %s).", ticker, name, isin
                 )
                 return pd.DataFrame()
 
             df = pd.DataFrame(rows)
             keep = [c for c in (
-                "Date", "Insider", "Transaction", "Value", "Volume", "Price",
-                "Title", "ISIN", "Source",
+                "Date", "Insider", "Transaction", "Value", "Volume", "Shares",
+                "Price", "Title", "ISIN", "Source",
             ) if c in df.columns]
             return df[keep].reset_index(drop=True) if keep else pd.DataFrame()
         except Exception as exc:  # noqa: BLE001
             self.last_error = str(exc)
-            _trip_amf_circuit(str(exc))
             logger.debug("AmfInsiderScraper failed for %s: %s", ticker, exc)
             return pd.DataFrame()
 
@@ -151,12 +150,171 @@ class AmfInsiderScraper:
             issuer=profile.get("name"),
         )
 
+    def _search_ods_api(self, query: str) -> list[dict]:
+        """Fetch AMF data via Opendatasoft v2.1 API using ODSQL (public)."""
+        if not query or not str(query).strip():
+            return []
+        q = str(query).strip().replace('"', "")
+        # Candidate portals/datasets (AMF / Info-Financière / Economy ODS).
+        endpoints = [
+            (
+                "https://data.amf-france.org/api/explore/v2.1/catalog/datasets/"
+                "declarations-dirigeants/records"
+            ),
+            (
+                "https://www.info-financiere.fr/api/explore/v2.1/catalog/datasets/"
+                "flux-amf-new-prod/records"
+            ),
+        ]
+        # Also hit the live BDIF back API (structured public feed).
+        back_rows = self._search_bdif_back(q)
+        if back_rows:
+            return back_rows
+
+        for url in endpoints:
+            try:
+                rate_limit(0.2, 0.5)
+                resp = self._session.get(
+                    url,
+                    params={
+                        "where": f'search("{q}")',
+                        "limit": 25,
+                        "order_by": "date_publication DESC",
+                    },
+                    headers={
+                        **stealth_headers(),
+                        "Accept": "application/json",
+                    },
+                    timeout=10,
+                )
+                if resp.status_code != 200:
+                    continue
+                try:
+                    data = resp.json()
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug("ODS JSON decode failed for %s: %s", q, exc)
+                    continue
+                results: list[dict] = []
+                for item in (data.get("results") or []):
+                    if not isinstance(item, dict):
+                        continue
+                    tx_raw = str(
+                        item.get("type_transaction")
+                        or item.get("nature_transaction")
+                        or item.get("typesDocument")
+                        or ""
+                    ).lower()
+                    results.append({
+                        "Date": str(
+                            item.get("date_publication")
+                            or item.get("datePublication")
+                            or item.get("date")
+                            or ""
+                        )[:10],
+                        "Insider": (
+                            item.get("declarant")
+                            or item.get("nom")
+                            or item.get("raison_sociale")
+                            or "Dirigeant"
+                        ),
+                        "Transaction": (
+                            "Achat" if "achat" in tx_raw or "acquisition" in tx_raw
+                            else ("Vente" if "vente" in tx_raw or "cession" in tx_raw
+                                  else "Declaration")
+                        ),
+                        "Value": item.get("montant") or item.get("valeur"),
+                        "Shares": item.get("volume") or item.get("quantite"),
+                        "Volume": item.get("volume") or item.get("quantite"),
+                        "Title": f"ODS API: {q}",
+                        "ISIN": item.get("isin") or "",
+                        "Source": "AMF Opendatasoft",
+                    })
+                if results:
+                    return results
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("ODS API failed for %r via %s: %s", q, url, exc)
+        return []
+
+    def _search_bdif_back(self, query: str) -> list[dict[str, Any]]:
+        """Public BDIF ``/back/api/v1/informations`` feed (typesInformation=DD)."""
+        q = (query or "").strip()
+        if not q:
+            return []
+        try:
+            rate_limit(0.2, 0.5)
+            resp = self._session.get(
+                _BDIF_BASE + "/back/api/v1/informations",
+                params={
+                    "from": 0,
+                    "size": 40,
+                    "typesInformation": "DD",
+                    "RechercheTexte": q,
+                },
+                headers={
+                    **stealth_headers(),
+                    "Accept": "application/json",
+                },
+                timeout=12,
+            )
+            if resp.status_code != 200:
+                return []
+            payload = resp.json()
+            items = payload.get("result") or payload.get("hits") or []
+            if isinstance(items, dict):
+                items = items.get("hits") or []
+            rows: list[dict[str, Any]] = []
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                src = item.get("_source") if "_source" in item else item
+                if not isinstance(src, dict):
+                    continue
+                societes = src.get("societes") or []
+                names = " ".join(
+                    str(s.get("raisonSociale") or "")
+                    for s in societes if isinstance(s, dict)
+                )
+                title = (
+                    src.get("titre")
+                    or f"Declaration dirigeants — {names or q}"
+                )
+                blob = f"{title} {names}".casefold()
+                tx = (
+                    "Achat" if any(w in blob for w in ("achat", "acquisition"))
+                    else ("Vente" if any(w in blob for w in ("vente", "cession"))
+                          else "Declaration")
+                )
+                rows.append({
+                    "Date": str(
+                        src.get("datePublication")
+                        or src.get("dateInformation")
+                        or src.get("dateMiseEnLigne")
+                        or ""
+                    )[:10],
+                    "Insider": names or "Dirigeant",
+                    "Transaction": tx,
+                    "Value": None,
+                    "Shares": None,
+                    "Volume": None,
+                    "Title": str(title)[:240],
+                    "ISIN": "",
+                    "Source": "AMF BDIF Back API",
+                })
+            return rows[:25]
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("BDIF back API failed for %r: %s", q, exc)
+            return []
+
     def _search_bdif(
         self, query: str, *, isin: str | None = None
     ) -> list[dict[str, Any]]:
         """Query BDIF search with fail-fast on WAF blocks."""
         if not amf_available():
             return []
+        # Prefer the working /back endpoint before the fragile /api/v1.
+        back = self._search_bdif_back(query)
+        if back:
+            return back
         end = datetime.now(timezone.utc)
         start = end - timedelta(days=548)  # ~18 months
         attempts = [
@@ -217,10 +375,12 @@ class AmfInsiderScraper:
         if isinstance(payload, list):
             items = payload
         elif isinstance(payload, dict):
-            for key in ("items", "results", "informations", "data", "content"):
+            for key in ("items", "results", "result", "informations", "data", "content"):
                 if isinstance(payload.get(key), list):
                     items = payload[key]
                     break
+            if not items and isinstance(payload.get("hits"), dict):
+                items = payload["hits"].get("hits") or []
             if not items and payload:
                 items = [payload]
 

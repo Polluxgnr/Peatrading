@@ -1,4 +1,4 @@
-# PEA Sniper Terminal — V-Prime 3.0 (Phase 26)
+# PEA Sniper Terminal — V-Prime 3.0 (Phase 32)
 
 > **Sovereign execution. Kinetic risk management. Absolute quantitative transparency.**
 
@@ -51,7 +51,8 @@ Repo: [github.com/Polluxgnr/Peatrading](https://github.com/Polluxgnr/Peatrading)
    **AMF BDIF → FMP → yfinance**. OHLCV stays on `yfinance` → DuckDB. HTML
    scrapers are best-effort with circuit-breakers (AMF BDIF is often WAF-blocked).
 4. **Split state.** DuckDB = heavy OHLCV; SQLite = portfolio, positions, immutable
-   audit log, **daily equity curve** (`portfolio_history`).
+   audit log, **daily equity curve** (`portfolio_history`), and **news archive**
+   (`news_history` — cross-session headlines with real timestamps).
 5. **Zero crash tolerance.** A failed pass logs `CRITICAL` and writes a red
    pipeline heartbeat; the daemon keeps running for the next slot.
 6. **Manual execution.** You always have the last word (Discord **or** Streamlit
@@ -65,15 +66,15 @@ Repo: [github.com/Polluxgnr/Peatrading](https://github.com/Polluxgnr/Peatrading)
 
 | Layer | What it does (why it exists) |
 |------|------------------------------|
-| **Data** | OHLCV → DuckDB; VIX/VSTOXX; Put/Call; insiders **AMF→FMP→Yahoo**; Polymarket Gamma; Bourso + **Google News / Yahoo** news; **newsletter IMAP** (whitelist) |
-| **Quant** | **Ensemble conviction (0–100)**: Mean Reversion ≤35 + Volume Breakout ≤25 + Insider cluster ≤20 + Institutional proxy ≤20 — emit if ≥65 |
+| **Data** | OHLCV → DuckDB; VIX/VSTOXX; Put/Call; insiders **AMF→FMP→Yahoo**; Polymarket Gamma; Bourso + **Google News / Yahoo** news (archived in **`news_history`**); **newsletter IMAP** (whitelist) |
+| **Quant** | **Ensemble conviction (0–100)**: MR ≤35 + Vol ≤25 + Insider ≤20 + Inst ≤20 + **News/Polymarket modifiers** — emit if ≥65 |
 | **Core/Satellite** | Smart DCA on `CW8.PA` (more aggressive under SMA200); satellites capped ~30% equity |
 | **Risk cascade** | VIX panic, **EPS &lt; 0**, macro veto, **earnings blackout**, max satellite lines, **ADV € floor**, sector, correlation, vol-parity sizing |
 | **Exits** | **Daily** ATR stop (`price < entry − 2.5×ATR14`); **monthly** +20% profit-shave |
-| **Memory** | SQLite equity curve + shared `equity_metrics` + `morning_briefing.json` Zeitgeist |
-| **AI (explain only)** | Trade rationale, news sentiment, weekly digest, geo brief, **morning newsletter Zeitgeist** |
-| **UI** | Mission Control + Discord + Streamlit (**Command Center approve**, decision funnel, conviction radar, what-if 1000€) |
-| **Ops** | Paris daemon (incl. **08:25 briefing**), walk-forward scaffold, seed CLI, CI pytest |
+| **Memory** | SQLite equity curve + **`news_history`** + shared `equity_metrics` + `morning_briefing.json` Zeitgeist |
+| **AI (explain only)** | Trade rationale, news sentiment, weekly digest, geo brief, **morning newsletter Zeitgeist**, deep news synthesis (24h cache) |
+| **UI** | Mission Control + **native HTML ticker tape** + Discord + Streamlit (**Command Center**, funnel, radar, what-if, **order ticket**, **decision checklist**, **live telemetry**) |
+| **Ops** | Paris daemon (incl. **08:25 briefing**), session auto-sync on dashboard open, walk-forward scaffold, seed CLI, CI pytest |
 
 ---
 
@@ -102,8 +103,10 @@ Orchestrator — scoring runs after an idea is worth evaluating on price/alt-dat
 | Volume Breakout | 25 | Close = 50d high **and** Volume &gt; 2× ADV20 |
 | Insider Clustering | 20 | Buy-cluster ≥2 → 20; ==1 → 10 (`get_insider_buy_cluster`) |
 | Institutional Quality | 20 | Ticker in hardcoded EU blue-chip proxy set |
+| **News sentiment** | +10 / −15 | LLM or heuristic: score &gt;30 → +10; &lt;−30 → −15 |
+| **Polymarket macro** | +10 / −10 | YES prob ≥0.62 → +10; ≤0.38 → −10 (context only) |
 
-The continuous score (0–100) is the sum of axes; the dashboard colours PENDING
+The continuous score (0–100) is clamped after modifiers; the dashboard colours PENDING
 scores (**amber 65–75**, **neon 76–100**) and shows a polar radar in Exploration.
 
 ### 3. Risk cascade (order matters — cheap checks first)
@@ -195,9 +198,10 @@ is git-ignored.
 |------|----------------|
 | `00_data_sensors/market_prices_api.py` | Batch OHLCV download → DuckDB |
 | `00_data_sensors/macro_alpha_api.py` | VIX, Put/Call, insiders (**AMF→FMP→YF**), Polymarket |
-| `00_data_sensors/scrapers/amf_scraper.py` | Official AMF BDIF + 12h circuit breaker |
+| `00_data_sensors/scrapers/amf_scraper.py` | AMF Opendatasoft v2.1 + BDIF `/back` (`RechercheTexte`) → legacy BDIF + 12h circuit |
+| `01_memory_core/env_loader.py` | Native `api_keys.env` parser (no python-dotenv) |
 | `01_memory_core/data_models.py` | Pydantic contracts (`Signal`, `Position`, `PortfolioState`) |
-| `01_memory_core/sqlite_portfolio.py` | Account, positions, audit, **`portfolio_history`** |
+| `01_memory_core/sqlite_portfolio.py` | Account, positions, audit, **`portfolio_history`**, **`news_history`** |
 | `01_memory_core/duckdb_manager.py` | OHLCV store (ATR / correlation / indicators) |
 | `01_memory_core/logging_setup.py` | Rotating logs + pipeline heartbeat |
 | `02_quant_engine/technical_scorer.py` | MRE signals; `RSI_OVERSOLD_THRESHOLD` from YAML |
@@ -232,14 +236,16 @@ is git-ignored.
 |--------|--------|-------|
 | **yfinance OHLCV** | Works | Primary market data → DuckDB |
 | **`^V2TX` / `^VIX`** | Partial | VSTOXX often missing on Yahoo → falls back to US VIX as panic proxy |
-| **AMF BDIF** | Fragile | Official FR insiders; HTTP 500/WAF common → 12h circuit → FMP → Yahoo |
+| **AMF ODS / BDIF back** | Primary | Public, no paid key; ODS explore v2.1 + `/back/api/v1` with `RechercheTexte` |
+| **AMF BDIF legacy** | Fragile | `/api/v1` often WAF/500 → 12h circuit → FMP → Yahoo |
 | **FMP insider API** | Optional | Needs `FMP_API_KEY` |
 | **yfinance insiders** | Tertiary | Sparse on many `.PA` mid-caps |
 | **Options Put/Call** | Partial | Sparse for EU → neutral `1.0` |
-| **Polymarket Gamma** | Live | Macro context only (never a trade trigger) |
-| **OpenRouter** | Optional | Explanations / sentiment / weekly report |
-| **TradingView / Yahoo news** | Works | UI embeds + radar |
-| **Yahoo Mail IMAP** | Sandbox | App password; read-only newsletter ingest (experiments only) |
+| **Polymarket Gamma** | Live | Macro context + conviction modifier (never a trade trigger) |
+| **OpenRouter** | Optional | Explanations / sentiment / weekly report / deep news |
+| **Boursorama scraper** | Fragile | PEA profile, consensus, news (dates normalized to ISO) |
+| **Native ticker tape** | Works | HTML/CSS marquee — blue chips + Clearbit logos (no TradingView tape) |
+| **Yahoo Mail IMAP** | Optional | Morning Briefing Zeitgeist (`YAHOO_MAIL_USER`) |
 
 Graceful degradation: missing sources return **neutral** values; the daemon does not crash.
 
@@ -280,7 +286,13 @@ python main_scheduler.py --now    # first fetch + equity snapshot
 | `DISCORD_WEBHOOK_URL` | daemon | Weekly + monthly / ATR notifications |
 | `OPENROUTER_API_KEY` / `OPENROUTER_MODEL` | optional | LLM explain / sentiment |
 | `FMP_API_KEY` | optional | Secondary insider source after AMF |
+| `AMF_API_KEY` | placeholder | Public ODS/BDIF — use `free_public_ods_api` |
+| `YAHOO_MAIL_USER` / `YAHOO_MAIL_APP_PASSWORD` | briefing | Morning Briefing IMAP |
 | `EODHD_API_KEY` | optional | Reserved for paid EU market data |
+
+Keys are loaded by a **native** parser (`01_memory_core/env_loader.py`) —
+**no `python-dotenv` required**. `main_scheduler.py` and the Streamlit dashboard
+force-load `config/api_keys.env` at boot.
 
 ### `config/risk_params.yaml` (the rulebook)
 
@@ -331,6 +343,16 @@ python tools/build_llm_dump.py          # refresh LLM one-shot dump
 
 Launch: `.\run_dashboard.ps1` → http://localhost:8501
 
+On first open each session, the dashboard **auto-syncs** market data
+(`load_universe`, `get_last_prices`, `get_vix`) behind a global spinner.
+
+### Native ticker tape (top of page)
+
+Replaces the old TradingView widget (which showed red errors on `.PA` small caps).
+A **CSS marquee** scrolls blue-chip performances with **Clearbit logos** and a
+period selector: **1j / 5j / 1m**. Data from `get_market_performance` — no
+external widget dependency.
+
 ### Mission Control (above tabs)
 
 Designed so you read **market state in ~3 seconds** before diving into tabs:
@@ -349,11 +371,18 @@ real Bloomberg conventions and easier on long sessions than green-everywhere.
 
 | Tab | Content |
 |-----|---------|
-| **General & Signaux** | Morning Briefing (**bouton générer**), suggestion + expanders, ranking/pépites **cliquables** vers Exploration, geo brief, funnel, Command Center |
-| **Portefeuille** | Equity curve + **Sharpe/DD/CAGR/Sortino**, sunburst, positions, **table stops ATR 2.5x explicite**, wallet editor → SQLite |
-| **Exploration** | Dossier + **logo Clearbit**, TA, what-if, **ticket d'ordre PEA**, **checklist décision**, valorisation, 10y, radar, synthèse IA news, insiders, Polymarket intégré |
-| **Univers** | Full list + perf sectorielle + **tags techniques cliquables** (full filtered view, no 80-row cap) |
-| **Architecture & Logs** | Living docs + **log file picker / tail jusqu'à 5000 lignes** |
+| **General & Signaux** | Morning Briefing (chargement patient), suggestion + ranking/pépites **cliquables**, geo brief, funnel |
+| **Portefeuille** | Equity curve, sunburst, **stops ATR 2.5x**, wallet editor → SQLite |
+| **Exploration** | **Recherche univers 600+** (selectbox haut de page), dossier ticker, **ticket d'ordre PEA**, **checklist décision**, news archivées SQLite, synthèse IA 24h |
+| **Univers** | Liste PEA + tags techniques **cliquables** (full filtered view) |
+| **Architecture & Logs** | **Télémétrie live** (health check env + DB), **`risk_params.yaml` actifs**, expanders logique quant, logs (5000 lignes) |
+
+### News memory (`news_history`)
+
+Headlines are **upserted into SQLite** on each fetch (`PortfolioDB.save_news`).
+The UI reads `get_news_history(ticker)` first; live APIs run only if fewer than
+3 cached articles. Boursorama relative dates (`il y a 2h`, empty, `Recent`) are
+normalized to `YYYY-MM-DD HH:MM` at scrape time.
 
 ### Rich trade cards (what you see before approving)
 
@@ -388,11 +417,19 @@ For one-shot context in another LLM / agent:
 
 ```bash
 python tools/build_llm_dump.py
+# optional: skip architecture preamble
+python tools/build_llm_dump.py --no-summary
 ```
 
-Writes **`PROJECT_FULL_DUMP_FOR_LLM.md`**: indexed concatenation of source,
-configs, and docs (excludes venv, DBs, secrets, nested dump). Regenerate after
-meaningful code or README changes so external agents stay in sync.
+Writes **`PROJECT_FULL_DUMP_FOR_LLM.md`** with:
+
+- **Architecture snapshot** — layer map, Phase 26–28 highlights, hard rules
+- **Priority file list** — README, risk YAML, scorer, dashboard, scheduler
+- **Grouped file index** — by directory, with line counts and ⭐ on key files
+- **Full source bodies** — fenced code blocks for every included file
+
+Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
+Regenerate after meaningful code or README changes so external agents stay in sync.
 
 ---
 
@@ -451,6 +488,10 @@ sources over furtive HTML scraping.
 | **UX overhaul (tape / GO / news diversity)** | ✅ Phase 23 — no GO, logos off, multi-source news, deep IA narrative |
 | **Polymarket harden + news clean + tape + logs** | ✅ Phase 24 — JSONDecode guard, no heuristic pills, blue-chip tape, briefing button, log tail 5k |
 | **Auto-sync + score holistique + UI exécution** | ✅ Phase 26 — warmup au démarrage, News/Polymarket dans le score, stops ATR visibles, tickets/checklist, tables cliquables |
+| **Bandeau natif + news SQLite + exploration universelle** | ✅ Phase 27 — marquee HTML/CSS, `news_history`, dates exactes, selectbox 600+ tickers |
+| **Télémétrie live Architecture & Logs** | ✅ Phase 28 — health check sources, risk_params actifs, expanders logique quant |
+| **UX rename + clickable tape + news history** | ✅ Phase 29 — Pollux branding, query-param tape, Synthèse IA, full news DB |
+| **Native env + AMF ODS + TV EURONEXT + uncapped lists** | ✅ Phase 32 — no-dotenv loader, AMF Opendatasoft/BDIF back API, Polymarket JSON guard, full universe/logs |
 | pytest + GitHub Actions CI | Expand coverage over time |
 
 ### Next (highest leverage)
@@ -489,6 +530,9 @@ EUR/USD note in CIO digest · rolling Sharpe chart.
 | LLM / weekly silent | `OPENROUTER_API_KEY` / `DISCORD_WEBHOOK_URL` |
 | Cash too small for CW8 | MICRO mode: 1 liquid share + cash runway (by design) |
 | Newsletter IMAP auth fail | Use Yahoo **app password**, folder name exact, SSL 993 |
+| News dates show `Recent` | Re-open ticker in Exploration — scraper now stamps ISO; archive in `news_history` |
+| Red TradingView tape errors | Fixed in Phase 27 — native HTML marquee replaces TV widget |
+| Briefing flashes error on boot | Phase 27 — patient `st.info` + manual generate button |
 | CI / pytest | `python -m pytest -q` |
 
 ---
@@ -499,4 +543,4 @@ Decision-support and educational tool only. **No automated execution. No financi
 advice.** You are solely responsible for every trade. Past or backtested results
 do not guarantee future performance.
 
-© 2026 Pollux Quantitative Research — V-Prime 3.0 (Phase 26).
+© 2026 Pollux Quantitative Research — V-Prime 3.0 (Phase 32).

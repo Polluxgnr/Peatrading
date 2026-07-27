@@ -29,12 +29,26 @@ if str(_EXPERIMENT) not in sys.path:
     sys.path.insert(0, str(_EXPERIMENT))
 
 try:
-    from dotenv import load_dotenv
+    sys.path.insert(0, str(_ROOT / "01_memory_core"))
+    from env_loader import load_api_keys
 
-    load_dotenv(_ROOT / "config" / "api_keys.env")
-    load_dotenv(_EXPERIMENT / ".env")
+    load_api_keys(_ROOT / "config" / "api_keys.env")
 except Exception:  # noqa: BLE001
-    pass
+    _env = _ROOT / "config" / "api_keys.env"
+    if _env.exists():
+        with open(_env, "r", encoding="utf-8") as fh:
+            for line in fh:
+                if "=" in line and not line.strip().startswith("#"):
+                    k, v = line.strip().split("=", 1)
+                    os.environ.setdefault(k.strip(), v.strip().strip(" '\""))
+# Optional sandbox overrides for local newsletter experiments.
+_sandbox_env = _EXPERIMENT / ".env"
+if _sandbox_env.exists():
+    with open(_sandbox_env, "r", encoding="utf-8") as fh:
+        for line in fh:
+            if "=" in line and not line.strip().startswith("#"):
+                k, v = line.strip().split("=", 1)
+                os.environ.setdefault(k.strip(), v.strip().strip(" '\""))
 
 
 class NewsletterSensor:

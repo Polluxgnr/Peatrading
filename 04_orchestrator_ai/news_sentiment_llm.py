@@ -15,13 +15,20 @@ import sys
 from pathlib import Path
 from typing import List
 
-try:  # Load config/api_keys.env if python-dotenv is available.
-    from dotenv import load_dotenv
+try:
+    _CORE = Path(__file__).resolve().parent.parent / "01_memory_core"
+    sys.path.insert(0, str(_CORE))
+    from env_loader import load_api_keys
 
-    _ENV_PATH = Path(__file__).resolve().parent.parent / "config" / "api_keys.env"
-    load_dotenv(_ENV_PATH)
-except Exception:  # noqa: BLE001 - dotenv is a convenience, not a requirement.
-    pass
+    load_api_keys(Path(__file__).resolve().parent.parent / "config" / "api_keys.env")
+except Exception:  # noqa: BLE001
+    _env = Path(__file__).resolve().parent.parent / "config" / "api_keys.env"
+    if _env.exists():
+        with open(_env, "r", encoding="utf-8") as fh:
+            for line in fh:
+                if "=" in line and not line.strip().startswith("#"):
+                    k, v = line.strip().split("=", 1)
+                    os.environ.setdefault(k.strip(), v.strip().strip(" '\""))
 
 # Reuse the shared OpenRouter client from the interfaces layer.
 _INTERFACES_DIR = os.path.join(

@@ -18,18 +18,30 @@ from pathlib import Path
 
 import aiohttp
 
-try:  # Load config/api_keys.env if python-dotenv is available.
-    from dotenv import load_dotenv
+try:
+    from env_loader import load_api_keys
 
-    _ENV_PATH = Path(__file__).resolve().parent.parent / "config" / "api_keys.env"
-    load_dotenv(_ENV_PATH)
-except Exception:  # noqa: BLE001 - dotenv is a convenience, not a requirement.
-    pass
+    load_api_keys(Path(__file__).resolve().parent.parent / "config" / "api_keys.env")
+except Exception:  # noqa: BLE001
+    # Native fallback if env_loader not on path yet.
+    _env = Path(__file__).resolve().parent.parent / "config" / "api_keys.env"
+    if _env.exists():
+        with open(_env, "r", encoding="utf-8") as fh:
+            for line in fh:
+                if "=" in line and not line.strip().startswith("#"):
+                    k, v = line.strip().split("=", 1)
+                    os.environ.setdefault(k.strip(), v.strip().strip(" '\""))
 
 _CORE_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "01_memory_core"
 )
 sys.path.insert(0, _CORE_DIR)
+try:
+    from env_loader import load_api_keys as _load_keys2  # noqa: E402
+
+    _load_keys2()
+except Exception:  # noqa: BLE001
+    pass
 
 from data_models import PortfolioState, Signal  # noqa: E402
 

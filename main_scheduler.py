@@ -28,8 +28,17 @@ from pathlib import Path
 
 import yaml
 
-# --- Wire up the digit-prefixed package directories --------------------------
+# Native .env loader (no python-dotenv) — force keys into os.environ.
 _ROOT = Path(__file__).resolve().parent
+_env_path = _ROOT / "config" / "api_keys.env"
+if _env_path.exists():
+    with open(_env_path, "r", encoding="utf-8") as f:
+        for line in f:
+            if "=" in line and not line.strip().startswith("#"):
+                k, v = line.strip().split("=", 1)
+                os.environ[k.strip()] = v.strip().strip(" '\"")
+
+# --- Wire up the digit-prefixed package directories --------------------------
 for _sub in (
     "00_data_sensors",
     "01_memory_core",
@@ -39,6 +48,13 @@ for _sub in (
     "05_interfaces",
 ):
     sys.path.insert(0, str(_ROOT / _sub))
+
+try:
+    from env_loader import load_api_keys  # noqa: E402
+
+    load_api_keys(_env_path)
+except Exception:  # noqa: BLE001
+    pass
 
 import aiohttp  # noqa: E402
 import schedule  # noqa: E402

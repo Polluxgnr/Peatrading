@@ -21,6 +21,7 @@ Run (auto-opens browser):
 """
 
 import asyncio
+import os
 import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -35,9 +36,25 @@ import yfinance as yf
 
 # --- Cross-package imports (dirs start with digits) --------------------------
 _ROOT = Path(__file__).resolve().parent.parent
+# Native .env loader (no python-dotenv) — force keys into os.environ.
+_env_path = _ROOT / "config" / "api_keys.env"
+if _env_path.exists():
+    with open(_env_path, "r", encoding="utf-8") as f:
+        for line in f:
+            if "=" in line and not line.strip().startswith("#"):
+                k, v = line.strip().split("=", 1)
+                os.environ[k.strip()] = v.strip().strip(" '\"")
+
 for _sub in ("00_data_sensors", "01_memory_core", "02_quant_engine",
              "03_risk_portfolio", "04_orchestrator_ai", "05_interfaces"):
     sys.path.insert(0, str(_ROOT / _sub))
+
+try:
+    from env_loader import load_api_keys  # noqa: E402
+
+    load_api_keys(_env_path)
+except Exception:  # noqa: BLE001
+    pass
 
 from sqlite_portfolio import PortfolioDB  # noqa: E402
 from data_models import Position, PortfolioState  # noqa: E402
@@ -362,11 +379,21 @@ def render_pending_trade_cards(pending_df: pd.DataFrame, portfolio_obj) -> None:
 # Page config & Bloomberg CSS
 # =============================================================================
 st.set_page_config(
-    page_title="PEA Sniper Terminal | V-Prime",
+    page_title="Pollux PEA Terminal | V-Prime",
     layout="wide",
     page_icon="\U0001F6E1\uFE0F",
     initial_sidebar_state="collapsed",
 )
+
+if "ticker" in st.query_params:
+    _qp_ticker = st.query_params["ticker"]
+    if isinstance(_qp_ticker, list):
+        _qp_ticker = _qp_ticker[0] if _qp_ticker else ""
+    _qp_ticker = str(_qp_ticker).strip()
+    if _qp_ticker:
+        st.session_state["explore_ticker"] = _qp_ticker
+        st.session_state["focus_ticker"] = _qp_ticker
+    st.query_params.clear()
 
 st.markdown(
     f"""
@@ -433,6 +460,32 @@ st.markdown(
 """,
     unsafe_allow_html=True,
 )
+
+# --- STRICT GATEKEEPER: core AI + newsletter must be connected -------------
+missing_keys = []
+if not os.getenv("OPENROUTER_API_KEY"):
+    missing_keys.append("OPENROUTER_API_KEY (LLM / IA)")
+if not os.getenv("YAHOO_MAIL_USER") or not os.getenv("YAHOO_MAIL_APP_PASSWORD"):
+    missing_keys.append("YAHOO_MAIL_USER / APP_PASSWORD (Briefing Newsletters)")
+
+if missing_keys:
+    st.error("🛑 **ERREUR CRITIQUE : COMPOSANTS DÉCONNECTÉS**")
+    st.markdown(
+        "Le terminal exige que les sources IA / newsletter soient connectées. "
+        "Il manque les clés suivantes dans `config/api_keys.env` :"
+    )
+    for k in missing_keys:
+        st.markdown(f"- `{k}`")
+    st.info("Remplissez vos clés dans le fichier `config/api_keys.env` et rechargez la page.")
+    st.stop()
+
+# FMP is secondary (AMF Opendatasoft / BDIF is primary for FR insiders).
+if not os.getenv("FMP_API_KEY"):
+    st.warning(
+        "⚠️ `FMP_API_KEY` absente — fallback insiders US/EU limité. "
+        "AMF public (ODS/BDIF) reste actif. Ajoute FMP dans `config/api_keys.env` "
+        "pour la cascade complète."
+    )
 
 
 def metric_box(title: str, value: str, sub: str = "", accent: str = "",
@@ -1540,12 +1593,8 @@ def simulate_buy_what_if(
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
-def get_recent_news(symbol: str, limit: int = 6) -> list[dict]:
-    """Fetch diverse news: always merge Boursorama + Google News + Yahoo.
-
-    Sources are concatenated then deduped by title (case-insensitive). Never
-    short-circuits after Boursorama alone — diversity first.
-    """
+def _fetch_news_from_apis(symbol: str, limit: int = 6) -> list[dict]:
+    """Fetch diverse news from live APIs (Boursorama + Google + Yahoo)."""
     collected: list[dict] = []
     seen_titles: set[str] = set()
 
@@ -1554,10 +1603,13 @@ def get_recent_news(symbol: str, limit: int = 6) -> list[dict]:
         if not key or key in seen_titles:
             return
         seen_titles.add(key)
+        pub = (date or "").strip()
+        if not pub or pub.lower() == "recent":
+            pub = datetime.now().strftime("%Y-%m-%d %H:%M")
         collected.append({
             "title": title.strip(),
             "link": link or "#",
-            "date": date or "Recent",
+            "date": pub,
             "provider": provider,
         })
 
@@ -1577,7 +1629,7 @@ def get_recent_news(symbol: str, limit: int = 6) -> list[dict]:
                 _push(
                     n.get("title", ""),
                     n.get("link") or "#",
-                    n.get("date") or "Recent",
+                    n.get("date") or "",
                     f"Boursorama · {n.get('provider') or 'local'} · "
                     f"sentiment {sentiment} · elig {elig}",
                 )
@@ -1586,7 +1638,7 @@ def get_recent_news(symbol: str, limit: int = 6) -> list[dict]:
             headlines = (bourso or {}).get("news") or []
             sentiment = (bourso or {}).get("sentiment") or "Unknown"
             for title in headlines:
-                _push(title, "#", "Recent", f"Boursorama · sentiment {sentiment}")
+                _push(title, "#", "", f"Boursorama · sentiment {sentiment}")
     except Exception:  # noqa: BLE001
         pass
 
@@ -1621,7 +1673,7 @@ def get_recent_news(symbol: str, limit: int = 6) -> list[dict]:
                 pub = (item.findtext("pubDate") or "")[:16]
                 source = item.find("source")
                 src = (source.text if source is not None else None) or "Google News"
-                _push(title, link, pub or "Recent", f"Google News · {src}")
+                _push(title, link, pub, f"Google News · {src}")
     except Exception:  # noqa: BLE001
         pass
 
@@ -1640,13 +1692,47 @@ def get_recent_news(symbol: str, limit: int = 6) -> list[dict]:
             date_str = content.get("pubDate") or content.get("displayTime") or ""
             provider = (content.get("provider") or {}).get("displayName", "")
             _push(
-                title, link, (date_str or "")[:10] or "Recent",
+                title, link, (date_str or "")[:16],
                 provider or "Yahoo Finance",
             )
     except Exception:  # noqa: BLE001
         pass
 
     return collected[:limit]
+
+
+def get_recent_news(symbol: str, limit: int = 6) -> list[dict]:
+    """Return news for a ticker — SQLite archive first, live fetch if sparse."""
+    db_items: list[dict] = []
+    if _SQLITE_PATH.exists():
+        try:
+            db = PortfolioDB(db_path=_SQLITE_PATH)
+            db.init_db()
+            db_items = db.get_news_history(symbol, limit=limit)
+        except Exception:  # noqa: BLE001
+            db_items = []
+
+    if len(db_items) >= 3:
+        return db_items[:limit]
+
+    fresh = _fetch_news_from_apis(symbol, limit=max(limit, 12))
+    if fresh and _SQLITE_PATH.exists():
+        try:
+            db = PortfolioDB(db_path=_SQLITE_PATH)
+            db.init_db()
+            db.save_news([{**n, "ticker": symbol, "url": n.get("link")} for n in fresh])
+        except Exception:  # noqa: BLE001
+            pass
+
+    merged: list[dict] = []
+    seen: set[str] = set()
+    for n in db_items + fresh:
+        key = (n.get("title") or "").strip().casefold()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        merged.append(n)
+    return merged[:limit]
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
@@ -1780,6 +1866,206 @@ def get_decision_checklist(ticker: str, portfolio_obj, vix: float) -> dict:
     else:
         overall = "🟢 PRÊT"
     return {"overall": overall, "checks": checks, "score_hint": score}
+
+
+_BLUE_CHIPS_TAPE = [
+    "CW8.PA", "MC.PA", "OR.PA", "AI.PA", "SAN.PA",
+    "TTE.PA", "BNP.PA", "AIR.PA", "RMS.PA", "SU.PA",
+]
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def _native_tape_perf(period: str) -> pd.DataFrame:
+    """Cached performance snapshot for the native HTML ticker tape.
+
+    For ``1d`` we pull 5d data and compute close-to-close day return
+    ``(last / prev - 1)`` to avoid Yahoo's period quirks.
+    """
+    if period != "1d":
+        return get_market_performance(tuple(_BLUE_CHIPS_TAPE), period=period)
+    try:
+        raw = yf.download(
+            _BLUE_CHIPS_TAPE,
+            period="5d",
+            progress=False,
+            auto_adjust=True,
+            threads=True,
+        )
+        close = _extract_close_frame(raw, _BLUE_CHIPS_TAPE)
+        if close.empty:
+            return pd.DataFrame()
+        rows = []
+        for t in close.columns:
+            series = _valid_price_series(close[t])
+            if series is None or len(series) < 2:
+                continue
+            current = float(series.iloc[-1])
+            prev = float(series.iloc[-2])
+            if prev <= 0:
+                continue
+            rows.append(
+                {
+                    "Ticker": t,
+                    "Start Price": prev,
+                    "Current Price": current,
+                    "Performance (%)": (current / prev - 1.0) * 100.0,
+                }
+            )
+        if not rows:
+            return pd.DataFrame()
+        out = pd.DataFrame(rows).sort_values("Performance (%)", ascending=False)
+        return out.reset_index(drop=True)
+    except Exception:  # noqa: BLE001
+        return pd.DataFrame()
+
+
+def render_native_ticker_tape(period: str = "1d") -> None:
+    """Render a CSS marquee ticker tape (no TradingView dependency)."""
+    perf = _native_tape_perf(period)
+    if perf is None or perf.empty:
+        st.caption("Bandeau marché indisponible (réseau ou données manquantes).")
+        return
+
+    chips: list[str] = []
+    for _, row in perf.iterrows():
+        ticker = str(row["Ticker"])
+        perf_pct = float(row["Performance (%)"])
+        color = _NEON if perf_pct >= 0 else _RED
+        logo = get_company_logo(ticker)
+        chips.append(
+            f'<span class="tape-chip">'
+            f'<a href="/?ticker={ticker}" target="_self" '
+            f'style="text-decoration:none;color:inherit;">'
+            f'<img src="{logo}" height="16" '
+            f'style="vertical-align:middle;margin-right:6px;border-radius:2px;" '
+            f'onerror="this.style.display=\'none\'" />'
+            f'{short_name(ticker)} '
+            f'<span style="color:{color};font-weight:700;">{perf_pct:+.2f}%</span>'
+            f"</a>"
+            f"</span>"
+        )
+    if not chips:
+        st.caption("Bandeau marché vide pour cette période.")
+        return
+
+    track = "".join(chips) * 2
+    period_label = {"1d": "1 jour", "5d": "5 jours", "1mo": "1 mois"}.get(period, period)
+    st.markdown(
+        f"""
+<style>
+@keyframes pea-marquee {{
+  0% {{ transform: translateX(0); }}
+  100% {{ transform: translateX(-50%); }}
+}}
+.native-tape-wrap {{
+  background: #0A0A0A;
+  border: 1px solid #222;
+  border-left: 3px solid {_CYAN};
+  overflow: hidden;
+  padding: 10px 0;
+  margin-bottom: 6px;
+}}
+.native-tape-track {{
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+  animation: pea-marquee 45s linear infinite;
+  gap: 28px;
+}}
+.tape-chip {{
+  display: inline-flex;
+  align-items: center;
+  color: {_WHITE};
+  font-family: Courier New, monospace;
+  font-size: 13px;
+  padding: 0 14px;
+}}
+</style>
+<div class="native-tape-wrap" title="Bandeau natif · {period_label}">
+  <div class="native-tape-track">{track}</div>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+
+def build_data_sources_health_df() -> pd.DataFrame:
+    """Live telemetry for Architecture tab — env vars + local DB files."""
+    duck_path = _DB_DIR / "ohlcv.duckdb"
+    rows = [
+        (
+            "yfinance",
+            "OHLCV, calendrier, insiders, news fallback",
+            "🟢 Actif",
+            "Pas de prix si réseau down",
+        ),
+        (
+            "VIX / VSTOXX",
+            f"Coupe-circuit panic (seuil {_VIX_PANIC:.0f})",
+            "🟢 Actif",
+            "Fallback 15.0 si indispo",
+        ),
+        (
+            "Bandeau natif (HTML)",
+            "Perf blue-chips + logos Clearbit",
+            "🟢 Actif",
+            "Remplace l'ancien widget TradingView tape",
+        ),
+        (
+            "SQLite portfolio.db",
+            "Portfolio / audit / equity / news_history",
+            "🟢 Connecté" if _SQLITE_PATH.exists() else "🔴 Absent",
+            "Dashboard bloqué sans DB locale",
+        ),
+        (
+            "DuckDB ohlcv.duckdb",
+            "Historique technique / ATR / screener",
+            "🟢 Connecté" if duck_path.exists() else "🟡 Partiel",
+            "ATR/stops moins fiables sans OHLCV local",
+        ),
+        (
+            "OpenRouter",
+            "Sentiment news + briefing geo + Synthèse IA",
+            "🟢 Actif" if os.getenv("OPENROUTER_API_KEY") else "🔴 DÉCONNECTÉ",
+            "CRITIQUE: Arrêt immédiat du terminal",
+        ),
+        (
+            "FMP",
+            "Insiders fallback (après AMF)",
+            "🟢 Actif" if os.getenv("FMP_API_KEY") else "🔴 DÉCONNECTÉ",
+            "CRITIQUE: cascade AMF-only (pas de fallback US)",
+        ),
+        (
+            "AMF Opendatasoft / BDIF",
+            "Déclarations dirigeants (API publique, free)",
+            "🟢 Actif",
+            "Insiders FR indisponibles si BDIF/ODS down",
+        ),
+        (
+            "IMAP Newsletter",
+            "Morning Briefing Synthèse IA",
+            "🟢 Actif"
+            if os.getenv("YAHOO_MAIL_USER") and os.getenv("YAHOO_MAIL_APP_PASSWORD")
+            else "🔴 DÉCONNECTÉ",
+            "CRITIQUE: Arrêt immédiat du terminal",
+        ),
+        (
+            "Polymarket Gamma",
+            "Probabilités macro (contexte)",
+            "🟢 Actif",
+            "Fallback seed si JSON bloqué (Cloudflare)",
+        ),
+        (
+            "Boursorama scraper",
+            "Profil PEA/SRD, consensus, news",
+            "🟢 Actif",
+            "Fragile — dates parfois approximatives",
+        ),
+    ]
+    return pd.DataFrame(
+        rows,
+        columns=["Source", "Rôle", "Statut Live", "Impact si manquant"],
+    )
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -3092,7 +3378,7 @@ def get_polymarket_macro(limit: int = 8) -> list[dict]:
 # Header + live ticker tape (streaming)
 # =============================================================================
 st.markdown(
-    "<h1>\U0001F6E1\uFE0F PEA SNIPER TERMINAL "
+    "<h1>\U0001F6E1\uFE0F POLLUX PEA TERMINAL "
     "<span style='color:#00FF00; font-size:20px;'>V-PRIME</span></h1>",
     unsafe_allow_html=True,
 )
@@ -3111,26 +3397,20 @@ universe_df = load_universe()
 # Populate the name lookup with every universe entry (STEP 1.3 coverage).
 TICKER_NAMES.update(dict(zip(universe_df["Ticker"], universe_df["Name"])))
 
-# Live streaming ticker tape — blue chips only (TV rejects many small-caps).
-_blue_chips_tape = [
-    "CW8.PA", "MC.PA", "OR.PA", "AI.PA", "SAN.PA",
-    "TTE.PA", "BNP.PA", "AIR.PA", "RMS.PA", "SU.PA",
-]
-_tape_symbols = ",".join(
-    f'{{"proName":"{_tv_symbol(t)}","title":"{short_name(t)}"}}'
-    for t in _blue_chips_tape
-)
-_tape_html = f"""
-<div class="tradingview-widget-container">
-  <div class="tradingview-widget-container__widget"></div>
-  <script type="text/javascript"
-    src="https://s3.tradingview.com/external-embedding/embed-widget-ticker-tape.js" async>
-  {{"symbols":[{_tape_symbols}],"showSymbolLogo":false,"colorTheme":"dark",
-   "isTransparent":true,"displayMode":"adaptive","locale":"fr"}}
-  </script>
-</div>
-"""
-components.html(_tape_html, height=80)
+# Native ticker tape (replaces TradingView widget — no .PA red errors).
+_tape_col1, _tape_col2 = st.columns([0.22, 0.78])
+with _tape_col1:
+    _tape_period = st.radio(
+        "Période bandeau",
+        ["1d", "5d", "1mo"],
+        horizontal=True,
+        key="native_tape_period",
+        format_func=lambda x: {"1d": "1j", "5d": "5j", "1mo": "1m"}[x],
+        label_visibility="collapsed",
+    )
+with _tape_col2:
+    st.caption("Bandeau marché natif · blue chips PEA · logos Clearbit")
+render_native_ticker_tape(_tape_period)
 
 portfolio = load_portfolio_state()
 if portfolio is None:
@@ -3354,12 +3634,16 @@ with tab_gen:
         unsafe_allow_html=True,
     )
 
-    # --- Phase 19: Morning Briefing (Zeitgeist) — top of General ------------
-    st.markdown("#### 🗞️ Morning Briefing (Zeitgeist)")
+    # --- Phase 19: Morning Briefing (Synthèse IA) — top of General ----------
+    st.markdown("#### 🗞️ Morning Briefing (Synthèse IA)")
+    if "briefing_loaded" not in st.session_state:
+        st.session_state["briefing_loaded"] = False
     with st.spinner("Synchronisation du Morning Briefing..."):
         briefing = load_morning_briefing()
+        st.session_state["briefing_loaded"] = True
+        st.session_state["briefing_cache"] = briefing
     if not morning_briefing_is_live(briefing):
-        st.caption("Briefing matinal non disponible aujourd'hui.")
+        st.info("Briefing en attente de génération ou de chargement.")
         if st.button(
             "Générer le Briefing maintenant",
             type="primary",
@@ -3394,7 +3678,7 @@ with tab_gen:
                     metric_box(
                         f"Thème {i + 1}",
                         bullet[:90] + ("…" if len(bullet) > 90 else ""),
-                        sub="newsletter Zeitgeist",
+                        sub="newsletter Synthèse IA",
                         accent="cyan" if i % 2 == 0 else "amber",
                         help_text="Narratif macro extrait des newsletters overnight.",
                     ),
@@ -4057,6 +4341,17 @@ with tab_mkt:
         unsafe_allow_html=True,
     )
 
+    _uni_all = sorted(universe_df["Ticker"].tolist())
+    _uni_search = st.selectbox(
+        "🔍 Rechercher et analyser un actif spécifique",
+        _uni_all,
+        format_func=format_name,
+        key="mkt_universal_search",
+    )
+    if _uni_search:
+        st.session_state["explore_ticker"] = _uni_search
+        st.session_state["focus_ticker"] = _uni_search
+
     # Prefer liquid mid/large names — exclude microcaps/pennies from scan defaults.
     liquid_scan = list(dict.fromkeys(
         [p.ticker for p in positions]
@@ -4120,21 +4415,21 @@ with tab_mkt:
                 st.metric(format_name(worst["Ticker"]), f"{worst['Current Price']:.2f} €",
                           f"{worst['Performance (%)']:+.2f}%")
 
-            st.markdown("#### Classement (top & flop liquides)")
-            show = pd.concat([perf.head(12), perf.tail(12)]).drop_duplicates("Ticker")
-            show = show.sort_values("Performance (%)", ascending=True)
-            show["Label"] = [f"{short_name(t)} ({t})" for t in show["Ticker"]]
-            bar = pex.bar(
-                show, x="Performance (%)", y="Label", orientation="h",
-                color="Performance (%)", color_continuous_scale=_DIVERGE,
-                color_continuous_midpoint=0,
-                hover_data={"Current Price": ":.2f", "Ticker": True, "Label": False},
+            st.markdown("#### 📋 Univers liquide complet (triable)")
+            full_perf = perf.copy().sort_values("Performance (%)", ascending=False)
+            full_disp = pd.DataFrame({
+                "Ticker": full_perf["Ticker"],
+                "Titre": [format_name(t) for t in full_perf["Ticker"]],
+                "Début": [f"{v:,.2f} €" for v in full_perf["Start Price"]],
+                "Actuel": [f"{v:,.2f} €" for v in full_perf["Current Price"]],
+                "Performance %": [f"{v:+.2f}%" for v in full_perf["Performance (%)"]],
+            })
+            st.dataframe(
+                full_disp,
+                use_container_width=True,
+                hide_index=True,
+                key="mkt_full_perf_table",
             )
-            _style_dark_fig(bar, height=max(420, 22 * len(show)))
-            bar.update_layout(margin=dict(t=10, l=0, r=0, b=0),
-                              coloraxis_showscale=False,
-                              yaxis_title="", xaxis_title=f"Perf % · {interval_label}")
-            st.plotly_chart(bar, width="stretch")
 
             movers = list(perf["Ticker"].head(4)) + list(perf["Ticker"].tail(4))
             movers = tuple(dict.fromkeys(movers))
@@ -4395,7 +4690,8 @@ with tab_mkt:
                 unsafe_allow_html=True,
             )
 
-    # Full-width TradingView chart (unique container id per ticker → no AAPL sticky)
+    # Full-width TradingView chart — ALWAYS resolve via _tv_symbol (EURONEXT:…).
+    _tv_resolved = _tv_symbol(selected)
     _tv_cid = f"tv_chart_explore_{selected.replace('.', '_').replace(':', '_')}"
     chart_html = f"""
     <div class="tradingview-widget-container" style="height:620px;width:100%">
@@ -4403,7 +4699,7 @@ with tab_mkt:
       <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
       <script type="text/javascript">
         new TradingView.widget({{
-          "autosize": true, "symbol": "{tv}", "interval": "D",
+          "autosize": true, "symbol": "{_tv_resolved}", "interval": "D",
           "timezone": "Europe/Paris", "theme": "dark", "style": "1",
           "locale": "fr", "enable_publishing": false,
           "hide_side_toolbar": false, "allow_symbol_change": true,
@@ -4414,7 +4710,7 @@ with tab_mkt:
     </div>
     """
     components.html(chart_html, height=640)
-    st.caption(f"TradingView symbol injecté : `{tv}`")
+    st.caption(f"TradingView symbol injecté : `{_tv_resolved}`")
 
     # TA widget + SMAs under chart
     tw1, tw2 = st.columns([1, 1])
@@ -4425,7 +4721,7 @@ with tab_mkt:
           <script type="text/javascript"
             src="https://s3.tradingview.com/external-embedding/embed-widget-technical-analysis.js" async>
           {{"interval":"1D","width":"100%","isTransparent":true,"height":380,
-            "symbol":"{tv}","showIntervalTabs":true,"locale":"fr","colorTheme":"dark"}}
+            "symbol":"{_tv_resolved}","showIntervalTabs":true,"locale":"fr","colorTheme":"dark"}}
           </script>
         </div>
         """
@@ -4453,7 +4749,7 @@ with tab_mkt:
             f"(souvent neutre sur small/mid .PA — chaine options rare)</span></div>"
             f"<div style='margin-top:12px;'><b>Insiders</b> : {ins_txt}</div>"
             f"<div style='margin-top:12px;color:{_MUTED};font-size:13px;'>"
-            f"TradingView: <code>{tv}</code></div>"
+            f"TradingView: <code>{_tv_resolved}</code></div>"
             f"</div>",
             unsafe_allow_html=True,
         )
@@ -4667,6 +4963,30 @@ with tab_mkt:
             width="stretch",
             key=f"explore_news_table_{selected}",
         )
+        st.markdown("#### 📚 Historique complet des actualités (Base de données)")
+        db_news: list[dict] = []
+        if _SQLITE_PATH.exists():
+            try:
+                db = PortfolioDB(db_path=_SQLITE_PATH)
+                db.init_db()
+                db_news = db.get_news_history(selected, limit=100)
+            except Exception:  # noqa: BLE001
+                db_news = []
+        if db_news:
+            hist_df = pd.DataFrame(
+                [
+                    {
+                        "Date": str(n.get("date") or "")[:16],
+                        "Source": str(n.get("provider") or "")[:70],
+                        "Titre": str(n.get("title") or "")[:180],
+                        "Lien": str(n.get("link") or ""),
+                    }
+                    for n in db_news
+                ]
+            )
+            st.dataframe(hist_df, use_container_width=True, hide_index=True)
+        else:
+            st.caption("Historique SQLite vide pour cet actif.")
     else:
         st.caption("Aucune actualite majeure recente pour cet actif.")
 
@@ -4914,31 +5234,61 @@ quotidiennes** (heure de Paris), uniquement les **jours de bourse** :
 
 ---
 
-### 📡 Les Donnees
+### 📡 Les Données (télémétrie live)
 
-| Source | Usage | Statut |
-|--------|--------|--------|
-| **yfinance** | OHLCV, calendrier, insiders, news fallback | Primaire |
-| **VIX / VSTOXX** | Coupe-circuit panic (`VIX_PANIC_THRESHOLD`) | `^V2TX` puis `^VIX` |
-| **TradingView** | Graphiques + jauge TA (UI only) | Widgets |
-| **Polymarket Gamma** | Probabilites macro (contexte) | Live, no auth |
-| **Boursorama** | Profil PEA/SRD, consensus, news (best-effort) | Scraper fragile |
-| **AMF BDIF** | Declarations dirigeants (**primaire**) | Officiel FR ; WAF/HTTP 500 possible → FMP → Yahoo |
-| **FMP** | Insiders fallback (`FMP_API_KEY`) | Secondaire |
-| **OpenRouter** | Sentiment news + briefing geo (explique, ne decide pas) | Optionnel |
-| **SQLite + DuckDB** | Portfolio / audit / equity curve / OHLCV | Local |
+""")
 
+    st.markdown("#### 📡 Santé des sources de données")
+    _health_df = build_data_sources_health_df()
+    _health_colors = []
+    for s in _health_df["Statut Live"].tolist():
+        if "🟢" in s:
+            _health_colors.append(_NEON)
+        elif "🔴" in s:
+            _health_colors.append(_RED)
+        else:
+            _health_colors.append(_AMBER)
+    st.plotly_chart(
+        dark_table(
+            _health_df,
+            height=min(420, 56 + 28 * len(_health_df)),
+            font_color_map={"Statut Live": _health_colors},
+            col_widths=[1.4, 2.2, 1.0, 2.4],
+        ),
+        width="stretch",
+        key="arch_data_health_table",
+    )
+
+    st.markdown("#### ⚙️ Configuration Active (risk_params.yaml)")
+    _risk_rows = [
+        ("VIX_PANIC_THRESHOLD", _RISK.get("VIX_PANIC_THRESHOLD", _VIX_PANIC)),
+        ("SATELLITE_MAX_BUDGET_PCT", _RISK.get("SATELLITE_MAX_BUDGET_PCT", _SAT_BUDGET)),
+        ("MAX_SECTOR_WEIGHT_PCT", _RISK.get("MAX_SECTOR_WEIGHT_PCT", _MAX_SECTOR)),
+        ("REBALANCE_ATR_STOP_MULT", _RISK.get("REBALANCE_ATR_STOP_MULT", 2.5)),
+        ("KELLY_FRACTION", _RISK.get("KELLY_FRACTION", 0.5)),
+        ("CORRELATION_LOOKBACK_DAYS", _RISK.get("CORRELATION_LOOKBACK_DAYS", 60)),
+        ("MAX_CORRELATION_TO_PORTFOLIO", _RISK.get("MAX_CORRELATION_TO_PORTFOLIO", 0.70)),
+        ("RSI_OVERSOLD_THRESHOLD", _RISK.get("RSI_OVERSOLD_THRESHOLD", 30)),
+    ]
+    st.dataframe(
+        pd.DataFrame(_risk_rows, columns=["Paramètre", "Valeur active"]),
+        use_container_width=True,
+        hide_index=True,
+        key="arch_active_risk_params",
+    )
+
+    st.markdown("""
 ---
 
 ### 🖥️ Dashboard (onglets)
 
 | Onglet | Contenu |
 |--------|---------|
-| **General & Signaux** | Suggestion adaptative **multi-horizon**, explication cash, fiche ETF Core, reco, geo, registre, news du mois |
-| **Portefeuille** | Equity curve + allocation + editeur wallet (SQLite) |
-| **Exploration** | Scan liquide top/flop + trajectoires, fiche ticker (dossier entreprise, TA expliquee, news, insiders, Polymarket) |
+| **General & Signaux** | Suggestion adaptative **multi-horizon**, briefing Zeitgeist, ranking cliquable, geo, registre |
+| **Portefeuille** | Equity curve + allocation + **stops ATR 2.5x** + editeur wallet (SQLite) |
+| **Exploration** | Recherche univers 600+ tickers, fiche ticker, ticket d'ordre, checklist, news archivées |
 | **Univers** | Liste PEA + **perf moyenne par secteur** (horizon reglable) |
-| **Architecture** | Cette page |
+| **Architecture** | Cette page (télémétrie live + logs) |
 
 Mode **MICRO** (ex. 100 €) : 1 part liquide + gros cash buffer — le Core
 (`CW8.PA`) cote trop cher pour une part entiere. Ce n'est pas une erreur :
@@ -4964,7 +5314,51 @@ c'est de l'optionalite jusqu'au prochain depot.
    avant l'alerte Discord.
 
 L'IA **n'approuve jamais** un trade. Discord = copilot manuel.
+""")
 
+    with st.expander("📐 Sizing & Demi-Kelly (Inverse Volatilité)", expanded=False):
+        st.markdown(
+            "<div class='info-text'>Le sizing évite la sur-allocation sur les "
+            "titres très volatils. Un titre à <b>40% de vol annualisée</b> reçoit "
+            "environ <b>2× moins de cash</b> qu'un titre à 20%. Le "
+            "<b>Half-Kelly</b> (50% de Kelly) limite le risque de ruine : on "
+            "capture une partie de l'edge quant sans parier la totalité de "
+            "l'equity sur un seul signal.</div>",
+            unsafe_allow_html=True,
+        )
+    with st.expander("🛑 Stop-Loss ATR (2.5×)", expanded=False):
+        st.markdown(
+            "<div class='info-text'>Le stop utilise l'<b>ATR(14)</b> (Average True "
+            "Range) pour s'adapter au bruit normal du titre. Règle : "
+            "<code>stop = PRU − 2.5 × ATR</code>. Un stop fixe en % serait trop "
+            "serré sur les small caps volatiles et trop large sur les blue chips "
+            "calmes. Visible en direct dans l'onglet Portefeuille.</div>",
+            unsafe_allow_html=True,
+        )
+    with st.expander("🔗 Filtre de Corrélation de Pearson", expanded=False):
+        st.markdown(
+            f"<div class='info-text'>Mesure le chevauchement des mouvements de "
+            f"prix sur <b>{int(_RISK.get('CORRELATION_LOOKBACK_DAYS', 60))} jours</b>. "
+            f"Si un candidat bouge comme une ligne déjà détenue "
+            f"(corr &gt; {_RISK.get('MAX_CORRELATION_TO_PORTFOLIO', 0.70):.0%}), "
+            f"il est rejeté pour préserver une vraie diversification sectorielle "
+            f"et éviter le « faux satellite ».</div>",
+            unsafe_allow_html=True,
+        )
+    with st.expander("🕸️ Score d'Empreinte (0–100)", expanded=False):
+        st.markdown(
+            "<div class='info-text'>Pondération multi-axes avant émission BUY : "
+            "<b>35% Mean Reversion</b> (RSI + SMA200), "
+            "<b>25% Momentum / Volume</b>, "
+            "<b>20% Qualité/Valeur</b>, "
+            "<b>20% Insiders/Institutionnels</b>, "
+            "plus modificateurs News/Polymarket. "
+            "Seuil d'émission : <b>≥ 65</b> — plusieurs confirmations requises, "
+            "jamais un seul indicateur isolé.</div>",
+            unsafe_allow_html=True,
+        )
+
+    st.markdown("""
 ---
 
 ### 🛡️ Bouclier de risque
@@ -4988,7 +5382,7 @@ AMF → FMP → yfinance / VIX / Bourso best-effort
         → CorrelationFirewall + PeaSizer + MacroVeto
         → Monthly ATR rebalancer
         → Discord Copilot
-        → SQLite (portfolio + equity curve)  ↔  Streamlit Dashboard
+        → SQLite (portfolio + equity curve + news_history)  ↔  Streamlit Dashboard
         → DuckDB (OHLCV)
 ```
 
@@ -5033,7 +5427,7 @@ cash/positions. Les ordres restent Discord + scheduler.
 st.write("---")
 st.caption(
     "PEA Sniper Terminal V-Prime \u00b7 Zero-leverage \u00b7 Execution manuelle "
-    "via Discord \u00b7 Donnees: yfinance / TradingView \u00b7 "
+    "via Discord \u00b7 Donnees: yfinance / bandeau natif \u00b7 "
     "Ceci n'est PAS un conseil en investissement."
 )
 

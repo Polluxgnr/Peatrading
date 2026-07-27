@@ -17,11 +17,18 @@ import sys
 from pathlib import Path
 
 try:
-    from dotenv import load_dotenv
+    sys.path.insert(0, str(Path(__file__).resolve().parent / "01_memory_core"))
+    from env_loader import load_api_keys
 
-    load_dotenv(Path(__file__).resolve().parent / "config" / "api_keys.env")
+    load_api_keys(Path(__file__).resolve().parent / "config" / "api_keys.env")
 except Exception:  # noqa: BLE001
-    pass
+    _env = Path(__file__).resolve().parent / "config" / "api_keys.env"
+    if _env.exists():
+        with open(_env, "r", encoding="utf-8") as fh:
+            for line in fh:
+                if "=" in line and not line.strip().startswith("#"):
+                    k, v = line.strip().split("=", 1)
+                    os.environ.setdefault(k.strip(), v.strip().strip(" '\""))
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "05_interfaces"))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "01_memory_core"))

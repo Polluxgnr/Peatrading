@@ -126,6 +126,19 @@ class PortfolioDB:
                     );
                     """
                 )
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS news_history (
+                        url              TEXT PRIMARY KEY,
+                        ticker           TEXT NOT NULL,
+                        title            TEXT NOT NULL,
+                        date_published   TEXT NOT NULL,
+                        provider         TEXT NOT NULL,
+                        sentiment_score  REAL,
+                        inserted_at      TEXT NOT NULL
+                    );
+                    """
+                )
             logger.info("SQLite schema initialized at %s", self.db_path)
         except sqlite3.Error:
             logger.exception("Failed to initialize SQLite schema.")
@@ -418,4 +431,90 @@ class PortfolioDB:
             return [dict(row) for row in rows]
         except sqlite3.Error:
             logger.exception("Failed to fetch signals since %s.", since_iso)
+            raise
+
+    def save_news(self, news_list: list[dict]) -> None:
+        """Upsert news articles into ``news_history`` (keyed by URL).
+
+        Args:
+            news_list: Dicts with keys ``url`` or ``link``, ``ticker``, ``title``,
+                ``date`` or ``date_published``, ``provider``, optional
+                ``sentiment_score``.
+        """
+        if not news_list:
+            return
+        now = datetime.now(timezone.utc).isoformat()
+        try:
+            with self._connect() as conn:
+                for item in news_list:
+                    url = str(item.get("url") or item.get("link") or "").strip()
+                    title = str(item.get("title") or "").strip()
+                    if not title:
+                        continue
+                    if not url or url == "#":
+                        url = f"title:{title.casefold()}"
+                    ticker = str(item.get("ticker") or "").strip()
+                    if not ticker:
+                        continue
+                    date_pub = str(
+                        item.get("date_published") or item.get("date") or now[:16]
+                    ).strip()
+                    provider = str(item.get("provider") or "unknown").strip()
+                    sentiment = item.get("sentiment_score")
+                    conn.execute(
+                        """
+                        INSERT INTO news_history (
+                            url, ticker, title, date_published, provider,
+                            sentiment_score, inserted_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(url) DO UPDATE SET
+                            ticker = excluded.ticker,
+                            title = excluded.title,
+                            date_published = excluded.date_published,
+                            provider = excluded.provider,
+                            sentiment_score = excluded.sentiment_score,
+                            inserted_at = excluded.inserted_at;
+                        """,
+                        (url, ticker, title, date_pub, provider, sentiment, now),
+                    )
+        except sqlite3.Error:
+            logger.exception("Failed to save news history.")
+            raise
+
+    def get_news_history(self, ticker: str, limit: int = 50) -> list[dict]:
+        """Return archived news for a ticker, newest first.
+
+        Args:
+            ticker: Yahoo symbol (e.g. ``MC.PA``).
+            limit: Max rows to return.
+
+        Returns:
+            list[dict]: UI-ready items with ``title``, ``link``, ``date``,
+            ``provider``.
+        """
+        try:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    """
+                    SELECT url, ticker, title, date_published, provider,
+                           sentiment_score, inserted_at
+                    FROM news_history
+                    WHERE ticker = ?
+                    ORDER BY date_published DESC, inserted_at DESC
+                    LIMIT ?;
+                    """,
+                    (ticker, int(limit)),
+                ).fetchall()
+            return [
+                {
+                    "title": row["title"],
+                    "link": row["url"],
+                    "date": row["date_published"],
+                    "provider": row["provider"],
+                    "sentiment_score": row["sentiment_score"],
+                }
+                for row in rows
+            ]
+        except sqlite3.Error:
+            logger.exception("Failed to read news history for %s.", ticker)
             raise
