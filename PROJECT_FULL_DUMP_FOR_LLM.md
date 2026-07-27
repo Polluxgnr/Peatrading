@@ -1,6 +1,6 @@
 # PEA Sniper Terminal — Full Project Dump for LLM
 Root: `C:\Users\PolluxGronier\Downloads\pea_sniper_terminal`
-Generated: 2026-07-24 09:06 UTC
+Generated: 2026-07-27 12:09 UTC
 One-shot context dump of source, configs, and docs (no venv, no DBs, no secrets).
 ---
 ## File index (68 files)
@@ -640,7 +640,15 @@ class MacroAlphaSensor:
             )
             if resp.status_code != 200:
                 raise ValueError(f"Polymarket HTTP {resp.status_code}")
-            data = resp.json()
+            try:
+                data = resp.json()
+            except Exception as exc:  # noqa: BLE001 - Cloudflare HTML / empty body
+                logger.debug(
+                    "Polymarket JSON decode failed for %r: %s", query, exc
+                )
+                data = None
+            if not isinstance(data, dict):
+                raise ValueError("Polymarket payload not JSON object")
             events = (data or {}).get("events") or []
             for ev in events:
                 markets = ev.get("markets") or []
@@ -3197,6 +3205,36 @@ TOP_INSTITUTIONAL_HOLDINGS: set[str] = {
     "NESN.SW", "NOVN.SW", "ROG.SW", "AZN.L",
 }
 
+try:  # Optional: richer news signal if OpenRouter/news module is available.
+    from news_sentiment_llm import NewsSentimentScorer  # noqa: E402
+except Exception:  # noqa: BLE001
+    NewsSentimentScorer = None  # type: ignore[assignment]
+
+
+def _heuristic_news_score(title: str) -> int:
+    """Fallback keyword score (-75..+75) when LLM news is unavailable."""
+    t = (title or "").casefold()
+    if not t:
+        return 0
+    bull = (
+        "rachat", "acquisition", "fusion", "record", "hausse", "rebond",
+        "dividende", "benefice", "bénéfice", "profit", "croissance", "contrat",
+        "upgrade", "buyback", "surperform", "positif", "approval", "accord",
+    )
+    bear = (
+        "amende", "fraude", "scandale", "baisse", "perte", "licenciement",
+        "faillite", "recession", "récession", "guerre", "sanction", "downgrade",
+        "profit warning", "deception", "déception", "enquete", "enquête", "crise",
+    )
+    score = 0
+    for w in bull:
+        if w in t:
+            score += 28
+    for w in bear:
+        if w in t:
+            score -= 32
+    return int(max(-75, min(75, score)))
+
 
 class SignalGenerator:
     """Generates raw BUY signals from ensemble conviction scoring."""
@@ -3325,6 +3363,8 @@ class SignalGenerator:
         rsi_14 = last["RSI_14"]
         factors: list[str] = []
         mr = vol_pts = ins_pts = inst_pts = 0
+        news_mod = 0
+        poly_mod = 0
 
         if not pd.isna(sma_200) and not pd.isna(rsi_14):
             above_sma = close > float(sma_200)
@@ -3380,12 +3420,59 @@ class SignalGenerator:
             inst_pts = 20
             factors.append("INST+20 institutional consensus proxy")
 
-        total = float(mr + vol_pts + ins_pts + inst_pts)
+        # Holistic news integration: LLM sentiment first, heuristic fallback.
+        news_score = 0.0
+        headlines: list[str] = []
+        try:
+            if yf is not None:
+                raw_news = yf.Ticker(ticker).news or []
+                for n in raw_news[:6]:
+                    content = n.get("content", n)
+                    title = (content.get("title") or n.get("title") or "").strip()
+                    if title:
+                        headlines.append(title)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("News fetch failed for %s: %s", ticker, exc)
+        if headlines:
+            if NewsSentimentScorer is not None:
+                try:
+                    news_score = float(
+                        asyncio.run(NewsSentimentScorer().analyze_news(ticker, headlines))
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug("LLM sentiment failed for %s: %s", ticker, exc)
+            if abs(news_score) < 1:
+                heuristic_vals = [_heuristic_news_score(h) for h in headlines]
+                if heuristic_vals:
+                    news_score = float(sum(heuristic_vals) / len(heuristic_vals))
+        if news_score > 30:
+            news_mod = 10
+            factors.append(f"NEWS+10 Bullish sentiment ({news_score:.0f})")
+        elif news_score < -30:
+            news_mod = -15
+            factors.append(f"NEWS-15 Bearish sentiment ({news_score:.0f})")
+
+        # Polymarket integration via existing macro sensor.
+        if sensor is not None:
+            try:
+                poly_prob = float(sensor.get_polymarket_sentiment(f"{ticker} outlook"))
+                if poly_prob >= 0.62:
+                    poly_mod = 10
+                    factors.append(f"POLY+10 YES={poly_prob:.2f}")
+                elif poly_prob <= 0.38:
+                    poly_mod = -10
+                    factors.append(f"POLY-10 YES={poly_prob:.2f}")
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("Polymarket sentiment failed for %s: %s", ticker, exc)
+
+        total = float(max(0.0, min(100.0, mr + vol_pts + ins_pts + inst_pts + news_mod + poly_mod)))
         return {
             "mean_reversion": mr,
             "volume_breakout": vol_pts,
             "insider": ins_pts,
             "institutional": inst_pts,
+            "news_modifier": news_mod,
+            "polymarket_modifier": poly_mod,
             "total": total,
             "factors": factors,
             "rsi": None if pd.isna(rsi_14) else float(rsi_14),
@@ -6361,6 +6448,11 @@ try:
 except Exception:  # noqa: BLE001
     PeaSizer = None  # type: ignore[assignment]
 
+try:
+    from monthly_rebalancer import PortfolioRebalancer  # noqa: E402
+except Exception:  # noqa: BLE001
+    PortfolioRebalancer = None  # type: ignore[assignment]
+
 try:  # Optional sensors — the dashboard still works if a network dep is missing.
     from macro_alpha_api import MacroAlphaSensor  # noqa: E402
 except Exception:  # noqa: BLE001
@@ -7965,6 +8057,100 @@ def _tv_symbol(ticker: str) -> str:
     return ticker.upper()
 
 
+def build_broker_order_ticket(
+    ticker: str,
+    qty: int,
+    price: float,
+    isin: str | None = None,
+) -> dict:
+    """Build a ready-to-execute PEA order ticket payload for UI display."""
+    try:
+        scrapers_dir = _ROOT / "00_data_sensors" / "scrapers"
+        if str(scrapers_dir) not in sys.path:
+            sys.path.insert(0, str(scrapers_dir))
+        from bourso_scraper import yahoo_to_bourso_slug  # noqa: WPS433
+        bourso_slug = yahoo_to_bourso_slug(ticker) or ticker.replace(".", "-").lower()
+    except Exception:  # noqa: BLE001
+        bourso_slug = ticker.replace(".", "-").lower()
+
+    clean_qty = max(0, int(qty or 0))
+    clean_price = max(0.0, float(price or 0.0))
+    limit_price = round(clean_price * 1.001, 2) if clean_price > 0 else 0.0
+    notional = clean_qty * clean_price
+    est_fee = round(notional * 0.005, 2)
+    return {
+        "ticker": ticker,
+        "isin": isin or "n/a",
+        "order_type": "Limite",
+        "qty": clean_qty,
+        "limit_price": limit_price,
+        "notional": notional,
+        "estimated_fee_max": est_fee,
+        "bourso_url": f"https://www.boursorama.com/cours/{bourso_slug}/",
+    }
+
+
+def get_decision_checklist(ticker: str, portfolio_obj, vix: float) -> dict:
+    """Evaluate key V-Prime gate checks and return an explicit checklist."""
+    ind = get_indicators(ticker) or {}
+    close = float(ind.get("close") or 0.0)
+    rsi = ind.get("rsi")
+    sma200 = ind.get("sma200")
+    sma5 = ind.get("sma5")
+
+    score = 0.0
+    try:
+        fp = get_strategy_fingerprint(ticker) or {}
+        vals = [float(v) for v in fp.values() if v is not None]
+        if vals:
+            score = float(sum(vals) / len(vals))
+    except Exception:  # noqa: BLE001
+        score = 0.0
+
+    sector = _sector_for_ticker(ticker)
+    sector_value = sum(
+        float(getattr(p, "market_value", 0.0) or 0.0)
+        for p in (portfolio_obj.positions or [])
+        if str(getattr(p, "sector", "")) == sector
+    )
+    eq = float(getattr(portfolio_obj, "total_equity", 0.0) or 0.0)
+    sector_pct = (sector_value / eq * 100.0) if eq > 0 else 0.0
+    cash = float(getattr(portfolio_obj, "cash_available", 0.0) or 0.0)
+
+    checks = []
+
+    r1_ok = bool((rsi is not None and rsi < 30) or score >= 65)
+    checks.append({
+        "rule": "R1 RSI<30 ou Score>=65",
+        "status": "OK" if r1_ok else "WARN",
+        "detail": f"RSI={rsi:.1f}" if rsi is not None else f"Score={score:.0f}",
+    })
+    r2_ok = bool(close and sma200 and close > float(sma200))
+    checks.append({"rule": "R2 Close > SMA200", "status": "OK" if r2_ok else "FAIL",
+                   "detail": f"{close:.2f} vs {float(sma200):.2f}" if sma200 else "SMA200 n/a"})
+    r3_ok = bool(close and sma5 and close > float(sma5))
+    checks.append({"rule": "R3 Close > SMA5", "status": "OK" if r3_ok else "FAIL",
+                   "detail": f"{close:.2f} vs {float(sma5):.2f}" if sma5 else "SMA5 n/a"})
+    r4_ok = float(vix) < 30.0
+    checks.append({"rule": "R4 VIX < 30", "status": "OK" if r4_ok else "VETO",
+                   "detail": f"VIX={float(vix):.1f}"})
+    r5_ok = sector_pct < 25.0
+    checks.append({"rule": "R5 Poids secteur < 25%", "status": "OK" if r5_ok else "VETO",
+                   "detail": f"{sector}={sector_pct:.1f}%"})
+    r6_ok = cash >= close > 0
+    checks.append({"rule": "R6 Cash >= 1 part", "status": "OK" if r6_ok else "FAIL",
+                   "detail": f"Cash={cash:,.0f}€ / Cours={close:,.2f}€"})
+
+    statuses = [c["status"] for c in checks]
+    if any(s == "VETO" for s in statuses):
+        overall = "🔴 BLOQUÉ"
+    elif any(s in ("FAIL", "WARN") for s in statuses):
+        overall = "🟡 ATTENTE"
+    else:
+        overall = "🟢 PRÊT"
+    return {"overall": overall, "checks": checks, "score_hint": score}
+
+
 @st.cache_data(ttl=600, show_spinner=False)
 def get_vix() -> float:
     """Current market volatility gauge (VSTOXX, VIX proxy fallback)."""
@@ -9197,7 +9383,12 @@ def get_polymarket_macro(limit: int = 8) -> list[dict]:
         )
         if resp.status_code != 200:
             return []
-        events = resp.json()
+        try:
+            events = resp.json()
+        except Exception as exc:  # noqa: BLE001 - Cloudflare challenge / HTML body
+            if _dash_log is not None:
+                _dash_log.debug("Polymarket macro JSON decode failed: %s", exc)
+            return []
         if not isinstance(events, list):
             return []
 
@@ -9275,14 +9466,28 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# One-shot sync/pre-warm when the dashboard session opens.
+if not st.session_state.get("daily_sync_done", False):
+    with st.spinner("Initialisation et synchronisation des flux de marché..."):
+        _boot_universe = load_universe()
+        _boot_tickers = tuple(_boot_universe["Ticker"].head(24).tolist())
+        if _boot_tickers:
+            get_last_prices(_boot_tickers)
+        get_vix()
+    st.session_state["daily_sync_done"] = True
+
 universe_df = load_universe()
 # Populate the name lookup with every universe entry (STEP 1.3 coverage).
 TICKER_NAMES.update(dict(zip(universe_df["Ticker"], universe_df["Name"])))
 
-# Live streaming ticker tape across the top.
+# Live streaming ticker tape — blue chips only (TV rejects many small-caps).
+_blue_chips_tape = [
+    "CW8.PA", "MC.PA", "OR.PA", "AI.PA", "SAN.PA",
+    "TTE.PA", "BNP.PA", "AIR.PA", "RMS.PA", "SU.PA",
+]
 _tape_symbols = ",".join(
     f'{{"proName":"{_tv_symbol(t)}","title":"{short_name(t)}"}}'
-    for t in universe_df["Ticker"].head(16)
+    for t in _blue_chips_tape
 )
 _tape_html = f"""
 <div class="tradingview-widget-container">
@@ -9524,6 +9729,21 @@ with tab_gen:
         briefing = load_morning_briefing()
     if not morning_briefing_is_live(briefing):
         st.caption("Briefing matinal non disponible aujourd'hui.")
+        if st.button(
+            "Générer le Briefing maintenant",
+            type="primary",
+            key="gen_morning_briefing_now",
+        ):
+            with st.spinner("Analyse des newsletters en cours (IMAP + IA)..."):
+                try:
+                    from newsletter_api import run_morning_briefing_sync
+
+                    run_morning_briefing_sync()
+                    st.cache_data.clear()
+                except Exception as exc:  # noqa: BLE001
+                    st.error(f"Briefing échoué : {exc}")
+                else:
+                    st.rerun()
     else:
         zg = str(briefing.get("zeitgeist") or "").strip()
         headlines = briefing.get("headlines") or []
@@ -9655,16 +9875,24 @@ with tab_gen:
                     _AMBER if r == "SURVEILLER" else
                     _CYAN if r == "ATTENDRE" else _RED
                 )
-        st.plotly_chart(
-            dark_table(
-                adisp,
-                height=min(560, 64 + 36 * len(adisp)),
-                font_color_map={"Reco": reco_colors, "Score": reco_colors},
-                col_widths=[0.4, 1.5, 0.55, 0.7, 0.65, 1.2, 0.5, 0.75, 0.7, 3.4],
-            ),
-            width="stretch",
-            key="gen_alternatives_ranking_table",
+        adisp_click = adisp.copy()
+        adisp_click.insert(0, "Ticker", [a["ticker"] for a in alts])
+        _alt_event = st.dataframe(
+            adisp_click,
+            use_container_width=True,
+            hide_index=True,
+            selection_mode="single-row",
+            on_select="rerun",
+            key="gen_alternatives_click",
         )
+        _alt_rows = list(getattr(getattr(_alt_event, "selection", None), "rows", []) or [])
+        if _alt_rows:
+            _i = int(_alt_rows[0])
+            if 0 <= _i < len(adisp_click):
+                _ticker_pick = str(adisp_click.iloc[_i]["Ticker"])
+                st.session_state["focus_ticker"] = _ticker_pick
+                st.session_state["explore_ticker"] = _ticker_pick
+                st.caption(f"🔍 Analyse rapide prête pour {format_name(_ticker_pick)} (onglet Exploration).")
         # Phase 22: high-vol momentum pepites
         st.markdown("#### 🚀 Pépites (Forte Volatilité & Croissance)")
         st.markdown(
@@ -9682,16 +9910,24 @@ with tab_gen:
                 "vs SMA50": f"{p['gap_sma50']:+.1f}%",
                 "Cours": f"{p['close']:,.2f} €",
             } for p in pepites])
-            st.plotly_chart(
-                dark_table(
-                    pdisp,
-                    height=min(240, 56 + 34 * len(pdisp)),
-                    font_color_map={"Vol": [_AMBER] * len(pdisp)},
-                    col_widths=[2.2, 0.8, 0.7, 0.9, 1.0],
-                ),
-                width="stretch",
-                key="gen_pepites_table",
+            pdisp_click = pdisp.copy()
+            pdisp_click.insert(0, "Ticker", [p["ticker"] for p in pepites])
+            _pep_event = st.dataframe(
+                pdisp_click,
+                use_container_width=True,
+                hide_index=True,
+                selection_mode="single-row",
+                on_select="rerun",
+                key="gen_pepites_click",
             )
+            _pep_rows = list(getattr(getattr(_pep_event, "selection", None), "rows", []) or [])
+            if _pep_rows:
+                _i = int(_pep_rows[0])
+                if 0 <= _i < len(pdisp_click):
+                    _ticker_pick = str(pdisp_click.iloc[_i]["Ticker"])
+                    st.session_state["focus_ticker"] = _ticker_pick
+                    st.session_state["explore_ticker"] = _ticker_pick
+                    st.caption(f"🔍 Analyse rapide prête pour {format_name(_ticker_pick)} (onglet Exploration).")
         else:
             st.caption("Aucune pépite sur le panier liquide (vol/SMA50).")
     else:
@@ -9919,35 +10155,31 @@ with tab_gen:
                 key="gen_earnings_table",
             )
     st.markdown("---")
-    st.markdown("#### 📰 Actualites (impact marche)")
+    st.markdown("#### 📰 Actualites (contexte marche)")
     st.markdown(
-        "<div class='info-text'>Une seule liste dedupliquee, classee par "
-        "impact. Contexte seulement — jamais un trigger d'ordre.</div>",
+        "<div class='info-text'>Liste dedupliquee multi-sources "
+        "(Boursorama / Google / Yahoo). <b>Contexte seulement</b> — "
+        "jamais un trigger d'ordre. Pour la synthèse IA profonde, ouvre "
+        "l'onglet Exploration sur un ticker.</div>",
         unsafe_allow_html=True,
     )
     news_bundle = get_general_news_bundle(watch)
-    score_gen = st.checkbox(
-        "Scorer les news (IA + mots-cles)",
-        value=False,
-        key="gen_score_news",
-        help="Impact FORT/MOYEN/FAIBLE. Cache 1h. Decoche = heuristique rapide.",
-    )
     if news_bundle:
-        if score_gen:
-            with st.spinner("Notation des actualites…"):
-                scored_bundle = [
-                    (n, score_news_with_llm(n.get("ticker", ""), n.get("title", "")))
-                    for n in news_bundle
-                ]
-        else:
-            scored_bundle = [
-                (n, heuristic_news_score(n.get("title", ""))) for n in news_bundle
-            ]
-        scored_bundle.sort(key=lambda x: abs(x[1]), reverse=True)
-        nc1, nc2 = st.columns(2)
-        for i, (n, sc) in enumerate(scored_bundle[:12]):
-            with (nc1 if i % 2 == 0 else nc2):
-                render_news_card(n.get("ticker", ""), n, sc)
+        ndisp = pd.DataFrame([{
+            "Source": str(n.get("provider") or "")[:48],
+            "Date": str(n.get("date") or "")[:16],
+            "Titre": str(n.get("title") or "")[:120],
+            "Ticker": short_name(str(n.get("ticker") or "")),
+        } for n in news_bundle[:12]])
+        st.plotly_chart(
+            dark_table(
+                ndisp,
+                height=min(360, 56 + 28 * len(ndisp)),
+                col_widths=[1.6, 0.9, 3.2, 0.8],
+            ),
+            width="stretch",
+            key="gen_news_clean_table",
+        )
     else:
         st.caption("Aucune actualite recente sur la watchlist.")
 
@@ -10077,6 +10309,60 @@ with tab_pf:
                 dark_table(disp, height=430, font_color_map={"PnL": pnl_colors},
                            col_widths=[2.2, 1.4, 0.7, 1, 1, 1.2, 0.8, 0.9]),
                 width="stretch")
+
+    st.markdown("---")
+    st.markdown("#### 🛑 Gestion des Stops & Sorties (ATR 2.5x)")
+    if not positions:
+        st.caption("Aucune ligne ouverte, donc aucun stop ATR à surveiller.")
+    else:
+        stop_rows = []
+        for p in positions:
+            ticker = str(p.ticker)
+            atr = _latest_atr14_approx(ticker)
+            current = float(p.current_price or 0.0)
+            pru = float(p.avg_entry_price or 0.0)
+            if atr is None or atr <= 0:
+                stop_rows.append({
+                    "Ticker": ticker,
+                    "PRU": pru,
+                    "Cours Actuel": current,
+                    "Niveau Stop-Loss (€)": None,
+                    "Distance au Stop (%)": None,
+                    "Statut": "⚪ ATR indisponible",
+                })
+                continue
+            stop_price = pru - (2.5 * float(atr))
+            distance_pct = ((current - stop_price) / current) * 100.0 if current > 0 else -999.0
+            status = "🔴 DANGER DÉCLENCHÉ" if current < stop_price else "🟢 Safe"
+            atr_pct = None
+            if PortfolioRebalancer is not None:
+                try:
+                    atr_pct = PortfolioRebalancer.atr_pct(float(atr), float(current))
+                except Exception:  # noqa: BLE001
+                    atr_pct = None
+            stop_rows.append({
+                "Ticker": ticker,
+                "PRU": pru,
+                "Cours Actuel": current,
+                "Niveau Stop-Loss (€)": stop_price,
+                "Distance au Stop (%)": distance_pct,
+                "ATR%": atr_pct,
+                "Statut": status,
+            })
+        stops_df = pd.DataFrame(stop_rows)
+        show_stops = stops_df.copy()
+        for col in ("PRU", "Cours Actuel", "Niveau Stop-Loss (€)"):
+            show_stops[col] = show_stops[col].map(
+                lambda x: "—" if pd.isna(x) else f"{float(x):,.2f} €"
+            )
+        show_stops["Distance au Stop (%)"] = show_stops["Distance au Stop (%)"].map(
+            lambda x: "—" if pd.isna(x) else f"{float(x):+.2f}%"
+        )
+        if "ATR%" in show_stops.columns:
+            show_stops["ATR%"] = show_stops["ATR%"].map(
+                lambda x: "—" if pd.isna(x) else f"{float(x):.2f}%"
+            )
+        st.dataframe(show_stops, use_container_width=True, hide_index=True)
 
     st.markdown("---")
     with st.expander("✏️ Ajuster le wallet (cash & positions)", expanded=False):
@@ -10390,6 +10676,45 @@ with tab_mkt:
                 f"{(bprofile or {}).get('exchange') or '—'}",
         ), unsafe_allow_html=True)
 
+    st.markdown("#### 📋 Ticket d'Ordre PEA (Prêt à l'Exécution)")
+    live_price = float((ind or {}).get("close") or 0.0)
+    qty_default = max(1, int(float(portfolio.cash_available or 0.0) // live_price)) if live_price > 0 else 1
+    qty_ticket = st.number_input(
+        "Quantité à préparer",
+        min_value=1,
+        value=int(qty_default),
+        step=1,
+        key=f"mkt_order_qty_{selected}",
+    )
+    ticket = build_broker_order_ticket(
+        selected,
+        int(qty_ticket),
+        live_price,
+        isin=(bprofile or {}).get("isin"),
+    )
+    st.markdown(
+        f"<div style='background:#0A0A0A;padding:14px 16px;margin-bottom:10px;"
+        f"border:1px solid #2A2A2A;border-left:4px solid {_CYAN};"
+        f"font-family:Courier New,monospace;'>"
+        f"<div style='color:{_CYAN};font-size:11px;letter-spacing:1.5px;'>ORDER TICKET</div>"
+        f"<div style='margin-top:8px;line-height:1.6;'>"
+        f"<b>ISIN</b>: {ticket['isin']}<br>"
+        f"<b>Type d'ordre</b>: {ticket['order_type']}<br>"
+        f"<b>Quantité</b>: {ticket['qty']}<br>"
+        f"<b>Limite suggérée</b>: {ticket['limit_price']:,.2f} €<br>"
+        f"<b>Notional estimé</b>: {ticket['notional']:,.2f} €<br>"
+        f"<b>Frais PEA max (0.5%)</b>: {ticket['estimated_fee_max']:,.2f} €"
+        f"</div></div>",
+        unsafe_allow_html=True,
+    )
+    st.markdown(f"[↗️ Ouvrir sur Boursorama]({ticket['bourso_url']})")
+
+    st.markdown("#### ✅ Checklist de Décision")
+    checklist = get_decision_checklist(selected, portfolio, float(vix))
+    chk_df = pd.DataFrame(checklist["checks"])
+    st.dataframe(chk_df, use_container_width=True, hide_index=True)
+    st.caption(f"Statut global: {checklist['overall']} · score proxy {checklist['score_hint']:.0f}/100")
+
     # Technical analysis explanation (full width)
     st.markdown(
         f"<div class='eli5'><b style='color:{_AMBER};'>"
@@ -10685,38 +11010,32 @@ with tab_mkt:
     else:
         st.caption("Empreinte indisponible (indicateurs / valorisation manquants).")
 
-    # News — deep LLM synthesis (24h cache) + raw multi-source headlines
+    # News — deep LLM synthesis (24h cache) + dark table of sources
     st.markdown(f"#### 📰 Actualites — {short_name(selected)}")
-    news = get_recent_news(selected, limit=10)
+    news = get_recent_news(selected, limit=12)
     if news:
         headlines_tuple = tuple(
             str(n.get("title") or "").strip()
             for n in news
             if str(n.get("title") or "").strip()
         )
-        with st.spinner("Analyse approfondie par l'IA en cours..."):
+        with st.spinner("IA en cours d'analyse..."):
             deep = get_deep_news_synthesis(selected, headlines_tuple)
-        st.markdown(
-            f"<div style='background:#0A0A0A;padding:16px;margin-bottom:12px;"
-            f"border:1px solid #2A2A2A;border-left:4px solid {_CYAN};"
-            f"color:#E8E8E8;line-height:1.55;font-size:14px;white-space:pre-wrap;'>"
-            f"<div style='color:{_CYAN};font-size:11px;letter-spacing:1.5px;"
-            f"margin-bottom:8px;'>🧠 SYNTHÈSE IA · CACHE 24H</div>"
-            f"{deep}</div>",
-            unsafe_allow_html=True,
+        st.info(f"🧠 **Synthèse IA (cache 24h)**\n\n{deep}")
+        ndisp = pd.DataFrame([{
+            "Source": str(n.get("provider") or "")[:56],
+            "Date": str(n.get("date") or "")[:16],
+            "Titre": str(n.get("title") or "")[:140],
+        } for n in news])
+        st.plotly_chart(
+            dark_table(
+                ndisp,
+                height=min(380, 56 + 28 * len(ndisp)),
+                col_widths=[1.8, 0.9, 3.5],
+            ),
+            width="stretch",
+            key=f"explore_news_table_{selected}",
         )
-        with st.expander("Titres sources (Boursorama / Google / Yahoo)", expanded=False):
-            for n in news:
-                title = n.get("title") or ""
-                link = n.get("link") or "#"
-                provider = n.get("provider") or ""
-                date = n.get("date") or ""
-                st.markdown(
-                    f"- [{title}]({link})  \n"
-                    f"  <span style='color:#888;font-size:12px;'>"
-                    f"{provider} · {date}</span>",
-                    unsafe_allow_html=True,
-                )
     else:
         st.caption("Aucune actualite majeure recente pour cet actif.")
 
@@ -10907,48 +11226,34 @@ with tab_uni:
         view = universe_df if not sector_filter else \
             universe_df[universe_df["Sector"].isin(sector_filter)]
         view = view.sort_values(["Sector", "Ticker"])
-        # Screener tags from DuckDB technicals (cap for responsiveness)
-        tag_cap = 80
-        tag_tickers = tuple(view["Ticker"].head(tag_cap).tolist())
+        # Screener tags for the full filtered view (no artificial .head(80) cut).
+        tag_tickers = tuple(view["Ticker"].tolist())
         with st.spinner("Tags techniques (OVERSOLD / UPTREND)…"):
             tag_map = get_universe_screener_tags(tag_tickers)
-        tags_col = []
-        for i, t in enumerate(view["Ticker"].tolist()):
-            if i < tag_cap:
-                tags_col.append(tag_map.get(t, "—"))
-            else:
-                tags_col.append("…")
+        tags_col = [tag_map.get(t, "—") for t in view["Ticker"].tolist()]
         disp = pd.DataFrame({
             "Titre": view["Name"],
             "Ticker": view["Ticker"],
             "Secteur": view["Sector"],
             "Tags": tags_col,
         })
-        tag_colors = []
-        for t in tags_col:
-            if "OVERSOLD" in t:
-                tag_colors.append(_AMBER)
-            elif "UPTREND" in t:
-                tag_colors.append(_NEON)
-            elif "DOWNTREND" in t:
-                tag_colors.append(_RED)
-            else:
-                tag_colors.append(_MUTED)
-        st.plotly_chart(
-            dark_table(
-                disp.head(120),
-                height=400,
-                font_color_map={"Tags": tag_colors[:120]},
-                col_widths=[2, 1, 1.3, 2.2],
-            ),
-            width="stretch",
-            key="uni_screener_tags_table",
+        _uni_event = st.dataframe(
+            disp,
+            use_container_width=True,
+            hide_index=True,
+            selection_mode="single-row",
+            on_select="rerun",
+            key="uni_screener_click",
         )
-        if len(view) > tag_cap:
-            st.caption(
-                f"Tags calculés sur les {tag_cap} premiers titres affichés "
-                f"(filtre un secteur pour scorer le reste)."
-            )
+        _uni_rows = list(getattr(getattr(_uni_event, "selection", None), "rows", []) or [])
+        if _uni_rows:
+            _i = int(_uni_rows[0])
+            if 0 <= _i < len(disp):
+                _ticker_pick = str(disp.iloc[_i]["Ticker"])
+                st.session_state["focus_ticker"] = _ticker_pick
+                st.session_state["explore_ticker"] = _ticker_pick
+                st.caption(f"🔍 Analyse rapide prête pour {format_name(_ticker_pick)} (onglet Exploration).")
+        st.caption(f"{len(disp)} titre(s) affiché(s) · tags DuckDB lorsque dispo.")
 
 # --- Tab: Architecture & Documentation --------------------------------------
 with tab_arch:
@@ -11080,7 +11385,7 @@ cash/positions. Les ordres restent Discord + scheduler.
         else:
             names = [p.name for p in files]
             pick = st.selectbox("Fichier", names, key="log_file_pick")
-            nlines = st.slider("Lignes (tail)", 50, 1000, 250, 50, key="log_tail_n")
+            nlines = st.slider("Lignes (tail)", 50, 5000, 500, 50, key="log_tail_n")
             path = next(p for p in files if p.name == pick)
             body = tail_log(path, nlines)
             st.text_area(
@@ -15348,7 +15653,7 @@ if __name__ == "__main__":
 
 ## FILE: README.md
 ```markdown
-# PEA Sniper Terminal — V-Prime 3.0 (Phase 22)
+# PEA Sniper Terminal — V-Prime 3.0 (Phase 26)
 
 > **Sovereign execution. Kinetic risk management. Absolute quantitative transparency.**
 
@@ -15689,7 +15994,7 @@ Designed so you read **market state in ~3 seconds** before diving into tabs:
 - Last pipeline pass status (from `pipeline_status.json`)  
 - Equity + day variation (from `portfolio_history`)  
 - VIX gauge, count of PENDING Discord signals  
-- Quick actions: **`TICKER` + GO** (jumps Exploration dossier), ledger hint, manual pass reminder  
+- Quick actions: clickable ranking/universe rows (jumps Exploration dossier), ledger hint, manual pass reminder  
 
 **Palette:** off-white `#E0E0E0` for body text; neon `#00FF00` reserved for
 **positive PnL / APPROVED**; amber for alerts/vetoes; red for losses. Closer to
@@ -15699,11 +16004,11 @@ real Bloomberg conventions and easier on long sessions than green-everywhere.
 
 | Tab | Content |
 |-----|---------|
-| **General & Signaux** | Morning Briefing, suggestion + expanders, ranking **[HORS BUDGET]**, **Pépites**, geo brief, funnel, Command Center |
-| **Portefeuille** | Equity curve + **Sharpe/DD/CAGR/Sortino**, sunburst, positions, wallet editor → SQLite |
-| **Exploration** | Dossier + **logo Clearbit**, TA, what-if, valorisation, 10y, radar, **analyse IA news 24h**, insiders, Polymarket |
-| **Univers** | Full list + perf sectorielle + **Tags** techniques (OVERSOLD / UPTREND) |
-| **Architecture & Logs** | Living docs + **log file picker / tail / copy** |
+| **General & Signaux** | Morning Briefing (**bouton générer**), suggestion + expanders, ranking/pépites **cliquables** vers Exploration, geo brief, funnel, Command Center |
+| **Portefeuille** | Equity curve + **Sharpe/DD/CAGR/Sortino**, sunburst, positions, **table stops ATR 2.5x explicite**, wallet editor → SQLite |
+| **Exploration** | Dossier + **logo Clearbit**, TA, what-if, **ticket d'ordre PEA**, **checklist décision**, valorisation, 10y, radar, synthèse IA news, insiders, Polymarket intégré |
+| **Univers** | Full list + perf sectorielle + **tags techniques cliquables** (full filtered view, no 80-row cap) |
+| **Architecture & Logs** | Living docs + **log file picker / tail jusqu'à 5000 lignes** |
 
 ### Rich trade cards (what you see before approving)
 
@@ -15797,7 +16102,10 @@ sources over furtive HTML scraping.
 | **Ensemble conviction scoring** | ✅ Phase 20 — 4 axes, emit ≥65; radar + Command Center approve |
 | **What-if 1000€ + walk-forward scaffold** | ✅ Exploration simulator + `walk_forward_backtester.py` |
 | **Terminal polish (TV / zone / ranking / Polymarket)** | ✅ Phase 21 — EPA: ticker map, flat buy-zone fix, fingerprint ranking, SSL-tolerant Gamma |
-| **Smart UX + deep news + logos + pépites** | ✅ Phase 22 — expanders, Clearbit logos, LLM news 24h cache, HORS BUDGET ranking |
+| **Smart UX + deep news + logos + pépites** | ✅ Phase 22 |
+| **UX overhaul (tape / GO / news diversity)** | ✅ Phase 23 — no GO, logos off, multi-source news, deep IA narrative |
+| **Polymarket harden + news clean + tape + logs** | ✅ Phase 24 — JSONDecode guard, no heuristic pills, blue-chip tape, briefing button, log tail 5k |
+| **Auto-sync + score holistique + UI exécution** | ✅ Phase 26 — warmup au démarrage, News/Polymarket dans le score, stops ATR visibles, tickets/checklist, tables cliquables |
 | pytest + GitHub Actions CI | Expand coverage over time |
 
 ### Next (highest leverage)
@@ -15846,7 +16154,7 @@ Decision-support and educational tool only. **No automated execution. No financi
 advice.** You are solely responsible for every trade. Past or backtested results
 do not guarantee future performance.
 
-© 2026 Pollux Quantitative Research — V-Prime 3.0 (Phase 22).
+© 2026 Pollux Quantitative Research — V-Prime 3.0 (Phase 26).
 ```
 
 ## FILE: requirements.txt

@@ -60,6 +60,36 @@ TOP_INSTITUTIONAL_HOLDINGS: set[str] = {
     "NESN.SW", "NOVN.SW", "ROG.SW", "AZN.L",
 }
 
+try:  # Optional: richer news signal if OpenRouter/news module is available.
+    from news_sentiment_llm import NewsSentimentScorer  # noqa: E402
+except Exception:  # noqa: BLE001
+    NewsSentimentScorer = None  # type: ignore[assignment]
+
+
+def _heuristic_news_score(title: str) -> int:
+    """Fallback keyword score (-75..+75) when LLM news is unavailable."""
+    t = (title or "").casefold()
+    if not t:
+        return 0
+    bull = (
+        "rachat", "acquisition", "fusion", "record", "hausse", "rebond",
+        "dividende", "benefice", "bénéfice", "profit", "croissance", "contrat",
+        "upgrade", "buyback", "surperform", "positif", "approval", "accord",
+    )
+    bear = (
+        "amende", "fraude", "scandale", "baisse", "perte", "licenciement",
+        "faillite", "recession", "récession", "guerre", "sanction", "downgrade",
+        "profit warning", "deception", "déception", "enquete", "enquête", "crise",
+    )
+    score = 0
+    for w in bull:
+        if w in t:
+            score += 28
+    for w in bear:
+        if w in t:
+            score -= 32
+    return int(max(-75, min(75, score)))
+
 
 class SignalGenerator:
     """Generates raw BUY signals from ensemble conviction scoring."""
@@ -188,6 +218,8 @@ class SignalGenerator:
         rsi_14 = last["RSI_14"]
         factors: list[str] = []
         mr = vol_pts = ins_pts = inst_pts = 0
+        news_mod = 0
+        poly_mod = 0
 
         if not pd.isna(sma_200) and not pd.isna(rsi_14):
             above_sma = close > float(sma_200)
@@ -243,12 +275,59 @@ class SignalGenerator:
             inst_pts = 20
             factors.append("INST+20 institutional consensus proxy")
 
-        total = float(mr + vol_pts + ins_pts + inst_pts)
+        # Holistic news integration: LLM sentiment first, heuristic fallback.
+        news_score = 0.0
+        headlines: list[str] = []
+        try:
+            if yf is not None:
+                raw_news = yf.Ticker(ticker).news or []
+                for n in raw_news[:6]:
+                    content = n.get("content", n)
+                    title = (content.get("title") or n.get("title") or "").strip()
+                    if title:
+                        headlines.append(title)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("News fetch failed for %s: %s", ticker, exc)
+        if headlines:
+            if NewsSentimentScorer is not None:
+                try:
+                    news_score = float(
+                        asyncio.run(NewsSentimentScorer().analyze_news(ticker, headlines))
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug("LLM sentiment failed for %s: %s", ticker, exc)
+            if abs(news_score) < 1:
+                heuristic_vals = [_heuristic_news_score(h) for h in headlines]
+                if heuristic_vals:
+                    news_score = float(sum(heuristic_vals) / len(heuristic_vals))
+        if news_score > 30:
+            news_mod = 10
+            factors.append(f"NEWS+10 Bullish sentiment ({news_score:.0f})")
+        elif news_score < -30:
+            news_mod = -15
+            factors.append(f"NEWS-15 Bearish sentiment ({news_score:.0f})")
+
+        # Polymarket integration via existing macro sensor.
+        if sensor is not None:
+            try:
+                poly_prob = float(sensor.get_polymarket_sentiment(f"{ticker} outlook"))
+                if poly_prob >= 0.62:
+                    poly_mod = 10
+                    factors.append(f"POLY+10 YES={poly_prob:.2f}")
+                elif poly_prob <= 0.38:
+                    poly_mod = -10
+                    factors.append(f"POLY-10 YES={poly_prob:.2f}")
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("Polymarket sentiment failed for %s: %s", ticker, exc)
+
+        total = float(max(0.0, min(100.0, mr + vol_pts + ins_pts + inst_pts + news_mod + poly_mod)))
         return {
             "mean_reversion": mr,
             "volume_breakout": vol_pts,
             "insider": ins_pts,
             "institutional": inst_pts,
+            "news_modifier": news_mod,
+            "polymarket_modifier": poly_mod,
             "total": total,
             "factors": factors,
             "rsi": None if pd.isna(rsi_14) else float(rsi_14),

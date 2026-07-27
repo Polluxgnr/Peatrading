@@ -452,7 +452,15 @@ class MacroAlphaSensor:
             )
             if resp.status_code != 200:
                 raise ValueError(f"Polymarket HTTP {resp.status_code}")
-            data = resp.json()
+            try:
+                data = resp.json()
+            except Exception as exc:  # noqa: BLE001 - Cloudflare HTML / empty body
+                logger.debug(
+                    "Polymarket JSON decode failed for %r: %s", query, exc
+                )
+                data = None
+            if not isinstance(data, dict):
+                raise ValueError("Polymarket payload not JSON object")
             events = (data or {}).get("events") or []
             for ev in events:
                 markets = ev.get("markets") or []

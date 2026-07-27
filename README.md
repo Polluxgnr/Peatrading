@@ -1,4 +1,4 @@
-# PEA Sniper Terminal — V-Prime 3.0 (Phase 23)
+# PEA Sniper Terminal — V-Prime 3.0 (Phase 26)
 
 > **Sovereign execution. Kinetic risk management. Absolute quantitative transparency.**
 
@@ -339,7 +339,7 @@ Designed so you read **market state in ~3 seconds** before diving into tabs:
 - Last pipeline pass status (from `pipeline_status.json`)  
 - Equity + day variation (from `portfolio_history`)  
 - VIX gauge, count of PENDING Discord signals  
-- Quick actions: **`TICKER` + GO** (jumps Exploration dossier), ledger hint, manual pass reminder  
+- Quick actions: clickable ranking/universe rows (jumps Exploration dossier), ledger hint, manual pass reminder  
 
 **Palette:** off-white `#E0E0E0` for body text; neon `#00FF00` reserved for
 **positive PnL / APPROVED**; amber for alerts/vetoes; red for losses. Closer to
@@ -349,11 +349,11 @@ real Bloomberg conventions and easier on long sessions than green-everywhere.
 
 | Tab | Content |
 |-----|---------|
-| **General & Signaux** | Morning Briefing, suggestion + expanders, ranking **[HORS BUDGET]**, **Pépites**, geo brief, funnel, Command Center |
-| **Portefeuille** | Equity curve + **Sharpe/DD/CAGR/Sortino**, sunburst, positions, wallet editor → SQLite |
-| **Exploration** | Dossier + **logo Clearbit**, TA, what-if, valorisation, 10y, radar, **analyse IA news 24h**, insiders, Polymarket |
-| **Univers** | Full list + perf sectorielle + **Tags** techniques (OVERSOLD / UPTREND) |
-| **Architecture & Logs** | Living docs + **log file picker / tail / copy** |
+| **General & Signaux** | Morning Briefing (**bouton générer**), suggestion + expanders, ranking/pépites **cliquables** vers Exploration, geo brief, funnel, Command Center |
+| **Portefeuille** | Equity curve + **Sharpe/DD/CAGR/Sortino**, sunburst, positions, **table stops ATR 2.5x explicite**, wallet editor → SQLite |
+| **Exploration** | Dossier + **logo Clearbit**, TA, what-if, **ticket d'ordre PEA**, **checklist décision**, valorisation, 10y, radar, synthèse IA news, insiders, Polymarket intégré |
+| **Univers** | Full list + perf sectorielle + **tags techniques cliquables** (full filtered view, no 80-row cap) |
+| **Architecture & Logs** | Living docs + **log file picker / tail jusqu'à 5000 lignes** |
 
 ### Rich trade cards (what you see before approving)
 
@@ -449,6 +449,8 @@ sources over furtive HTML scraping.
 | **Terminal polish (TV / zone / ranking / Polymarket)** | ✅ Phase 21 — EPA: ticker map, flat buy-zone fix, fingerprint ranking, SSL-tolerant Gamma |
 | **Smart UX + deep news + logos + pépites** | ✅ Phase 22 |
 | **UX overhaul (tape / GO / news diversity)** | ✅ Phase 23 — no GO, logos off, multi-source news, deep IA narrative |
+| **Polymarket harden + news clean + tape + logs** | ✅ Phase 24 — JSONDecode guard, no heuristic pills, blue-chip tape, briefing button, log tail 5k |
+| **Auto-sync + score holistique + UI exécution** | ✅ Phase 26 — warmup au démarrage, News/Polymarket dans le score, stops ATR visibles, tickets/checklist, tables cliquables |
 | pytest + GitHub Actions CI | Expand coverage over time |
 
 ### Next (highest leverage)
@@ -497,4 +499,4 @@ Decision-support and educational tool only. **No automated execution. No financi
 advice.** You are solely responsible for every trade. Past or backtested results
 do not guarantee future performance.
 
-© 2026 Pollux Quantitative Research — V-Prime 3.0 (Phase 23).
+© 2026 Pollux Quantitative Research — V-Prime 3.0 (Phase 26).
