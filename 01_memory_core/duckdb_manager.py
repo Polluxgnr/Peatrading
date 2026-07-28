@@ -30,14 +30,19 @@ class TimeSeriesDB:
         db_path: Absolute path to the DuckDB database file.
     """
 
-    def __init__(self, db_path: Optional[Path | str] = None) -> None:
+    def __init__(
+        self, db_path: Optional[Path | str] = None, read_only: bool = False
+    ) -> None:
         """Initialize the manager and ensure the database directory exists.
 
         Args:
             db_path: Optional custom path to the DuckDB file. Defaults to
                 ``<project_root>/database/timeseries.duckdb``.
+            read_only: When True, open DuckDB in read-only mode and disable
+                write operations (schema init + upserts).
         """
         self.db_path: Path = Path(db_path) if db_path else _DEFAULT_DB_PATH
+        self.read_only = bool(read_only)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         logger.debug("TimeSeriesDB using database at %s", self.db_path)
 
@@ -51,7 +56,12 @@ class TimeSeriesDB:
         Raises:
             duckdb.Error: Propagated if any DB error occurs.
         """
-        conn = duckdb.connect(str(self.db_path))
+        # When dashboard runs concurrently with the daemon, open DuckDB in
+        # read-only mode to avoid conflicting locks.
+        conn = duckdb.connect(
+            str(self.db_path),
+            read_only=self.read_only,
+        )
         try:
             yield conn
         except duckdb.Error:
@@ -66,6 +76,12 @@ class TimeSeriesDB:
         A composite primary key on ``(ticker, date)`` enforces one row per
         ticker per day and enables efficient upserts.
         """
+        if self.read_only:
+            logger.debug(
+                "TimeSeriesDB.init_db skipped (read_only=True) for %s",
+                self.db_path,
+            )
+            return
         try:
             with self._connect() as conn:
                 conn.execute(
@@ -101,6 +117,12 @@ class TimeSeriesDB:
             ValueError: If required columns are missing.
             duckdb.Error: If the database operation fails.
         """
+        if self.read_only:
+            logger.debug(
+                "TimeSeriesDB.upsert_ohlcv skipped (read_only=True) for %s",
+                self.db_path,
+            )
+            return 0
         if df is None or df.empty:
             logger.warning("upsert_ohlcv received an empty DataFrame; skipping.")
             return 0

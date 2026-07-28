@@ -9,9 +9,10 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-# System deps: tzdata for Paris scheduling, build tools for wheels that need them.
+# System deps: tzdata for Paris scheduling, build tools for wheels that need them,
+# plus small utilities for docker healthchecks.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends tzdata gcc \
+    && apt-get install -y --no-install-recommends tzdata gcc procps curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python deps first (better layer caching).

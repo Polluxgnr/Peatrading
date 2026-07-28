@@ -1,0 +1,104 @@
+"""Academic quantitative-math utilities for portfolio analytics.
+
+Pure numpy/pandas implementations (vectorized) with no DB side-effects.
+"""
+
+from __future__ import annotations
+
+import numpy as np
+import pandas as pd
+
+
+def _clean_returns(returns: pd.Series) -> pd.Series:
+    """Return finite float returns only."""
+    if returns is None:
+        return pd.Series(dtype=float)
+    ser = pd.to_numeric(returns, errors="coerce").replace([np.inf, -np.inf], np.nan)
+    return ser.dropna()
+
+
+def calculate_historical_var(
+    returns: pd.Series, confidence_level: float = 0.95
+) -> float:
+    """Historical Value at Risk (VaR) as a positive loss number.
+
+    Args:
+        returns: Series of arithmetic returns (e.g. daily pct returns in decimal).
+        confidence_level: Tail confidence (default 95%).
+
+    Returns:
+        Positive loss estimate (e.g. 0.018 means -1.8% one-period VaR), or 0.0
+        when data is insufficient.
+    """
+    r = _clean_returns(returns)
+    if r.empty:
+        return 0.0
+    alpha = float(1.0 - confidence_level)
+    alpha = min(max(alpha, 1e-6), 1.0 - 1e-6)
+    q = float(np.quantile(r.to_numpy(dtype=float), alpha))
+    return float(max(0.0, -q))
+
+
+def calculate_cvar(returns: pd.Series, confidence_level: float = 0.95) -> float:
+    """Conditional VaR (Expected Shortfall) as positive tail loss.
+
+    Args:
+        returns: Series of arithmetic returns.
+        confidence_level: Tail confidence (default 95%).
+
+    Returns:
+        Positive expected loss in the alpha tail, or 0.0 when unavailable.
+    """
+    r = _clean_returns(returns)
+    if r.empty:
+        return 0.0
+    alpha = float(1.0 - confidence_level)
+    alpha = min(max(alpha, 1e-6), 1.0 - 1e-6)
+    q = float(np.quantile(r.to_numpy(dtype=float), alpha))
+    tail = r[r <= q]
+    if tail.empty:
+        return float(max(0.0, -q))
+    return float(max(0.0, -float(tail.mean())))
+
+
+def calculate_z_score(series: pd.Series) -> pd.Series:
+    """50-period rolling Z-score: ``(x - mean) / std``.
+
+    Args:
+        series: Input numeric series.
+
+    Returns:
+        Series aligned to input index. Non-computable points are NaN.
+    """
+    ser = pd.to_numeric(series, errors="coerce").replace([np.inf, -np.inf], np.nan)
+    roll_mean = ser.rolling(window=50, min_periods=50).mean()
+    roll_std = ser.rolling(window=50, min_periods=50).std(ddof=0)
+    z = (ser - roll_mean) / roll_std.replace(0.0, np.nan)
+    return z.replace([np.inf, -np.inf], np.nan)
+
+
+def calculate_portfolio_variance(weights: np.ndarray, cov_matrix: pd.DataFrame) -> float:
+    """Portfolio variance ``w.T @ Sigma @ w``.
+
+    Args:
+        weights: 1D numpy vector of portfolio weights.
+        cov_matrix: Covariance matrix as pandas DataFrame.
+
+    Returns:
+        Non-negative scalar portfolio variance.
+    """
+    w = np.asarray(weights, dtype=float).reshape(-1)
+    sigma = np.asarray(cov_matrix, dtype=float)
+    if sigma.ndim != 2 or sigma.shape[0] != sigma.shape[1] or sigma.shape[0] != w.shape[0]:
+        raise ValueError("weights and covariance matrix dimensions are inconsistent")
+    var = float(w.T @ sigma @ w)
+    return float(max(0.0, var))
+
+
+def calculate_annualized_volatility(returns: pd.Series, periods_per_year: int = 252) -> float:
+    """Annualized volatility from return series (helper for refactoring)."""
+    r = _clean_returns(returns)
+    if r.empty:
+        return 0.0
+    return float(r.std(ddof=0) * np.sqrt(float(periods_per_year)))
+

@@ -10,6 +10,7 @@ scores survivors' technical / alt-data axes (0–100) and emits when ≥ 65.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import sys
@@ -21,6 +22,7 @@ from typing import Any, List, Optional
 
 import pandas as pd
 import yaml
+from quantitative_math import calculate_z_score
 
 try:  # yfinance is only needed for the optional Quality (EPS) filter.
     import yfinance as yf
@@ -38,6 +40,7 @@ _CORE_DIR = os.path.join(
 sys.path.insert(0, _CORE_DIR)
 
 from data_models import Signal, SignalStatus, SignalType  # noqa: E402
+from sqlite_portfolio import PortfolioDB  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -117,6 +120,41 @@ class SignalGenerator:
         )
         self._macro = macro_sensor
 
+    @staticmethod
+    def _load_fundamentals_from_sources(ticker: str) -> dict:
+        """Fetch fundamentals via SQLite cache -> Finnhub/yfinance sensor."""
+        try:
+            pdb = PortfolioDB()
+            pdb.init_db()
+            cache = pdb.get_cached_fundamentals(ticker, max_age_days=7)
+            if cache:
+                return cache
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Fundamentals cache read failed for %s: %s", ticker, exc)
+
+        data: dict = {}
+        try:
+            if str(_SENSORS_DIR) not in sys.path:
+                sys.path.insert(0, str(_SENSORS_DIR))
+            from fundamentals_api import FundamentalsSensor  # noqa: WPS433
+
+            data = FundamentalsSensor().get_basic_financials(ticker) or {}
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Fundamentals sensor unavailable for %s: %s", ticker, exc)
+            data = {}
+
+        if any(
+            data.get(k) is not None
+            for k in ("pe_ratio", "pb_ratio", "roe", "debt_to_equity")
+        ):
+            try:
+                pdb = PortfolioDB()
+                pdb.init_db()
+                pdb.upsert_fundamentals(ticker, data)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("Fundamentals cache upsert failed for %s: %s", ticker, exc)
+        return data
+
     def _macro_sensor(self) -> Any | None:
         if self._macro is not None:
             return self._macro
@@ -132,13 +170,16 @@ class SignalGenerator:
             return None
 
     def calculate_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Attach SMA-5/50/200 and RSI-14 columns for a single ticker."""
+        """Attach trend/MR/breakout indicators for the ensemble committee."""
         out = df.copy()
         close = out["Close"]
         out["SMA_5"] = out.ta.sma(close=close, length=5)
         out["SMA_50"] = out.ta.sma(close=close, length=50)
         out["SMA_200"] = out.ta.sma(close=close, length=200)
         out["RSI_14"] = out.ta.rsi(close=close, length=14)
+        out.ta.macd(close=close, append=True)
+        out.ta.bbands(close=close, append=True)
+        out["Z_SCORE_50"] = calculate_z_score(close)
         return out
 
     def score_rsi(self, rsi_value: float) -> float:
@@ -181,20 +222,7 @@ class SignalGenerator:
         *,
         macro_sensor: Any | None = None,
     ) -> dict[str, Any]:
-        """Score a ticker on the four ensemble axes (max 100).
-
-        Weights
-        -------
-        * Mean Reversion — max 35
-        * Volume Breakout — max 25
-        * Insider Clustering — max 20
-        * Institutional Quality — max 20
-
-        Returns:
-            dict: Keys ``mean_reversion``, ``volume_breakout``, ``insider``,
-            ``institutional``, ``total``, ``factors`` (list[str]), plus
-            diagnostic RSI / close fields when available.
-        """
+        """Committee-style multi-model score (0..100 total)."""
         empty = {
             "mean_reversion": 0,
             "volume_breakout": 0,
@@ -205,6 +233,18 @@ class SignalGenerator:
             "rsi": None,
             "close": None,
             "sma200": None,
+            "model_scores": {
+                "trend_model": 0.0,
+                "mean_reversion_model": 0.0,
+                "breakout_model": 0.0,
+                "context_model": 0.0,
+            },
+            "context_breakdown": {
+                "fundamentals": 0.0,
+                "insiders": 0.0,
+                "news": 0.0,
+                "polymarket": 0.0,
+            },
         }
         if history is None or history.empty or len(history) < _MIN_ROWS:
             return empty
@@ -216,39 +256,77 @@ class SignalGenerator:
         close = float(last["Close"])
         sma_200 = last["SMA_200"]
         rsi_14 = last["RSI_14"]
+        z50 = last.get("Z_SCORE_50")
         factors: list[str] = []
-        mr = vol_pts = ins_pts = inst_pts = 0
-        news_mod = 0
-        poly_mod = 0
+        news_mod = 0.0
+        poly_mod = 0.0
+        fundamentals_score = 0.0
+        insider_score = 0.0
 
-        if not pd.isna(sma_200) and not pd.isna(rsi_14):
-            above_sma = close > float(sma_200)
-            if above_sma and float(rsi_14) < 30.0:
-                mr = 35
-                factors.append(f"MR+35 RSI={float(rsi_14):.1f}<30 & Close>SMA200")
-            elif above_sma and float(rsi_14) < 40.0:
-                mr = 15
-                factors.append(f"MR+15 RSI={float(rsi_14):.1f}<40 & Close>SMA200")
+        # --- Trend model: MACD histogram + close>SMA50 ----------------------
+        trend_score = 0.0
+        macd_hist_col = next((c for c in enriched.columns if c.startswith("MACDh_")), "")
+        sma_50 = last.get("SMA_50")
+        if macd_hist_col:
+            mh = pd.to_numeric(enriched[macd_hist_col], errors="coerce").dropna()
+            if len(mh) >= 2:
+                last_h = float(mh.iloc[-1])
+                prev_h = float(mh.iloc[-2])
+                if last_h > 0:
+                    trend_score += 35.0
+                if last_h > prev_h:
+                    trend_score += 25.0
+                if sma_50 is not None and not pd.isna(sma_50) and close > float(sma_50):
+                    trend_score += 40.0
+        trend_score = max(0.0, min(100.0, trend_score))
+        if trend_score > 0:
+            factors.append(f"TREND {trend_score:.0f}/100")
 
-        # Volume breakout: 50d high close + volume > 2× 20d ADV
-        if (
-            "Volume" in enriched.columns
-            and len(enriched) >= 50
-            and not pd.isna(last.get("Volume"))
-        ):
-            window50 = enriched.tail(50)
-            high_50 = float(window50["Close"].max())
-            avg_vol_20 = float(enriched["Volume"].tail(20).mean())
+        # --- Mean-reversion model: RSI + lower Bollinger proximity ----------
+        mr_score = 0.0
+        bbl_col = next((c for c in enriched.columns if c.startswith("BBL_")), "")
+        if rsi_14 is not None and not pd.isna(rsi_14):
+            rv = float(rsi_14)
+            if rv < 30:
+                mr_score += 60.0
+            elif rv < 35:
+                mr_score += 35.0
+            elif rv < 40:
+                mr_score += 15.0
+        if z50 is not None and not pd.isna(z50):
+            z = float(z50)
+            if z < -2.0:
+                mr_score += 30.0
+                factors.append(f"STAT+30 Z={z:.2f}< -2")
+            elif z < -1.5:
+                mr_score += 15.0
+                factors.append(f"STAT+15 Z={z:.2f}< -1.5")
+        if bbl_col:
+            bbl = last.get(bbl_col)
+            if bbl is not None and not pd.isna(bbl) and float(bbl) > 0:
+                dist = abs(close - float(bbl)) / float(bbl)
+                if close <= float(bbl) * 1.02:
+                    mr_score += 40.0
+                elif dist <= 0.05:
+                    mr_score += 20.0
+        mr_score = max(0.0, min(100.0, mr_score))
+        if mr_score > 0:
+            factors.append(f"MR {mr_score:.0f}/100")
+
+        # --- Breakout model: close 20d high + volume burst -------------------
+        breakout_score = 0.0
+        if "Volume" in enriched.columns and len(enriched) >= 25 and not pd.isna(last.get("Volume")):
+            w20 = enriched.tail(20)
+            high_20 = float(pd.to_numeric(w20["Close"], errors="coerce").max())
+            avg_vol_20 = float(pd.to_numeric(enriched["Volume"], errors="coerce").tail(20).mean())
             today_vol = float(last["Volume"])
-            if (
-                avg_vol_20 > 0
-                and close >= high_50 * 0.999
-                and today_vol > 2.0 * avg_vol_20
-            ):
-                vol_pts = 25
-                factors.append(
-                    f"VOL+25 50d-high + vol {today_vol / avg_vol_20:.1f}× ADV20"
-                )
+            if high_20 > 0 and close >= high_20 * 0.999:
+                breakout_score += 60.0
+            if avg_vol_20 > 0 and today_vol > 1.8 * avg_vol_20:
+                breakout_score += 40.0
+        breakout_score = max(0.0, min(100.0, breakout_score))
+        if breakout_score > 0:
+            factors.append(f"BREAKOUT {breakout_score:.0f}/100")
 
         sensor = macro_sensor if macro_sensor is not None else self._macro_sensor()
         cluster = 0
@@ -259,21 +337,70 @@ class SignalGenerator:
                 logger.debug("Insider cluster failed for %s: %s", ticker, exc)
                 cluster = 0
         if cluster >= 2:
-            ins_pts = 20
-            factors.append(f"INS+20 cluster buys={cluster}")
+            insider_score = 100.0
+            factors.append(f"INS 100/100 cluster buys={cluster}")
         elif cluster == 1:
-            ins_pts = 10
-            factors.append("INS+10 single buy cluster")
+            insider_score = 65.0
+            factors.append("INS 65/100 single buy cluster")
+        elif cluster <= -1:
+            insider_score = 10.0
+            factors.append("INS 10/100 net selling")
+        else:
+            insider_score = 35.0
 
-        is_inst = ticker in TOP_INSTITUTIONAL_HOLDINGS
-        if sensor is not None:
-            try:
-                is_inst = bool(sensor.get_institutional_consensus(ticker)) or is_inst
-            except Exception:  # noqa: BLE001
-                pass
-        if is_inst:
-            inst_pts = 20
-            factors.append("INST+20 institutional consensus proxy")
+        # Value/Quality axis (fundamentals) with graceful fallback.
+        fundamentals = self._load_fundamentals_from_sources(ticker)
+        pe = fundamentals.get("pe_ratio")
+        pb = fundamentals.get("pb_ratio")
+        roe = fundamentals.get("roe")
+        debt_eq = fundamentals.get("debt_to_equity")
+        source = fundamentals.get("source") or "fallback"
+
+        if any(v is not None for v in (pe, pb, roe, debt_eq)):
+            f_raw = 50.0
+            # Value
+            if pe is not None and pe > 0:
+                if pe < 15:
+                    f_raw += 18.0
+                    factors.append(f"VAL+8 PE={pe:.1f}<15 ({source})")
+                elif pe < 25:
+                    f_raw += 10.0
+                    factors.append(f"VAL+5 PE={pe:.1f}<25 ({source})")
+                elif pe > 30:
+                    f_raw -= 12.0
+                    factors.append(f"VAL-3 PE={pe:.1f}>30 ({source})")
+            if pb is not None and pb > 0:
+                if pb < 2.0:
+                    f_raw += 12.0
+                    factors.append(f"VAL+4 PB={pb:.2f}<2 ({source})")
+                elif pb > 5.0:
+                    f_raw -= 8.0
+                    factors.append(f"VAL-2 PB={pb:.2f}>5 ({source})")
+
+            # Quality
+            if roe is not None:
+                if roe >= 0.15:
+                    f_raw += 16.0
+                    factors.append(f"QLT+6 ROE={roe:.2f}>=15% ({source})")
+                elif roe <= 0:
+                    f_raw -= 8.0
+                    factors.append(f"QLT-2 ROE={roe:.2f}<=0 ({source})")
+            if debt_eq is not None:
+                if debt_eq > 2.0:
+                    f_raw -= 24.0
+                    factors.append(f"QLT-7 D/E={debt_eq:.2f}>2 ({source})")
+                elif debt_eq < 1.0:
+                    f_raw += 8.0
+                    factors.append(f"QLT+2 D/E={debt_eq:.2f}<1 ({source})")
+            fundamentals_score = max(0.0, min(100.0, f_raw))
+        else:
+            # Fallback: legacy EPS profitability proxy when fundamentals unavailable.
+            if self.is_profitable(ticker):
+                fundamentals_score = 55.0
+                factors.append("Q/V+10 EPS>0 proxy (fallback)")
+            else:
+                fundamentals_score = 25.0
+                factors.append("Q/V-5 EPS<0 proxy (fallback)")
 
         # Holistic news integration: LLM sentiment first, heuristic fallback.
         news_score = 0.0
@@ -301,38 +428,71 @@ class SignalGenerator:
                 if heuristic_vals:
                     news_score = float(sum(heuristic_vals) / len(heuristic_vals))
         if news_score > 30:
-            news_mod = 10
+            news_mod = 15.0
             factors.append(f"NEWS+10 Bullish sentiment ({news_score:.0f})")
         elif news_score < -30:
-            news_mod = -15
+            news_mod = -20.0
             factors.append(f"NEWS-15 Bearish sentiment ({news_score:.0f})")
+        news_component = max(0.0, min(100.0, 50.0 + news_mod))
 
         # Polymarket integration via existing macro sensor.
         if sensor is not None:
             try:
                 poly_prob = float(sensor.get_polymarket_sentiment(f"{ticker} outlook"))
                 if poly_prob >= 0.62:
-                    poly_mod = 10
+                    poly_mod = 12.0
                     factors.append(f"POLY+10 YES={poly_prob:.2f}")
                 elif poly_prob <= 0.38:
-                    poly_mod = -10
+                    poly_mod = -12.0
                     factors.append(f"POLY-10 YES={poly_prob:.2f}")
             except Exception as exc:  # noqa: BLE001
                 logger.debug("Polymarket sentiment failed for %s: %s", ticker, exc)
+        poly_component = max(0.0, min(100.0, 50.0 + poly_mod))
 
-        total = float(max(0.0, min(100.0, mr + vol_pts + ins_pts + inst_pts + news_mod + poly_mod)))
+        # Context model combines fundamentals + sentiment + insiders.
+        context_score = (
+            0.45 * fundamentals_score
+            + 0.25 * insider_score
+            + 0.20 * news_component
+            + 0.10 * poly_component
+        )
+        context_score = max(0.0, min(100.0, context_score))
+
+        # Final ensemble as weighted average of model committee.
+        total = (
+            0.30 * trend_score
+            + 0.25 * mr_score
+            + 0.20 * breakout_score
+            + 0.25 * context_score
+        )
+        total = float(max(0.0, min(100.0, total)))
+
         return {
-            "mean_reversion": mr,
-            "volume_breakout": vol_pts,
-            "insider": ins_pts,
-            "institutional": inst_pts,
-            "news_modifier": news_mod,
-            "polymarket_modifier": poly_mod,
+            # Backward-compatible keys consumed by dashboard/orchestrator.
+            "mean_reversion": int(round(mr_score * 0.35)),
+            "volume_breakout": int(round(breakout_score * 0.25)),
+            "insider": int(round(insider_score * 0.20)),
+            "institutional": int(round(fundamentals_score * 0.20)),
+            "news_modifier": int(round(news_mod)),
+            "polymarket_modifier": int(round(poly_mod)),
             "total": total,
             "factors": factors,
             "rsi": None if pd.isna(rsi_14) else float(rsi_14),
             "close": close,
             "sma200": None if pd.isna(sma_200) else float(sma_200),
+            "zscore_50": None if (z50 is None or pd.isna(z50)) else float(z50),
+            "model_scores": {
+                "trend_model": float(trend_score),
+                "mean_reversion_model": float(mr_score),
+                "breakout_model": float(breakout_score),
+                "context_model": float(context_score),
+            },
+            "context_breakdown": {
+                "fundamentals": float(fundamentals_score),
+                "insiders": float(insider_score),
+                "news": float(news_component),
+                "polymarket": float(poly_component),
+            },
         }
 
     def generate_raw_signals(

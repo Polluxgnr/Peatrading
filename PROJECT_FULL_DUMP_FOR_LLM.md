@@ -1,6 +1,6 @@
 # PEA Sniper Terminal — Full Project Dump for LLM
 
-> **Phase 32** · Generated `2026-07-28 07:28 UTC` · Root `C:\Users\PolluxGronier\Downloads\pea_sniper_terminal`
+> **Phase 32** · Generated `2026-07-28 14:50 UTC` · Root `C:\Users\PolluxGronier\Downloads\pea_sniper_terminal`
 
 One-shot context for external LLM agents. Includes source, configs, and docs.
 Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
@@ -44,13 +44,13 @@ Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
 - `main_scheduler.py`
 
 ---
-## File index (69 files)
+## File index (74 files)
 ### `(root)/`
 - `.gitignore` (45 lines)
-- `docker-compose.yml` (59 lines)
-- `Dockerfile` (29 lines)
+- `docker-compose.yml` (71 lines)
+- `Dockerfile` (30 lines)
 - `main_scheduler.py` (662 lines) ⭐
-- `README.md` (604 lines) ⭐
+- `README.md` (663 lines) ⭐
 - `requirements.txt` (37 lines)
 - `run_dashboard.ps1` (15 lines)
 - `run_discord.py` (100 lines)
@@ -64,6 +64,7 @@ Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
 
 ### `00_data_sensors/`
 - `00_data_sensors/__init__.py` (0 lines)
+- `00_data_sensors/fundamentals_api.py` (144 lines)
 - `00_data_sensors/macro_alpha_api.py` (491 lines)
 - `00_data_sensors/market_prices_api.py` (196 lines)
 - `00_data_sensors/newsletter_api.py` (216 lines)
@@ -77,15 +78,17 @@ Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
 ### `01_memory_core/`
 - `01_memory_core/__init__.py` (0 lines)
 - `01_memory_core/data_models.py` (161 lines) ⭐
-- `01_memory_core/duckdb_manager.py` (185 lines) ⭐
+- `01_memory_core/duckdb_manager.py` (207 lines) ⭐
 - `01_memory_core/env_loader.py` (34 lines)
 - `01_memory_core/logging_setup.py` (196 lines)
-- `01_memory_core/sqlite_portfolio.py` (520 lines) ⭐
+- `01_memory_core/sqlite_portfolio.py` (664 lines) ⭐
 
 ### `02_quant_engine/`
 - `02_quant_engine/__init__.py` (0 lines)
+- `02_quant_engine/quantitative_math.py` (104 lines)
 - `02_quant_engine/smart_dca_engine.py` (207 lines)
-- `02_quant_engine/technical_scorer.py` (460 lines) ⭐
+- `02_quant_engine/stochastic_models.py` (87 lines)
+- `02_quant_engine/technical_scorer.py` (620 lines) ⭐
 - `02_quant_engine/walk_forward_backtester.py` (200 lines)
 
 ### `03_risk_portfolio/`
@@ -94,25 +97,27 @@ Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
 - `03_risk_portfolio/equity_metrics.py` (143 lines)
 - `03_risk_portfolio/monthly_rebalancer.py` (232 lines)
 - `03_risk_portfolio/pea_position_sizer.py` (245 lines) ⭐
+- `03_risk_portfolio/stress_tester.py` (130 lines)
 
 ### `04_orchestrator_ai/`
 - `04_orchestrator_ai/__init__.py` (0 lines)
 - `04_orchestrator_ai/earnings_blackout.py` (92 lines)
 - `04_orchestrator_ai/macro_veto.py` (125 lines)
 - `04_orchestrator_ai/news_sentiment_llm.py` (144 lines)
+- `04_orchestrator_ai/red_team_agent.py` (78 lines)
 - `04_orchestrator_ai/revocation_engine.py` (135 lines)
-- `04_orchestrator_ai/signal_priority_cascade.py` (337 lines) ⭐
+- `04_orchestrator_ai/signal_priority_cascade.py` (339 lines) ⭐
 - `04_orchestrator_ai/weekly_historian.py` (226 lines)
 
 ### `05_interfaces/`
 - `05_interfaces/__init__.py` (0 lines)
 - `05_interfaces/discord_copilot.py` (284 lines)
 - `05_interfaces/llm_explainer.py` (272 lines)
-- `05_interfaces/terminal_dashboard.py` (5438 lines) ⭐
+- `05_interfaces/terminal_dashboard.py` (6157 lines) ⭐
 - `05_interfaces/trade_cards.py` (166 lines)
 
 ### `config/`
-- `config/api_keys.env.example` (39 lines)
+- `config/api_keys.env.example` (42 lines)
 - `config/earnings_calendar.yaml` (18 lines)
 - `config/macro_calendar.yaml` (17 lines)
 - `config/pea_universe.yaml` (1901 lines) ⭐
@@ -255,6 +260,153 @@ port = 8501
 ## FILE: 00_data_sensors/__init__.py (0 lines)
 ```python
 
+```
+
+## FILE: 00_data_sensors/fundamentals_api.py (144 lines)
+```python
+"""Fundamental data sensor with Finnhub primary + yfinance fallback.
+
+Designed for graceful degradation:
+- Finnhub key missing/rate-limited/network error -> fallback to yfinance
+- Any parsing issue returns partial/empty metrics, never raises to callers
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+from typing import Any
+
+import requests
+
+try:
+    import yfinance as yf
+except Exception:  # noqa: BLE001
+    yf = None  # type: ignore[assignment]
+
+logger = logging.getLogger(__name__)
+
+
+def _to_float(value: Any) -> float | None:
+    try:
+        if value is None:
+            return None
+        out = float(value)
+        return out if out == out else None
+    except (TypeError, ValueError):
+        return None
+
+
+class FundamentalsSensor:
+    """Fetches basic value/quality factors for EU tickers."""
+
+    def __init__(self) -> None:
+        self.api_key = (os.getenv("FINNHUB_API_KEY") or "").strip()
+        self._session = requests.Session()
+
+    @staticmethod
+    def _map_symbol(ticker: str) -> str:
+        """Map Yahoo symbol to Finnhub symbol format.
+
+        Most EU Yahoo symbols (e.g. MC.PA, OR.PA, ASML.AS) are accepted as-is.
+        """
+        return str(ticker or "").strip().upper()
+
+    def _from_finnhub(self, ticker: str) -> dict:
+        blank = {
+            "pe_ratio": None,
+            "pb_ratio": None,
+            "roe": None,
+            "debt_to_equity": None,
+            "source": "none",
+        }
+        if not self.api_key:
+            return blank
+
+        symbol = self._map_symbol(ticker)
+        url = "https://finnhub.io/api/v1/stock/metric"
+        try:
+            resp = self._session.get(
+                url,
+                params={
+                    "symbol": symbol,
+                    "metric": "all",
+                    "token": self.api_key,
+                },
+                timeout=10,
+            )
+            if resp.status_code != 200:
+                logger.debug("Finnhub HTTP %s for %s", resp.status_code, symbol)
+                return blank
+            payload = resp.json()
+            metric = payload.get("metric") if isinstance(payload, dict) else None
+            if not isinstance(metric, dict):
+                return blank
+
+            pe = _to_float(metric.get("peExclExtraTTM"))
+            pb = _to_float(metric.get("pbAnnual"))
+            roe = _to_float(metric.get("roeTTM"))
+            debt = _to_float(metric.get("totalDebt/totalEquityAnnual"))
+            # Some endpoints expose debt/equity as percent points.
+            if debt is not None and debt > 50:
+                debt = debt / 100.0
+
+            out = {
+                "pe_ratio": pe,
+                "pb_ratio": pb,
+                "roe": roe,
+                "debt_to_equity": debt,
+                "source": "finnhub",
+            }
+            if any(v is not None for k, v in out.items() if k != "source"):
+                return out
+            return blank
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Finnhub metrics failed for %s: %s", symbol, exc)
+            return blank
+
+    @staticmethod
+    def _from_yfinance(ticker: str) -> dict:
+        blank = {
+            "pe_ratio": None,
+            "pb_ratio": None,
+            "roe": None,
+            "debt_to_equity": None,
+            "source": "none",
+        }
+        if yf is None:
+            return blank
+        try:
+            info = yf.Ticker(ticker).info or {}
+            if not isinstance(info, dict) or not info:
+                return blank
+            pe = _to_float(info.get("trailingPE"))
+            pb = _to_float(info.get("priceToBook"))
+            roe = _to_float(info.get("returnOnEquity"))
+            debt = _to_float(info.get("debtToEquity"))
+            # yfinance debtToEquity often comes as percent points.
+            if debt is not None and debt > 50:
+                debt = debt / 100.0
+            out = {
+                "pe_ratio": pe,
+                "pb_ratio": pb,
+                "roe": roe,
+                "debt_to_equity": debt,
+                "source": "yfinance",
+            }
+            if any(v is not None for k, v in out.items() if k != "source"):
+                return out
+            return blank
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("yfinance fundamentals failed for %s: %s", ticker, exc)
+            return blank
+
+    def get_basic_financials(self, ticker: str) -> dict:
+        """Return normalized factors: PE, PB, ROE, debt/equity."""
+        fh = self._from_finnhub(ticker)
+        if any(fh.get(k) is not None for k in ("pe_ratio", "pb_ratio", "roe", "debt_to_equity")):
+            return fh
+        return self._from_yfinance(ticker)
 ```
 
 ## FILE: 00_data_sensors/macro_alpha_api.py (491 lines)
@@ -2363,7 +2515,7 @@ class Signal(BaseModel):
     reason: str = Field(default="", description="Explanation for the UI.")
 ```
 
-## FILE: 01_memory_core/duckdb_manager.py (185 lines)
+## FILE: 01_memory_core/duckdb_manager.py (207 lines)
 ```python
 """DuckDB time-series engine for PEA Sniper Terminal V-Prime.
 
@@ -2397,14 +2549,19 @@ class TimeSeriesDB:
         db_path: Absolute path to the DuckDB database file.
     """
 
-    def __init__(self, db_path: Optional[Path | str] = None) -> None:
+    def __init__(
+        self, db_path: Optional[Path | str] = None, read_only: bool = False
+    ) -> None:
         """Initialize the manager and ensure the database directory exists.
 
         Args:
             db_path: Optional custom path to the DuckDB file. Defaults to
                 ``<project_root>/database/timeseries.duckdb``.
+            read_only: When True, open DuckDB in read-only mode and disable
+                write operations (schema init + upserts).
         """
         self.db_path: Path = Path(db_path) if db_path else _DEFAULT_DB_PATH
+        self.read_only = bool(read_only)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         logger.debug("TimeSeriesDB using database at %s", self.db_path)
 
@@ -2418,7 +2575,12 @@ class TimeSeriesDB:
         Raises:
             duckdb.Error: Propagated if any DB error occurs.
         """
-        conn = duckdb.connect(str(self.db_path))
+        # When dashboard runs concurrently with the daemon, open DuckDB in
+        # read-only mode to avoid conflicting locks.
+        conn = duckdb.connect(
+            str(self.db_path),
+            read_only=self.read_only,
+        )
         try:
             yield conn
         except duckdb.Error:
@@ -2433,6 +2595,12 @@ class TimeSeriesDB:
         A composite primary key on ``(ticker, date)`` enforces one row per
         ticker per day and enables efficient upserts.
         """
+        if self.read_only:
+            logger.debug(
+                "TimeSeriesDB.init_db skipped (read_only=True) for %s",
+                self.db_path,
+            )
+            return
         try:
             with self._connect() as conn:
                 conn.execute(
@@ -2468,6 +2636,12 @@ class TimeSeriesDB:
             ValueError: If required columns are missing.
             duckdb.Error: If the database operation fails.
         """
+        if self.read_only:
+            logger.debug(
+                "TimeSeriesDB.upsert_ohlcv skipped (read_only=True) for %s",
+                self.db_path,
+            )
+            return 0
         if df is None or df.empty:
             logger.warning("upsert_ohlcv received an empty DataFrame; skipping.")
             return 0
@@ -2790,7 +2964,7 @@ def read_pipeline_status() -> Optional[dict]:
         return None
 ```
 
-## FILE: 01_memory_core/sqlite_portfolio.py (520 lines)
+## FILE: 01_memory_core/sqlite_portfolio.py (664 lines)
 ```python
 """SQLite state manager for PEA Sniper Terminal V-Prime.
 
@@ -2807,7 +2981,7 @@ import os
 import sqlite3
 import sys
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterator, Optional
 
@@ -2856,8 +3030,13 @@ class PortfolioDB:
         Raises:
             sqlite3.Error: Propagated after a rollback if any DB error occurs.
         """
-        conn = sqlite3.connect(self.db_path)
+        # WAL mode enables concurrent readers while a writer holds a lock.
+        # Dashboard can read while daemon updates portfolio/analytics.
+        conn = sqlite3.connect(str(self.db_path), timeout=15.0)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA busy_timeout = 15000;")
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute("PRAGMA synchronous=NORMAL;")
         conn.execute("PRAGMA foreign_keys = ON;")
         try:
             yield conn
@@ -2930,6 +3109,27 @@ class PortfolioDB:
                         provider         TEXT NOT NULL,
                         sentiment_score  REAL,
                         inserted_at      TEXT NOT NULL
+                    );
+                    """
+                )
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS fundamentals_cache (
+                        ticker          TEXT PRIMARY KEY,
+                        pe_ratio        REAL,
+                        pb_ratio        REAL,
+                        roe             REAL,
+                        debt_to_equity  REAL,
+                        updated_at      TEXT NOT NULL
+                    );
+                    """
+                )
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS ticker_notes (
+                        ticker          TEXT PRIMARY KEY,
+                        analyst_comment TEXT,
+                        last_updated    TEXT NOT NULL
                     );
                     """
                 )
@@ -3312,11 +3512,236 @@ class PortfolioDB:
         except sqlite3.Error:
             logger.exception("Failed to read news history for %s.", ticker)
             raise
+
+    def upsert_fundamentals(self, ticker: str, data: dict) -> None:
+        """Upsert normalized fundamentals into local cache."""
+        if not ticker:
+            return
+        payload = data or {}
+        now = datetime.now(timezone.utc).isoformat()
+        try:
+            with self._connect() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO fundamentals_cache (
+                        ticker, pe_ratio, pb_ratio, roe, debt_to_equity, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(ticker) DO UPDATE SET
+                        pe_ratio = excluded.pe_ratio,
+                        pb_ratio = excluded.pb_ratio,
+                        roe = excluded.roe,
+                        debt_to_equity = excluded.debt_to_equity,
+                        updated_at = excluded.updated_at;
+                    """,
+                    (
+                        str(ticker).strip().upper(),
+                        payload.get("pe_ratio"),
+                        payload.get("pb_ratio"),
+                        payload.get("roe"),
+                        payload.get("debt_to_equity"),
+                        now,
+                    ),
+                )
+        except sqlite3.Error:
+            logger.exception("Failed to upsert fundamentals for %s.", ticker)
+            raise
+
+    def get_cached_fundamentals(
+        self, ticker: str, max_age_days: int = 7
+    ) -> dict | None:
+        """Return cached fundamentals when still fresh, else None."""
+        if not ticker:
+            return None
+        try:
+            with self._connect() as conn:
+                row = conn.execute(
+                    """
+                    SELECT ticker, pe_ratio, pb_ratio, roe, debt_to_equity, updated_at
+                    FROM fundamentals_cache
+                    WHERE ticker = ?;
+                    """,
+                    (str(ticker).strip().upper(),),
+                ).fetchone()
+            if row is None:
+                return None
+            updated_raw = str(row["updated_at"] or "").strip()
+            if not updated_raw:
+                return None
+            try:
+                updated_at = datetime.fromisoformat(updated_raw)
+            except ValueError:
+                return None
+            if updated_at.tzinfo is None:
+                updated_at = updated_at.replace(tzinfo=timezone.utc)
+            if datetime.now(timezone.utc) - updated_at > timedelta(days=max_age_days):
+                return None
+            return {
+                "pe_ratio": row["pe_ratio"],
+                "pb_ratio": row["pb_ratio"],
+                "roe": row["roe"],
+                "debt_to_equity": row["debt_to_equity"],
+                "updated_at": updated_raw,
+                "source": "sqlite_cache",
+            }
+        except sqlite3.Error:
+            logger.exception("Failed to read cached fundamentals for %s.", ticker)
+            return None
+
+    def save_ticker_note(self, ticker: str, comment: str) -> None:
+        """Save or update analyst note for one ticker."""
+        tk = str(ticker or "").strip().upper()
+        if not tk:
+            return
+        now = datetime.now(timezone.utc).isoformat()
+        try:
+            with self._connect() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO ticker_notes (ticker, analyst_comment, last_updated)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(ticker) DO UPDATE SET
+                        analyst_comment = excluded.analyst_comment,
+                        last_updated = excluded.last_updated;
+                    """,
+                    (tk, str(comment or "").strip(), now),
+                )
+        except sqlite3.Error:
+            logger.exception("Failed to save ticker note for %s.", tk)
+            raise
+
+    def get_ticker_note(self, ticker: str) -> str:
+        """Return analyst note text for ticker (empty string when absent)."""
+        tk = str(ticker or "").strip().upper()
+        if not tk:
+            return ""
+        try:
+            with self._connect() as conn:
+                row = conn.execute(
+                    """
+                    SELECT analyst_comment
+                    FROM ticker_notes
+                    WHERE ticker = ?;
+                    """,
+                    (tk,),
+                ).fetchone()
+            if row is None:
+                return ""
+            return str(row["analyst_comment"] or "")
+        except sqlite3.Error:
+            logger.exception("Failed to read ticker note for %s.", tk)
+            return ""
 ```
 
 ## FILE: 02_quant_engine/__init__.py (0 lines)
 ```python
 
+```
+
+## FILE: 02_quant_engine/quantitative_math.py (104 lines)
+```python
+"""Academic quantitative-math utilities for portfolio analytics.
+
+Pure numpy/pandas implementations (vectorized) with no DB side-effects.
+"""
+
+from __future__ import annotations
+
+import numpy as np
+import pandas as pd
+
+
+def _clean_returns(returns: pd.Series) -> pd.Series:
+    """Return finite float returns only."""
+    if returns is None:
+        return pd.Series(dtype=float)
+    ser = pd.to_numeric(returns, errors="coerce").replace([np.inf, -np.inf], np.nan)
+    return ser.dropna()
+
+
+def calculate_historical_var(
+    returns: pd.Series, confidence_level: float = 0.95
+) -> float:
+    """Historical Value at Risk (VaR) as a positive loss number.
+
+    Args:
+        returns: Series of arithmetic returns (e.g. daily pct returns in decimal).
+        confidence_level: Tail confidence (default 95%).
+
+    Returns:
+        Positive loss estimate (e.g. 0.018 means -1.8% one-period VaR), or 0.0
+        when data is insufficient.
+    """
+    r = _clean_returns(returns)
+    if r.empty:
+        return 0.0
+    alpha = float(1.0 - confidence_level)
+    alpha = min(max(alpha, 1e-6), 1.0 - 1e-6)
+    q = float(np.quantile(r.to_numpy(dtype=float), alpha))
+    return float(max(0.0, -q))
+
+
+def calculate_cvar(returns: pd.Series, confidence_level: float = 0.95) -> float:
+    """Conditional VaR (Expected Shortfall) as positive tail loss.
+
+    Args:
+        returns: Series of arithmetic returns.
+        confidence_level: Tail confidence (default 95%).
+
+    Returns:
+        Positive expected loss in the alpha tail, or 0.0 when unavailable.
+    """
+    r = _clean_returns(returns)
+    if r.empty:
+        return 0.0
+    alpha = float(1.0 - confidence_level)
+    alpha = min(max(alpha, 1e-6), 1.0 - 1e-6)
+    q = float(np.quantile(r.to_numpy(dtype=float), alpha))
+    tail = r[r <= q]
+    if tail.empty:
+        return float(max(0.0, -q))
+    return float(max(0.0, -float(tail.mean())))
+
+
+def calculate_z_score(series: pd.Series) -> pd.Series:
+    """50-period rolling Z-score: ``(x - mean) / std``.
+
+    Args:
+        series: Input numeric series.
+
+    Returns:
+        Series aligned to input index. Non-computable points are NaN.
+    """
+    ser = pd.to_numeric(series, errors="coerce").replace([np.inf, -np.inf], np.nan)
+    roll_mean = ser.rolling(window=50, min_periods=50).mean()
+    roll_std = ser.rolling(window=50, min_periods=50).std(ddof=0)
+    z = (ser - roll_mean) / roll_std.replace(0.0, np.nan)
+    return z.replace([np.inf, -np.inf], np.nan)
+
+
+def calculate_portfolio_variance(weights: np.ndarray, cov_matrix: pd.DataFrame) -> float:
+    """Portfolio variance ``w.T @ Sigma @ w``.
+
+    Args:
+        weights: 1D numpy vector of portfolio weights.
+        cov_matrix: Covariance matrix as pandas DataFrame.
+
+    Returns:
+        Non-negative scalar portfolio variance.
+    """
+    w = np.asarray(weights, dtype=float).reshape(-1)
+    sigma = np.asarray(cov_matrix, dtype=float)
+    if sigma.ndim != 2 or sigma.shape[0] != sigma.shape[1] or sigma.shape[0] != w.shape[0]:
+        raise ValueError("weights and covariance matrix dimensions are inconsistent")
+    var = float(w.T @ sigma @ w)
+    return float(max(0.0, var))
+
+
+def calculate_annualized_volatility(returns: pd.Series, periods_per_year: int = 252) -> float:
+    """Annualized volatility from return series (helper for refactoring)."""
+    r = _clean_returns(returns)
+    if r.empty:
+        return 0.0
+    return float(r.std(ddof=0) * np.sqrt(float(periods_per_year)))
 ```
 
 ## FILE: 02_quant_engine/smart_dca_engine.py (207 lines)
@@ -3530,7 +3955,97 @@ if __name__ == "__main__":
     print(f"  score={s2.score:.0f} qty={s2.target_qty}\n  {s2.reason}")
 ```
 
-## FILE: 02_quant_engine/technical_scorer.py (460 lines)
+## FILE: 02_quant_engine/stochastic_models.py (87 lines)
+```python
+"""Stochastic portfolio models (vectorized numpy implementations)."""
+
+from __future__ import annotations
+
+import numpy as np
+import pandas as pd
+
+
+def run_correlated_monte_carlo(
+    weights: np.ndarray,
+    cov_matrix: pd.DataFrame,
+    expected_returns: pd.Series,
+    initial_portfolio_value: float,
+    days: int = 252,
+    simulations: int = 2000,
+) -> pd.DataFrame:
+    """Run correlated GBM Monte Carlo and return percentile fan paths.
+
+    Args:
+        weights: Portfolio weights vector (N,).
+        cov_matrix: Daily return covariance matrix (N x N).
+        expected_returns: Expected daily returns indexed by ticker (N,).
+        initial_portfolio_value: Starting portfolio value.
+        days: Trading-day horizon.
+        simulations: Number of Monte Carlo simulations.
+
+    Returns:
+        DataFrame with columns:
+        ``day, p05, p25, p50, p75, p95``.
+    """
+    w = np.asarray(weights, dtype=float).reshape(-1)
+    if w.size == 0:
+        return pd.DataFrame(columns=["day", "p05", "p25", "p50", "p75", "p95"])
+    if float(w.sum()) <= 0:
+        w = np.ones_like(w) / float(w.size)
+    else:
+        w = w / float(w.sum())
+
+    tickers = list(cov_matrix.columns)
+    sigma = cov_matrix.loc[tickers, tickers].to_numpy(dtype=float)
+    mu = expected_returns.reindex(tickers).fillna(0.0).to_numpy(dtype=float)
+
+    # Stabilize covariance for Cholesky.
+    eps = 1e-10
+    sigma = (sigma + sigma.T) / 2.0 + np.eye(sigma.shape[0]) * eps
+    try:
+        chol = np.linalg.cholesky(sigma)
+    except np.linalg.LinAlgError:
+        evals, evecs = np.linalg.eigh(sigma)
+        evals = np.clip(evals, a_min=eps, a_max=None)
+        sigma_psd = (evecs * evals) @ evecs.T
+        chol = np.linalg.cholesky(sigma_psd + np.eye(sigma.shape[0]) * eps)
+
+    n_assets = w.size
+    T = int(max(1, days))
+    M = int(max(100, simulations))
+    dt = 1.0
+
+    # Correlated normal shocks: (M, T, N)
+    z = np.random.normal(loc=0.0, scale=1.0, size=(M, T, n_assets))
+    shocks = np.einsum("mtn,nk->mtk", z, chol)
+
+    drift = (mu - 0.5 * np.diag(sigma)) * dt
+    step_returns = np.exp(drift.reshape(1, 1, n_assets) + shocks) - 1.0
+
+    # Portfolio return each step: (M, T)
+    port_r = np.einsum("mtn,n->mt", step_returns, w)
+    wealth = float(initial_portfolio_value) * np.cumprod(1.0 + port_r, axis=1)
+
+    # Include day 0
+    wealth = np.concatenate(
+        [np.full((M, 1), float(initial_portfolio_value)), wealth],
+        axis=1,
+    )
+    pct = np.percentile(wealth, q=[5, 25, 50, 75, 95], axis=0)
+    days_idx = np.arange(0, T + 1, dtype=int)
+    return pd.DataFrame(
+        {
+            "day": days_idx,
+            "p05": pct[0],
+            "p25": pct[1],
+            "p50": pct[2],
+            "p75": pct[3],
+            "p95": pct[4],
+        }
+    )
+```
+
+## FILE: 02_quant_engine/technical_scorer.py (620 lines)
 ```python
 """Quantitative signal engine for PEA Sniper Terminal V-Prime.
 
@@ -3544,6 +4059,7 @@ scores survivors' technical / alt-data axes (0–100) and emits when ≥ 65.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import sys
@@ -3555,6 +4071,7 @@ from typing import Any, List, Optional
 
 import pandas as pd
 import yaml
+from quantitative_math import calculate_z_score
 
 try:  # yfinance is only needed for the optional Quality (EPS) filter.
     import yfinance as yf
@@ -3572,6 +4089,7 @@ _CORE_DIR = os.path.join(
 sys.path.insert(0, _CORE_DIR)
 
 from data_models import Signal, SignalStatus, SignalType  # noqa: E402
+from sqlite_portfolio import PortfolioDB  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -3651,6 +4169,41 @@ class SignalGenerator:
         )
         self._macro = macro_sensor
 
+    @staticmethod
+    def _load_fundamentals_from_sources(ticker: str) -> dict:
+        """Fetch fundamentals via SQLite cache -> Finnhub/yfinance sensor."""
+        try:
+            pdb = PortfolioDB()
+            pdb.init_db()
+            cache = pdb.get_cached_fundamentals(ticker, max_age_days=7)
+            if cache:
+                return cache
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Fundamentals cache read failed for %s: %s", ticker, exc)
+
+        data: dict = {}
+        try:
+            if str(_SENSORS_DIR) not in sys.path:
+                sys.path.insert(0, str(_SENSORS_DIR))
+            from fundamentals_api import FundamentalsSensor  # noqa: WPS433
+
+            data = FundamentalsSensor().get_basic_financials(ticker) or {}
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Fundamentals sensor unavailable for %s: %s", ticker, exc)
+            data = {}
+
+        if any(
+            data.get(k) is not None
+            for k in ("pe_ratio", "pb_ratio", "roe", "debt_to_equity")
+        ):
+            try:
+                pdb = PortfolioDB()
+                pdb.init_db()
+                pdb.upsert_fundamentals(ticker, data)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("Fundamentals cache upsert failed for %s: %s", ticker, exc)
+        return data
+
     def _macro_sensor(self) -> Any | None:
         if self._macro is not None:
             return self._macro
@@ -3666,13 +4219,16 @@ class SignalGenerator:
             return None
 
     def calculate_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Attach SMA-5/50/200 and RSI-14 columns for a single ticker."""
+        """Attach trend/MR/breakout indicators for the ensemble committee."""
         out = df.copy()
         close = out["Close"]
         out["SMA_5"] = out.ta.sma(close=close, length=5)
         out["SMA_50"] = out.ta.sma(close=close, length=50)
         out["SMA_200"] = out.ta.sma(close=close, length=200)
         out["RSI_14"] = out.ta.rsi(close=close, length=14)
+        out.ta.macd(close=close, append=True)
+        out.ta.bbands(close=close, append=True)
+        out["Z_SCORE_50"] = calculate_z_score(close)
         return out
 
     def score_rsi(self, rsi_value: float) -> float:
@@ -3715,20 +4271,7 @@ class SignalGenerator:
         *,
         macro_sensor: Any | None = None,
     ) -> dict[str, Any]:
-        """Score a ticker on the four ensemble axes (max 100).
-
-        Weights
-        -------
-        * Mean Reversion — max 35
-        * Volume Breakout — max 25
-        * Insider Clustering — max 20
-        * Institutional Quality — max 20
-
-        Returns:
-            dict: Keys ``mean_reversion``, ``volume_breakout``, ``insider``,
-            ``institutional``, ``total``, ``factors`` (list[str]), plus
-            diagnostic RSI / close fields when available.
-        """
+        """Committee-style multi-model score (0..100 total)."""
         empty = {
             "mean_reversion": 0,
             "volume_breakout": 0,
@@ -3739,6 +4282,18 @@ class SignalGenerator:
             "rsi": None,
             "close": None,
             "sma200": None,
+            "model_scores": {
+                "trend_model": 0.0,
+                "mean_reversion_model": 0.0,
+                "breakout_model": 0.0,
+                "context_model": 0.0,
+            },
+            "context_breakdown": {
+                "fundamentals": 0.0,
+                "insiders": 0.0,
+                "news": 0.0,
+                "polymarket": 0.0,
+            },
         }
         if history is None or history.empty or len(history) < _MIN_ROWS:
             return empty
@@ -3750,39 +4305,77 @@ class SignalGenerator:
         close = float(last["Close"])
         sma_200 = last["SMA_200"]
         rsi_14 = last["RSI_14"]
+        z50 = last.get("Z_SCORE_50")
         factors: list[str] = []
-        mr = vol_pts = ins_pts = inst_pts = 0
-        news_mod = 0
-        poly_mod = 0
+        news_mod = 0.0
+        poly_mod = 0.0
+        fundamentals_score = 0.0
+        insider_score = 0.0
 
-        if not pd.isna(sma_200) and not pd.isna(rsi_14):
-            above_sma = close > float(sma_200)
-            if above_sma and float(rsi_14) < 30.0:
-                mr = 35
-                factors.append(f"MR+35 RSI={float(rsi_14):.1f}<30 & Close>SMA200")
-            elif above_sma and float(rsi_14) < 40.0:
-                mr = 15
-                factors.append(f"MR+15 RSI={float(rsi_14):.1f}<40 & Close>SMA200")
+        # --- Trend model: MACD histogram + close>SMA50 ----------------------
+        trend_score = 0.0
+        macd_hist_col = next((c for c in enriched.columns if c.startswith("MACDh_")), "")
+        sma_50 = last.get("SMA_50")
+        if macd_hist_col:
+            mh = pd.to_numeric(enriched[macd_hist_col], errors="coerce").dropna()
+            if len(mh) >= 2:
+                last_h = float(mh.iloc[-1])
+                prev_h = float(mh.iloc[-2])
+                if last_h > 0:
+                    trend_score += 35.0
+                if last_h > prev_h:
+                    trend_score += 25.0
+                if sma_50 is not None and not pd.isna(sma_50) and close > float(sma_50):
+                    trend_score += 40.0
+        trend_score = max(0.0, min(100.0, trend_score))
+        if trend_score > 0:
+            factors.append(f"TREND {trend_score:.0f}/100")
 
-        # Volume breakout: 50d high close + volume > 2× 20d ADV
-        if (
-            "Volume" in enriched.columns
-            and len(enriched) >= 50
-            and not pd.isna(last.get("Volume"))
-        ):
-            window50 = enriched.tail(50)
-            high_50 = float(window50["Close"].max())
-            avg_vol_20 = float(enriched["Volume"].tail(20).mean())
+        # --- Mean-reversion model: RSI + lower Bollinger proximity ----------
+        mr_score = 0.0
+        bbl_col = next((c for c in enriched.columns if c.startswith("BBL_")), "")
+        if rsi_14 is not None and not pd.isna(rsi_14):
+            rv = float(rsi_14)
+            if rv < 30:
+                mr_score += 60.0
+            elif rv < 35:
+                mr_score += 35.0
+            elif rv < 40:
+                mr_score += 15.0
+        if z50 is not None and not pd.isna(z50):
+            z = float(z50)
+            if z < -2.0:
+                mr_score += 30.0
+                factors.append(f"STAT+30 Z={z:.2f}< -2")
+            elif z < -1.5:
+                mr_score += 15.0
+                factors.append(f"STAT+15 Z={z:.2f}< -1.5")
+        if bbl_col:
+            bbl = last.get(bbl_col)
+            if bbl is not None and not pd.isna(bbl) and float(bbl) > 0:
+                dist = abs(close - float(bbl)) / float(bbl)
+                if close <= float(bbl) * 1.02:
+                    mr_score += 40.0
+                elif dist <= 0.05:
+                    mr_score += 20.0
+        mr_score = max(0.0, min(100.0, mr_score))
+        if mr_score > 0:
+            factors.append(f"MR {mr_score:.0f}/100")
+
+        # --- Breakout model: close 20d high + volume burst -------------------
+        breakout_score = 0.0
+        if "Volume" in enriched.columns and len(enriched) >= 25 and not pd.isna(last.get("Volume")):
+            w20 = enriched.tail(20)
+            high_20 = float(pd.to_numeric(w20["Close"], errors="coerce").max())
+            avg_vol_20 = float(pd.to_numeric(enriched["Volume"], errors="coerce").tail(20).mean())
             today_vol = float(last["Volume"])
-            if (
-                avg_vol_20 > 0
-                and close >= high_50 * 0.999
-                and today_vol > 2.0 * avg_vol_20
-            ):
-                vol_pts = 25
-                factors.append(
-                    f"VOL+25 50d-high + vol {today_vol / avg_vol_20:.1f}× ADV20"
-                )
+            if high_20 > 0 and close >= high_20 * 0.999:
+                breakout_score += 60.0
+            if avg_vol_20 > 0 and today_vol > 1.8 * avg_vol_20:
+                breakout_score += 40.0
+        breakout_score = max(0.0, min(100.0, breakout_score))
+        if breakout_score > 0:
+            factors.append(f"BREAKOUT {breakout_score:.0f}/100")
 
         sensor = macro_sensor if macro_sensor is not None else self._macro_sensor()
         cluster = 0
@@ -3793,21 +4386,70 @@ class SignalGenerator:
                 logger.debug("Insider cluster failed for %s: %s", ticker, exc)
                 cluster = 0
         if cluster >= 2:
-            ins_pts = 20
-            factors.append(f"INS+20 cluster buys={cluster}")
+            insider_score = 100.0
+            factors.append(f"INS 100/100 cluster buys={cluster}")
         elif cluster == 1:
-            ins_pts = 10
-            factors.append("INS+10 single buy cluster")
+            insider_score = 65.0
+            factors.append("INS 65/100 single buy cluster")
+        elif cluster <= -1:
+            insider_score = 10.0
+            factors.append("INS 10/100 net selling")
+        else:
+            insider_score = 35.0
 
-        is_inst = ticker in TOP_INSTITUTIONAL_HOLDINGS
-        if sensor is not None:
-            try:
-                is_inst = bool(sensor.get_institutional_consensus(ticker)) or is_inst
-            except Exception:  # noqa: BLE001
-                pass
-        if is_inst:
-            inst_pts = 20
-            factors.append("INST+20 institutional consensus proxy")
+        # Value/Quality axis (fundamentals) with graceful fallback.
+        fundamentals = self._load_fundamentals_from_sources(ticker)
+        pe = fundamentals.get("pe_ratio")
+        pb = fundamentals.get("pb_ratio")
+        roe = fundamentals.get("roe")
+        debt_eq = fundamentals.get("debt_to_equity")
+        source = fundamentals.get("source") or "fallback"
+
+        if any(v is not None for v in (pe, pb, roe, debt_eq)):
+            f_raw = 50.0
+            # Value
+            if pe is not None and pe > 0:
+                if pe < 15:
+                    f_raw += 18.0
+                    factors.append(f"VAL+8 PE={pe:.1f}<15 ({source})")
+                elif pe < 25:
+                    f_raw += 10.0
+                    factors.append(f"VAL+5 PE={pe:.1f}<25 ({source})")
+                elif pe > 30:
+                    f_raw -= 12.0
+                    factors.append(f"VAL-3 PE={pe:.1f}>30 ({source})")
+            if pb is not None and pb > 0:
+                if pb < 2.0:
+                    f_raw += 12.0
+                    factors.append(f"VAL+4 PB={pb:.2f}<2 ({source})")
+                elif pb > 5.0:
+                    f_raw -= 8.0
+                    factors.append(f"VAL-2 PB={pb:.2f}>5 ({source})")
+
+            # Quality
+            if roe is not None:
+                if roe >= 0.15:
+                    f_raw += 16.0
+                    factors.append(f"QLT+6 ROE={roe:.2f}>=15% ({source})")
+                elif roe <= 0:
+                    f_raw -= 8.0
+                    factors.append(f"QLT-2 ROE={roe:.2f}<=0 ({source})")
+            if debt_eq is not None:
+                if debt_eq > 2.0:
+                    f_raw -= 24.0
+                    factors.append(f"QLT-7 D/E={debt_eq:.2f}>2 ({source})")
+                elif debt_eq < 1.0:
+                    f_raw += 8.0
+                    factors.append(f"QLT+2 D/E={debt_eq:.2f}<1 ({source})")
+            fundamentals_score = max(0.0, min(100.0, f_raw))
+        else:
+            # Fallback: legacy EPS profitability proxy when fundamentals unavailable.
+            if self.is_profitable(ticker):
+                fundamentals_score = 55.0
+                factors.append("Q/V+10 EPS>0 proxy (fallback)")
+            else:
+                fundamentals_score = 25.0
+                factors.append("Q/V-5 EPS<0 proxy (fallback)")
 
         # Holistic news integration: LLM sentiment first, heuristic fallback.
         news_score = 0.0
@@ -3835,38 +4477,71 @@ class SignalGenerator:
                 if heuristic_vals:
                     news_score = float(sum(heuristic_vals) / len(heuristic_vals))
         if news_score > 30:
-            news_mod = 10
+            news_mod = 15.0
             factors.append(f"NEWS+10 Bullish sentiment ({news_score:.0f})")
         elif news_score < -30:
-            news_mod = -15
+            news_mod = -20.0
             factors.append(f"NEWS-15 Bearish sentiment ({news_score:.0f})")
+        news_component = max(0.0, min(100.0, 50.0 + news_mod))
 
         # Polymarket integration via existing macro sensor.
         if sensor is not None:
             try:
                 poly_prob = float(sensor.get_polymarket_sentiment(f"{ticker} outlook"))
                 if poly_prob >= 0.62:
-                    poly_mod = 10
+                    poly_mod = 12.0
                     factors.append(f"POLY+10 YES={poly_prob:.2f}")
                 elif poly_prob <= 0.38:
-                    poly_mod = -10
+                    poly_mod = -12.0
                     factors.append(f"POLY-10 YES={poly_prob:.2f}")
             except Exception as exc:  # noqa: BLE001
                 logger.debug("Polymarket sentiment failed for %s: %s", ticker, exc)
+        poly_component = max(0.0, min(100.0, 50.0 + poly_mod))
 
-        total = float(max(0.0, min(100.0, mr + vol_pts + ins_pts + inst_pts + news_mod + poly_mod)))
+        # Context model combines fundamentals + sentiment + insiders.
+        context_score = (
+            0.45 * fundamentals_score
+            + 0.25 * insider_score
+            + 0.20 * news_component
+            + 0.10 * poly_component
+        )
+        context_score = max(0.0, min(100.0, context_score))
+
+        # Final ensemble as weighted average of model committee.
+        total = (
+            0.30 * trend_score
+            + 0.25 * mr_score
+            + 0.20 * breakout_score
+            + 0.25 * context_score
+        )
+        total = float(max(0.0, min(100.0, total)))
+
         return {
-            "mean_reversion": mr,
-            "volume_breakout": vol_pts,
-            "insider": ins_pts,
-            "institutional": inst_pts,
-            "news_modifier": news_mod,
-            "polymarket_modifier": poly_mod,
+            # Backward-compatible keys consumed by dashboard/orchestrator.
+            "mean_reversion": int(round(mr_score * 0.35)),
+            "volume_breakout": int(round(breakout_score * 0.25)),
+            "insider": int(round(insider_score * 0.20)),
+            "institutional": int(round(fundamentals_score * 0.20)),
+            "news_modifier": int(round(news_mod)),
+            "polymarket_modifier": int(round(poly_mod)),
             "total": total,
             "factors": factors,
             "rsi": None if pd.isna(rsi_14) else float(rsi_14),
             "close": close,
             "sma200": None if pd.isna(sma_200) else float(sma_200),
+            "zscore_50": None if (z50 is None or pd.isna(z50)) else float(z50),
+            "model_scores": {
+                "trend_model": float(trend_score),
+                "mean_reversion_model": float(mr_score),
+                "breakout_model": float(breakout_score),
+                "context_model": float(context_score),
+            },
+            "context_breakdown": {
+                "fundamentals": float(fundamentals_score),
+                "insiders": float(insider_score),
+                "news": float(news_component),
+                "polymarket": float(poly_component),
+            },
         }
 
     def generate_raw_signals(
@@ -5130,6 +5805,139 @@ if __name__ == "__main__":
     print(f"ASML.AS @180 EUR, cash 300 -> {qty3} shares (expected 1)")
 ```
 
+## FILE: 03_risk_portfolio/stress_tester.py (130 lines)
+```python
+"""Historical stress testing utilities (black swan replay)."""
+
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Iterable
+
+import pandas as pd
+
+
+_SHOCK_WINDOWS = [
+    ("Subprime 2008", "2008-09-01", "2008-10-31"),
+    ("COVID Crash 2020", "2020-02-20", "2020-03-23"),
+    ("Inflation Shock 2022", "2022-01-03", "2022-10-12"),
+]
+
+
+def _max_drawdown_from_returns(returns: pd.Series) -> float:
+    if returns is None or returns.empty:
+        return 0.0
+    wealth = (1.0 + returns.astype(float)).cumprod()
+    peak = wealth.cummax()
+    drawdown = wealth / peak - 1.0
+    return float(drawdown.min()) if not drawdown.empty else 0.0
+
+
+def simulate_historical_shocks(
+    portfolio_tickers: list,
+    weights: dict,
+    db_manager,
+) -> pd.DataFrame:
+    """Replay historical windows and estimate weighted portfolio drawdowns.
+
+    If a ticker has no data for a window, a Core ETF proxy is attempted.
+    """
+    if not portfolio_tickers:
+        return pd.DataFrame(columns=["Shock", "Start", "End", "Worst PnL %", "Proxy Used"])
+
+    tickers = [str(t) for t in portfolio_tickers if str(t)]
+    w = {str(k): float(v) for k, v in (weights or {}).items()}
+    if not w:
+        ew = 1.0 / float(len(tickers))
+        w = {t: ew for t in tickers}
+
+    # pull broad history once (covers earliest window)
+    start_min = min(pd.Timestamp(s) for _, s, _ in _SHOCK_WINDOWS)
+    end_max = max(pd.Timestamp(e) for _, _, e in _SHOCK_WINDOWS)
+    days = int((end_max - start_min).days) + 30
+
+    series_map: dict[str, pd.Series] = {}
+    for t in tickers:
+        try:
+            hist = db_manager.get_historical_prices(t, days=days)
+            if hist is None or hist.empty:
+                continue
+            frame = hist[["Date", "Close"]].copy()
+            frame["Date"] = pd.to_datetime(frame["Date"], errors="coerce")
+            frame["Close"] = pd.to_numeric(frame["Close"], errors="coerce")
+            frame = frame.dropna(subset=["Date", "Close"]).sort_values("Date")
+            if frame.empty:
+                continue
+            series_map[t] = frame.set_index("Date")["Close"]
+        except Exception:
+            continue
+
+    proxy_pool: Iterable[str] = ("CW8.PA", "EWLD.PA", "PE500.PA")
+    out_rows = []
+    for shock_name, start_s, end_s in _SHOCK_WINDOWS:
+        start = pd.Timestamp(start_s)
+        end = pd.Timestamp(end_s)
+        active_returns = []
+        active_weights = []
+        proxy_used = False
+
+        for t in tickers:
+            s = series_map.get(t)
+            if s is None:
+                # Try proxy
+                for px in proxy_pool:
+                    sp = series_map.get(px)
+                    if sp is not None:
+                        s = sp
+                        proxy_used = True
+                        break
+            if s is None:
+                continue
+
+            wdw = s[(s.index >= start) & (s.index <= end)]
+            if wdw is None or wdw.empty or len(wdw) < 4:
+                continue
+            r = wdw.pct_change().dropna()
+            if r.empty:
+                continue
+            active_returns.append(r.rename(t))
+            active_weights.append(float(w.get(t, 0.0)))
+
+        if not active_returns:
+            out_rows.append(
+                {
+                    "Shock": shock_name,
+                    "Start": start_s,
+                    "End": end_s,
+                    "Worst PnL %": None,
+                    "Proxy Used": "n/a",
+                }
+            )
+            continue
+
+        mat = pd.concat(active_returns, axis=1, join="inner").dropna()
+        if mat.empty:
+            worst = None
+        else:
+            ww = pd.Series(active_weights, dtype=float)
+            ww = ww / ww.sum() if ww.sum() > 0 else pd.Series([1.0 / len(active_weights)] * len(active_weights))
+            pr = mat.to_numpy(dtype=float) @ ww.to_numpy(dtype=float)
+            dd = _max_drawdown_from_returns(pd.Series(pr, index=mat.index))
+            worst = dd * 100.0
+
+        out_rows.append(
+            {
+                "Shock": shock_name,
+                "Start": start_s,
+                "End": end_s,
+                "Worst PnL %": worst,
+                "Proxy Used": "yes" if proxy_used else "no",
+            }
+        )
+
+    return pd.DataFrame(out_rows)
+```
+
 ## FILE: 04_orchestrator_ai/__init__.py (0 lines)
 ```python
 
@@ -5508,6 +6316,87 @@ if __name__ == "__main__":
     print("Live sentiment (0 if no API key):", result)
 ```
 
+## FILE: 04_orchestrator_ai/red_team_agent.py (78 lines)
+```python
+"""LLM multi-agent red teaming: bull vs bear vs judge."""
+
+from __future__ import annotations
+
+import asyncio
+import os
+import sys
+from pathlib import Path
+
+_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_ROOT / "05_interfaces"))
+
+from llm_explainer import openrouter_chat  # noqa: E402
+
+
+async def run_bull_bear_debate(ticker: str, context_data: str) -> dict:
+    """Run a 3-agent debate with concurrent bull/bear then judge verdict."""
+    api_key = os.getenv("OPENROUTER_API_KEY")
+    model = os.getenv("OPENROUTER_MODEL", "mistralai/mistral-7b-instruct")
+    if not api_key:
+        return {
+            "bull": "OpenRouter indisponible (clé manquante).",
+            "bear": "OpenRouter indisponible (clé manquante).",
+            "judge": "Impossible d'arbitrer sans LLM.",
+        }
+
+    bull_sys = (
+        "You are a ruthless BULL analyst. Defend the stock aggressively, "
+        "focus on catalysts, upside asymmetry, and dismiss noisy objections."
+    )
+    bear_sys = (
+        "You are a ruthless BEAR analyst. Attack the stock aggressively, "
+        "focus on debt, fragility, momentum breakdowns, and systemic risks."
+    )
+    user_prompt = (
+        f"Ticker: {ticker}\n\nContext:\n{context_data}\n\n"
+        "Give exactly 5 concise bullet points."
+    )
+
+    bull_task = openrouter_chat(
+        [{"role": "system", "content": bull_sys}, {"role": "user", "content": user_prompt}],
+        api_key=api_key,
+        model=model,
+        max_tokens=260,
+        temperature=0.4,
+    )
+    bear_task = openrouter_chat(
+        [{"role": "system", "content": bear_sys}, {"role": "user", "content": user_prompt}],
+        api_key=api_key,
+        model=model,
+        max_tokens=260,
+        temperature=0.4,
+    )
+    bull, bear = await asyncio.gather(bull_task, bear_task)
+    bull = (bull or "Bull argument indisponible.").strip()
+    bear = (bear or "Bear argument indisponible.").strip()
+
+    judge_sys = (
+        "You are a cynical Senior Portfolio Manager. Read both sides and issue "
+        "a ruthless final decision in exactly 3 sentences, in French."
+    )
+    judge_user = (
+        f"Ticker: {ticker}\n\nBULL:\n{bull}\n\nBEAR:\n{bear}\n\n"
+        "Return: 1) conviction side, 2) key risk, 3) action bias."
+    )
+    judge = await openrouter_chat(
+        [{"role": "system", "content": judge_sys}, {"role": "user", "content": judge_user}],
+        api_key=api_key,
+        model=model,
+        max_tokens=220,
+        temperature=0.2,
+    )
+    return {
+        "bull": bull,
+        "bear": bear,
+        "judge": (judge or "Verdict indisponible.").strip(),
+    }
+```
+
 ## FILE: 04_orchestrator_ai/revocation_engine.py (135 lines)
 ```python
 """Revocation Engine for PEA Sniper Terminal V-Prime.
@@ -5647,7 +6536,7 @@ if __name__ == "__main__":
     print(f"status={s3.status.value} | reason='{s3.reason}'")
 ```
 
-## FILE: 04_orchestrator_ai/signal_priority_cascade.py (337 lines)
+## FILE: 04_orchestrator_ai/signal_priority_cascade.py (339 lines)
 ```python
 """Signal Priority Cascade for PEA Sniper Terminal V-Prime.
 
@@ -5681,12 +6570,14 @@ import yaml
 _ROOT = Path(__file__).resolve().parent.parent
 for _sub in ("01_memory_core", "03_risk_portfolio", "04_orchestrator_ai"):
     sys.path.insert(0, os.path.join(str(_ROOT), _sub))
+sys.path.insert(0, os.path.join(str(_ROOT), "02_quant_engine"))
 
 from data_models import PortfolioState, Signal, SignalStatus  # noqa: E402
 from correlation_firewall import CorrelationFirewall  # noqa: E402
 from pea_position_sizer import PeaSizer  # noqa: E402
 from macro_veto import MacroVetoEngine  # noqa: E402
 from earnings_blackout import EarningsBlackoutEngine  # noqa: E402
+from quantitative_math import calculate_annualized_volatility  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -5759,7 +6650,7 @@ class SignalOrchestrator:
             returns = df["Close"].astype(float).pct_change().dropna()
             if returns.empty:
                 return None
-            return float(returns.std() * (252 ** 0.5))
+            return float(calculate_annualized_volatility(returns))
         except Exception:  # noqa: BLE001
             logger.debug("Volatility unavailable for %s.", ticker)
             return None
@@ -6787,7 +7678,7 @@ if __name__ == "__main__":
     asyncio.run(_demo())
 ```
 
-## FILE: 05_interfaces/terminal_dashboard.py (5438 lines)
+## FILE: 05_interfaces/terminal_dashboard.py (6157 lines)
 ```python
 """Web Terminal (Streamlit dashboard) for PEA Sniper Terminal V-Prime.
 
@@ -6817,6 +7708,7 @@ import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import plotly.express as pex
 import plotly.graph_objects as go
@@ -6901,6 +7793,29 @@ try:
     from news_sentiment_llm import NewsSentimentScorer  # noqa: E402
 except Exception:  # noqa: BLE001
     NewsSentimentScorer = None  # type: ignore[assignment]
+
+try:
+    from quantitative_math import (  # noqa: E402
+        calculate_historical_var,
+        calculate_cvar,
+        calculate_annualized_volatility,
+        calculate_portfolio_variance,
+    )
+except Exception:  # noqa: BLE001
+    calculate_historical_var = None  # type: ignore[assignment]
+    calculate_cvar = None  # type: ignore[assignment]
+    calculate_annualized_volatility = None  # type: ignore[assignment]
+    calculate_portfolio_variance = None  # type: ignore[assignment]
+
+try:
+    from stochastic_models import run_correlated_monte_carlo  # noqa: E402
+except Exception:  # noqa: BLE001
+    run_correlated_monte_carlo = None  # type: ignore[assignment]
+
+try:
+    from stress_tester import simulate_historical_shocks  # noqa: E402
+except Exception:  # noqa: BLE001
+    simulate_historical_shocks = None  # type: ignore[assignment]
 
 _DB_DIR = _ROOT / "database"
 _SQLITE_PATH = _DB_DIR / "portfolio.db"
@@ -6987,7 +7902,7 @@ def _latest_atr14_approx(ticker: str) -> float | None:
     """Best-effort ATR(14) for risk cards (DuckDB, else yfinance)."""
     try:
         from duckdb_manager import TimeSeriesDB
-        db = TimeSeriesDB()
+        db = TimeSeriesDB(read_only=True)
         hist = db.get_historical_prices(ticker, days=60)
         if hist is not None and not hist.empty and len(hist) >= 20:
             try:
@@ -7258,6 +8173,9 @@ if not os.getenv("OPENROUTER_API_KEY"):
     missing_keys.append("OPENROUTER_API_KEY (LLM / IA)")
 if not os.getenv("YAHOO_MAIL_USER") or not os.getenv("YAHOO_MAIL_APP_PASSWORD"):
     missing_keys.append("YAHOO_MAIL_USER / APP_PASSWORD (Briefing Newsletters)")
+optional_missing_keys = []
+if not os.getenv("FINNHUB_API_KEY"):
+    optional_missing_keys.append("FINNHUB_API_KEY (fondamentaux EU Value/Quality)")
 
 if missing_keys:
     st.error("🛑 **ERREUR CRITIQUE : COMPOSANTS DÉCONNECTÉS**")
@@ -7269,6 +8187,13 @@ if missing_keys:
         st.markdown(f"- `{k}`")
     st.info("Remplissez vos clés dans le fichier `config/api_keys.env` et rechargez la page.")
     st.stop()
+
+if optional_missing_keys:
+    st.warning(
+        "⚠️ Clés optionnelles absentes : "
+        + ", ".join(f"`{k}`" for k in optional_missing_keys)
+        + ". Le terminal reste actif avec fallback yfinance / score neutre."
+    )
 
 # FMP is secondary (AMF Opendatasoft / BDIF is primary for FR insiders).
 if not os.getenv("FMP_API_KEY"):
@@ -7396,6 +8321,65 @@ def load_signals(statuses: tuple[str, ...], limit: int | None = None) -> pd.Data
         return pd.DataFrame()
     db = PortfolioDB(db_path=_SQLITE_PATH)
     return pd.DataFrame(db.fetch_signals_by_status(list(statuses), limit=limit))
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def compute_portfolio_returns_matrix(
+    tickers: tuple[str, ...], days: int = 252
+) -> pd.DataFrame:
+    """Return aligned daily returns matrix from DuckDB for given tickers."""
+    if not tickers:
+        return pd.DataFrame()
+    try:
+        from duckdb_manager import TimeSeriesDB
+
+        db = TimeSeriesDB(read_only=True)
+        close_cols = []
+        for t in tickers:
+            hist = db.get_historical_prices(str(t), days=days + 10)
+            if hist is None or hist.empty or "Close" not in hist.columns:
+                continue
+            frame = hist[["Date", "Close"]].copy()
+            frame["Date"] = pd.to_datetime(frame["Date"], errors="coerce")
+            frame["Close"] = pd.to_numeric(frame["Close"], errors="coerce")
+            frame = frame.dropna(subset=["Date", "Close"]).sort_values("Date")
+            if len(frame) < 30:
+                continue
+            close_cols.append(frame.set_index("Date")["Close"].rename(str(t)))
+        if not close_cols:
+            return pd.DataFrame()
+        close_df = pd.concat(close_cols, axis=1, join="inner").dropna()
+        if close_df.empty:
+            return pd.DataFrame()
+        return close_df.pct_change().dropna()
+    except Exception:  # noqa: BLE001
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def run_portfolio_monte_carlo(
+    tickers: tuple[str, ...], weights: tuple[float, ...], equity: float, days: int = 252, simulations: int = 2000
+) -> pd.DataFrame:
+    """Cached Monte Carlo fan chart inputs."""
+    if run_correlated_monte_carlo is None:
+        return pd.DataFrame()
+    ret = compute_portfolio_returns_matrix(tickers, days=days)
+    if ret.empty or ret.shape[1] < 1:
+        return pd.DataFrame()
+    cols = list(ret.columns)
+    w = np.asarray(weights, dtype=float)
+    if len(w) != len(cols):
+        return pd.DataFrame()
+    cov = ret.cov()
+    mu = ret.mean()
+    return run_correlated_monte_carlo(
+        weights=w,
+        cov_matrix=cov,
+        expected_returns=mu,
+        initial_portfolio_value=float(equity),
+        days=days,
+        simulations=simulations,
+    )
 
 
 def _classify_audit_row(row: dict) -> str:
@@ -7789,6 +8773,72 @@ def get_valuation_metrics(ticker: str) -> dict:
         return blank
 
 
+@st.cache_data(ttl=21600, show_spinner=False)
+def get_fundamental_metrics(ticker: str) -> dict:
+    """PE/PB/ROE/Debt-Equity from SQLite cache -> Finnhub -> yfinance fallback."""
+    out = {
+        "pe_ratio": None,
+        "pb_ratio": None,
+        "roe": None,
+        "debt_to_equity": None,
+        "source": "none",
+    }
+    if not ticker:
+        return out
+
+    try:
+        db = PortfolioDB(db_path=_SQLITE_PATH)
+        db.init_db()
+        cached = db.get_cached_fundamentals(ticker, max_age_days=7)
+        if cached:
+            return {
+                "pe_ratio": cached.get("pe_ratio"),
+                "pb_ratio": cached.get("pb_ratio"),
+                "roe": cached.get("roe"),
+                "debt_to_equity": cached.get("debt_to_equity"),
+                "source": cached.get("source") or "sqlite_cache",
+            }
+    except Exception:  # noqa: BLE001
+        pass
+
+    try:
+        sensors_dir = _ROOT / "00_data_sensors"
+        if str(sensors_dir) not in sys.path:
+            sys.path.insert(0, str(sensors_dir))
+        from fundamentals_api import FundamentalsSensor  # noqa: WPS433
+
+        live = FundamentalsSensor().get_basic_financials(ticker) or {}
+        payload = {
+            "pe_ratio": live.get("pe_ratio"),
+            "pb_ratio": live.get("pb_ratio"),
+            "roe": live.get("roe"),
+            "debt_to_equity": live.get("debt_to_equity"),
+            "source": live.get("source") or "none",
+        }
+        if any(
+            payload.get(k) is not None
+            for k in ("pe_ratio", "pb_ratio", "roe", "debt_to_equity")
+        ):
+            try:
+                db = PortfolioDB(db_path=_SQLITE_PATH)
+                db.init_db()
+                db.upsert_fundamentals(ticker, payload)
+            except Exception:  # noqa: BLE001
+                pass
+            return payload
+    except Exception:  # noqa: BLE001
+        pass
+
+    val = get_valuation_metrics(ticker) or {}
+    return {
+        "pe_ratio": val.get("trailing_pe"),
+        "pb_ratio": val.get("price_to_book"),
+        "roe": None,
+        "debt_to_equity": None,
+        "source": "valuation_fallback",
+    }
+
+
 def render_annual_returns_chart(df: pd.DataFrame, ticker: str) -> go.Figure:
     """Neon/red yearly return bars on the terminal dark theme."""
     colors = [_NEON if float(v) >= 0 else _RED for v in df["Return_Pct"]]
@@ -8078,84 +9128,31 @@ def morning_briefing_is_live(briefing: dict | None) -> bool:
 
 @st.cache_data(ttl=900, show_spinner=False)
 def get_strategy_fingerprint(ticker: str) -> dict:
-    """Four strategy axes scored 0–100 for the Exploration radar.
-
-    Axes (dashboard UI — complementary to the engine conviction weights):
-      Mean Reversion · Momentum · Quality/Value · Insider Confidence
-    """
+    """Radar axes powered by the multi-model ensemble outputs."""
     out = {
         "Mean Reversion": 0.0,
         "Momentum": 0.0,
         "Quality/Value": 0.0,
         "Insider Confidence": 0.0,
     }
-    ind = get_indicators(ticker) or {}
-    rsi = ind.get("rsi")
-    close = ind.get("close")
-    sma5 = ind.get("sma5")
-    sma50 = ind.get("sma50")
-    sma200 = ind.get("sma200")
-
-    # Mean Reversion — oversold stretch (RSI)
-    if rsi is not None:
-        if rsi < 25:
-            out["Mean Reversion"] = 100.0
-        elif rsi < 30:
-            out["Mean Reversion"] = 90.0
-        elif rsi < 40:
-            out["Mean Reversion"] = 55.0
-        elif rsi < 50:
-            out["Mean Reversion"] = 25.0
-        else:
-            out["Mean Reversion"] = max(0.0, 15.0 - (rsi - 50) * 0.3)
-
-    # Momentum — price above short/medium SMAs
-    mom = 0.0
-    if close is not None and sma5 is not None and close > sma5:
-        mom += 45.0
-    if close is not None and sma50 is not None and close > sma50:
-        mom += 35.0
-    if close is not None and sma200 is not None and close > sma200:
-        mom += 20.0
-    out["Momentum"] = min(100.0, mom)
-
-    # Quality/Value — EPS > 0 and/or reasonable trailing P/E
     try:
-        val = get_valuation_metrics(ticker) or {}
+        from duckdb_manager import TimeSeriesDB
+        from technical_scorer import SignalGenerator
+
+        hist = TimeSeriesDB(read_only=True).get_historical_prices(ticker, days=252)
+        if hist is None or hist.empty or len(hist) < 200:
+            return out
+        conv = SignalGenerator().evaluate(ticker, hist)
+        models = conv.get("model_scores") or {}
+        ctx = conv.get("context_breakdown") or {}
+
+        out["Mean Reversion"] = float(models.get("mean_reversion_model") or 0.0)
+        out["Momentum"] = float(models.get("trend_model") or 0.0)
+        out["Quality/Value"] = float(ctx.get("fundamentals") or 0.0)
+        out["Insider Confidence"] = float(ctx.get("insiders") or 0.0)
+        return out
     except Exception:  # noqa: BLE001
-        val = {}
-    pe = val.get("trailing_pe")
-    qv = 0.0
-    if pe is not None and pe > 0:
-        qv += 50.0
-        if pe <= 15:
-            qv += 50.0
-        elif pe <= 25:
-            qv += 30.0
-        elif pe <= 35:
-            qv += 15.0
-    else:
-        # Soft EPS proxy via ensemble helper when PE missing
-        try:
-            from technical_scorer import SignalGenerator
-
-            if SignalGenerator().is_profitable(ticker):
-                qv += 55.0
-        except Exception:  # noqa: BLE001
-            pass
-    out["Quality/Value"] = min(100.0, qv)
-
-    # Insider Confidence — net buys
-    alpha = get_alpha_signals(ticker) or {}
-    ins = int(alpha.get("insider") or 0)
-    if ins >= 1:
-        out["Insider Confidence"] = 85.0
-    elif ins <= -1:
-        out["Insider Confidence"] = 10.0
-    else:
-        out["Insider Confidence"] = 35.0
-
-    return out
+        return out
 
 
 def render_strategy_radar(fingerprint: dict, ticker: str):
@@ -8217,7 +9214,7 @@ def get_conviction_axes(ticker: str) -> dict:
         from technical_scorer import SignalGenerator
         from duckdb_manager import TimeSeriesDB
 
-        db = TimeSeriesDB()
+        db = TimeSeriesDB(read_only=True)
         hist = db.get_historical_prices(ticker, days=300)
         if hist is None or hist.empty:
             return {}
@@ -8277,7 +9274,7 @@ def get_universe_screener_tags(tickers: tuple[str, ...]) -> dict:
         from duckdb_manager import TimeSeriesDB
         from technical_scorer import SignalGenerator
 
-        db = TimeSeriesDB()
+        db = TimeSeriesDB(read_only=True)
         gen = SignalGenerator()
         for ticker in tickers:
             parts: list[str] = []
@@ -8348,7 +9345,7 @@ def simulate_buy_what_if(
     try:
         from duckdb_manager import TimeSeriesDB
 
-        db = TimeSeriesDB()
+        db = TimeSeriesDB(read_only=True)
         cand = db.get_historical_prices(ticker, days=90)
         if cand is not None and not cand.empty and "Close" in cand.columns:
             cser = cand["Close"].pct_change().dropna()
@@ -8783,54 +9780,81 @@ def render_native_ticker_tape(period: str = "1d") -> None:
 def build_data_sources_health_df() -> pd.DataFrame:
     """Live telemetry for Architecture tab — env vars + local DB files."""
     duck_path = _DB_DIR / "ohlcv.duckdb"
+    freshness = "n/a"
+    try:
+        from duckdb_manager import TimeSeriesDB
+
+        db = TimeSeriesDB(read_only=True)
+        with db._connect() as conn:
+            row = conn.execute("SELECT MAX(date) AS d FROM ohlcv_data;").fetchone()
+        max_date = row[0] if row else None
+        if max_date:
+            freshness = f"Dernière bougie: {str(max_date)[:10]}"
+    except Exception:  # noqa: BLE001
+        freshness = "indisponible"
     rows = [
         (
             "yfinance",
             "OHLCV, calendrier, insiders, news fallback",
             "🟢 Actif",
             "Pas de prix si réseau down",
+            freshness,
         ),
         (
             "VIX / VSTOXX",
             f"Coupe-circuit panic (seuil {_VIX_PANIC:.0f})",
             "🟢 Actif",
             "Fallback 15.0 si indispo",
+            freshness,
         ),
         (
             "Bandeau natif (HTML)",
             "Perf blue-chips + logos Clearbit",
             "🟢 Actif",
             "Remplace l'ancien widget TradingView tape",
+            freshness,
         ),
         (
             "SQLite portfolio.db",
             "Portfolio / audit / equity / news_history",
             "🟢 Connecté" if _SQLITE_PATH.exists() else "🔴 Absent",
             "Dashboard bloqué sans DB locale",
+            f"MAJ wallet: {str(portfolio.last_updated)[:19]}" if "portfolio" in globals() else "n/a",
         ),
         (
             "DuckDB ohlcv.duckdb",
             "Historique technique / ATR / screener",
             "🟢 Connecté" if duck_path.exists() else "🟡 Partiel",
             "ATR/stops moins fiables sans OHLCV local",
+            freshness,
         ),
         (
             "OpenRouter",
             "Sentiment news + briefing geo + Synthèse IA",
             "🟢 Actif" if os.getenv("OPENROUTER_API_KEY") else "🔴 DÉCONNECTÉ",
             "CRITIQUE: Arrêt immédiat du terminal",
+            "temps réel",
         ),
         (
             "FMP",
             "Insiders fallback (après AMF)",
             "🟢 Actif" if os.getenv("FMP_API_KEY") else "🔴 DÉCONNECTÉ",
             "CRITIQUE: cascade AMF-only (pas de fallback US)",
+            "n/a",
+        ),
+        (
+            "Finnhub",
+            "Fondamentaux EU (Value/Quality)",
+            "🟢 Actif" if os.getenv("FINNHUB_API_KEY") else "🟡 Optionnel",
+            "Fallback yfinance / score neutre si indisponible",
+            "cache 7 jours",
         ),
         (
             "AMF Opendatasoft / BDIF",
             "Déclarations dirigeants (API publique, free)",
             "🟢 Actif",
             "Insiders FR indisponibles si BDIF/ODS down",
+            "n/a",
         ),
         (
             "IMAP Newsletter",
@@ -8839,23 +9863,26 @@ def build_data_sources_health_df() -> pd.DataFrame:
             if os.getenv("YAHOO_MAIL_USER") and os.getenv("YAHOO_MAIL_APP_PASSWORD")
             else "🔴 DÉCONNECTÉ",
             "CRITIQUE: Arrêt immédiat du terminal",
+            "job 08:25 Paris",
         ),
         (
             "Polymarket Gamma",
             "Probabilités macro (contexte)",
             "🟢 Actif",
             "Fallback seed si JSON bloqué (Cloudflare)",
+            "quasi temps réel",
         ),
         (
             "Boursorama scraper",
             "Profil PEA/SRD, consensus, news",
             "🟢 Actif",
             "Fragile — dates parfois approximatives",
+            "variable",
         ),
     ]
     return pd.DataFrame(
         rows,
-        columns=["Source", "Rôle", "Statut Live", "Impact si manquant"],
+        columns=["Source", "Rôle", "Statut Live", "Impact si manquant", "Fraîcheur des données"],
     )
 
 
@@ -8895,6 +9922,79 @@ def get_core_regime() -> dict:
         return {}
 
 
+@st.cache_data(ttl=900, show_spinner=False)
+def get_market_breadth(universe_df: pd.DataFrame, db_manager) -> dict:
+    """Market breadth (SMA50/SMA200) over ~100 universe tickers.
+
+    We sample universe tickers (deterministically) and keep only those with a
+    full ~200 trading-days history in DuckDB, then compute:
+      - % Close > SMA50
+      - % Close > SMA200
+    """
+    try:
+        from duckdb_manager import TimeSeriesDB
+
+        if universe_df is None or universe_df.empty:
+            return {"pct_sma50": None, "pct_sma200": None, "valid": 0}
+        if db_manager is None:
+            return {"pct_sma50": None, "pct_sma200": None, "valid": 0}
+
+        # DuckDB manager passed as db_path string for cache friendliness.
+        db = TimeSeriesDB(db_path=str(db_manager), read_only=True)
+
+        tickers = (
+            universe_df.get("Ticker", pd.Series([], dtype=str))
+            .dropna()
+            .astype(str)
+            .unique()
+            .tolist()
+        )
+        tickers = [t for t in tickers if t]
+        if not tickers:
+            return {"pct_sma50": None, "pct_sma200": None, "valid": 0}
+
+        # Deterministic sampling then stop once we have ~100 valid tickers.
+        candidates = tickers[: min(160, len(tickers))]
+        valid = 0
+        above50 = 0
+        above200 = 0
+
+        for t in candidates:
+            hist = db.get_historical_prices(t, days=200)
+            if hist is None or hist.empty or "Close" not in hist.columns:
+                continue
+            if len(hist) < 200:
+                continue
+
+            close = pd.to_numeric(hist["Close"], errors="coerce").dropna()
+            if close.empty or len(close) < 200:
+                continue
+
+            last = float(close.iloc[-1])
+            sma50 = float(close.tail(50).mean())
+            sma200 = float(close.tail(200).mean())
+            valid += 1
+
+            if last > sma50:
+                above50 += 1
+            if last > sma200:
+                above200 += 1
+
+            if valid >= 100:
+                break
+
+        if valid <= 0:
+            return {"pct_sma50": None, "pct_sma200": None, "valid": 0}
+
+        return {
+            "pct_sma50": above50 / valid * 100.0,
+            "pct_sma200": above200 / valid * 100.0,
+            "valid": valid,
+        }
+    except Exception:  # noqa: BLE001
+        return {"pct_sma50": None, "pct_sma200": None, "valid": 0}
+
+
 @st.cache_data(ttl=600, show_spinner=False)
 def get_indicators(ticker: str) -> dict:
     """Compute RSI(14) + SMA 5/50/200 + trend flags for one ticker."""
@@ -8927,8 +10027,13 @@ def get_indicators(ticker: str) -> dict:
             if len(close) >= 2 else 0.0,
             "chg_5d": float((close.iloc[-1] / close.iloc[-6] - 1) * 100)
             if len(close) >= 6 else 0.0,
-            "vol_ann": float(close.pct_change().dropna().tail(60).std() * (252 ** 0.5)
-                             * 100),
+            "vol_ann": float(
+                (
+                    calculate_annualized_volatility(close.pct_change().dropna().tail(60))
+                    if calculate_annualized_volatility is not None
+                    else close.pct_change().dropna().tail(60).std(ddof=0) * (252 ** 0.5)
+                ) * 100.0
+            ),
         }
         return out
     except Exception:  # noqa: BLE001
@@ -9936,6 +11041,7 @@ def get_ticker_dossier(ticker: str) -> dict:
         "catalysts": [],
         "risk_events": [],
         "is_etf": False,
+        "fundamentals": {},
     }
     try:
         info = yf.Ticker(ticker).info or {}
@@ -9995,6 +11101,10 @@ def get_ticker_dossier(ticker: str) -> dict:
         ]
     out["catalysts"] = catalysts[:5]
     out["risk_events"] = risks[:5]
+    try:
+        out["fundamentals"] = get_fundamental_metrics(ticker)
+    except Exception:  # noqa: BLE001
+        out["fundamentals"] = {}
     return out
 
 
@@ -10273,7 +11383,24 @@ if sector_weights and portfolio.total_equity:
     max_sector = max(sector_weights, key=sector_weights.get)
     max_sector_val = sector_weights[max_sector] / portfolio.total_equity * 100
 
-r1, r2, r3, r4 = st.columns(4)
+from duckdb_manager import TimeSeriesDB  # noqa: E402
+
+_db_breadth = TimeSeriesDB(read_only=True)
+_breadth = get_market_breadth(universe_df, str(_db_breadth.db_path))
+_pct50 = _breadth.get("pct_sma50")
+_pct200 = _breadth.get("pct_sma200")
+_valid = _breadth.get("valid") or 0
+_pct50_f = float(_pct50) if _pct50 is not None else None
+_pct200_f = float(_pct200) if _pct200 is not None else None
+
+_breadth_ok = (_pct200_f is not None and _pct200_f >= 55)
+_breadth_mid = (_pct200_f is not None and 45 <= _pct200_f < 55)
+_breadth_accent = "green" if _breadth_ok else ("cyan" if _breadth_mid else "red")
+_breadth_sub_cls = (
+    "sub-green" if _breadth_ok else ("sub-red" if _pct200_f is not None else "sub-muted")
+)
+
+r1, r2, r3, r4, r5 = st.columns(5)
 with r1:
     vsub = ("\U0001F6A8 PANIC - achats satellites geles" if vix_panic
             else f"Calme (seuil {_VIX_PANIC:.0f})")
@@ -10303,6 +11430,22 @@ with r2:
                       "Donnees temporairement indisponibles.",
         ), unsafe_allow_html=True)
 with r3:
+    breadth_val = (
+        f"{_pct50_f:.0f}% / {_pct200_f:.0f}%" if _pct200_f is not None else "n/a"
+    )
+    st.markdown(metric_box(
+        "Market Breadth (SMA50/200)",
+        breadth_val,
+        sub=f"{int(_valid)} titres validés · Close>SMA50/SMA200",
+        accent=_breadth_accent,
+        sub_cls=_breadth_sub_cls,
+        help_text=(
+            "Broad market measure : % des noms PEA ayant "
+            "Close > SMA50 et Close > SMA200 (hist. DuckDB ~200j)."
+        ),
+    ), unsafe_allow_html=True)
+
+with r4:
     over = sat_used_pct > 100
     ssub = f"{satellite_value:,.0f} / {sat_budget_eur:,.0f} \u20ac (max {_SAT_BUDGET*100:.0f}%)"
     st.markdown(metric_box(
@@ -10312,7 +11455,7 @@ with r3:
                   "portefeuille total) pour chercher de la surperformance. Le "
                   "reste est investi dans l'ETF Monde (le Coeur du portefeuille).",
     ), unsafe_allow_html=True)
-with r4:
+with r5:
     breach = max_sector_val > _MAX_SECTOR * 100
     st.markdown(metric_box(
         "Concentration Sectorielle Max", f"{max_sector_val:.0f}%",
@@ -10781,6 +11924,88 @@ with tab_gen:
         st.markdown("##### En attente (Command Center) — cartes de trade")
         pending = pending_gen
         render_pending_trade_cards(pending, portfolio)
+
+        # --- Phase 34: Near-Miss radar -------------------------------------
+        st.markdown("#### 📡 Radar de Surveillance (Near-Miss)")
+        pending_tickers = set()
+        if pending is not None and not pending.empty and "ticker" in pending.columns:
+            try:
+                pending_tickers = {
+                    str(t) for t in pending["ticker"].dropna().tolist()
+                }
+            except Exception:  # noqa: BLE001
+                pending_tickers = set()
+
+        near_miss = []
+        try:
+            # "Alternatives" viennent du même scoring heuristique que la
+            # recommandation (rank_affordable_alternatives).
+            for a in (alts or []):
+                try:
+                    sc = int(a.get("score") or -1)
+                except Exception:  # noqa: BLE001
+                    continue
+                if 55 <= sc <= 64:
+                    t = str(a.get("ticker") or "")
+                    if t and t not in pending_tickers:
+                        near_miss.append(a)
+        except Exception:  # noqa: BLE001
+            near_miss = []
+
+        near_miss.sort(key=lambda x: int(x.get("score") or 0), reverse=True)
+        near_miss = near_miss[:10]
+
+        if not near_miss:
+            st.caption("Aucun near-miss détecte (scores 55–64).")
+        else:
+            rows = []
+            for a in near_miss:
+                t = str(a.get("ticker") or "")
+                ind = get_indicators(t) or {}
+                close = ind.get("close") or a.get("price")
+                sma5 = ind.get("sma5")
+                sma50 = ind.get("sma50")
+                sma200 = ind.get("sma200")
+                rsi = ind.get("rsi") if ind else None
+
+                missing = "En attente de confirmation"
+                try:
+                    if close is not None and sma5 is not None and float(close) < float(sma5):
+                        missing = "En attente du franchissement SMA5"
+                    elif close is not None and sma50 is not None and float(close) < float(sma50):
+                        missing = "En attente du franchissement SMA50"
+                    elif close is not None and sma200 is not None and float(close) < float(sma200):
+                        missing = "En attente du franchissement SMA200"
+                    else:
+                        missing = "En attente d'un meilleur contexte (MR/Mom/Insider)"
+                except Exception:  # noqa: BLE001
+                    missing = "En attente de confirmation"
+
+                sc = int(a.get("score") or 0)
+                rows.append({
+                    "Ticker": t,
+                    "Score": f"{sc}/100",
+                    "RSI": f"{float(rsi):.0f}" if rsi is not None else "—",
+                    "Manquant": missing,
+                })
+
+            disp = pd.DataFrame(rows)
+            score_colors = [
+                (_NEON if int(s.split("/")[0]) >= 62 else
+                 _AMBER if int(s.split("/")[0]) >= 58 else
+                 _CYAN)
+                for s in disp["Score"].tolist()
+            ]
+            st.plotly_chart(
+                dark_table(
+                    disp,
+                    height=min(420, 44 + 28 * len(disp)),
+                    col_widths=[1.2, 0.8, 0.7, 3.2],
+                    font_color_map={"Score": score_colors},
+                ),
+                width="stretch",
+                key="gen_near_miss_radar",
+            )
     with col2:
         st.markdown("##### Historique (20 derniers)")
         hist = load_signals(("EXECUTED", "REVOKED", "REJECTED", "EXPIRED"), limit=20)
@@ -10965,6 +12190,154 @@ with tab_pf:
                     "que le futur backtester."
                 )
 
+            st.markdown("#### 📉 Métriques de Risque Académique (Tail Risk)")
+            if (
+                calculate_historical_var is None
+                or calculate_cvar is None
+                or len(eq) < 30
+            ):
+                st.caption("VaR/CVaR indisponibles (historique insuffisant ou module quant absent).")
+            else:
+                try:
+                    eq_ret = pd.to_numeric(eq["equity"], errors="coerce").pct_change().dropna()
+                    var95 = float(calculate_historical_var(eq_ret, confidence_level=0.95))
+                    cvar95 = float(calculate_cvar(eq_ret, confidence_level=0.95))
+                    rv1, rv2 = st.columns(2)
+                    with rv1:
+                        st.markdown(
+                            metric_box(
+                                "VaR 95% (1j)",
+                                f"-{var95*100:.2f}%",
+                                sub="Perte max attendue (quantile 5%)",
+                                accent="amber",
+                                sub_cls="sub-amber",
+                                help_text=(
+                                    "Historical VaR 95%: perte journalière maximale attendue "
+                                    "avec 95% de confiance (quantile historique à 5%)."
+                                ),
+                            ),
+                            unsafe_allow_html=True,
+                        )
+                    with rv2:
+                        st.markdown(
+                            metric_box(
+                                "CVaR 95% (1j)",
+                                f"-{cvar95*100:.2f}%",
+                                sub="Perte moyenne au-delà de la VaR",
+                                accent="red",
+                                sub_cls="sub-red",
+                                help_text=(
+                                    "Conditional VaR 95% (Expected Shortfall): perte journalière "
+                                    "moyenne conditionnelle une fois la VaR dépassée."
+                                ),
+                            ),
+                            unsafe_allow_html=True,
+                        )
+                except Exception:  # noqa: BLE001
+                    st.caption("VaR/CVaR indisponibles (erreur de calcul).")
+
+            st.markdown("#### 🔮 Projections Stochastiques (Monte Carlo)")
+            held_tickers_pf = [str(p.ticker) for p in positions if getattr(p, "ticker", None)]
+            if run_correlated_monte_carlo is None or len(held_tickers_pf) < 1:
+                st.caption("Monte Carlo indisponible (module absent ou aucune position).")
+            else:
+                with st.expander("Lancer la projection probabiliste (on-demand)", expanded=False):
+                    sims = st.slider(
+                        "Simulations Monte Carlo",
+                        min_value=500,
+                        max_value=5000,
+                        value=2000,
+                        step=500,
+                        key="pf_mc_sims",
+                    )
+                    horizon = st.slider(
+                        "Horizon (jours de bourse)",
+                        min_value=60,
+                        max_value=504,
+                        value=252,
+                        step=21,
+                        key="pf_mc_horizon",
+                    )
+                    if st.button("Exécuter Monte Carlo", key="pf_run_mc"):
+                        w_curr = np.array([float(p.market_value) for p in positions], dtype=float)
+                        if w_curr.sum() <= 0:
+                            w_curr = np.ones(len(held_tickers_pf), dtype=float) / float(len(held_tickers_pf))
+                        else:
+                            w_curr = w_curr / w_curr.sum()
+                        with st.spinner("Simulation stochastique en cours..."):
+                            fan = run_portfolio_monte_carlo(
+                                tuple(held_tickers_pf),
+                                tuple(w_curr.tolist()),
+                                float(portfolio.total_equity),
+                                days=int(horizon),
+                                simulations=int(sims),
+                            )
+                        if fan.empty:
+                            st.caption("Fan chart indisponible (historique insuffisant).")
+                        else:
+                            fig_fan = go.Figure()
+                            fig_fan.add_trace(go.Scatter(
+                                x=fan["day"], y=fan["p95"], mode="lines",
+                                line=dict(color="rgba(0,180,216,0.0)"), name="P95",
+                                showlegend=False,
+                            ))
+                            fig_fan.add_trace(go.Scatter(
+                                x=fan["day"], y=fan["p75"], mode="lines",
+                                line=dict(color="rgba(0,180,216,0.0)"), fill="tonexty",
+                                fillcolor="rgba(0,180,216,0.12)", name="P75-95",
+                                showlegend=False,
+                            ))
+                            fig_fan.add_trace(go.Scatter(
+                                x=fan["day"], y=fan["p50"], mode="lines",
+                                line=dict(color=_CYAN, width=2), name="Médiane P50",
+                            ))
+                            fig_fan.add_trace(go.Scatter(
+                                x=fan["day"], y=fan["p25"], mode="lines",
+                                line=dict(color="rgba(0,255,0,0.0)"), fill="tonexty",
+                                fillcolor="rgba(0,255,0,0.10)", name="P25-50",
+                                showlegend=False,
+                            ))
+                            fig_fan.add_trace(go.Scatter(
+                                x=fan["day"], y=fan["p05"], mode="lines",
+                                line=dict(color="rgba(255,59,48,0.0)"), fill="tonexty",
+                                fillcolor="rgba(255,59,48,0.16)", name="P05-25",
+                                showlegend=False,
+                            ))
+                            fig_fan.update_layout(
+                                title="Fan Chart Monte Carlo (corrélé)",
+                                xaxis_title="Jour",
+                                yaxis_title="Valeur portefeuille (€)",
+                                margin=dict(t=40, l=20, r=20, b=20),
+                                height=380,
+                                showlegend=True,
+                            )
+                            _style_dark_fig(fig_fan)
+                            st.plotly_chart(fig_fan, width="stretch", key="pf_mc_fan_chart")
+
+                        if simulate_historical_shocks is not None:
+                            try:
+                                from duckdb_manager import TimeSeriesDB
+
+                                db_ro = TimeSeriesDB(read_only=True)
+                                w_map = {t: float(w_curr[i]) for i, t in enumerate(held_tickers_pf)}
+                                stress = simulate_historical_shocks(held_tickers_pf, w_map, db_ro)
+                                if stress is not None and not stress.empty:
+                                    sdisp = stress.copy()
+                                    sdisp["Worst PnL %"] = sdisp["Worst PnL %"].map(
+                                        lambda x: "n/a" if pd.isna(x) else f"{float(x):+.2f}%"
+                                    )
+                                    st.plotly_chart(
+                                        dark_table(
+                                            sdisp,
+                                            height=min(260, 56 + 28 * len(sdisp)),
+                                            col_widths=[1.4, 0.8, 0.8, 1.0, 0.7],
+                                        ),
+                                        width="stretch",
+                                        key="pf_stress_table",
+                                    )
+                            except Exception:
+                                st.caption("Stress test indisponible.")
+
     if not positions:
         st.info("⏸️ Le portefeuille est actuellement 100% en "
                 "liquidites. Aucune position ouverte : le capital attend une "
@@ -11015,6 +12388,56 @@ with tab_pf:
                 dark_table(disp, height=430, font_color_map={"PnL": pnl_colors},
                            col_widths=[2.2, 1.4, 0.7, 1, 1, 1.2, 0.8, 0.9]),
                 width="stretch")
+
+    # --- Phase 34: Correlation heatmap --------------------------------------
+    st.markdown("#### 🕸️ Matrice de Corrélation (Risque Croisé)")
+    held_tickers = [str(p.ticker) for p in positions if getattr(p, "ticker", None)]
+    held_tickers = [t for t in held_tickers if t]
+    if len(held_tickers) < 2:
+        st.caption("Pas assez de positions (min 2) pour calculer une matrice de corrélation.")
+    else:
+        try:
+            from duckdb_manager import TimeSeriesDB
+            db = TimeSeriesDB(read_only=True)
+
+            returns: dict[str, pd.Series] = {}
+            for t in held_tickers:
+                hist = db.get_historical_prices(t, days=90)
+                if hist is None or hist.empty or "Close" not in hist.columns:
+                    continue
+                frame = hist[["Date", "Close"]].copy()
+                frame["Date"] = pd.to_datetime(frame["Date"], errors="coerce")
+                frame["Close"] = pd.to_numeric(frame["Close"], errors="coerce")
+                frame = frame.dropna(subset=["Date", "Close"]).sort_values("Date")
+                if len(frame) < 6:
+                    continue
+                r = frame["Close"].pct_change().dropna()
+                if r is None or r.empty:
+                    continue
+                r.name = t
+                returns[t] = r
+
+            ret_df = pd.concat(returns, axis=1).dropna(how="all")
+            if ret_df.shape[1] < 2:
+                st.caption("Corrélation indisponible (données retour vides / trop sparse).")
+            else:
+                corr_matrix = ret_df.corr(method="pearson")
+                fig_corr = pex.imshow(
+                    corr_matrix,
+                    text_auto=".2f",
+                    aspect="auto",
+                    color_continuous_scale="RdBu_r",
+                    zmin=-1,
+                    zmax=1,
+                )
+                _style_dark_fig(fig_corr, height=430)
+                st.plotly_chart(
+                    fig_corr,
+                    width="stretch",
+                    key="pf_corr_heatmap",
+                )
+        except Exception:  # noqa: BLE001
+            st.caption("Corrélation indisponible (erreur DuckDB/Yahoo).")
 
     st.markdown("---")
     st.markdown("#### 🛑 Gestion des Stops & Sorties (ATR 2.5x)")
@@ -11318,6 +12741,30 @@ with tab_mkt:
             for r in dossier.get("risk_events") or []:
                 st.markdown(f"- {r}")
 
+    if st.button("Lancer un Red Teaming IA (Bull vs Bear)", key=f"red_team_{selected}"):
+        context_blob = (
+            f"Ticker: {selected}\n"
+            f"Name: {dossier.get('name')}\n"
+            f"Sector: {dossier.get('sector')}\n"
+            f"Summary: {dossier.get('summary')}\n"
+            f"Catalysts: {', '.join(dossier.get('catalysts') or [])}\n"
+            f"Risks: {', '.join(dossier.get('risk_events') or [])}\n"
+        )
+        with st.spinner("Red Teaming multi-agent en cours..."):
+            try:
+                from red_team_agent import run_bull_bear_debate
+
+                debate = asyncio.run(run_bull_bear_debate(selected, context_blob))
+            except Exception as exc:  # noqa: BLE001
+                debate = {
+                    "bull": "Indisponible",
+                    "bear": f"Indisponible ({exc})",
+                    "judge": "Indisponible",
+                }
+        st.info(f"🐂 **Bull Agent**\n\n{debate.get('bull') or 'n/a'}")
+        st.warning(f"🐻 **Bear Agent**\n\n{debate.get('bear') or 'n/a'}")
+        st.error(f"⚖️ **Judge Agent**\n\n{debate.get('judge') or 'n/a'}")
+
     ind = get_indicators(selected)
     alpha = get_alpha_signals(selected)
     bprofile = get_bourso_profile(selected)
@@ -11393,6 +12840,61 @@ with tab_mkt:
                 f"{(bprofile or {}).get('exchange') or '—'}",
         ), unsafe_allow_html=True)
 
+    # Phase 35: Multi-factor fundamentals (Finnhub -> cache -> yfinance fallback).
+    fmeta = (dossier or {}).get("fundamentals") or get_fundamental_metrics(selected)
+    src = str((fmeta or {}).get("source") or "none")
+    pe = (fmeta or {}).get("pe_ratio")
+    pb = (fmeta or {}).get("pb_ratio")
+    roe = (fmeta or {}).get("roe")
+    deq = (fmeta or {}).get("debt_to_equity")
+    mrow3 = st.columns(4)
+    with mrow3[0]:
+        st.markdown(
+            metric_box(
+                "P/E (TTM)",
+                f"{float(pe):.2f}" if pe is not None else "n/a",
+                sub=f"Source: {src}",
+                accent="cyan" if pe is not None and float(pe) > 0 and float(pe) < 20 else "",
+                help_text="Valorisation bénéfices (plus bas peut être plus attractif).",
+            ),
+            unsafe_allow_html=True,
+        )
+    with mrow3[1]:
+        st.markdown(
+            metric_box(
+                "P/B",
+                f"{float(pb):.2f}" if pb is not None else "n/a",
+                sub="Value factor",
+                accent="cyan" if pb is not None and float(pb) < 2.0 else "",
+                help_text="Valorisation fonds propres (bonus si <2).",
+            ),
+            unsafe_allow_html=True,
+        )
+    with mrow3[2]:
+        st.markdown(
+            metric_box(
+                "ROE",
+                f"{float(roe)*100:.1f}%" if roe is not None and float(roe) <= 1.5 else (
+                    f"{float(roe):.1f}%" if roe is not None else "n/a"
+                ),
+                sub="Quality factor",
+                accent="green" if roe is not None and float(roe) >= 0.15 else "",
+                help_text="Rentabilité des capitaux propres (qualité).",
+            ),
+            unsafe_allow_html=True,
+        )
+    with mrow3[3]:
+        st.markdown(
+            metric_box(
+                "Debt / Equity",
+                f"{float(deq):.2f}" if deq is not None else "n/a",
+                sub="Risque de levier",
+                accent="red" if deq is not None and float(deq) > 2.0 else "",
+                help_text="Levier bilan (malus >2.0 dans le modèle multi-factor).",
+            ),
+            unsafe_allow_html=True,
+        )
+
     st.markdown("#### 📋 Ticket d'Ordre PEA (Prêt à l'Exécution)")
     live_price = float((ind or {}).get("close") or 0.0)
     qty_default = max(1, int(float(portfolio.cash_available or 0.0) // live_price)) if live_price > 0 else 1
@@ -11431,6 +12933,81 @@ with tab_mkt:
     chk_df = pd.DataFrame(checklist["checks"])
     st.dataframe(chk_df, use_container_width=True, hide_index=True)
     st.caption(f"Statut global: {checklist['overall']} · score proxy {checklist['score_hint']:.0f}/100")
+
+    st.markdown("#### 🧠 Bureau de l'Analyste & Data Lake")
+    note_db = PortfolioDB(db_path=_SQLITE_PATH)
+    try:
+        note_db.init_db()
+        current_note = note_db.get_ticker_note(selected)
+    except Exception:  # noqa: BLE001
+        current_note = ""
+    note_value = st.text_area(
+        f"Note analyste personnelle — {format_name(selected)}",
+        value=current_note,
+        height=120,
+        key=f"analyst_note_{selected}",
+        help="Commentaires qualitatifs manuels (thèse, trigger, risques, plan d'exécution).",
+    )
+    if st.button("Sauvegarder la note", key=f"save_note_{selected}", type="secondary"):
+        try:
+            note_db.save_ticker_note(selected, note_value)
+            st.success("Note sauvegardée dans SQLite.")
+        except Exception as exc:  # noqa: BLE001
+            st.error(f"Sauvegarde impossible: {exc}")
+
+    # Multi-model raw pack for full transparency.
+    model_breakdown = {}
+    model_context = {}
+    hist_dl = pd.DataFrame()
+    try:
+        from duckdb_manager import TimeSeriesDB
+        from technical_scorer import SignalGenerator
+
+        db_ro = TimeSeriesDB(read_only=True)
+        hist_dl = db_ro.get_historical_prices(selected, days=260)
+        if hist_dl is not None and not hist_dl.empty:
+            conv_dl = SignalGenerator().evaluate(selected, hist_dl)
+            model_breakdown = conv_dl.get("model_scores") or {}
+            model_context = conv_dl.get("context_breakdown") or {}
+    except Exception:  # noqa: BLE001
+        model_breakdown = {}
+        model_context = {}
+
+    with st.expander("Voir toutes les données brutes (Data Lake)", expanded=False):
+        st.caption("Transparence totale sur les entrées consommées par l'analyste quant.")
+
+        st.markdown("**Prix / OHLCV (DuckDB, ~260 jours)**")
+        if hist_dl is None or hist_dl.empty:
+            st.caption("Aucune série OHLCV locale disponible.")
+        else:
+            st.dataframe(hist_dl.tail(120), use_container_width=True, hide_index=True)
+
+        st.markdown("**Indicateurs instantanés**")
+        st.dataframe(pd.DataFrame([ind or {}]), use_container_width=True, hide_index=True)
+
+        st.markdown("**Fondamentaux (Finnhub/yfinance/cache)**")
+        st.dataframe(pd.DataFrame([fmeta or {}]), use_container_width=True, hide_index=True)
+
+        st.markdown("**Comité Multi-Modèles**")
+        if model_breakdown:
+            st.dataframe(
+                pd.DataFrame(
+                    [{"Model": k, "Score": v} for k, v in model_breakdown.items()]
+                ),
+                use_container_width=True,
+                hide_index=True,
+            )
+        else:
+            st.caption("Breakdown multi-modèles indisponible.")
+        if model_context:
+            st.markdown("**Détail du modèle Context**")
+            st.dataframe(
+                pd.DataFrame(
+                    [{"Context_Factor": k, "Score": v} for k, v in model_context.items()]
+                ),
+                use_container_width=True,
+                hide_index=True,
+            )
 
     # Technical analysis explanation (full width)
     st.markdown(
@@ -11916,6 +13493,14 @@ with tab_uni:
         "Horizon perf. sectorielle", list(sec_period_map.keys()), value="1 Mois",
         key="uni_sec_horizon",
     )
+    uni_treemap_horizon = st.radio(
+        "Horizon Treemap (Finviz style)",
+        ["1 jour", "1 mois"],
+        index=1,
+        horizontal=True,
+        key="uni_treemap_horizon",
+    )
+    treemap_period = "1d" if uni_treemap_horizon == "1 jour" else "1mo"
     with st.spinner("Perf. moyennes par secteur…"):
         sec_perf = get_sector_performance(universe_df, period=sec_period_map[sec_label])
     if not sec_perf.empty:
@@ -11946,6 +13531,31 @@ with tab_uni:
                        col_widths=[2, 0.8, 0.8, 0.5, 0.8, 0.8]),
             width="stretch",
         )
+
+        # --- Phase 34: Sector Treemap --------------------------------------
+        st.markdown(
+            f"#### 🌳 Treemap Sectoriel (Top 100 · {uni_treemap_horizon})"
+        )
+        try:
+            top100 = universe_df["Ticker"].head(100).tolist()
+            perf100 = get_market_performance(tuple(top100), period=treemap_period)
+            if perf100.empty or "Performance (%)" not in perf100.columns:
+                st.caption("Treemap indisponible (performance vide).")
+            else:
+                sector_map = dict(zip(universe_df["Ticker"], universe_df["Sector"]))
+                df_tm = perf100.copy()
+                df_tm["Sector"] = df_tm["Ticker"].map(sector_map).fillna("Unknown")
+                fig_tm = pex.treemap(
+                    df_tm,
+                    path=[pex.Constant("Univers PEA"), "Sector", "Ticker"],
+                    color="Performance (%)",
+                    color_continuous_scale="RdYlGn",
+                    color_continuous_midpoint=0,
+                )
+                _style_dark_fig(fig_tm, height=560)
+                st.plotly_chart(fig_tm, width="stretch", key="uni_sector_treemap")
+        except Exception:  # noqa: BLE001
+            st.caption("Treemap indisponible (erreur DuckDB / yfinance).")
     else:
         st.caption("Perf. sectorielle indisponible pour cet horizon.")
 
@@ -12044,7 +13654,7 @@ quotidiennes** (heure de Paris), uniquement les **jours de bourse** :
             _health_df,
             height=min(420, 56 + 28 * len(_health_df)),
             font_color_map={"Statut Live": _health_colors},
-            col_widths=[1.4, 2.2, 1.0, 2.4],
+            col_widths=[1.3, 2.1, 1.0, 2.1, 1.3],
         ),
         width="stretch",
         key="arch_data_health_table",
@@ -12399,7 +14009,7 @@ def render_signal_card(
 """
 ```
 
-## FILE: config/api_keys.env.example (39 lines)
+## FILE: config/api_keys.env.example (42 lines)
 ```text
 # =============================================================================
 # PEA Sniper Terminal V-Prime - Secrets template
@@ -12429,6 +14039,9 @@ OPENROUTER_MODEL=mistralai/mistral-7b-instruct
 # Financial Modeling Prep (https://site.financialmodelingprep.com/developer/docs).
 # Secondary insider-trading fallback after AMF BDIF / Opendatasoft.
 FMP_API_KEY=your_fmp_api_key_here
+
+# Finnhub (https://finnhub.io/) — primary EU fundamentals for Value/Quality.
+FINNHUB_API_KEY=your_finnhub_api_key_here
 
 # AMF public data (Opendatasoft / BDIF) — no paid key required.
 # Placeholder kept so env validation / telemetry stay consistent.
@@ -14450,7 +16063,7 @@ REBALANCE_PROFIT_TRIGGER_PCT: 20.0 # Profit-shave trigger (unrealized %).
 REBALANCE_ATR_STOP_MULT: 2.5
 ```
 
-## FILE: docker-compose.yml (59 lines)
+## FILE: docker-compose.yml (71 lines)
 ```yaml
 # PEA Sniper Terminal V-Prime - fleet.
 #   daemon    : always-on backend (scheduled analysis, weekly report, rebalance)
@@ -14463,6 +16076,7 @@ services:
     image: pea_sniper_terminal:latest
     container_name: pea_daemon
     restart: unless-stopped
+    mem_limit: 1024m
     env_file:
       - config/api_keys.env
     environment:
@@ -14470,7 +16084,12 @@ services:
     volumes:
       - ./database:/app/database
       - ./logs:/app/logs
-      - ./config:/app/config
+      - ./config:/app/config:ro
+    healthcheck:
+      test: ["CMD-SHELL", "ps aux | grep -m 1 '[m]ain_scheduler.py' >/dev/null"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
     command: ["python", "main_scheduler.py"]
 
   dashboard:
@@ -14480,6 +16099,7 @@ services:
     restart: unless-stopped
     depends_on:
       - daemon
+    mem_limit: 1024m
     env_file:
       - config/api_keys.env
     environment:
@@ -14489,7 +16109,12 @@ services:
     volumes:
       - ./database:/app/database
       - ./logs:/app/logs
-      - ./config:/app/config
+      - ./config:/app/config:ro
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8501/_stcore/health >/dev/null"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
     command:
       - streamlit
       - run
@@ -14509,11 +16134,11 @@ services:
   #   volumes:
   #     - ./database:/app/database
   #     - ./logs:/app/logs
-  #     - ./config:/app/config
+  #     - ./config:/app/config:ro
   #   command: ["python", "run_discord.py"]
 ```
 
-## FILE: Dockerfile (29 lines)
+## FILE: Dockerfile (30 lines)
 ```text
 # PEA Sniper Terminal V-Prime - single image, two roles (daemon + dashboard).
 # Python 3.11 (x64) is required: streamlit's pyarrow has no 3.13/arm64 wheel.
@@ -14526,9 +16151,10 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-# System deps: tzdata for Paris scheduling, build tools for wheels that need them.
+# System deps: tzdata for Paris scheduling, build tools for wheels that need them,
+# plus small utilities for docker healthchecks.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends tzdata gcc \
+    && apt-get install -y --no-install-recommends tzdata gcc procps curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python deps first (better layer caching).
@@ -16494,7 +18120,7 @@ if __name__ == "__main__":
     main()
 ```
 
-## FILE: README.md (604 lines)
+## FILE: README.md (663 lines)
 ```markdown
 # PEA Sniper Terminal — V-Prime 3.0 (Phase 32)
 
@@ -16667,6 +18293,37 @@ comparisons; use % for vol-style dashboards, absolute for the stop distance.
 
 **One analysis pass:** fetch → VIX → raw signals → mark-to-market (+ equity
 snapshot) → cascade → Smart-DCA → audit log → Discord alerts → pipeline heartbeat.
+
+### Phase 38 add-on architecture (Monte Carlo + Stress + Red Team)
+
+``​`
+Portfolio Weights + DuckDB Returns
+              │
+              ▼
+  02_quant_engine/stochastic_models.py
+  - Cholesky(cov)
+  - Correlated GBM paths
+  - Fan chart percentiles (P05..P95)
+              │
+              ▼
+  Streamlit Portefeuille Tab
+  - On-demand Monte Carlo fan chart
+  - Tail risk (VaR/CVaR)
+  - Black swan stress table
+``​`
+
+``​`
+Exploration Tab (selected ticker)
+              │
+              ▼
+04_orchestrator_ai/red_team_agent.py
+  Bull Agent  ─┐
+               ├─ asyncio.gather ─► Judge Agent ─► 3-sentence verdict
+  Bear Agent  ─┘
+              │
+              ▼
+UI Boxes: st.info (Bull), st.warning (Bear), st.error (Judge)
+``​`
 
 ---
 
@@ -17100,6 +18757,34 @@ advice.** You are solely responsible for every trade. Past or backtested results
 do not guarantee future performance.
 
 © 2026 Pollux Quantitative Research — V-Prime 3.0 (Phase 32).
+
+---
+
+## English quick guide
+
+PEA Sniper Terminal is a **quantitative decision-support stack** for a personal
+French PEA account. It does not place broker orders automatically.
+
+### What is new in Phase 38
+
+- **Correlated Monte Carlo engine** (`02_quant_engine/stochastic_models.py`)
+  - Vectorized NumPy simulation using Cholesky decomposition
+  - GBM portfolio projections with percentile fan chart (5/25/50/75/95)
+- **Historical black swan stress testing** (`03_risk_portfolio/stress_tester.py`)
+  - Replays major shock windows (2008, 2020, 2022)
+  - Estimates worst scenario drawdown for current holdings
+- **LLM red teaming** (`04_orchestrator_ai/red_team_agent.py`)
+  - Bull vs Bear debate in parallel with `asyncio.gather`
+  - Judge agent outputs a concise final verdict
+- **Dashboard integration**
+  - Portfolio tab: on-demand Monte Carlo + stress table
+  - Exploration tab: one-click Bull/Bear/Judge analysis
+
+### Design principles
+
+- **Math-first, AI-second:** models score and risk-filter signals; AI explains.
+- **Vectorized calculations:** no loop-based price-path simulations.
+- **Non-blocking UX:** heavy analytics run on-demand and are cached.
 ```
 
 ## FILE: requirements.txt (37 lines)

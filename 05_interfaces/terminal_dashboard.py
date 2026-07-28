@@ -26,6 +26,7 @@ import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import plotly.express as pex
 import plotly.graph_objects as go
@@ -110,6 +111,29 @@ try:
     from news_sentiment_llm import NewsSentimentScorer  # noqa: E402
 except Exception:  # noqa: BLE001
     NewsSentimentScorer = None  # type: ignore[assignment]
+
+try:
+    from quantitative_math import (  # noqa: E402
+        calculate_historical_var,
+        calculate_cvar,
+        calculate_annualized_volatility,
+        calculate_portfolio_variance,
+    )
+except Exception:  # noqa: BLE001
+    calculate_historical_var = None  # type: ignore[assignment]
+    calculate_cvar = None  # type: ignore[assignment]
+    calculate_annualized_volatility = None  # type: ignore[assignment]
+    calculate_portfolio_variance = None  # type: ignore[assignment]
+
+try:
+    from stochastic_models import run_correlated_monte_carlo  # noqa: E402
+except Exception:  # noqa: BLE001
+    run_correlated_monte_carlo = None  # type: ignore[assignment]
+
+try:
+    from stress_tester import simulate_historical_shocks  # noqa: E402
+except Exception:  # noqa: BLE001
+    simulate_historical_shocks = None  # type: ignore[assignment]
 
 _DB_DIR = _ROOT / "database"
 _SQLITE_PATH = _DB_DIR / "portfolio.db"
@@ -196,7 +220,7 @@ def _latest_atr14_approx(ticker: str) -> float | None:
     """Best-effort ATR(14) for risk cards (DuckDB, else yfinance)."""
     try:
         from duckdb_manager import TimeSeriesDB
-        db = TimeSeriesDB()
+        db = TimeSeriesDB(read_only=True)
         hist = db.get_historical_prices(ticker, days=60)
         if hist is not None and not hist.empty and len(hist) >= 20:
             try:
@@ -467,6 +491,9 @@ if not os.getenv("OPENROUTER_API_KEY"):
     missing_keys.append("OPENROUTER_API_KEY (LLM / IA)")
 if not os.getenv("YAHOO_MAIL_USER") or not os.getenv("YAHOO_MAIL_APP_PASSWORD"):
     missing_keys.append("YAHOO_MAIL_USER / APP_PASSWORD (Briefing Newsletters)")
+optional_missing_keys = []
+if not os.getenv("FINNHUB_API_KEY"):
+    optional_missing_keys.append("FINNHUB_API_KEY (fondamentaux EU Value/Quality)")
 
 if missing_keys:
     st.error("🛑 **ERREUR CRITIQUE : COMPOSANTS DÉCONNECTÉS**")
@@ -478,6 +505,13 @@ if missing_keys:
         st.markdown(f"- `{k}`")
     st.info("Remplissez vos clés dans le fichier `config/api_keys.env` et rechargez la page.")
     st.stop()
+
+if optional_missing_keys:
+    st.warning(
+        "⚠️ Clés optionnelles absentes : "
+        + ", ".join(f"`{k}`" for k in optional_missing_keys)
+        + ". Le terminal reste actif avec fallback yfinance / score neutre."
+    )
 
 # FMP is secondary (AMF Opendatasoft / BDIF is primary for FR insiders).
 if not os.getenv("FMP_API_KEY"):
@@ -605,6 +639,65 @@ def load_signals(statuses: tuple[str, ...], limit: int | None = None) -> pd.Data
         return pd.DataFrame()
     db = PortfolioDB(db_path=_SQLITE_PATH)
     return pd.DataFrame(db.fetch_signals_by_status(list(statuses), limit=limit))
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def compute_portfolio_returns_matrix(
+    tickers: tuple[str, ...], days: int = 252
+) -> pd.DataFrame:
+    """Return aligned daily returns matrix from DuckDB for given tickers."""
+    if not tickers:
+        return pd.DataFrame()
+    try:
+        from duckdb_manager import TimeSeriesDB
+
+        db = TimeSeriesDB(read_only=True)
+        close_cols = []
+        for t in tickers:
+            hist = db.get_historical_prices(str(t), days=days + 10)
+            if hist is None or hist.empty or "Close" not in hist.columns:
+                continue
+            frame = hist[["Date", "Close"]].copy()
+            frame["Date"] = pd.to_datetime(frame["Date"], errors="coerce")
+            frame["Close"] = pd.to_numeric(frame["Close"], errors="coerce")
+            frame = frame.dropna(subset=["Date", "Close"]).sort_values("Date")
+            if len(frame) < 30:
+                continue
+            close_cols.append(frame.set_index("Date")["Close"].rename(str(t)))
+        if not close_cols:
+            return pd.DataFrame()
+        close_df = pd.concat(close_cols, axis=1, join="inner").dropna()
+        if close_df.empty:
+            return pd.DataFrame()
+        return close_df.pct_change().dropna()
+    except Exception:  # noqa: BLE001
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def run_portfolio_monte_carlo(
+    tickers: tuple[str, ...], weights: tuple[float, ...], equity: float, days: int = 252, simulations: int = 2000
+) -> pd.DataFrame:
+    """Cached Monte Carlo fan chart inputs."""
+    if run_correlated_monte_carlo is None:
+        return pd.DataFrame()
+    ret = compute_portfolio_returns_matrix(tickers, days=days)
+    if ret.empty or ret.shape[1] < 1:
+        return pd.DataFrame()
+    cols = list(ret.columns)
+    w = np.asarray(weights, dtype=float)
+    if len(w) != len(cols):
+        return pd.DataFrame()
+    cov = ret.cov()
+    mu = ret.mean()
+    return run_correlated_monte_carlo(
+        weights=w,
+        cov_matrix=cov,
+        expected_returns=mu,
+        initial_portfolio_value=float(equity),
+        days=days,
+        simulations=simulations,
+    )
 
 
 def _classify_audit_row(row: dict) -> str:
@@ -998,6 +1091,72 @@ def get_valuation_metrics(ticker: str) -> dict:
         return blank
 
 
+@st.cache_data(ttl=21600, show_spinner=False)
+def get_fundamental_metrics(ticker: str) -> dict:
+    """PE/PB/ROE/Debt-Equity from SQLite cache -> Finnhub -> yfinance fallback."""
+    out = {
+        "pe_ratio": None,
+        "pb_ratio": None,
+        "roe": None,
+        "debt_to_equity": None,
+        "source": "none",
+    }
+    if not ticker:
+        return out
+
+    try:
+        db = PortfolioDB(db_path=_SQLITE_PATH)
+        db.init_db()
+        cached = db.get_cached_fundamentals(ticker, max_age_days=7)
+        if cached:
+            return {
+                "pe_ratio": cached.get("pe_ratio"),
+                "pb_ratio": cached.get("pb_ratio"),
+                "roe": cached.get("roe"),
+                "debt_to_equity": cached.get("debt_to_equity"),
+                "source": cached.get("source") or "sqlite_cache",
+            }
+    except Exception:  # noqa: BLE001
+        pass
+
+    try:
+        sensors_dir = _ROOT / "00_data_sensors"
+        if str(sensors_dir) not in sys.path:
+            sys.path.insert(0, str(sensors_dir))
+        from fundamentals_api import FundamentalsSensor  # noqa: WPS433
+
+        live = FundamentalsSensor().get_basic_financials(ticker) or {}
+        payload = {
+            "pe_ratio": live.get("pe_ratio"),
+            "pb_ratio": live.get("pb_ratio"),
+            "roe": live.get("roe"),
+            "debt_to_equity": live.get("debt_to_equity"),
+            "source": live.get("source") or "none",
+        }
+        if any(
+            payload.get(k) is not None
+            for k in ("pe_ratio", "pb_ratio", "roe", "debt_to_equity")
+        ):
+            try:
+                db = PortfolioDB(db_path=_SQLITE_PATH)
+                db.init_db()
+                db.upsert_fundamentals(ticker, payload)
+            except Exception:  # noqa: BLE001
+                pass
+            return payload
+    except Exception:  # noqa: BLE001
+        pass
+
+    val = get_valuation_metrics(ticker) or {}
+    return {
+        "pe_ratio": val.get("trailing_pe"),
+        "pb_ratio": val.get("price_to_book"),
+        "roe": None,
+        "debt_to_equity": None,
+        "source": "valuation_fallback",
+    }
+
+
 def render_annual_returns_chart(df: pd.DataFrame, ticker: str) -> go.Figure:
     """Neon/red yearly return bars on the terminal dark theme."""
     colors = [_NEON if float(v) >= 0 else _RED for v in df["Return_Pct"]]
@@ -1287,84 +1446,31 @@ def morning_briefing_is_live(briefing: dict | None) -> bool:
 
 @st.cache_data(ttl=900, show_spinner=False)
 def get_strategy_fingerprint(ticker: str) -> dict:
-    """Four strategy axes scored 0–100 for the Exploration radar.
-
-    Axes (dashboard UI — complementary to the engine conviction weights):
-      Mean Reversion · Momentum · Quality/Value · Insider Confidence
-    """
+    """Radar axes powered by the multi-model ensemble outputs."""
     out = {
         "Mean Reversion": 0.0,
         "Momentum": 0.0,
         "Quality/Value": 0.0,
         "Insider Confidence": 0.0,
     }
-    ind = get_indicators(ticker) or {}
-    rsi = ind.get("rsi")
-    close = ind.get("close")
-    sma5 = ind.get("sma5")
-    sma50 = ind.get("sma50")
-    sma200 = ind.get("sma200")
-
-    # Mean Reversion — oversold stretch (RSI)
-    if rsi is not None:
-        if rsi < 25:
-            out["Mean Reversion"] = 100.0
-        elif rsi < 30:
-            out["Mean Reversion"] = 90.0
-        elif rsi < 40:
-            out["Mean Reversion"] = 55.0
-        elif rsi < 50:
-            out["Mean Reversion"] = 25.0
-        else:
-            out["Mean Reversion"] = max(0.0, 15.0 - (rsi - 50) * 0.3)
-
-    # Momentum — price above short/medium SMAs
-    mom = 0.0
-    if close is not None and sma5 is not None and close > sma5:
-        mom += 45.0
-    if close is not None and sma50 is not None and close > sma50:
-        mom += 35.0
-    if close is not None and sma200 is not None and close > sma200:
-        mom += 20.0
-    out["Momentum"] = min(100.0, mom)
-
-    # Quality/Value — EPS > 0 and/or reasonable trailing P/E
     try:
-        val = get_valuation_metrics(ticker) or {}
+        from duckdb_manager import TimeSeriesDB
+        from technical_scorer import SignalGenerator
+
+        hist = TimeSeriesDB(read_only=True).get_historical_prices(ticker, days=252)
+        if hist is None or hist.empty or len(hist) < 200:
+            return out
+        conv = SignalGenerator().evaluate(ticker, hist)
+        models = conv.get("model_scores") or {}
+        ctx = conv.get("context_breakdown") or {}
+
+        out["Mean Reversion"] = float(models.get("mean_reversion_model") or 0.0)
+        out["Momentum"] = float(models.get("trend_model") or 0.0)
+        out["Quality/Value"] = float(ctx.get("fundamentals") or 0.0)
+        out["Insider Confidence"] = float(ctx.get("insiders") or 0.0)
+        return out
     except Exception:  # noqa: BLE001
-        val = {}
-    pe = val.get("trailing_pe")
-    qv = 0.0
-    if pe is not None and pe > 0:
-        qv += 50.0
-        if pe <= 15:
-            qv += 50.0
-        elif pe <= 25:
-            qv += 30.0
-        elif pe <= 35:
-            qv += 15.0
-    else:
-        # Soft EPS proxy via ensemble helper when PE missing
-        try:
-            from technical_scorer import SignalGenerator
-
-            if SignalGenerator().is_profitable(ticker):
-                qv += 55.0
-        except Exception:  # noqa: BLE001
-            pass
-    out["Quality/Value"] = min(100.0, qv)
-
-    # Insider Confidence — net buys
-    alpha = get_alpha_signals(ticker) or {}
-    ins = int(alpha.get("insider") or 0)
-    if ins >= 1:
-        out["Insider Confidence"] = 85.0
-    elif ins <= -1:
-        out["Insider Confidence"] = 10.0
-    else:
-        out["Insider Confidence"] = 35.0
-
-    return out
+        return out
 
 
 def render_strategy_radar(fingerprint: dict, ticker: str):
@@ -1426,7 +1532,7 @@ def get_conviction_axes(ticker: str) -> dict:
         from technical_scorer import SignalGenerator
         from duckdb_manager import TimeSeriesDB
 
-        db = TimeSeriesDB()
+        db = TimeSeriesDB(read_only=True)
         hist = db.get_historical_prices(ticker, days=300)
         if hist is None or hist.empty:
             return {}
@@ -1486,7 +1592,7 @@ def get_universe_screener_tags(tickers: tuple[str, ...]) -> dict:
         from duckdb_manager import TimeSeriesDB
         from technical_scorer import SignalGenerator
 
-        db = TimeSeriesDB()
+        db = TimeSeriesDB(read_only=True)
         gen = SignalGenerator()
         for ticker in tickers:
             parts: list[str] = []
@@ -1557,7 +1663,7 @@ def simulate_buy_what_if(
     try:
         from duckdb_manager import TimeSeriesDB
 
-        db = TimeSeriesDB()
+        db = TimeSeriesDB(read_only=True)
         cand = db.get_historical_prices(ticker, days=90)
         if cand is not None and not cand.empty and "Close" in cand.columns:
             cser = cand["Close"].pct_change().dropna()
@@ -1992,54 +2098,81 @@ def render_native_ticker_tape(period: str = "1d") -> None:
 def build_data_sources_health_df() -> pd.DataFrame:
     """Live telemetry for Architecture tab — env vars + local DB files."""
     duck_path = _DB_DIR / "ohlcv.duckdb"
+    freshness = "n/a"
+    try:
+        from duckdb_manager import TimeSeriesDB
+
+        db = TimeSeriesDB(read_only=True)
+        with db._connect() as conn:
+            row = conn.execute("SELECT MAX(date) AS d FROM ohlcv_data;").fetchone()
+        max_date = row[0] if row else None
+        if max_date:
+            freshness = f"Dernière bougie: {str(max_date)[:10]}"
+    except Exception:  # noqa: BLE001
+        freshness = "indisponible"
     rows = [
         (
             "yfinance",
             "OHLCV, calendrier, insiders, news fallback",
             "🟢 Actif",
             "Pas de prix si réseau down",
+            freshness,
         ),
         (
             "VIX / VSTOXX",
             f"Coupe-circuit panic (seuil {_VIX_PANIC:.0f})",
             "🟢 Actif",
             "Fallback 15.0 si indispo",
+            freshness,
         ),
         (
             "Bandeau natif (HTML)",
             "Perf blue-chips + logos Clearbit",
             "🟢 Actif",
             "Remplace l'ancien widget TradingView tape",
+            freshness,
         ),
         (
             "SQLite portfolio.db",
             "Portfolio / audit / equity / news_history",
             "🟢 Connecté" if _SQLITE_PATH.exists() else "🔴 Absent",
             "Dashboard bloqué sans DB locale",
+            f"MAJ wallet: {str(portfolio.last_updated)[:19]}" if "portfolio" in globals() else "n/a",
         ),
         (
             "DuckDB ohlcv.duckdb",
             "Historique technique / ATR / screener",
             "🟢 Connecté" if duck_path.exists() else "🟡 Partiel",
             "ATR/stops moins fiables sans OHLCV local",
+            freshness,
         ),
         (
             "OpenRouter",
             "Sentiment news + briefing geo + Synthèse IA",
             "🟢 Actif" if os.getenv("OPENROUTER_API_KEY") else "🔴 DÉCONNECTÉ",
             "CRITIQUE: Arrêt immédiat du terminal",
+            "temps réel",
         ),
         (
             "FMP",
             "Insiders fallback (après AMF)",
             "🟢 Actif" if os.getenv("FMP_API_KEY") else "🔴 DÉCONNECTÉ",
             "CRITIQUE: cascade AMF-only (pas de fallback US)",
+            "n/a",
+        ),
+        (
+            "Finnhub",
+            "Fondamentaux EU (Value/Quality)",
+            "🟢 Actif" if os.getenv("FINNHUB_API_KEY") else "🟡 Optionnel",
+            "Fallback yfinance / score neutre si indisponible",
+            "cache 7 jours",
         ),
         (
             "AMF Opendatasoft / BDIF",
             "Déclarations dirigeants (API publique, free)",
             "🟢 Actif",
             "Insiders FR indisponibles si BDIF/ODS down",
+            "n/a",
         ),
         (
             "IMAP Newsletter",
@@ -2048,23 +2181,26 @@ def build_data_sources_health_df() -> pd.DataFrame:
             if os.getenv("YAHOO_MAIL_USER") and os.getenv("YAHOO_MAIL_APP_PASSWORD")
             else "🔴 DÉCONNECTÉ",
             "CRITIQUE: Arrêt immédiat du terminal",
+            "job 08:25 Paris",
         ),
         (
             "Polymarket Gamma",
             "Probabilités macro (contexte)",
             "🟢 Actif",
             "Fallback seed si JSON bloqué (Cloudflare)",
+            "quasi temps réel",
         ),
         (
             "Boursorama scraper",
             "Profil PEA/SRD, consensus, news",
             "🟢 Actif",
             "Fragile — dates parfois approximatives",
+            "variable",
         ),
     ]
     return pd.DataFrame(
         rows,
-        columns=["Source", "Rôle", "Statut Live", "Impact si manquant"],
+        columns=["Source", "Rôle", "Statut Live", "Impact si manquant", "Fraîcheur des données"],
     )
 
 
@@ -2104,6 +2240,79 @@ def get_core_regime() -> dict:
         return {}
 
 
+@st.cache_data(ttl=900, show_spinner=False)
+def get_market_breadth(universe_df: pd.DataFrame, db_manager) -> dict:
+    """Market breadth (SMA50/SMA200) over ~100 universe tickers.
+
+    We sample universe tickers (deterministically) and keep only those with a
+    full ~200 trading-days history in DuckDB, then compute:
+      - % Close > SMA50
+      - % Close > SMA200
+    """
+    try:
+        from duckdb_manager import TimeSeriesDB
+
+        if universe_df is None or universe_df.empty:
+            return {"pct_sma50": None, "pct_sma200": None, "valid": 0}
+        if db_manager is None:
+            return {"pct_sma50": None, "pct_sma200": None, "valid": 0}
+
+        # DuckDB manager passed as db_path string for cache friendliness.
+        db = TimeSeriesDB(db_path=str(db_manager), read_only=True)
+
+        tickers = (
+            universe_df.get("Ticker", pd.Series([], dtype=str))
+            .dropna()
+            .astype(str)
+            .unique()
+            .tolist()
+        )
+        tickers = [t for t in tickers if t]
+        if not tickers:
+            return {"pct_sma50": None, "pct_sma200": None, "valid": 0}
+
+        # Deterministic sampling then stop once we have ~100 valid tickers.
+        candidates = tickers[: min(160, len(tickers))]
+        valid = 0
+        above50 = 0
+        above200 = 0
+
+        for t in candidates:
+            hist = db.get_historical_prices(t, days=200)
+            if hist is None or hist.empty or "Close" not in hist.columns:
+                continue
+            if len(hist) < 200:
+                continue
+
+            close = pd.to_numeric(hist["Close"], errors="coerce").dropna()
+            if close.empty or len(close) < 200:
+                continue
+
+            last = float(close.iloc[-1])
+            sma50 = float(close.tail(50).mean())
+            sma200 = float(close.tail(200).mean())
+            valid += 1
+
+            if last > sma50:
+                above50 += 1
+            if last > sma200:
+                above200 += 1
+
+            if valid >= 100:
+                break
+
+        if valid <= 0:
+            return {"pct_sma50": None, "pct_sma200": None, "valid": 0}
+
+        return {
+            "pct_sma50": above50 / valid * 100.0,
+            "pct_sma200": above200 / valid * 100.0,
+            "valid": valid,
+        }
+    except Exception:  # noqa: BLE001
+        return {"pct_sma50": None, "pct_sma200": None, "valid": 0}
+
+
 @st.cache_data(ttl=600, show_spinner=False)
 def get_indicators(ticker: str) -> dict:
     """Compute RSI(14) + SMA 5/50/200 + trend flags for one ticker."""
@@ -2136,8 +2345,13 @@ def get_indicators(ticker: str) -> dict:
             if len(close) >= 2 else 0.0,
             "chg_5d": float((close.iloc[-1] / close.iloc[-6] - 1) * 100)
             if len(close) >= 6 else 0.0,
-            "vol_ann": float(close.pct_change().dropna().tail(60).std() * (252 ** 0.5)
-                             * 100),
+            "vol_ann": float(
+                (
+                    calculate_annualized_volatility(close.pct_change().dropna().tail(60))
+                    if calculate_annualized_volatility is not None
+                    else close.pct_change().dropna().tail(60).std(ddof=0) * (252 ** 0.5)
+                ) * 100.0
+            ),
         }
         return out
     except Exception:  # noqa: BLE001
@@ -3145,6 +3359,7 @@ def get_ticker_dossier(ticker: str) -> dict:
         "catalysts": [],
         "risk_events": [],
         "is_etf": False,
+        "fundamentals": {},
     }
     try:
         info = yf.Ticker(ticker).info or {}
@@ -3204,6 +3419,10 @@ def get_ticker_dossier(ticker: str) -> dict:
         ]
     out["catalysts"] = catalysts[:5]
     out["risk_events"] = risks[:5]
+    try:
+        out["fundamentals"] = get_fundamental_metrics(ticker)
+    except Exception:  # noqa: BLE001
+        out["fundamentals"] = {}
     return out
 
 
@@ -3482,7 +3701,24 @@ if sector_weights and portfolio.total_equity:
     max_sector = max(sector_weights, key=sector_weights.get)
     max_sector_val = sector_weights[max_sector] / portfolio.total_equity * 100
 
-r1, r2, r3, r4 = st.columns(4)
+from duckdb_manager import TimeSeriesDB  # noqa: E402
+
+_db_breadth = TimeSeriesDB(read_only=True)
+_breadth = get_market_breadth(universe_df, str(_db_breadth.db_path))
+_pct50 = _breadth.get("pct_sma50")
+_pct200 = _breadth.get("pct_sma200")
+_valid = _breadth.get("valid") or 0
+_pct50_f = float(_pct50) if _pct50 is not None else None
+_pct200_f = float(_pct200) if _pct200 is not None else None
+
+_breadth_ok = (_pct200_f is not None and _pct200_f >= 55)
+_breadth_mid = (_pct200_f is not None and 45 <= _pct200_f < 55)
+_breadth_accent = "green" if _breadth_ok else ("cyan" if _breadth_mid else "red")
+_breadth_sub_cls = (
+    "sub-green" if _breadth_ok else ("sub-red" if _pct200_f is not None else "sub-muted")
+)
+
+r1, r2, r3, r4, r5 = st.columns(5)
 with r1:
     vsub = ("\U0001F6A8 PANIC - achats satellites geles" if vix_panic
             else f"Calme (seuil {_VIX_PANIC:.0f})")
@@ -3512,6 +3748,22 @@ with r2:
                       "Donnees temporairement indisponibles.",
         ), unsafe_allow_html=True)
 with r3:
+    breadth_val = (
+        f"{_pct50_f:.0f}% / {_pct200_f:.0f}%" if _pct200_f is not None else "n/a"
+    )
+    st.markdown(metric_box(
+        "Market Breadth (SMA50/200)",
+        breadth_val,
+        sub=f"{int(_valid)} titres validés · Close>SMA50/SMA200",
+        accent=_breadth_accent,
+        sub_cls=_breadth_sub_cls,
+        help_text=(
+            "Broad market measure : % des noms PEA ayant "
+            "Close > SMA50 et Close > SMA200 (hist. DuckDB ~200j)."
+        ),
+    ), unsafe_allow_html=True)
+
+with r4:
     over = sat_used_pct > 100
     ssub = f"{satellite_value:,.0f} / {sat_budget_eur:,.0f} \u20ac (max {_SAT_BUDGET*100:.0f}%)"
     st.markdown(metric_box(
@@ -3521,7 +3773,7 @@ with r3:
                   "portefeuille total) pour chercher de la surperformance. Le "
                   "reste est investi dans l'ETF Monde (le Coeur du portefeuille).",
     ), unsafe_allow_html=True)
-with r4:
+with r5:
     breach = max_sector_val > _MAX_SECTOR * 100
     st.markdown(metric_box(
         "Concentration Sectorielle Max", f"{max_sector_val:.0f}%",
@@ -3990,6 +4242,88 @@ with tab_gen:
         st.markdown("##### En attente (Command Center) — cartes de trade")
         pending = pending_gen
         render_pending_trade_cards(pending, portfolio)
+
+        # --- Phase 34: Near-Miss radar -------------------------------------
+        st.markdown("#### 📡 Radar de Surveillance (Near-Miss)")
+        pending_tickers = set()
+        if pending is not None and not pending.empty and "ticker" in pending.columns:
+            try:
+                pending_tickers = {
+                    str(t) for t in pending["ticker"].dropna().tolist()
+                }
+            except Exception:  # noqa: BLE001
+                pending_tickers = set()
+
+        near_miss = []
+        try:
+            # "Alternatives" viennent du même scoring heuristique que la
+            # recommandation (rank_affordable_alternatives).
+            for a in (alts or []):
+                try:
+                    sc = int(a.get("score") or -1)
+                except Exception:  # noqa: BLE001
+                    continue
+                if 55 <= sc <= 64:
+                    t = str(a.get("ticker") or "")
+                    if t and t not in pending_tickers:
+                        near_miss.append(a)
+        except Exception:  # noqa: BLE001
+            near_miss = []
+
+        near_miss.sort(key=lambda x: int(x.get("score") or 0), reverse=True)
+        near_miss = near_miss[:10]
+
+        if not near_miss:
+            st.caption("Aucun near-miss détecte (scores 55–64).")
+        else:
+            rows = []
+            for a in near_miss:
+                t = str(a.get("ticker") or "")
+                ind = get_indicators(t) or {}
+                close = ind.get("close") or a.get("price")
+                sma5 = ind.get("sma5")
+                sma50 = ind.get("sma50")
+                sma200 = ind.get("sma200")
+                rsi = ind.get("rsi") if ind else None
+
+                missing = "En attente de confirmation"
+                try:
+                    if close is not None and sma5 is not None and float(close) < float(sma5):
+                        missing = "En attente du franchissement SMA5"
+                    elif close is not None and sma50 is not None and float(close) < float(sma50):
+                        missing = "En attente du franchissement SMA50"
+                    elif close is not None and sma200 is not None and float(close) < float(sma200):
+                        missing = "En attente du franchissement SMA200"
+                    else:
+                        missing = "En attente d'un meilleur contexte (MR/Mom/Insider)"
+                except Exception:  # noqa: BLE001
+                    missing = "En attente de confirmation"
+
+                sc = int(a.get("score") or 0)
+                rows.append({
+                    "Ticker": t,
+                    "Score": f"{sc}/100",
+                    "RSI": f"{float(rsi):.0f}" if rsi is not None else "—",
+                    "Manquant": missing,
+                })
+
+            disp = pd.DataFrame(rows)
+            score_colors = [
+                (_NEON if int(s.split("/")[0]) >= 62 else
+                 _AMBER if int(s.split("/")[0]) >= 58 else
+                 _CYAN)
+                for s in disp["Score"].tolist()
+            ]
+            st.plotly_chart(
+                dark_table(
+                    disp,
+                    height=min(420, 44 + 28 * len(disp)),
+                    col_widths=[1.2, 0.8, 0.7, 3.2],
+                    font_color_map={"Score": score_colors},
+                ),
+                width="stretch",
+                key="gen_near_miss_radar",
+            )
     with col2:
         st.markdown("##### Historique (20 derniers)")
         hist = load_signals(("EXECUTED", "REVOKED", "REJECTED", "EXPIRED"), limit=20)
@@ -4174,6 +4508,154 @@ with tab_pf:
                     "que le futur backtester."
                 )
 
+            st.markdown("#### 📉 Métriques de Risque Académique (Tail Risk)")
+            if (
+                calculate_historical_var is None
+                or calculate_cvar is None
+                or len(eq) < 30
+            ):
+                st.caption("VaR/CVaR indisponibles (historique insuffisant ou module quant absent).")
+            else:
+                try:
+                    eq_ret = pd.to_numeric(eq["equity"], errors="coerce").pct_change().dropna()
+                    var95 = float(calculate_historical_var(eq_ret, confidence_level=0.95))
+                    cvar95 = float(calculate_cvar(eq_ret, confidence_level=0.95))
+                    rv1, rv2 = st.columns(2)
+                    with rv1:
+                        st.markdown(
+                            metric_box(
+                                "VaR 95% (1j)",
+                                f"-{var95*100:.2f}%",
+                                sub="Perte max attendue (quantile 5%)",
+                                accent="amber",
+                                sub_cls="sub-amber",
+                                help_text=(
+                                    "Historical VaR 95%: perte journalière maximale attendue "
+                                    "avec 95% de confiance (quantile historique à 5%)."
+                                ),
+                            ),
+                            unsafe_allow_html=True,
+                        )
+                    with rv2:
+                        st.markdown(
+                            metric_box(
+                                "CVaR 95% (1j)",
+                                f"-{cvar95*100:.2f}%",
+                                sub="Perte moyenne au-delà de la VaR",
+                                accent="red",
+                                sub_cls="sub-red",
+                                help_text=(
+                                    "Conditional VaR 95% (Expected Shortfall): perte journalière "
+                                    "moyenne conditionnelle une fois la VaR dépassée."
+                                ),
+                            ),
+                            unsafe_allow_html=True,
+                        )
+                except Exception:  # noqa: BLE001
+                    st.caption("VaR/CVaR indisponibles (erreur de calcul).")
+
+            st.markdown("#### 🔮 Projections Stochastiques (Monte Carlo)")
+            held_tickers_pf = [str(p.ticker) for p in positions if getattr(p, "ticker", None)]
+            if run_correlated_monte_carlo is None or len(held_tickers_pf) < 1:
+                st.caption("Monte Carlo indisponible (module absent ou aucune position).")
+            else:
+                with st.expander("Lancer la projection probabiliste (on-demand)", expanded=False):
+                    sims = st.slider(
+                        "Simulations Monte Carlo",
+                        min_value=500,
+                        max_value=5000,
+                        value=2000,
+                        step=500,
+                        key="pf_mc_sims",
+                    )
+                    horizon = st.slider(
+                        "Horizon (jours de bourse)",
+                        min_value=60,
+                        max_value=504,
+                        value=252,
+                        step=21,
+                        key="pf_mc_horizon",
+                    )
+                    if st.button("Exécuter Monte Carlo", key="pf_run_mc"):
+                        w_curr = np.array([float(p.market_value) for p in positions], dtype=float)
+                        if w_curr.sum() <= 0:
+                            w_curr = np.ones(len(held_tickers_pf), dtype=float) / float(len(held_tickers_pf))
+                        else:
+                            w_curr = w_curr / w_curr.sum()
+                        with st.spinner("Simulation stochastique en cours..."):
+                            fan = run_portfolio_monte_carlo(
+                                tuple(held_tickers_pf),
+                                tuple(w_curr.tolist()),
+                                float(portfolio.total_equity),
+                                days=int(horizon),
+                                simulations=int(sims),
+                            )
+                        if fan.empty:
+                            st.caption("Fan chart indisponible (historique insuffisant).")
+                        else:
+                            fig_fan = go.Figure()
+                            fig_fan.add_trace(go.Scatter(
+                                x=fan["day"], y=fan["p95"], mode="lines",
+                                line=dict(color="rgba(0,180,216,0.0)"), name="P95",
+                                showlegend=False,
+                            ))
+                            fig_fan.add_trace(go.Scatter(
+                                x=fan["day"], y=fan["p75"], mode="lines",
+                                line=dict(color="rgba(0,180,216,0.0)"), fill="tonexty",
+                                fillcolor="rgba(0,180,216,0.12)", name="P75-95",
+                                showlegend=False,
+                            ))
+                            fig_fan.add_trace(go.Scatter(
+                                x=fan["day"], y=fan["p50"], mode="lines",
+                                line=dict(color=_CYAN, width=2), name="Médiane P50",
+                            ))
+                            fig_fan.add_trace(go.Scatter(
+                                x=fan["day"], y=fan["p25"], mode="lines",
+                                line=dict(color="rgba(0,255,0,0.0)"), fill="tonexty",
+                                fillcolor="rgba(0,255,0,0.10)", name="P25-50",
+                                showlegend=False,
+                            ))
+                            fig_fan.add_trace(go.Scatter(
+                                x=fan["day"], y=fan["p05"], mode="lines",
+                                line=dict(color="rgba(255,59,48,0.0)"), fill="tonexty",
+                                fillcolor="rgba(255,59,48,0.16)", name="P05-25",
+                                showlegend=False,
+                            ))
+                            fig_fan.update_layout(
+                                title="Fan Chart Monte Carlo (corrélé)",
+                                xaxis_title="Jour",
+                                yaxis_title="Valeur portefeuille (€)",
+                                margin=dict(t=40, l=20, r=20, b=20),
+                                height=380,
+                                showlegend=True,
+                            )
+                            _style_dark_fig(fig_fan)
+                            st.plotly_chart(fig_fan, width="stretch", key="pf_mc_fan_chart")
+
+                        if simulate_historical_shocks is not None:
+                            try:
+                                from duckdb_manager import TimeSeriesDB
+
+                                db_ro = TimeSeriesDB(read_only=True)
+                                w_map = {t: float(w_curr[i]) for i, t in enumerate(held_tickers_pf)}
+                                stress = simulate_historical_shocks(held_tickers_pf, w_map, db_ro)
+                                if stress is not None and not stress.empty:
+                                    sdisp = stress.copy()
+                                    sdisp["Worst PnL %"] = sdisp["Worst PnL %"].map(
+                                        lambda x: "n/a" if pd.isna(x) else f"{float(x):+.2f}%"
+                                    )
+                                    st.plotly_chart(
+                                        dark_table(
+                                            sdisp,
+                                            height=min(260, 56 + 28 * len(sdisp)),
+                                            col_widths=[1.4, 0.8, 0.8, 1.0, 0.7],
+                                        ),
+                                        width="stretch",
+                                        key="pf_stress_table",
+                                    )
+                            except Exception:
+                                st.caption("Stress test indisponible.")
+
     if not positions:
         st.info("⏸️ Le portefeuille est actuellement 100% en "
                 "liquidites. Aucune position ouverte : le capital attend une "
@@ -4224,6 +4706,56 @@ with tab_pf:
                 dark_table(disp, height=430, font_color_map={"PnL": pnl_colors},
                            col_widths=[2.2, 1.4, 0.7, 1, 1, 1.2, 0.8, 0.9]),
                 width="stretch")
+
+    # --- Phase 34: Correlation heatmap --------------------------------------
+    st.markdown("#### 🕸️ Matrice de Corrélation (Risque Croisé)")
+    held_tickers = [str(p.ticker) for p in positions if getattr(p, "ticker", None)]
+    held_tickers = [t for t in held_tickers if t]
+    if len(held_tickers) < 2:
+        st.caption("Pas assez de positions (min 2) pour calculer une matrice de corrélation.")
+    else:
+        try:
+            from duckdb_manager import TimeSeriesDB
+            db = TimeSeriesDB(read_only=True)
+
+            returns: dict[str, pd.Series] = {}
+            for t in held_tickers:
+                hist = db.get_historical_prices(t, days=90)
+                if hist is None or hist.empty or "Close" not in hist.columns:
+                    continue
+                frame = hist[["Date", "Close"]].copy()
+                frame["Date"] = pd.to_datetime(frame["Date"], errors="coerce")
+                frame["Close"] = pd.to_numeric(frame["Close"], errors="coerce")
+                frame = frame.dropna(subset=["Date", "Close"]).sort_values("Date")
+                if len(frame) < 6:
+                    continue
+                r = frame["Close"].pct_change().dropna()
+                if r is None or r.empty:
+                    continue
+                r.name = t
+                returns[t] = r
+
+            ret_df = pd.concat(returns, axis=1).dropna(how="all")
+            if ret_df.shape[1] < 2:
+                st.caption("Corrélation indisponible (données retour vides / trop sparse).")
+            else:
+                corr_matrix = ret_df.corr(method="pearson")
+                fig_corr = pex.imshow(
+                    corr_matrix,
+                    text_auto=".2f",
+                    aspect="auto",
+                    color_continuous_scale="RdBu_r",
+                    zmin=-1,
+                    zmax=1,
+                )
+                _style_dark_fig(fig_corr, height=430)
+                st.plotly_chart(
+                    fig_corr,
+                    width="stretch",
+                    key="pf_corr_heatmap",
+                )
+        except Exception:  # noqa: BLE001
+            st.caption("Corrélation indisponible (erreur DuckDB/Yahoo).")
 
     st.markdown("---")
     st.markdown("#### 🛑 Gestion des Stops & Sorties (ATR 2.5x)")
@@ -4527,6 +5059,30 @@ with tab_mkt:
             for r in dossier.get("risk_events") or []:
                 st.markdown(f"- {r}")
 
+    if st.button("Lancer un Red Teaming IA (Bull vs Bear)", key=f"red_team_{selected}"):
+        context_blob = (
+            f"Ticker: {selected}\n"
+            f"Name: {dossier.get('name')}\n"
+            f"Sector: {dossier.get('sector')}\n"
+            f"Summary: {dossier.get('summary')}\n"
+            f"Catalysts: {', '.join(dossier.get('catalysts') or [])}\n"
+            f"Risks: {', '.join(dossier.get('risk_events') or [])}\n"
+        )
+        with st.spinner("Red Teaming multi-agent en cours..."):
+            try:
+                from red_team_agent import run_bull_bear_debate
+
+                debate = asyncio.run(run_bull_bear_debate(selected, context_blob))
+            except Exception as exc:  # noqa: BLE001
+                debate = {
+                    "bull": "Indisponible",
+                    "bear": f"Indisponible ({exc})",
+                    "judge": "Indisponible",
+                }
+        st.info(f"🐂 **Bull Agent**\n\n{debate.get('bull') or 'n/a'}")
+        st.warning(f"🐻 **Bear Agent**\n\n{debate.get('bear') or 'n/a'}")
+        st.error(f"⚖️ **Judge Agent**\n\n{debate.get('judge') or 'n/a'}")
+
     ind = get_indicators(selected)
     alpha = get_alpha_signals(selected)
     bprofile = get_bourso_profile(selected)
@@ -4602,6 +5158,61 @@ with tab_mkt:
                 f"{(bprofile or {}).get('exchange') or '—'}",
         ), unsafe_allow_html=True)
 
+    # Phase 35: Multi-factor fundamentals (Finnhub -> cache -> yfinance fallback).
+    fmeta = (dossier or {}).get("fundamentals") or get_fundamental_metrics(selected)
+    src = str((fmeta or {}).get("source") or "none")
+    pe = (fmeta or {}).get("pe_ratio")
+    pb = (fmeta or {}).get("pb_ratio")
+    roe = (fmeta or {}).get("roe")
+    deq = (fmeta or {}).get("debt_to_equity")
+    mrow3 = st.columns(4)
+    with mrow3[0]:
+        st.markdown(
+            metric_box(
+                "P/E (TTM)",
+                f"{float(pe):.2f}" if pe is not None else "n/a",
+                sub=f"Source: {src}",
+                accent="cyan" if pe is not None and float(pe) > 0 and float(pe) < 20 else "",
+                help_text="Valorisation bénéfices (plus bas peut être plus attractif).",
+            ),
+            unsafe_allow_html=True,
+        )
+    with mrow3[1]:
+        st.markdown(
+            metric_box(
+                "P/B",
+                f"{float(pb):.2f}" if pb is not None else "n/a",
+                sub="Value factor",
+                accent="cyan" if pb is not None and float(pb) < 2.0 else "",
+                help_text="Valorisation fonds propres (bonus si <2).",
+            ),
+            unsafe_allow_html=True,
+        )
+    with mrow3[2]:
+        st.markdown(
+            metric_box(
+                "ROE",
+                f"{float(roe)*100:.1f}%" if roe is not None and float(roe) <= 1.5 else (
+                    f"{float(roe):.1f}%" if roe is not None else "n/a"
+                ),
+                sub="Quality factor",
+                accent="green" if roe is not None and float(roe) >= 0.15 else "",
+                help_text="Rentabilité des capitaux propres (qualité).",
+            ),
+            unsafe_allow_html=True,
+        )
+    with mrow3[3]:
+        st.markdown(
+            metric_box(
+                "Debt / Equity",
+                f"{float(deq):.2f}" if deq is not None else "n/a",
+                sub="Risque de levier",
+                accent="red" if deq is not None and float(deq) > 2.0 else "",
+                help_text="Levier bilan (malus >2.0 dans le modèle multi-factor).",
+            ),
+            unsafe_allow_html=True,
+        )
+
     st.markdown("#### 📋 Ticket d'Ordre PEA (Prêt à l'Exécution)")
     live_price = float((ind or {}).get("close") or 0.0)
     qty_default = max(1, int(float(portfolio.cash_available or 0.0) // live_price)) if live_price > 0 else 1
@@ -4640,6 +5251,81 @@ with tab_mkt:
     chk_df = pd.DataFrame(checklist["checks"])
     st.dataframe(chk_df, use_container_width=True, hide_index=True)
     st.caption(f"Statut global: {checklist['overall']} · score proxy {checklist['score_hint']:.0f}/100")
+
+    st.markdown("#### 🧠 Bureau de l'Analyste & Data Lake")
+    note_db = PortfolioDB(db_path=_SQLITE_PATH)
+    try:
+        note_db.init_db()
+        current_note = note_db.get_ticker_note(selected)
+    except Exception:  # noqa: BLE001
+        current_note = ""
+    note_value = st.text_area(
+        f"Note analyste personnelle — {format_name(selected)}",
+        value=current_note,
+        height=120,
+        key=f"analyst_note_{selected}",
+        help="Commentaires qualitatifs manuels (thèse, trigger, risques, plan d'exécution).",
+    )
+    if st.button("Sauvegarder la note", key=f"save_note_{selected}", type="secondary"):
+        try:
+            note_db.save_ticker_note(selected, note_value)
+            st.success("Note sauvegardée dans SQLite.")
+        except Exception as exc:  # noqa: BLE001
+            st.error(f"Sauvegarde impossible: {exc}")
+
+    # Multi-model raw pack for full transparency.
+    model_breakdown = {}
+    model_context = {}
+    hist_dl = pd.DataFrame()
+    try:
+        from duckdb_manager import TimeSeriesDB
+        from technical_scorer import SignalGenerator
+
+        db_ro = TimeSeriesDB(read_only=True)
+        hist_dl = db_ro.get_historical_prices(selected, days=260)
+        if hist_dl is not None and not hist_dl.empty:
+            conv_dl = SignalGenerator().evaluate(selected, hist_dl)
+            model_breakdown = conv_dl.get("model_scores") or {}
+            model_context = conv_dl.get("context_breakdown") or {}
+    except Exception:  # noqa: BLE001
+        model_breakdown = {}
+        model_context = {}
+
+    with st.expander("Voir toutes les données brutes (Data Lake)", expanded=False):
+        st.caption("Transparence totale sur les entrées consommées par l'analyste quant.")
+
+        st.markdown("**Prix / OHLCV (DuckDB, ~260 jours)**")
+        if hist_dl is None or hist_dl.empty:
+            st.caption("Aucune série OHLCV locale disponible.")
+        else:
+            st.dataframe(hist_dl.tail(120), use_container_width=True, hide_index=True)
+
+        st.markdown("**Indicateurs instantanés**")
+        st.dataframe(pd.DataFrame([ind or {}]), use_container_width=True, hide_index=True)
+
+        st.markdown("**Fondamentaux (Finnhub/yfinance/cache)**")
+        st.dataframe(pd.DataFrame([fmeta or {}]), use_container_width=True, hide_index=True)
+
+        st.markdown("**Comité Multi-Modèles**")
+        if model_breakdown:
+            st.dataframe(
+                pd.DataFrame(
+                    [{"Model": k, "Score": v} for k, v in model_breakdown.items()]
+                ),
+                use_container_width=True,
+                hide_index=True,
+            )
+        else:
+            st.caption("Breakdown multi-modèles indisponible.")
+        if model_context:
+            st.markdown("**Détail du modèle Context**")
+            st.dataframe(
+                pd.DataFrame(
+                    [{"Context_Factor": k, "Score": v} for k, v in model_context.items()]
+                ),
+                use_container_width=True,
+                hide_index=True,
+            )
 
     # Technical analysis explanation (full width)
     st.markdown(
@@ -5125,6 +5811,14 @@ with tab_uni:
         "Horizon perf. sectorielle", list(sec_period_map.keys()), value="1 Mois",
         key="uni_sec_horizon",
     )
+    uni_treemap_horizon = st.radio(
+        "Horizon Treemap (Finviz style)",
+        ["1 jour", "1 mois"],
+        index=1,
+        horizontal=True,
+        key="uni_treemap_horizon",
+    )
+    treemap_period = "1d" if uni_treemap_horizon == "1 jour" else "1mo"
     with st.spinner("Perf. moyennes par secteur…"):
         sec_perf = get_sector_performance(universe_df, period=sec_period_map[sec_label])
     if not sec_perf.empty:
@@ -5155,6 +5849,31 @@ with tab_uni:
                        col_widths=[2, 0.8, 0.8, 0.5, 0.8, 0.8]),
             width="stretch",
         )
+
+        # --- Phase 34: Sector Treemap --------------------------------------
+        st.markdown(
+            f"#### 🌳 Treemap Sectoriel (Top 100 · {uni_treemap_horizon})"
+        )
+        try:
+            top100 = universe_df["Ticker"].head(100).tolist()
+            perf100 = get_market_performance(tuple(top100), period=treemap_period)
+            if perf100.empty or "Performance (%)" not in perf100.columns:
+                st.caption("Treemap indisponible (performance vide).")
+            else:
+                sector_map = dict(zip(universe_df["Ticker"], universe_df["Sector"]))
+                df_tm = perf100.copy()
+                df_tm["Sector"] = df_tm["Ticker"].map(sector_map).fillna("Unknown")
+                fig_tm = pex.treemap(
+                    df_tm,
+                    path=[pex.Constant("Univers PEA"), "Sector", "Ticker"],
+                    color="Performance (%)",
+                    color_continuous_scale="RdYlGn",
+                    color_continuous_midpoint=0,
+                )
+                _style_dark_fig(fig_tm, height=560)
+                st.plotly_chart(fig_tm, width="stretch", key="uni_sector_treemap")
+        except Exception:  # noqa: BLE001
+            st.caption("Treemap indisponible (erreur DuckDB / yfinance).")
     else:
         st.caption("Perf. sectorielle indisponible pour cet horizon.")
 
@@ -5253,7 +5972,7 @@ quotidiennes** (heure de Paris), uniquement les **jours de bourse** :
             _health_df,
             height=min(420, 56 + 28 * len(_health_df)),
             font_color_map={"Statut Live": _health_colors},
-            col_widths=[1.4, 2.2, 1.0, 2.4],
+            col_widths=[1.3, 2.1, 1.0, 2.1, 1.3],
         ),
         width="stretch",
         key="arch_data_health_table",

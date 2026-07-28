@@ -9,6 +9,7 @@ services:
     image: pea_sniper_terminal:latest
     container_name: pea_daemon
     restart: unless-stopped
+    mem_limit: 1024m
     env_file:
       - config/api_keys.env
     environment:
@@ -16,7 +17,12 @@ services:
     volumes:
       - ./database:/app/database
       - ./logs:/app/logs
-      - ./config:/app/config
+      - ./config:/app/config:ro
+    healthcheck:
+      test: ["CMD-SHELL", "ps aux | grep -m 1 '[m]ain_scheduler.py' >/dev/null"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
     command: ["python", "main_scheduler.py"]
 
   dashboard:
@@ -26,6 +32,7 @@ services:
     restart: unless-stopped
     depends_on:
       - daemon
+    mem_limit: 1024m
     env_file:
       - config/api_keys.env
     environment:
@@ -35,7 +42,12 @@ services:
     volumes:
       - ./database:/app/database
       - ./logs:/app/logs
-      - ./config:/app/config
+      - ./config:/app/config:ro
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8501/_stcore/health >/dev/null"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
     command:
       - streamlit
       - run
@@ -55,5 +67,5 @@ services:
   #   volumes:
   #     - ./database:/app/database
   #     - ./logs:/app/logs
-  #     - ./config:/app/config
+  #     - ./config:/app/config:ro
   #   command: ["python", "run_discord.py"]

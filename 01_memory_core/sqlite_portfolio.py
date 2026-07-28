@@ -13,7 +13,7 @@ import os
 import sqlite3
 import sys
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterator, Optional
 
@@ -62,8 +62,13 @@ class PortfolioDB:
         Raises:
             sqlite3.Error: Propagated after a rollback if any DB error occurs.
         """
-        conn = sqlite3.connect(self.db_path)
+        # WAL mode enables concurrent readers while a writer holds a lock.
+        # Dashboard can read while daemon updates portfolio/analytics.
+        conn = sqlite3.connect(str(self.db_path), timeout=15.0)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA busy_timeout = 15000;")
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute("PRAGMA synchronous=NORMAL;")
         conn.execute("PRAGMA foreign_keys = ON;")
         try:
             yield conn
@@ -136,6 +141,27 @@ class PortfolioDB:
                         provider         TEXT NOT NULL,
                         sentiment_score  REAL,
                         inserted_at      TEXT NOT NULL
+                    );
+                    """
+                )
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS fundamentals_cache (
+                        ticker          TEXT PRIMARY KEY,
+                        pe_ratio        REAL,
+                        pb_ratio        REAL,
+                        roe             REAL,
+                        debt_to_equity  REAL,
+                        updated_at      TEXT NOT NULL
+                    );
+                    """
+                )
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS ticker_notes (
+                        ticker          TEXT PRIMARY KEY,
+                        analyst_comment TEXT,
+                        last_updated    TEXT NOT NULL
                     );
                     """
                 )
@@ -518,3 +544,121 @@ class PortfolioDB:
         except sqlite3.Error:
             logger.exception("Failed to read news history for %s.", ticker)
             raise
+
+    def upsert_fundamentals(self, ticker: str, data: dict) -> None:
+        """Upsert normalized fundamentals into local cache."""
+        if not ticker:
+            return
+        payload = data or {}
+        now = datetime.now(timezone.utc).isoformat()
+        try:
+            with self._connect() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO fundamentals_cache (
+                        ticker, pe_ratio, pb_ratio, roe, debt_to_equity, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(ticker) DO UPDATE SET
+                        pe_ratio = excluded.pe_ratio,
+                        pb_ratio = excluded.pb_ratio,
+                        roe = excluded.roe,
+                        debt_to_equity = excluded.debt_to_equity,
+                        updated_at = excluded.updated_at;
+                    """,
+                    (
+                        str(ticker).strip().upper(),
+                        payload.get("pe_ratio"),
+                        payload.get("pb_ratio"),
+                        payload.get("roe"),
+                        payload.get("debt_to_equity"),
+                        now,
+                    ),
+                )
+        except sqlite3.Error:
+            logger.exception("Failed to upsert fundamentals for %s.", ticker)
+            raise
+
+    def get_cached_fundamentals(
+        self, ticker: str, max_age_days: int = 7
+    ) -> dict | None:
+        """Return cached fundamentals when still fresh, else None."""
+        if not ticker:
+            return None
+        try:
+            with self._connect() as conn:
+                row = conn.execute(
+                    """
+                    SELECT ticker, pe_ratio, pb_ratio, roe, debt_to_equity, updated_at
+                    FROM fundamentals_cache
+                    WHERE ticker = ?;
+                    """,
+                    (str(ticker).strip().upper(),),
+                ).fetchone()
+            if row is None:
+                return None
+            updated_raw = str(row["updated_at"] or "").strip()
+            if not updated_raw:
+                return None
+            try:
+                updated_at = datetime.fromisoformat(updated_raw)
+            except ValueError:
+                return None
+            if updated_at.tzinfo is None:
+                updated_at = updated_at.replace(tzinfo=timezone.utc)
+            if datetime.now(timezone.utc) - updated_at > timedelta(days=max_age_days):
+                return None
+            return {
+                "pe_ratio": row["pe_ratio"],
+                "pb_ratio": row["pb_ratio"],
+                "roe": row["roe"],
+                "debt_to_equity": row["debt_to_equity"],
+                "updated_at": updated_raw,
+                "source": "sqlite_cache",
+            }
+        except sqlite3.Error:
+            logger.exception("Failed to read cached fundamentals for %s.", ticker)
+            return None
+
+    def save_ticker_note(self, ticker: str, comment: str) -> None:
+        """Save or update analyst note for one ticker."""
+        tk = str(ticker or "").strip().upper()
+        if not tk:
+            return
+        now = datetime.now(timezone.utc).isoformat()
+        try:
+            with self._connect() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO ticker_notes (ticker, analyst_comment, last_updated)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(ticker) DO UPDATE SET
+                        analyst_comment = excluded.analyst_comment,
+                        last_updated = excluded.last_updated;
+                    """,
+                    (tk, str(comment or "").strip(), now),
+                )
+        except sqlite3.Error:
+            logger.exception("Failed to save ticker note for %s.", tk)
+            raise
+
+    def get_ticker_note(self, ticker: str) -> str:
+        """Return analyst note text for ticker (empty string when absent)."""
+        tk = str(ticker or "").strip().upper()
+        if not tk:
+            return ""
+        try:
+            with self._connect() as conn:
+                row = conn.execute(
+                    """
+                    SELECT analyst_comment
+                    FROM ticker_notes
+                    WHERE ticker = ?;
+                    """,
+                    (tk,),
+                ).fetchone()
+            if row is None:
+                return ""
+            return str(row["analyst_comment"] or "")
+        except sqlite3.Error:
+            logger.exception("Failed to read ticker note for %s.", tk)
+            return ""

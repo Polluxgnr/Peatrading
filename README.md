@@ -170,6 +170,37 @@ comparisons; use % for vol-style dashboards, absolute for the stop distance.
 **One analysis pass:** fetch → VIX → raw signals → mark-to-market (+ equity
 snapshot) → cascade → Smart-DCA → audit log → Discord alerts → pipeline heartbeat.
 
+### Phase 38 add-on architecture (Monte Carlo + Stress + Red Team)
+
+```
+Portfolio Weights + DuckDB Returns
+              │
+              ▼
+  02_quant_engine/stochastic_models.py
+  - Cholesky(cov)
+  - Correlated GBM paths
+  - Fan chart percentiles (P05..P95)
+              │
+              ▼
+  Streamlit Portefeuille Tab
+  - On-demand Monte Carlo fan chart
+  - Tail risk (VaR/CVaR)
+  - Black swan stress table
+```
+
+```
+Exploration Tab (selected ticker)
+              │
+              ▼
+04_orchestrator_ai/red_team_agent.py
+  Bull Agent  ─┐
+               ├─ asyncio.gather ─► Judge Agent ─► 3-sentence verdict
+  Bear Agent  ─┘
+              │
+              ▼
+UI Boxes: st.info (Bull), st.warning (Bear), st.error (Judge)
+```
+
 ---
 
 ## Logging & observability
@@ -602,3 +633,31 @@ advice.** You are solely responsible for every trade. Past or backtested results
 do not guarantee future performance.
 
 © 2026 Pollux Quantitative Research — V-Prime 3.0 (Phase 32).
+
+---
+
+## English quick guide
+
+PEA Sniper Terminal is a **quantitative decision-support stack** for a personal
+French PEA account. It does not place broker orders automatically.
+
+### What is new in Phase 38
+
+- **Correlated Monte Carlo engine** (`02_quant_engine/stochastic_models.py`)
+  - Vectorized NumPy simulation using Cholesky decomposition
+  - GBM portfolio projections with percentile fan chart (5/25/50/75/95)
+- **Historical black swan stress testing** (`03_risk_portfolio/stress_tester.py`)
+  - Replays major shock windows (2008, 2020, 2022)
+  - Estimates worst scenario drawdown for current holdings
+- **LLM red teaming** (`04_orchestrator_ai/red_team_agent.py`)
+  - Bull vs Bear debate in parallel with `asyncio.gather`
+  - Judge agent outputs a concise final verdict
+- **Dashboard integration**
+  - Portfolio tab: on-demand Monte Carlo + stress table
+  - Exploration tab: one-click Bull/Bear/Judge analysis
+
+### Design principles
+
+- **Math-first, AI-second:** models score and risk-filter signals; AI explains.
+- **Vectorized calculations:** no loop-based price-path simulations.
+- **Non-blocking UX:** heavy analytics run on-demand and are cached.

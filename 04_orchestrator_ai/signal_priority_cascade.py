@@ -30,12 +30,14 @@ import yaml
 _ROOT = Path(__file__).resolve().parent.parent
 for _sub in ("01_memory_core", "03_risk_portfolio", "04_orchestrator_ai"):
     sys.path.insert(0, os.path.join(str(_ROOT), _sub))
+sys.path.insert(0, os.path.join(str(_ROOT), "02_quant_engine"))
 
 from data_models import PortfolioState, Signal, SignalStatus  # noqa: E402
 from correlation_firewall import CorrelationFirewall  # noqa: E402
 from pea_position_sizer import PeaSizer  # noqa: E402
 from macro_veto import MacroVetoEngine  # noqa: E402
 from earnings_blackout import EarningsBlackoutEngine  # noqa: E402
+from quantitative_math import calculate_annualized_volatility  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -108,7 +110,7 @@ class SignalOrchestrator:
             returns = df["Close"].astype(float).pct_change().dropna()
             if returns.empty:
                 return None
-            return float(returns.std() * (252 ** 0.5))
+            return float(calculate_annualized_volatility(returns))
         except Exception:  # noqa: BLE001
             logger.debug("Volatility unavailable for %s.", ticker)
             return None
