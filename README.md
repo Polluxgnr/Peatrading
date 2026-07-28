@@ -435,13 +435,71 @@ Regenerate after meaningful code or README changes so external agents stay in sy
 
 ## Deployment
 
+### Docker (recommended)
+
+`docker-compose.yml` is production-oriented for a single personal instance:
+
+- **persistent volumes**:
+  - `./database:/app/database` (SQLite + DuckDB + heartbeat JSON)
+  - `./logs:/app/logs` (component logs + `pea_sniper_all.log`)
+  - `./config:/app/config` (risk params, calendars, universe, env template)
+- **timezone pinned**:
+  - `TZ=Europe/Paris` in both `daemon` and `dashboard`
+  - scheduler itself also uses explicit `schedule.every().day.at(..., "Europe/Paris")`
+    in `main_scheduler.py`
+
 ```bash
 cp config/api_keys.env.example config/api_keys.env
+# Fill secrets locally (never commit config/api_keys.env)
+
+docker compose config            # final compose validation
 docker compose up -d --build
-# Dashboard :8501
+docker compose ps
 docker compose logs -f daemon
-docker compose exec daemon python seed_account.py --cash 10000
+docker compose logs -f dashboard
 ```
+
+First-time bootstrap (inside daemon container):
+
+```bash
+docker compose exec daemon python seed_account.py --cash 10000
+docker compose exec daemon python main_scheduler.py --now
+```
+
+Dashboard is exposed on `:8501`.
+
+### Pre-deploy final checks
+
+Run these before each push/deploy:
+
+```bash
+python -m pytest -q
+python tools/build_llm_dump.py
+git status --short
+```
+
+Expected outcomes:
+
+- pytest green (current baseline: `10 passed`)
+- `PROJECT_FULL_DUMP_FOR_LLM.md` regenerated and in sync with README/code
+- no secret files staged (`config/api_keys.env` must stay untracked/ignored)
+
+### Test coverage snapshot
+
+Current automated tests are focused and fast:
+
+- `tests/test_phase16_foundations.py`
+  - equity metrics (`max_drawdown`, `sharpe`, summary metrics)
+  - rebalancer mode split (`shave` vs `atr`) without network dependencies
+  - earnings blackout logic from YAML windows
+- `tests/test_ui_and_sandbox.py`
+  - sizing explanation metadata contract (`size_with_explanation`)
+  - trade-card helper rendering logic (tier/risk/sector-impact text)
+  - newsletter dedupe for near-duplicate titles
+- `tests/test_newsletter_whitelist.py`
+  - sender extraction + whitelist allow/deny behavior
+- `tests/test_funnel_analytics.py`
+  - rejection taxonomy mapping for funnel analytics consistency
 
 Alternatives: systemd (`Restart=always` on `main_scheduler.py`) or cron for
 `--now` / `--weekly` / `--atr-stops` / `--rebalance`.
