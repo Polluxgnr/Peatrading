@@ -1,4 +1,4 @@
-# PEA Sniper Terminal V-Prime - single image, two roles (daemon + dashboard).
+# PEA Pollux - single image, two roles (daemon + dashboard).
 # Python 3.11 (x64) is required: streamlit's pyarrow has no 3.13/arm64 wheel.
 FROM python:3.11-slim
 

@@ -1,4 +1,4 @@
-# PEA Sniper Terminal V-Prime - fleet.
+# PEA Pollux - fleet.
 #   daemon    : always-on backend (scheduled analysis, weekly report, rebalance)
 #   dashboard : Streamlit command center on :8501
 # Both share the same image, the database volume, and the config directory.
@@ -6,7 +6,7 @@
 services:
   daemon:
     build: .
-    image: pea_sniper_terminal:latest
+    image: pea_pollux:latest
     container_name: pea_daemon
     restart: unless-stopped
     mem_limit: 1024m
@@ -27,7 +27,7 @@ services:
 
   dashboard:
     build: .
-    image: pea_sniper_terminal:latest
+    image: pea_pollux:latest
     container_name: pea_dashboard
     restart: unless-stopped
     depends_on:
@@ -59,7 +59,7 @@ services:
   # Optional: enable the interactive Discord bot (approve/revoke buttons).
   # discord:
   #   build: .
-  #   image: pea_sniper_terminal:latest
+  #   image: pea_pollux:latest
   #   container_name: pea_discord
   #   restart: unless-stopped
   #   env_file:

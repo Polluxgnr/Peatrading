@@ -1,5 +1,5 @@
 # =============================================================================
-# PEA Sniper Terminal — Earnings / dividend blackout calendar
+# PEA Pollux — Earnings / dividend blackout calendar
 # -----------------------------------------------------------------------------
 # Per-ticker corporate events. The cascade vetoes NEW satellite buys for a
 # ticker when an event falls within EARNINGS_BLACKOUT_DAYS (risk_params.yaml).

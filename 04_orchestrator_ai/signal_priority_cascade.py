@@ -1,4 +1,4 @@
-"""Signal Priority Cascade for PEA Sniper Terminal V-Prime.
+"""Signal Priority Cascade for PEA Pollux.
 
 The strict conductor. Raw signals flow through an ordered, CPU-optimal cascade:
 

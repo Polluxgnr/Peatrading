@@ -1,5 +1,5 @@
 # =============================================================================
-# PEA Sniper Terminal V-Prime - Macro Event Calendar (dummy / seed data)
+# PEA Pollux - Macro Event Calendar (dummy / seed data)
 # -----------------------------------------------------------------------------
 # High-impact macro events that trigger a hard veto on new offensive signals
 # within MACRO_VETO_DAYS_BEFORE (see risk_params.yaml).

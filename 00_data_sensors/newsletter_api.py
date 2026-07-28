@@ -1,10 +1,10 @@
 """Newsletter IMAP sensor + LLM morning Zeitgeist (Phase 19).
 
-Production wrapper around the read-only Yahoo Mail ingest used in
-``experiments/newsletter_ingest/``. Never deletes or moves mailbox messages.
+Read-only Yahoo Mail ingest for whitelisted financial newsletters.
+Never deletes or moves mailbox messages.
 
-Secrets: ``YAHOO_MAIL_USER`` / ``YAHOO_MAIL_APP_PASSWORD`` from
-``config/api_keys.env`` or the sandbox ``.env``.
+Secrets: ``YAHOO_MAIL_USER`` / ``YAHOO_MAIL_APP_PASSWORD`` in
+``config/api_keys.env``.
 """
 
 from __future__ import annotations
@@ -21,12 +21,11 @@ from typing import Any, List, Optional
 logger = logging.getLogger(__name__)
 
 _ROOT = Path(__file__).resolve().parent.parent
-_EXPERIMENT = _ROOT / "experiments" / "newsletter_ingest"
+_INGEST = _ROOT / "00_data_sensors" / "newsletter_ingest"
 _DEFAULT_BRIEFING = _ROOT / "database" / "morning_briefing.json"
 
-# Reuse sandbox ingest modules (hermetic package under experiments/).
-if str(_EXPERIMENT) not in sys.path:
-    sys.path.insert(0, str(_EXPERIMENT))
+if str(_INGEST) not in sys.path:
+    sys.path.insert(0, str(_INGEST))
 
 try:
     sys.path.insert(0, str(_ROOT / "01_memory_core"))
@@ -41,14 +40,6 @@ except Exception:  # noqa: BLE001
                 if "=" in line and not line.strip().startswith("#"):
                     k, v = line.strip().split("=", 1)
                     os.environ.setdefault(k.strip(), v.strip().strip(" '\""))
-# Optional sandbox overrides for local newsletter experiments.
-_sandbox_env = _EXPERIMENT / ".env"
-if _sandbox_env.exists():
-    with open(_sandbox_env, "r", encoding="utf-8") as fh:
-        for line in fh:
-            if "=" in line and not line.strip().startswith("#"):
-                k, v = line.strip().split("=", 1)
-                os.environ.setdefault(k.strip(), v.strip().strip(" '\""))
 
 
 class NewsletterSensor:

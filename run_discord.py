@@ -1,4 +1,4 @@
-"""Entry point to launch the PEA Sniper Terminal Discord Copilot.
+"""Entry point to launch the PEA Pollux Discord Copilot.
 
 Usage:
     1. Copy config/api_keys.env.example -> config/api_keys.env and fill in:

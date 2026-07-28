@@ -1,4 +1,4 @@
-"""Central logging setup for PEA Sniper Terminal.
+"""Central logging setup for PEA Pollux.
 
 One place to configure human-readable, copy-friendly logs:
 
@@ -77,7 +77,7 @@ def setup_app_logging(
         root.addHandler(sh)
 
     # Shared "all" trail — every component fans into this too.
-    all_path = log_dir() / "pea_sniper_all.log"
+    all_path = log_dir() / "pea_pollux_all.log"
     if not any(
         isinstance(h, RotatingFileHandler) and getattr(h, "baseFilename", "") == str(all_path)
         for h in root.handlers

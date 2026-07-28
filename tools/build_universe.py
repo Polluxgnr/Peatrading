@@ -1,4 +1,4 @@
-"""Universe builder for PEA Sniper Terminal V-Prime.
+"""Universe builder for PEA Pollux.
 
 Writes ``config/pea_universe.yaml`` from a CURATED, authoritative map of
 Euronext Paris tickers (correctness > automation: yfinance search often returns
@@ -257,7 +257,7 @@ def main() -> None:
 
     payload = {"universe": {k: buckets[k] for k in sorted(buckets)}}
     with open(_UNIVERSE_PATH, "w", encoding="utf-8") as fh:
-        fh.write("# PEA Sniper Terminal V-Prime - investable universe\n")
+        fh.write("# PEA Pollux - investable universe\n")
         fh.write("# Curated Euronext Paris tickers, validated against Yahoo "
                  "Finance.\n")
         fh.write("# Regenerate with: python tools/build_universe.py\n\n")

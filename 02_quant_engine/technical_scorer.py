@@ -1,4 +1,4 @@
-"""Quantitative signal engine for PEA Sniper Terminal V-Prime.
+"""Quantitative signal engine for PEA Pollux.
 
 Reads OHLCV history from DuckDB, computes technical indicators via the
 pandas-ta accessor, and emits raw ``Signal`` objects from an **ensemble

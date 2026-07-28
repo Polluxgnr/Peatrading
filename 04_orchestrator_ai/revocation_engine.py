@@ -1,4 +1,4 @@
-"""Revocation Engine for PEA Sniper Terminal V-Prime.
+"""Revocation Engine for PEA Pollux.
 
 Implements the Anti-Stale logic re-run at each daily pass (09:00, 13:30, 17:10):
 a signal is REVOKED if the price drifts too far from the emission price, or

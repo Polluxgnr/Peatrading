@@ -1,20 +1,30 @@
-# PEA Sniper Terminal — V-Prime 3.0 (Phase 32)
+# PEA Pollux — Terminal quantitatif personnel
 
-> **Sovereign execution. Kinetic risk management. Absolute quantitative transparency.**
+> **Un bureau d'analyse quantitatif pour votre PEA — transparent, manuel, sans exécution automatique.**
 
-Zero-leverage quantitative **decision support** for a personal French **PEA**
-(Plan d'Épargne en Actions). The stack ingests market data, runs a deterministic
-quant engine, filters every idea through a multi-layer risk cascade, then surfaces
-highly curated proposals to a **Discord Copilot** and the **Streamlit Command Center**
-for **manual** execution. A Bloomberg-inspired **Streamlit** terminal is the
-day-to-day command center (Mission Control, equity curve, rich trade cards,
-morning Zeitgeist, log viewer).
+**PEA Pollux** est un terminal de recherche et de suivi de portefeuille conçu pour un
+**PEA personnel** (Plan d'Épargne en Actions). Il ingère les données de marché,
+calcule des signaux multi-facteurs, applique une cascade de risque stricte, puis
+présente des propositions **à valider manuellement** dans le dashboard Streamlit
+ou via Discord.
 
-**The system never sends orders to a broker.** Maths decides *what* is worth
-considering; AI only *explains* (rationale, news score, weekly CIO digest,
-newsletter Zeitgeist). **This is not investment advice.**
+**Le système n'envoie jamais d'ordres à un courtier.** Les modèles quantitatifs
+décident *ce qui mérite d'être étudié* ; l'IA *explique* (rationale, sentiment,
+briefing hebdo, red teaming Bull/Bear). **Ce n'est pas un conseil en investissement.**
 
 Repo: [github.com/Polluxgnr/Peatrading](https://github.com/Polluxgnr/Peatrading)
+
+---
+
+## Pourquoi PEA Pollux ?
+
+| Besoin | Réponse |
+|--------|---------|
+| Comprendre *pourquoi* un signal apparaît | Score multi-modèle + Data Lake transparent |
+| Gérer le risque avant d'acheter | Cascade VIX, corrélation, liquidité, earnings blackout |
+| Suivre la performance | Courbe d'equity, VaR/CVaR, Monte Carlo corrélé |
+| Challenger une idée | Red teaming IA (Bull vs Bear + Judge) |
+| Déployer proprement | Docker, healthchecks, logs rotatifs, CI pytest |
 
 ---
 
@@ -31,13 +41,13 @@ Repo: [github.com/Polluxgnr/Peatrading](https://github.com/Polluxgnr/Peatrading)
 9. [Configuration](#-configuration)
 10. [Usage](#-usage)
 11. [Dashboard](#-dashboard)
-12. [Experiments / sandboxes](#-experiments--sandboxes)
-13. [LLM full dump](#-llm-full-dump)
-14. [Deployment](#-deployment)
-15. [Scheduling](#-scheduling)
-16. [Roadmap](#-roadmap--future-improvements)
-17. [Troubleshooting](#-troubleshooting)
-18. [Disclaimer](#-disclaimer)
+12. [LLM full dump](#-llm-full-dump)
+13. [Deployment](#-deployment)
+14. [Scheduling](#-scheduling)
+15. [Roadmap](#-roadmap--future-improvements)
+16. [Troubleshooting](#-troubleshooting)
+17. [Disclaimer](#-disclaimer)
+18. [English guide](#english-guide)
 
 ---
 
@@ -212,7 +222,7 @@ debug a silent day, without enterprise noise.
 |-------|------|
 | `01_memory_core/logging_setup.py` | Console (compact INFO) + rotating **DEBUG** files |
 | `logs/<component>.log` | Per-component trails (`scheduler`, `dashboard`, `cascade`, …) |
-| `logs/pea_sniper_all.log` | Fan-in of everything |
+| `logs/pea_pollux_all.log` | Fan-in of everything |
 | `database/pipeline_status.json` | Last pass health for Mission Control (green / amber / red) |
 | Dashboard → **Architecture & Logs** | Pick a file, tail N lines, select/copy |
 
@@ -254,8 +264,13 @@ is git-ignored.
 | `tools/build_llm_dump.py` | Regenerate `PROJECT_FULL_DUMP_FOR_LLM.md` |
 | `tools/sync_universe_from_bourso.py` | Refresh PEA universe YAML |
 | `00_data_sensors/newsletter_api.py` | IMAP headlines + LLM morning Zeitgeist |
+| `00_data_sensors/newsletter_ingest/` | Modules IMAP (whitelist, dedupe, parse) |
+| `00_data_sensors/fundamentals_api.py` | Finnhub + yfinance (Value/Quality) |
+| `02_quant_engine/quantitative_math.py` | VaR, CVaR, Z-Score, variance (NumPy pur) |
+| `02_quant_engine/stochastic_models.py` | Monte Carlo corrélé (Cholesky + GBM) |
+| `03_risk_portfolio/stress_tester.py` | Stress tests historiques (2008/2020/2022) |
+| `04_orchestrator_ai/red_team_agent.py` | Débat Bull/Bear/Judge (OpenRouter) |
 | `02_quant_engine/walk_forward_backtester.py` | Walk-forward equity scaffold on DuckDB |
-| `experiments/newsletter_ingest/` | Yahoo Mail IMAP sandbox → local JSON only |
 | `tests/` | pytest foundations (sizing, equity metrics, cards, dedupe) |
 | `.github/workflows/ci.yml` | CI on push/PR |
 
@@ -287,8 +302,8 @@ Graceful degradation: missing sources return **neutral** values; the daemon does
 > Streamlit depends on `pyarrow` → use **Python 3.11 or 3.12 x64** (`venv_x64`).
 
 ```bash
-git clone https://github.com/Polluxgnr/Peatrading.git pea_sniper_terminal
-cd pea_sniper_terminal
+git clone https://github.com/Polluxgnr/Peatrading.git pea_pollux
+cd pea_pollux
 
 python3.11 -m venv venv_x64
 # Windows:  venv_x64\Scripts\Activate.ps1
@@ -427,21 +442,6 @@ For each PENDING BUY the card shows:
 
 ---
 
-## Experiments / sandboxes
-
-### `experiments/newsletter_ingest/` + production `NewsletterSensor`
-
-Sandbox CLI remains under `experiments/newsletter_ingest/`. **Production** lives in
-`00_data_sensors/newsletter_api.py` (`NewsletterSensor`): read-only IMAP → whitelist
-→ deduped headlines → OpenRouter Zeitgeist → `database/morning_briefing.json`.
-
-Scheduler: **08:25 Paris** (`python main_scheduler.py --briefing` to run now).
-Secrets: `YAHOO_MAIL_USER` / `YAHOO_MAIL_APP_PASSWORD` (+ `OPENROUTER_API_KEY`).
-
-Whitelist includes Café de la Bourse, Le monde d'après, Plan Cash, Brief.*, TLDR, etc.
-
----
-
 ## LLM full dump
 
 For one-shot context in another LLM / agent:
@@ -472,7 +472,7 @@ Regenerate after meaningful code or README changes so external agents stay in sy
 
 - **persistent volumes**:
   - `./database:/app/database` (SQLite + DuckDB + heartbeat JSON)
-  - `./logs:/app/logs` (component logs + `pea_sniper_all.log`)
+  - `./logs:/app/logs` (component logs + `pea_pollux_all.log`)
   - `./config:/app/config` (risk params, calendars, universe, env template)
 - **timezone pinned**:
   - `TZ=Europe/Paris` in both `daemon` and `dashboard`
@@ -580,7 +580,10 @@ sources over furtive HTML scraping.
 | **Bandeau natif + news SQLite + exploration universelle** | ✅ Phase 27 — marquee HTML/CSS, `news_history`, dates exactes, selectbox 600+ tickers |
 | **Télémétrie live Architecture & Logs** | ✅ Phase 28 — health check sources, risk_params actifs, expanders logique quant |
 | **UX rename + clickable tape + news history** | ✅ Phase 29 — Pollux branding, query-param tape, Synthèse IA, full news DB |
-| **Native env + AMF ODS + TV EURONEXT + uncapped lists** | ✅ Phase 32 — no-dotenv loader, AMF Opendatasoft/BDIF back API, Polymarket JSON guard, full universe/logs |
+| **Native env + AMF ODS + TV EURONEXT + uncapped lists** | ✅ Phase 32 |
+| **Multi-factor + Finnhub + Data Lake analyste** | ✅ Phase 35–36 |
+| **VaR/CVaR + Z-Score académique** | ✅ Phase 37 |
+| **Monte Carlo + stress tests + red teaming IA** | ✅ Phase 38 |
 | pytest + GitHub Actions CI | Expand coverage over time |
 
 ### Next (highest leverage)
@@ -632,32 +635,62 @@ Decision-support and educational tool only. **No automated execution. No financi
 advice.** You are solely responsible for every trade. Past or backtested results
 do not guarantee future performance.
 
-© 2026 Pollux Quantitative Research — V-Prime 3.0 (Phase 32).
+© 2026 Pollux Gronier — PEA Pollux.
 
 ---
 
-## English quick guide
+## English guide
 
-PEA Sniper Terminal is a **quantitative decision-support stack** for a personal
-French PEA account. It does not place broker orders automatically.
+**PEA Pollux** is a personal quantitative research terminal for a French **PEA**
+( tax-advantaged equity savings plan ). It helps you *research*, *size*, and *risk-manage*
+ideas — but **never places broker orders**.
 
-### What is new in Phase 38
+### What it does
 
-- **Correlated Monte Carlo engine** (`02_quant_engine/stochastic_models.py`)
-  - Vectorized NumPy simulation using Cholesky decomposition
-  - GBM portfolio projections with percentile fan chart (5/25/50/75/95)
-- **Historical black swan stress testing** (`03_risk_portfolio/stress_tester.py`)
-  - Replays major shock windows (2008, 2020, 2022)
-  - Estimates worst scenario drawdown for current holdings
-- **LLM red teaming** (`04_orchestrator_ai/red_team_agent.py`)
-  - Bull vs Bear debate in parallel with `asyncio.gather`
-  - Judge agent outputs a concise final verdict
-- **Dashboard integration**
-  - Portfolio tab: on-demand Monte Carlo + stress table
-  - Exploration tab: one-click Bull/Bear/Judge analysis
+1. **Ingests data** — OHLCV (yfinance → DuckDB), insiders (AMF → FMP → Yahoo),
+   news, newsletters, macro proxies (VIX, Polymarket).
+2. **Scores opportunities** — multi-model ensemble (Trend, Mean-Reversion, Breakout,
+   Context) with fundamentals (Finnhub) and sentiment modifiers.
+3. **Filters through risk** — VIX panic, sector caps, correlation firewall, earnings
+   blackout, liquidity floor, vol-parity sizing (whole shares only).
+4. **Surfaces decisions** — Streamlit dashboard + optional Discord copilot for
+   manual approve/reject.
+5. **Explains & challenges** — LLM rationales, weekly digest, Bull/Bear red teaming.
+
+### Phase 38 highlights
+
+| Feature | Module | Description |
+|---------|--------|-------------|
+| Monte Carlo fan chart | `stochastic_models.py` | Correlated GBM via Cholesky, P05–P95 paths |
+| Black swan replay | `stress_tester.py` | 2008, 2020, 2022 drawdown scenarios |
+| Tail risk metrics | `quantitative_math.py` | Historical VaR & CVaR (pure NumPy) |
+| AI red team | `red_team_agent.py` | Parallel Bull/Bear agents + Judge verdict |
+
+### Architecture (high level)
+
+```
+Data sensors → DuckDB/SQLite → Quant engine → Risk cascade → UI (Streamlit/Discord)
+                                      ↓
+                         Stochastic models + stress tests + LLM explainers
+```
+
+### Quick start
+
+```bash
+git clone https://github.com/Polluxgnr/Peatrading.git pea_pollux
+cd pea_pollux
+python3.11 -m venv venv_x64 && source venv_x64/bin/activate  # or Windows Activate.ps1
+pip install -r requirements.txt
+cp config/api_keys.env.example config/api_keys.env
+python seed_account.py --cash 10000
+python main_scheduler.py --now
+streamlit run 05_interfaces/terminal_dashboard.py
+```
 
 ### Design principles
 
-- **Math-first, AI-second:** models score and risk-filter signals; AI explains.
-- **Vectorized calculations:** no loop-based price-path simulations.
-- **Non-blocking UX:** heavy analytics run on-demand and are cached.
+- **Math-first, AI-second** — models decide eligibility; LLMs only explain or debate.
+- **Manual execution** — you always confirm trades.
+- **Graceful degradation** — missing API keys → neutral fallbacks, no crashes.
+- **Vectorized math** — NumPy/Pandas for VaR, Monte Carlo, Z-Scores.
+- **On-demand heavy compute** — Monte Carlo runs behind a button + cache, not on every page load.

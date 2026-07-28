@@ -1,4 +1,4 @@
-"""Alternative-data / macro alpha sensors for PEA Sniper Terminal V-Prime.
+"""Alternative-data / macro alpha sensors for PEA Pollux.
 
 This module turns qualitative market signals into hard numbers the deterministic
 engine can act on:
@@ -442,7 +442,7 @@ class MacroAlphaSensor:
                 url,
                 headers={
                     "User-Agent": (
-                        "Mozilla/5.0 (compatible; PEA-Sniper-Terminal/1.0; "
+                        "Mozilla/5.0 (compatible; PEA-Pollux/1.0; "
                         "+https://github.com/Polluxgnr/Peatrading)"
                     ),
                     "Accept": "application/json",

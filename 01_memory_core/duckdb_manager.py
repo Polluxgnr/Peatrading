@@ -1,4 +1,4 @@
-"""DuckDB time-series engine for PEA Sniper Terminal V-Prime.
+"""DuckDB time-series engine for PEA Pollux.
 
 DuckDB stores heavy OHLCV history and serves fast columnar reads to the quant
 engine (pandas-ta). This is a pure I/O layer: no indicator math, no trading

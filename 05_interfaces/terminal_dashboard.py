@@ -1,4 +1,4 @@
-"""Web Terminal (Streamlit dashboard) for PEA Sniper Terminal V-Prime.
+"""Web Terminal (Streamlit dashboard) for PEA Pollux.
 
 BLOOMBERG TERMINAL EDITION - command center on a pure-black, high-contrast UI.
 
@@ -403,7 +403,7 @@ def render_pending_trade_cards(pending_df: pd.DataFrame, portfolio_obj) -> None:
 # Page config & Bloomberg CSS
 # =============================================================================
 st.set_page_config(
-    page_title="Pollux PEA Terminal | V-Prime",
+    page_title="PEA Pollux | Terminal",
     layout="wide",
     page_icon="\U0001F6E1\uFE0F",
     initial_sidebar_state="collapsed",
@@ -1769,7 +1769,7 @@ def _fetch_news_from_apis(symbol: str, limit: int = 6) -> list[dict]:
             )
             req = urllib.request.Request(
                 url,
-                headers={"User-Agent": "PEA-Sniper-Terminal/1.0"},
+                headers={"User-Agent": "PEA-Pollux/1.0"},
             )
             with urllib.request.urlopen(req, timeout=8) as resp:
                 root = ET.fromstring(resp.read())
@@ -1914,7 +1914,7 @@ def build_broker_order_ticket(
 
 
 def get_decision_checklist(ticker: str, portfolio_obj, vix: float) -> dict:
-    """Evaluate key V-Prime gate checks and return an explicit checklist."""
+    """Evaluate key PEA Pollux gate checks and return an explicit checklist."""
     ind = get_indicators(ticker) or {}
     close = float(ind.get("close") or 0.0)
     rsi = ind.get("rsi")
@@ -3380,7 +3380,7 @@ def get_ticker_dossier(ticker: str) -> dict:
         out["summary"] = (
             f"{name} est un ETF eligible PEA. Il replique un indice large "
             "(ex. MSCI World pour CW8) au lieu d'un risque entreprise unique. "
-            "C'est l'ancre Core du systeme V-Prime."
+            "C'est l'ancre Core du systeme PEA Pollux."
         )
     else:
         out["summary"] = (
@@ -3441,7 +3441,7 @@ def get_etf_card(ticker: str = _CORE_TICKER) -> dict:
         "regime": get_core_regime() if ticker == _CORE_TICKER else {},
         "indicators": ind or {},
         "role": (
-            "Ancre Core V-Prime (MSCI World PEA). Cible 70–75% de l'equity "
+            "Ancre Core PEA Pollux (MSCI World PEA). Cible 70–75% de l'equity "
             "des que ton capital permet d'acheter des parts entieres."
             if ticker == _CORE_TICKER else
             "ETF eligible PEA — diversification indicielle."
@@ -3509,7 +3509,7 @@ def get_polymarket_macro(limit: int = 8) -> list[dict]:
             url,
             headers={
                 "User-Agent": (
-                    "Mozilla/5.0 (compatible; PEA-Sniper-Terminal/1.0; "
+                    "Mozilla/5.0 (compatible; PEA-Pollux/1.0; "
                     "+https://github.com/Polluxgnr/Peatrading)"
                 ),
                 "Accept": "application/json",
@@ -4436,7 +4436,7 @@ with tab_gen:
 with tab_pf:
     st.markdown(
         "<div class='info-text'>Decomposition de l'exposition sectorielle. "
-        "En capital eleve, le risque V-Prime limite a 25% / secteur et 15% / "
+        "En capital eleve, le risque PEA Pollux limite a 25% / secteur et 15% / "
         "ligne. En micro-PEA ces plafonds sont volontairement assouplis "
         "(voir suggestion dans General).</div>",
         unsafe_allow_html=True,
@@ -6113,7 +6113,7 @@ cash/positions. Les ordres restent Discord + scheduler.
     st.markdown("### 📋 Logs détaillés (copie / audit)")
     st.markdown(
         "<div class='info-text'>Fichiers rotatifs sous <code>logs/</code> — "
-        "un par composant + <code>pea_sniper_all.log</code>. Format détaillé "
+        "un par composant + <code>pea_pollux_all.log</code>. Format détaillé "
         "(fichier:ligne:fonction). Lecture seule ici ; rien n'est modifié.</div>",
         unsafe_allow_html=True,
     )
@@ -6145,7 +6145,7 @@ cash/positions. Les ordres restent Discord + scheduler.
 # =============================================================================
 st.write("---")
 st.caption(
-    "PEA Sniper Terminal V-Prime \u00b7 Zero-leverage \u00b7 Execution manuelle "
+    "PEA Pollux \u00b7 Zero-leverage \u00b7 Execution manuelle "
     "via Discord \u00b7 Donnees: yfinance / bandeau natif \u00b7 "
     "Ceci n'est PAS un conseil en investissement."
 )

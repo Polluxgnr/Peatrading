@@ -1,4 +1,4 @@
-# PEA Sniper Terminal V-Prime - Python 3.11+
+# PEA Pollux - Python 3.11+
 # Phase 1 only needs pydantic + pyyaml; the rest is pinned for the roadmap.
 
 # --- Core / data contracts (Phase 1) ---

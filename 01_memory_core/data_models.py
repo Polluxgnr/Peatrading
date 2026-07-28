@@ -1,4 +1,4 @@
-"""Strict data contracts for PEA Sniper Terminal V-Prime.
+"""Strict data contracts for PEA Pollux.
 
 This module defines the Pydantic V2 models that flow between every layer of the
 system (data sensors -> quant engine -> risk portfolio -> orchestrator ->

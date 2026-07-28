@@ -1,4 +1,4 @@
-"""Root daemon scheduler for PEA Sniper Terminal V-Prime.
+"""Root daemon scheduler for PEA Pollux.
 
 Ties the whole pipeline together and runs it on the multi-pass European market
 schedule (09:00, 13:30, 17:10 Paris time, weekdays only):
@@ -428,7 +428,7 @@ async def run_weekly_report_async() -> None:
 
     report = await historian.generate_weekly_report(pdb, explainer=explainer)
     header = (
-        "\U0001F4C8 **PEA Sniper Terminal - Weekly Risk & Performance Digest**\n"
+        "\U0001F4C8 **PEA Pollux - Weekly Risk & Performance Digest**\n"
         f"_(generated {datetime.now().strftime('%Y-%m-%d %H:%M')} Paris)_\n\n"
     )
     sent = await _post_webhook(header + report)
@@ -590,7 +590,7 @@ def main() -> None:
     """Entry point: parse CLI args and either run once or loop forever."""
     setup_app_logging(level=logging.INFO, console=True)
 
-    parser = argparse.ArgumentParser(description="PEA Sniper Terminal daemon.")
+    parser = argparse.ArgumentParser(description="PEA Pollux daemon.")
     parser.add_argument(
         "--now",
         action="store_true",
@@ -644,7 +644,7 @@ def main() -> None:
         return
 
     _schedule_passes()
-    logger.info("\U0001F6E1\uFE0F PEA Sniper Terminal Daemon started. "
+    logger.info("\U0001F6E1\uFE0F PEA Pollux Daemon started. "
                 "Waiting for scheduled runs...")
     while True:
         try:

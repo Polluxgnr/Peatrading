@@ -1,4 +1,4 @@
-"""Market data ingestion for PEA Sniper Terminal V-Prime.
+"""Market data ingestion for PEA Pollux.
 
 Fetches daily OHLCV via the official ``yfinance`` API (no scraping), flattens
 the multi-ticker response into the schema expected by ``TimeSeriesDB``

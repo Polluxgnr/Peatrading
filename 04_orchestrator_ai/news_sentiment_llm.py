@@ -1,4 +1,4 @@
-"""News sentiment scorer for PEA Sniper Terminal V-Prime (Phase 11).
+"""News sentiment scorer for PEA Pollux (Phase 11).
 
 Turns unstructured news headlines into a single hard number the deterministic
 engine can use. The LLM is constrained to act as a quantitative NLP model and

@@ -1,5 +1,5 @@
 # =============================================================================
-# PEA Sniper Terminal V-Prime - Institutional Risk Parameters
+# PEA Pollux - Institutional Risk Parameters
 # -----------------------------------------------------------------------------
 # These limits are NON-NEGOTIABLE. They are enforced by the Correlation Firewall
 # (03_risk_portfolio), the Position Sizer, and the Macro Veto Engine.

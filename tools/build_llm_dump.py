@@ -67,8 +67,12 @@ PRIORITY_FILES = [
     "01_memory_core/sqlite_portfolio.py",
     "01_memory_core/duckdb_manager.py",
     "02_quant_engine/technical_scorer.py",
+    "02_quant_engine/quantitative_math.py",
+    "02_quant_engine/stochastic_models.py",
+    "03_risk_portfolio/stress_tester.py",
     "03_risk_portfolio/pea_position_sizer.py",
     "04_orchestrator_ai/signal_priority_cascade.py",
+    "04_orchestrator_ai/red_team_agent.py",
     "05_interfaces/terminal_dashboard.py",
     "main_scheduler.py",
 ]
@@ -102,9 +106,9 @@ def _read_phase_from_readme() -> str:
     try:
         first = README.read_text(encoding="utf-8").splitlines()[0]
         m = re.search(r"Phase\s+[\d–\-]+", first)
-        return m.group(0) if m else "V-Prime 3.0"
+        return m.group(0) if m else "PEA Pollux"
     except OSError:
-        return "V-Prime 3.0"
+        return "PEA Pollux"
 
 
 def _lang(path: Path) -> str:
@@ -181,7 +185,7 @@ def main() -> None:
     phase = _read_phase_from_readme()
 
     lines: list[str] = [
-        "# PEA Sniper Terminal — Full Project Dump for LLM",
+        "# PEA Pollux — Full Project Dump for LLM",
         "",
         f"> **{phase}** · Generated `{stamp}` · Root `{ROOT}`",
         "",

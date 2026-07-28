@@ -1,4 +1,4 @@
-"""Portfolio rebalancer for PEA Sniper Terminal V-Prime (Phase 12/15/16).
+"""Portfolio rebalancer for PEA Pollux (Phase 12/15/16).
 
 Mechanical housekeeping trades:
 

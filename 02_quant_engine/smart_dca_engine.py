@@ -1,4 +1,4 @@
-"""Smart DCA core engine for PEA Sniper Terminal V-Prime (Phase 10).
+"""Smart DCA core engine for PEA Pollux (Phase 10).
 
 The Core/Satellite model parks the bulk of capital in a broad MSCI World PEA ETF
 (``CW8.PA``) and accumulates it with a *Smart* Dollar-Cost-Averaging rule:

@@ -1,4 +1,4 @@
-# Launch PEA Sniper Terminal dashboard.
+# Launch PEA Pollux dashboard.
 # Streamlit opens the browser itself when headless=false — do NOT also Start-Process
 # (that caused a double browser tab).
 $ErrorActionPreference = "Stop"
@@ -11,5 +11,5 @@ if (-not (Test-Path $py)) {
     exit 1
 }
 
-Write-Host "Starting PEA Sniper Terminal on http://localhost:8501 ..." -ForegroundColor Green
+Write-Host "Starting PEA Pollux on http://localhost:8501 ..." -ForegroundColor Green
 & $py run "05_interfaces/terminal_dashboard.py" --server.headless false --browser.gatherUsageStats false --server.port 8501

@@ -1,4 +1,4 @@
-"""Weekly Historian for PEA Sniper Terminal V-Prime (Phase 12).
+"""Weekly Historian for PEA Pollux (Phase 12).
 
 Every Friday the system "steps back" and writes a hedge-fund-style weekly digest
 for the CIO. It aggregates the last 7 days of audit logs into hard counts

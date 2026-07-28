@@ -1,4 +1,4 @@
-"""Correlation Firewall for PEA Sniper Terminal V-Prime.
+"""Correlation Firewall for PEA Pollux.
 
 Intercepts candidate signals and vetoes them when they would over-concentrate
 the portfolio, either by sector weight or by price correlation with existing

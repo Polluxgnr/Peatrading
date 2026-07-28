@@ -1,4 +1,4 @@
-"""SQLite state manager for PEA Sniper Terminal V-Prime.
+"""SQLite state manager for PEA Pollux.
 
 This module owns application state persistence: the current PEA account
 snapshot, open positions, and the audit log of every signal and its lifecycle.

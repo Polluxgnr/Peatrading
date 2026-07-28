@@ -1,4 +1,4 @@
-"""LLM narrative explainer for PEA Sniper Terminal V-Prime.
+"""LLM narrative explainer for PEA Pollux.
 
 Wraps OpenRouter (async, via ``aiohttp``) to turn an already-approved,
 already-sized ``Signal`` into a short, human-readable rationale for Discord.
@@ -89,7 +89,7 @@ async def openrouter_chat(
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
-        "X-Title": "PEA Sniper Terminal V-Prime",
+        "X-Title": "PEA Pollux",
     }
     try:
         timeout = aiohttp.ClientTimeout(total=timeout_s)

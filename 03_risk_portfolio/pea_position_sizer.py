@@ -1,4 +1,4 @@
-"""PEA position sizer for PEA Sniper Terminal V-Prime.
+"""PEA position sizer for PEA Pollux.
 
 Converts an approved signal into an integer number of shares, respecting the
 PEA's no-fractional-shares rule, the per-position cap, Half-Kelly scaling by

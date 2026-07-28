@@ -1,4 +1,4 @@
-"""Macro Veto Engine for PEA Sniper Terminal V-Prime.
+"""Macro Veto Engine for PEA Pollux.
 
 Blocks new offensive signals when a high-impact macro event (ECB/FED decision,
 CPI, NFP) falls within a configurable window. Running this cheap check before

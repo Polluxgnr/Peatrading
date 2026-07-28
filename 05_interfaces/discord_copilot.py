@@ -1,4 +1,4 @@
-"""Discord Copilot for PEA Sniper Terminal V-Prime.
+"""Discord Copilot for PEA Pollux.
 
 Pushes interactive trade alerts to Discord and waits for the human to approve
 or reject. Execution is manual: approving records the trade in SQLite (status

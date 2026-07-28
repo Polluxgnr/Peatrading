@@ -1,6 +1,6 @@
-# PEA Sniper Terminal — Full Project Dump for LLM
+# PEA Pollux — Full Project Dump for LLM
 
-> **Phase 32** · Generated `2026-07-28 14:50 UTC` · Root `C:\Users\PolluxGronier\Downloads\pea_sniper_terminal`
+> **PEA Pollux** · Generated `2026-07-28 14:57 UTC` · Root `C:\Users\PolluxGronier\Downloads\pea_sniper_terminal`
 
 One-shot context for external LLM agents. Includes source, configs, and docs.
 Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
@@ -38,19 +38,23 @@ Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
 - `01_memory_core/sqlite_portfolio.py`
 - `01_memory_core/duckdb_manager.py`
 - `02_quant_engine/technical_scorer.py`
+- `02_quant_engine/quantitative_math.py`
+- `02_quant_engine/stochastic_models.py`
+- `03_risk_portfolio/stress_tester.py`
 - `03_risk_portfolio/pea_position_sizer.py`
 - `04_orchestrator_ai/signal_priority_cascade.py`
+- `04_orchestrator_ai/red_team_agent.py`
 - `05_interfaces/terminal_dashboard.py`
 - `main_scheduler.py`
 
 ---
-## File index (74 files)
+## File index (72 files)
 ### `(root)/`
-- `.gitignore` (45 lines)
+- `.gitignore` (41 lines)
 - `docker-compose.yml` (71 lines)
 - `Dockerfile` (30 lines)
 - `main_scheduler.py` (662 lines) ⭐
-- `README.md` (663 lines) ⭐
+- `README.md` (696 lines) ⭐
 - `requirements.txt` (37 lines)
 - `run_dashboard.ps1` (15 lines)
 - `run_discord.py` (100 lines)
@@ -67,7 +71,16 @@ Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
 - `00_data_sensors/fundamentals_api.py` (144 lines)
 - `00_data_sensors/macro_alpha_api.py` (491 lines)
 - `00_data_sensors/market_prices_api.py` (196 lines)
-- `00_data_sensors/newsletter_api.py` (216 lines)
+- `00_data_sensors/newsletter_api.py` (207 lines)
+
+### `00_data_sensors/newsletter_ingest/ingest/`
+- `00_data_sensors/newsletter_ingest/ingest/__init__.py` (1 lines)
+- `00_data_sensors/newsletter_ingest/ingest/dedupe.py` (51 lines)
+- `00_data_sensors/newsletter_ingest/ingest/env_loader.py` (36 lines)
+- `00_data_sensors/newsletter_ingest/ingest/html_parser.py` (116 lines)
+- `00_data_sensors/newsletter_ingest/ingest/imap_client.py` (167 lines)
+- `00_data_sensors/newsletter_ingest/ingest/whitelist.py` (44 lines)
+- `00_data_sensors/newsletter_ingest/ingest/writer.py` (33 lines)
 
 ### `00_data_sensors/scrapers/`
 - `00_data_sensors/scrapers/__init__.py` (18 lines)
@@ -85,9 +98,9 @@ Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
 
 ### `02_quant_engine/`
 - `02_quant_engine/__init__.py` (0 lines)
-- `02_quant_engine/quantitative_math.py` (104 lines)
+- `02_quant_engine/quantitative_math.py` (104 lines) ⭐
 - `02_quant_engine/smart_dca_engine.py` (207 lines)
-- `02_quant_engine/stochastic_models.py` (87 lines)
+- `02_quant_engine/stochastic_models.py` (87 lines) ⭐
 - `02_quant_engine/technical_scorer.py` (620 lines) ⭐
 - `02_quant_engine/walk_forward_backtester.py` (200 lines)
 
@@ -97,14 +110,14 @@ Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
 - `03_risk_portfolio/equity_metrics.py` (143 lines)
 - `03_risk_portfolio/monthly_rebalancer.py` (232 lines)
 - `03_risk_portfolio/pea_position_sizer.py` (245 lines) ⭐
-- `03_risk_portfolio/stress_tester.py` (130 lines)
+- `03_risk_portfolio/stress_tester.py` (130 lines) ⭐
 
 ### `04_orchestrator_ai/`
 - `04_orchestrator_ai/__init__.py` (0 lines)
 - `04_orchestrator_ai/earnings_blackout.py` (92 lines)
 - `04_orchestrator_ai/macro_veto.py` (125 lines)
 - `04_orchestrator_ai/news_sentiment_llm.py` (144 lines)
-- `04_orchestrator_ai/red_team_agent.py` (78 lines)
+- `04_orchestrator_ai/red_team_agent.py` (78 lines) ⭐
 - `04_orchestrator_ai/revocation_engine.py` (135 lines)
 - `04_orchestrator_ai/signal_priority_cascade.py` (339 lines) ⭐
 - `04_orchestrator_ai/weekly_historian.py` (226 lines)
@@ -123,22 +136,6 @@ Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
 - `config/pea_universe.yaml` (1901 lines) ⭐
 - `config/risk_params.yaml` (56 lines) ⭐
 
-### `experiments/newsletter_ingest/`
-- `experiments/newsletter_ingest/README.md` (26 lines)
-- `experiments/newsletter_ingest/run_ingest.py` (150 lines)
-
-### `experiments/newsletter_ingest/ingest/`
-- `experiments/newsletter_ingest/ingest/__init__.py` (1 lines)
-- `experiments/newsletter_ingest/ingest/dedupe.py` (51 lines)
-- `experiments/newsletter_ingest/ingest/env_loader.py` (36 lines)
-- `experiments/newsletter_ingest/ingest/html_parser.py` (116 lines)
-- `experiments/newsletter_ingest/ingest/imap_client.py` (167 lines)
-- `experiments/newsletter_ingest/ingest/whitelist.py` (44 lines)
-- `experiments/newsletter_ingest/ingest/writer.py` (33 lines)
-
-### `experiments/newsletter_ingest/output/`
-- `experiments/newsletter_ingest/output/ingest_20260723_140121.json` (618 lines)
-
 ### `tests/`
 - `tests/__init__.py` (1 lines)
 - `tests/test_funnel_analytics.py` (63 lines)
@@ -147,14 +144,15 @@ Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
 - `tests/test_ui_and_sandbox.py` (66 lines)
 
 ### `tools/`
-- `tools/build_llm_dump.py` (228 lines)
+- `tools/build_llm_dump.py` (232 lines)
 - `tools/build_universe.py` (273 lines)
+- `tools/rebrand_pea_pollux.py` (65 lines)
 - `tools/sync_universe_from_bourso.py` (236 lines)
 
 ---
 ## FILE: .github/workflows/ci.yml (23 lines)
 ```yaml
-# PEA Sniper Terminal — CI
+# PEA Pollux — CI
 name: ci
 
 on:
@@ -179,7 +177,7 @@ jobs:
         run: python -m pytest -q
 ```
 
-## FILE: .gitignore (45 lines)
+## FILE: .gitignore (41 lines)
 ```text
 # --- Secrets & config ---
 config/api_keys.env
@@ -221,11 +219,6 @@ Thumbs.db
 *.log
 logs/
 data/
-
-# --- Experiment sandboxes ---
-experiments/**/.env
-experiments/**/output/*.json
-!experiments/**/output/.gitkeep
 ```
 
 ## FILE: .streamlit/config.toml (25 lines)
@@ -411,7 +404,7 @@ class FundamentalsSensor:
 
 ## FILE: 00_data_sensors/macro_alpha_api.py (491 lines)
 ```python
-"""Alternative-data / macro alpha sensors for PEA Sniper Terminal V-Prime.
+"""Alternative-data / macro alpha sensors for PEA Pollux.
 
 This module turns qualitative market signals into hard numbers the deterministic
 engine can act on:
@@ -855,7 +848,7 @@ class MacroAlphaSensor:
                 url,
                 headers={
                     "User-Agent": (
-                        "Mozilla/5.0 (compatible; PEA-Sniper-Terminal/1.0; "
+                        "Mozilla/5.0 (compatible; PEA-Pollux/1.0; "
                         "+https://github.com/Polluxgnr/Peatrading)"
                     ),
                     "Accept": "application/json",
@@ -906,7 +899,7 @@ if __name__ == "__main__":
 
 ## FILE: 00_data_sensors/market_prices_api.py (196 lines)
 ```python
-"""Market data ingestion for PEA Sniper Terminal V-Prime.
+"""Market data ingestion for PEA Pollux.
 
 Fetches daily OHLCV via the official ``yfinance`` API (no scraping), flattens
 the multi-ticker response into the schema expected by ``TimeSeriesDB``
@@ -1104,15 +1097,15 @@ if __name__ == "__main__":
     print(frame.tail(10).to_string(index=False))
 ```
 
-## FILE: 00_data_sensors/newsletter_api.py (216 lines)
+## FILE: 00_data_sensors/newsletter_api.py (207 lines)
 ```python
 """Newsletter IMAP sensor + LLM morning Zeitgeist (Phase 19).
 
-Production wrapper around the read-only Yahoo Mail ingest used in
-``experiments/newsletter_ingest/``. Never deletes or moves mailbox messages.
+Read-only Yahoo Mail ingest for whitelisted financial newsletters.
+Never deletes or moves mailbox messages.
 
-Secrets: ``YAHOO_MAIL_USER`` / ``YAHOO_MAIL_APP_PASSWORD`` from
-``config/api_keys.env`` or the sandbox ``.env``.
+Secrets: ``YAHOO_MAIL_USER`` / ``YAHOO_MAIL_APP_PASSWORD`` in
+``config/api_keys.env``.
 """
 
 from __future__ import annotations
@@ -1129,12 +1122,11 @@ from typing import Any, List, Optional
 logger = logging.getLogger(__name__)
 
 _ROOT = Path(__file__).resolve().parent.parent
-_EXPERIMENT = _ROOT / "experiments" / "newsletter_ingest"
+_INGEST = _ROOT / "00_data_sensors" / "newsletter_ingest"
 _DEFAULT_BRIEFING = _ROOT / "database" / "morning_briefing.json"
 
-# Reuse sandbox ingest modules (hermetic package under experiments/).
-if str(_EXPERIMENT) not in sys.path:
-    sys.path.insert(0, str(_EXPERIMENT))
+if str(_INGEST) not in sys.path:
+    sys.path.insert(0, str(_INGEST))
 
 try:
     sys.path.insert(0, str(_ROOT / "01_memory_core"))
@@ -1149,14 +1141,6 @@ except Exception:  # noqa: BLE001
                 if "=" in line and not line.strip().startswith("#"):
                     k, v = line.strip().split("=", 1)
                     os.environ.setdefault(k.strip(), v.strip().strip(" '\""))
-# Optional sandbox overrides for local newsletter experiments.
-_sandbox_env = _EXPERIMENT / ".env"
-if _sandbox_env.exists():
-    with open(_sandbox_env, "r", encoding="utf-8") as fh:
-        for line in fh:
-            if "=" in line and not line.strip().startswith("#"):
-                k, v = line.strip().split("=", 1)
-                os.environ.setdefault(k.strip(), v.strip().strip(" '\""))
 
 
 class NewsletterSensor:
@@ -1322,6 +1306,482 @@ def run_morning_briefing_sync(folder: str = "Finance") -> dict[str, Any]:
         zeitgeist = "Indisponible"
     sensor.write_briefing(zeitgeist, headlines)
     return {"zeitgeist": zeitgeist, "headlines": headlines}
+```
+
+## FILE: 00_data_sensors/newsletter_ingest/ingest/__init__.py (1 lines)
+```python
+# Package marker for newsletter ingest sandbox.
+```
+
+## FILE: 00_data_sensors/newsletter_ingest/ingest/dedupe.py (51 lines)
+```python
+"""Simple near-duplicate headline collapse (no ML)."""
+
+from __future__ import annotations
+
+import logging
+import re
+from typing import List
+
+logger = logging.getLogger(__name__)
+
+
+def _norm(title: str) -> str:
+    t = (title or "").lower()
+    t = re.sub(r"[^a-z0-9àâäéèêëïîôùûüç\s]", " ", t)
+    t = re.sub(r"\s+", " ", t).strip()
+    return t
+
+
+def _token_set(title: str) -> set[str]:
+    return {w for w in _norm(title).split() if len(w) > 2}
+
+
+def _similar(a: str, b: str, threshold: float = 0.72) -> bool:
+    """Jaccard similarity on token sets — cheap and good enough for newsletters."""
+    ta, tb = _token_set(a), _token_set(b)
+    if not ta or not tb:
+        return _norm(a) == _norm(b) and bool(_norm(a))
+    inter = len(ta & tb)
+    union = len(ta | tb)
+    return (inter / union) >= threshold if union else False
+
+
+def dedupe_articles(articles: List[dict]) -> List[dict]:
+    """Drop near-identical titles republished the same day across digests.
+
+    Keeps the first occurrence (stable order). Logs how many were removed.
+    """
+    kept: List[dict] = []
+    for art in articles:
+        title = art.get("title") or ""
+        if any(_similar(title, k.get("title") or "") for k in kept):
+            continue
+        # Also collapse exact same cleaned URL
+        url = art.get("url") or ""
+        if url and any(url == (k.get("url") or "") for k in kept):
+            continue
+        kept.append(art)
+    removed = len(articles) - len(kept)
+    if removed:
+        logger.info("Removed %d near-duplicate headline(s).", removed)
+    return kept
+```
+
+## FILE: 00_data_sensors/newsletter_ingest/ingest/env_loader.py (36 lines)
+```python
+"""Load sandbox ``.env`` without touching production ``config/api_keys.env``."""
+
+from __future__ import annotations
+
+import logging
+from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+
+def load_sandbox_env(path: Path) -> dict[str, str]:
+    """Parse a simple KEY=VALUE env file into a dict.
+
+    Args:
+        path: Path to the sandbox ``.env``.
+
+    Returns:
+        dict[str, str]: Uppercase keys; empty dict if file missing.
+    """
+    out: dict[str, str] = {}
+    if not path.exists():
+        logger.warning("Sandbox env file not found: %s", path)
+        return out
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, val = line.partition("=")
+            key = key.strip()
+            val = val.strip().strip('"').strip("'")
+            if key:
+                out[key] = val
+    except OSError as exc:
+        logger.error("Could not read %s: %s", path, exc)
+    return out
+```
+
+## FILE: 00_data_sensors/newsletter_ingest/ingest/html_parser.py (116 lines)
+```python
+"""Extract article titles/links from verbose newsletter HTML."""
+
+from __future__ import annotations
+
+import logging
+import re
+from typing import Any
+from urllib.parse import urlparse, urlunparse
+
+from bs4 import BeautifulSoup
+
+from ingest.imap_client import RawMessage
+
+logger = logging.getLogger(__name__)
+
+_TRACKER_HOST_BITS = (
+    "doubleclick", "googleadservices", "facebook.com/tr", "mailchi.mp/track",
+    "list-manage.com/track", "click.", "/track/", "utm_source=",
+)
+
+
+def _clean_url(url: str) -> str:
+    """Strip common tracking query noise while keeping the path."""
+    try:
+        p = urlparse(url)
+        # Drop obvious click-wrappers with empty path
+        if any(b in url.lower() for b in ("unsubscribe", "mailto:")):
+            return ""
+        # Keep scheme/netloc/path; drop query/fragment for stable dedupe keys.
+        return urlunparse((p.scheme, p.netloc, p.path, "", "", ""))
+    except Exception:  # noqa: BLE001
+        return url.strip()
+
+
+def _looks_like_article(title: str, href: str) -> bool:
+    t = (title or "").strip()
+    if len(t) < 18:
+        return False
+    # Skip chrome / CTAs
+    bad = (
+        "unsubscribe", "view in browser", "voir dans le navigateur",
+        "privacy", "preferences", "manage subscription", "ouvrir dans",
+        "share on", "twitter", "linkedin", "facebook", "instagram",
+    )
+    low = t.lower()
+    if any(b in low for b in bad):
+        return False
+    if not href.startswith("http"):
+        return False
+    if any(b in href.lower() for b in _TRACKER_HOST_BITS) and "http" in href:
+        # Still allow if path looks real after clean
+        cleaned = _clean_url(href)
+        if not cleaned or cleaned.count("/") < 3:
+            return False
+    return True
+
+
+def parse_newsletter(msg: RawMessage) -> dict[str, Any]:
+    """Parse one email into metadata + article candidates.
+
+    Args:
+        msg: Raw IMAP message.
+
+    Returns:
+        dict: subject/sender/date + ``articles`` list of
+        ``{title, url, source_subject, source_sender, date}``.
+    """
+    html = msg.html or ""
+    text = msg.text or ""
+    articles: list[dict[str, str]] = []
+    seen_href: set[str] = set()
+
+    if html:
+        soup = BeautifulSoup(html, "html.parser")
+        for a in soup.find_all("a", href=True):
+            title = a.get_text(" ", strip=True)
+            href = a["href"].strip()
+            if not _looks_like_article(title, href):
+                continue
+            clean = _clean_url(href) or href
+            if clean in seen_href:
+                continue
+            seen_href.add(clean)
+            articles.append({
+                "title": re.sub(r"\s+", " ", title)[:240],
+                "url": clean,
+                "source_subject": msg.subject,
+                "source_sender": msg.sender,
+                "date": msg.date,
+            })
+    elif text:
+        # Fallback: plain URLs in text body
+        for m in re.finditer(r"https?://\S+", text):
+            href = m.group(0).rstrip(").,]")
+            title = href
+            if not _looks_like_article(title, href):
+                continue
+            clean = _clean_url(href) or href
+            if clean in seen_href:
+                continue
+            seen_href.add(clean)
+            articles.append({
+                "title": title[:240],
+                "url": clean,
+                "source_subject": msg.subject,
+                "source_sender": msg.sender,
+                "date": msg.date,
+            })
+
+    return {
+        "uid": msg.uid,
+        "subject": msg.subject,
+        "sender": msg.sender,
+        "date": msg.date,
+        "articles": articles,
+    }
+```
+
+## FILE: 00_data_sensors/newsletter_ingest/ingest/imap_client.py (167 lines)
+```python
+"""Read-only Yahoo Mail IMAP client (SSL, app password)."""
+
+from __future__ import annotations
+
+import email
+import imaplib
+import logging
+from dataclasses import dataclass
+from email.header import decode_header
+from typing import List, Optional
+
+logger = logging.getLogger(__name__)
+
+_HOST = "imap.mail.yahoo.com"
+_PORT = 993
+
+
+@dataclass
+class RawMessage:
+    """Minimal email payload for the HTML parser."""
+
+    uid: str
+    subject: str
+    sender: str
+    date: str
+    html: str
+    text: str
+
+
+def _decode_mime(value: Optional[str]) -> str:
+    if not value:
+        return ""
+    parts = []
+    for chunk, enc in decode_header(value):
+        if isinstance(chunk, bytes):
+            parts.append(chunk.decode(enc or "utf-8", errors="replace"))
+        else:
+            parts.append(str(chunk))
+    return " ".join(parts).strip()
+
+
+class YahooImapClient:
+    """Connect, fetch recent messages, always close cleanly.
+
+    Never deletes, moves, or flags messages as deleted.
+    """
+
+    def __init__(self, user: str, app_password: str) -> None:
+        self.user = user
+        self.app_password = app_password
+        self._conn: Optional[imaplib.IMAP4_SSL] = None
+
+    def connect(self) -> None:
+        """Open an SSL IMAP session."""
+        logger.info("Connecting to %s:%s as %s …", _HOST, _PORT, self.user)
+        self._conn = imaplib.IMAP4_SSL(_HOST, _PORT)
+        self._conn.login(self.user, self.app_password)
+        logger.info("IMAP login OK.")
+
+    def close(self) -> None:
+        """Logout and close; swallow errors (never crash the CLI)."""
+        if self._conn is None:
+            return
+        try:
+            self._conn.close()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            self._conn.logout()
+        except Exception:  # noqa: BLE001
+            pass
+        self._conn = None
+        logger.info("IMAP session closed.")
+
+    def fetch_recent(self, folder: str = "Finance", limit: int = 20) -> List[RawMessage]:
+        """Fetch the ``limit`` most recent messages from ``folder`` (read-only).
+
+        Args:
+            folder: IMAP mailbox / Yahoo label name.
+            limit: Max messages to return (newest first).
+
+        Returns:
+            list[RawMessage]: Parsed envelopes + body parts.
+        """
+        if self._conn is None:
+            self.connect()
+        assert self._conn is not None
+
+        # Yahoo labels often appear as folder names; try a few variants.
+        candidates = [folder, f'"{folder}"', "INBOX"]
+        selected = None
+        for name in candidates:
+            typ, _ = self._conn.select(name, readonly=True)
+            if typ == "OK":
+                selected = name
+                break
+        if selected is None:
+            raise RuntimeError(
+                f"Could not SELECT folder '{folder}' (tried {candidates}). "
+                "Create the Yahoo label/folder and feed it with filters."
+            )
+        logger.info("Selected folder %s (readonly).", selected)
+
+        typ, data = self._conn.search(None, "ALL")
+        if typ != "OK" or not data or not data[0]:
+            logger.warning("No messages in folder %s.", selected)
+            return []
+
+        ids = data[0].split()
+        ids = ids[-max(1, limit) :]  # newest are usually last
+        ids = list(reversed(ids))  # newest first in output
+        out: List[RawMessage] = []
+        for mid in ids:
+            try:
+                typ, msg_data = self._conn.fetch(mid, "(RFC822)")
+                if typ != "OK" or not msg_data or not msg_data[0]:
+                    continue
+                raw = msg_data[0][1]
+                if not isinstance(raw, (bytes, bytearray)):
+                    continue
+                msg = email.message_from_bytes(raw)
+                html, text = self._extract_bodies(msg)
+                out.append(
+                    RawMessage(
+                        uid=mid.decode() if isinstance(mid, bytes) else str(mid),
+                        subject=_decode_mime(msg.get("Subject")),
+                        sender=_decode_mime(msg.get("From")),
+                        date=_decode_mime(msg.get("Date")),
+                        html=html,
+                        text=text,
+                    )
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Skip message %s: %s", mid, exc)
+        return out
+
+    @staticmethod
+    def _extract_bodies(msg: email.message.Message) -> tuple[str, str]:
+        html, text = "", ""
+        if msg.is_multipart():
+            for part in msg.walk():
+                ctype = part.get_content_type()
+                disp = str(part.get("Content-Disposition") or "")
+                if "attachment" in disp.lower():
+                    continue
+                try:
+                    payload = part.get_payload(decode=True) or b""
+                    charset = part.get_content_charset() or "utf-8"
+                    body = payload.decode(charset, errors="replace")
+                except Exception:  # noqa: BLE001
+                    continue
+                if ctype == "text/html" and not html:
+                    html = body
+                elif ctype == "text/plain" and not text:
+                    text = body
+        else:
+            try:
+                payload = msg.get_payload(decode=True) or b""
+                charset = msg.get_content_charset() or "utf-8"
+                body = payload.decode(charset, errors="replace")
+            except Exception:  # noqa: BLE001
+                body = ""
+            if msg.get_content_type() == "text/html":
+                html = body
+            else:
+                text = body
+        return html, text
+```
+
+## FILE: 00_data_sensors/newsletter_ingest/ingest/whitelist.py (44 lines)
+```python
+"""Strict sender whitelist for newsletter IMAP ingest.
+
+Only these From addresses are parsed; receipts / security alerts are skipped.
+"""
+
+from __future__ import annotations
+
+import re
+from typing import FrozenSet
+
+# Exact email addresses allowed (case-insensitive match on extracted address).
+ALLOWED_SENDERS: FrozenSet[str] = frozenset({
+    # Phase 18 core digests
+    "dan@tldrnewsletter.com",
+    "luc@the-nbs.fr",
+    "thevccorner@substack.com",
+    "theaicorner1@substack.com",
+    "hello@brief.me",
+    "daily@timetosignoff.fr",
+    "hello@brief.eco",
+    "newsletter@thedeepview.co",
+    "laura@lbkconsulting.fr",
+    "hello@brief.science",
+    # FR / PEA-oriented additions
+    "contact@cafedelabourse.com",
+    "charlessterlings@substack.com",
+    "plancash@substack.com",
+})
+
+_EMAIL_RE = re.compile(r"[\w.+-]+@[\w.-]+\.\w+", re.IGNORECASE)
+
+
+def extract_sender_email(from_header: str) -> str:
+    """Pull the bare email from a From header (``Name <a@b.c>`` or bare)."""
+    if not from_header:
+        return ""
+    match = _EMAIL_RE.search(from_header)
+    return match.group(0).lower() if match else ""
+
+
+def is_allowed_sender(from_header: str) -> bool:
+    """Return True iff the From address is on the newsletter whitelist."""
+    email = extract_sender_email(from_header)
+    return bool(email) and email in ALLOWED_SENDERS
+```
+
+## FILE: 00_data_sensors/newsletter_ingest/ingest/writer.py (33 lines)
+```python
+"""Write timestamped JSON under the sandbox ``output/`` folder only."""
+
+from __future__ import annotations
+
+import json
+import logging
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+logger = logging.getLogger(__name__)
+
+
+def write_output(payload: dict[str, Any], out_dir: Path) -> Path:
+    """Serialize ``payload`` to ``output/ingest_YYYYMMDD_HHMMSS.json``.
+
+    Args:
+        payload: JSON-serializable ingest result.
+        out_dir: Destination directory (created if needed).
+
+    Returns:
+        Path: Written file path.
+    """
+    out_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    path = out_dir / f"ingest_{stamp}.json"
+    body = {
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        **payload,
+    }
+    path.write_text(json.dumps(body, indent=2, ensure_ascii=False), encoding="utf-8")
+    logger.info("Sandbox output written (%d bytes).", path.stat().st_size)
+    return path
 ```
 
 ## FILE: 00_data_sensors/scrapers/__init__.py (18 lines)
@@ -2352,7 +2812,7 @@ class BoursoramaScraper:
 
 ## FILE: 01_memory_core/data_models.py (161 lines)
 ```python
-"""Strict data contracts for PEA Sniper Terminal V-Prime.
+"""Strict data contracts for PEA Pollux.
 
 This module defines the Pydantic V2 models that flow between every layer of the
 system (data sensors -> quant engine -> risk portfolio -> orchestrator ->
@@ -2517,7 +2977,7 @@ class Signal(BaseModel):
 
 ## FILE: 01_memory_core/duckdb_manager.py (207 lines)
 ```python
-"""DuckDB time-series engine for PEA Sniper Terminal V-Prime.
+"""DuckDB time-series engine for PEA Pollux.
 
 DuckDB stores heavy OHLCV history and serves fast columnar reads to the quant
 engine (pandas-ta). This is a pure I/O layer: no indicator math, no trading
@@ -2766,7 +3226,7 @@ def load_api_keys(env_path: Path | str | None = None) -> Path | None:
 
 ## FILE: 01_memory_core/logging_setup.py (196 lines)
 ```python
-"""Central logging setup for PEA Sniper Terminal.
+"""Central logging setup for PEA Pollux.
 
 One place to configure human-readable, copy-friendly logs:
 
@@ -2845,7 +3305,7 @@ def setup_app_logging(
         root.addHandler(sh)
 
     # Shared "all" trail — every component fans into this too.
-    all_path = log_dir() / "pea_sniper_all.log"
+    all_path = log_dir() / "pea_pollux_all.log"
     if not any(
         isinstance(h, RotatingFileHandler) and getattr(h, "baseFilename", "") == str(all_path)
         for h in root.handlers
@@ -2966,7 +3426,7 @@ def read_pipeline_status() -> Optional[dict]:
 
 ## FILE: 01_memory_core/sqlite_portfolio.py (664 lines)
 ```python
-"""SQLite state manager for PEA Sniper Terminal V-Prime.
+"""SQLite state manager for PEA Pollux.
 
 This module owns application state persistence: the current PEA account
 snapshot, open positions, and the audit log of every signal and its lifecycle.
@@ -3746,7 +4206,7 @@ def calculate_annualized_volatility(returns: pd.Series, periods_per_year: int = 
 
 ## FILE: 02_quant_engine/smart_dca_engine.py (207 lines)
 ```python
-"""Smart DCA core engine for PEA Sniper Terminal V-Prime (Phase 10).
+"""Smart DCA core engine for PEA Pollux (Phase 10).
 
 The Core/Satellite model parks the bulk of capital in a broad MSCI World PEA ETF
 (``CW8.PA``) and accumulates it with a *Smart* Dollar-Cost-Averaging rule:
@@ -4047,7 +4507,7 @@ def run_correlated_monte_carlo(
 
 ## FILE: 02_quant_engine/technical_scorer.py (620 lines)
 ```python
-"""Quantitative signal engine for PEA Sniper Terminal V-Prime.
+"""Quantitative signal engine for PEA Pollux.
 
 Reads OHLCV history from DuckDB, computes technical indicators via the
 pandas-ta accessor, and emits raw ``Signal`` objects from an **ensemble
@@ -4880,7 +5340,7 @@ if __name__ == "__main__":
 
 ## FILE: 03_risk_portfolio/correlation_firewall.py (291 lines)
 ```python
-"""Correlation Firewall for PEA Sniper Terminal V-Prime.
+"""Correlation Firewall for PEA Pollux.
 
 Intercepts candidate signals and vetoes them when they would over-concentrate
 the portfolio, either by sector weight or by price correlation with existing
@@ -5322,7 +5782,7 @@ def compute_equity_metrics(
 
 ## FILE: 03_risk_portfolio/monthly_rebalancer.py (232 lines)
 ```python
-"""Portfolio rebalancer for PEA Sniper Terminal V-Prime (Phase 12/15/16).
+"""Portfolio rebalancer for PEA Pollux (Phase 12/15/16).
 
 Mechanical housekeeping trades:
 
@@ -5558,7 +6018,7 @@ class PortfolioRebalancer:
 
 ## FILE: 03_risk_portfolio/pea_position_sizer.py (245 lines)
 ```python
-"""PEA position sizer for PEA Sniper Terminal V-Prime.
+"""PEA position sizer for PEA Pollux.
 
 Converts an approved signal into an integer number of shares, respecting the
 PEA's no-fractional-shares rule, the per-position cap, Half-Kelly scaling by
@@ -6041,7 +6501,7 @@ class EarningsBlackoutEngine:
 
 ## FILE: 04_orchestrator_ai/macro_veto.py (125 lines)
 ```python
-"""Macro Veto Engine for PEA Sniper Terminal V-Prime.
+"""Macro Veto Engine for PEA Pollux.
 
 Blocks new offensive signals when a high-impact macro event (ECB/FED decision,
 CPI, NFP) falls within a configurable window. Running this cheap check before
@@ -6170,7 +6630,7 @@ if __name__ == "__main__":
 
 ## FILE: 04_orchestrator_ai/news_sentiment_llm.py (144 lines)
 ```python
-"""News sentiment scorer for PEA Sniper Terminal V-Prime (Phase 11).
+"""News sentiment scorer for PEA Pollux (Phase 11).
 
 Turns unstructured news headlines into a single hard number the deterministic
 engine can use. The LLM is constrained to act as a quantitative NLP model and
@@ -6399,7 +6859,7 @@ async def run_bull_bear_debate(ticker: str, context_data: str) -> dict:
 
 ## FILE: 04_orchestrator_ai/revocation_engine.py (135 lines)
 ```python
-"""Revocation Engine for PEA Sniper Terminal V-Prime.
+"""Revocation Engine for PEA Pollux.
 
 Implements the Anti-Stale logic re-run at each daily pass (09:00, 13:30, 17:10):
 a signal is REVOKED if the price drifts too far from the emission price, or
@@ -6538,7 +6998,7 @@ if __name__ == "__main__":
 
 ## FILE: 04_orchestrator_ai/signal_priority_cascade.py (339 lines)
 ```python
-"""Signal Priority Cascade for PEA Sniper Terminal V-Prime.
+"""Signal Priority Cascade for PEA Pollux.
 
 The strict conductor. Raw signals flow through an ordered, CPU-optimal cascade:
 
@@ -6881,7 +7341,7 @@ if __name__ == "__main__":
 
 ## FILE: 04_orchestrator_ai/weekly_historian.py (226 lines)
 ```python
-"""Weekly Historian for PEA Sniper Terminal V-Prime (Phase 12).
+"""Weekly Historian for PEA Pollux (Phase 12).
 
 Every Friday the system "steps back" and writes a hedge-fund-style weekly digest
 for the CIO. It aggregates the last 7 days of audit logs into hard counts
@@ -7116,7 +7576,7 @@ if __name__ == "__main__":
 
 ## FILE: 05_interfaces/discord_copilot.py (284 lines)
 ```python
-"""Discord Copilot for PEA Sniper Terminal V-Prime.
+"""Discord Copilot for PEA Pollux.
 
 Pushes interactive trade alerts to Discord and waits for the human to approve
 or reject. Execution is manual: approving records the trade in SQLite (status
@@ -7404,7 +7864,7 @@ class DiscordCopilot(discord.Client):
 
 ## FILE: 05_interfaces/llm_explainer.py (272 lines)
 ```python
-"""LLM narrative explainer for PEA Sniper Terminal V-Prime.
+"""LLM narrative explainer for PEA Pollux.
 
 Wraps OpenRouter (async, via ``aiohttp``) to turn an already-approved,
 already-sized ``Signal`` into a short, human-readable rationale for Discord.
@@ -7495,7 +7955,7 @@ async def openrouter_chat(
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
-        "X-Title": "PEA Sniper Terminal V-Prime",
+        "X-Title": "PEA Pollux",
     }
     try:
         timeout = aiohttp.ClientTimeout(total=timeout_s)
@@ -7680,7 +8140,7 @@ if __name__ == "__main__":
 
 ## FILE: 05_interfaces/terminal_dashboard.py (6157 lines)
 ```python
-"""Web Terminal (Streamlit dashboard) for PEA Sniper Terminal V-Prime.
+"""Web Terminal (Streamlit dashboard) for PEA Pollux.
 
 BLOOMBERG TERMINAL EDITION - command center on a pure-black, high-contrast UI.
 
@@ -8085,7 +8545,7 @@ def render_pending_trade_cards(pending_df: pd.DataFrame, portfolio_obj) -> None:
 # Page config & Bloomberg CSS
 # =============================================================================
 st.set_page_config(
-    page_title="Pollux PEA Terminal | V-Prime",
+    page_title="PEA Pollux | Terminal",
     layout="wide",
     page_icon="\U0001F6E1\uFE0F",
     initial_sidebar_state="collapsed",
@@ -9451,7 +9911,7 @@ def _fetch_news_from_apis(symbol: str, limit: int = 6) -> list[dict]:
             )
             req = urllib.request.Request(
                 url,
-                headers={"User-Agent": "PEA-Sniper-Terminal/1.0"},
+                headers={"User-Agent": "PEA-Pollux/1.0"},
             )
             with urllib.request.urlopen(req, timeout=8) as resp:
                 root = ET.fromstring(resp.read())
@@ -9596,7 +10056,7 @@ def build_broker_order_ticket(
 
 
 def get_decision_checklist(ticker: str, portfolio_obj, vix: float) -> dict:
-    """Evaluate key V-Prime gate checks and return an explicit checklist."""
+    """Evaluate key PEA Pollux gate checks and return an explicit checklist."""
     ind = get_indicators(ticker) or {}
     close = float(ind.get("close") or 0.0)
     rsi = ind.get("rsi")
@@ -11062,7 +11522,7 @@ def get_ticker_dossier(ticker: str) -> dict:
         out["summary"] = (
             f"{name} est un ETF eligible PEA. Il replique un indice large "
             "(ex. MSCI World pour CW8) au lieu d'un risque entreprise unique. "
-            "C'est l'ancre Core du systeme V-Prime."
+            "C'est l'ancre Core du systeme PEA Pollux."
         )
     else:
         out["summary"] = (
@@ -11123,7 +11583,7 @@ def get_etf_card(ticker: str = _CORE_TICKER) -> dict:
         "regime": get_core_regime() if ticker == _CORE_TICKER else {},
         "indicators": ind or {},
         "role": (
-            "Ancre Core V-Prime (MSCI World PEA). Cible 70–75% de l'equity "
+            "Ancre Core PEA Pollux (MSCI World PEA). Cible 70–75% de l'equity "
             "des que ton capital permet d'acheter des parts entieres."
             if ticker == _CORE_TICKER else
             "ETF eligible PEA — diversification indicielle."
@@ -11191,7 +11651,7 @@ def get_polymarket_macro(limit: int = 8) -> list[dict]:
             url,
             headers={
                 "User-Agent": (
-                    "Mozilla/5.0 (compatible; PEA-Sniper-Terminal/1.0; "
+                    "Mozilla/5.0 (compatible; PEA-Pollux/1.0; "
                     "+https://github.com/Polluxgnr/Peatrading)"
                 ),
                 "Accept": "application/json",
@@ -12118,7 +12578,7 @@ with tab_gen:
 with tab_pf:
     st.markdown(
         "<div class='info-text'>Decomposition de l'exposition sectorielle. "
-        "En capital eleve, le risque V-Prime limite a 25% / secteur et 15% / "
+        "En capital eleve, le risque PEA Pollux limite a 25% / secteur et 15% / "
         "ligne. En micro-PEA ces plafonds sont volontairement assouplis "
         "(voir suggestion dans General).</div>",
         unsafe_allow_html=True,
@@ -13795,7 +14255,7 @@ cash/positions. Les ordres restent Discord + scheduler.
     st.markdown("### 📋 Logs détaillés (copie / audit)")
     st.markdown(
         "<div class='info-text'>Fichiers rotatifs sous <code>logs/</code> — "
-        "un par composant + <code>pea_sniper_all.log</code>. Format détaillé "
+        "un par composant + <code>pea_pollux_all.log</code>. Format détaillé "
         "(fichier:ligne:fonction). Lecture seule ici ; rien n'est modifié.</div>",
         unsafe_allow_html=True,
     )
@@ -13827,7 +14287,7 @@ cash/positions. Les ordres restent Discord + scheduler.
 # =============================================================================
 st.write("---")
 st.caption(
-    "PEA Sniper Terminal V-Prime \u00b7 Zero-leverage \u00b7 Execution manuelle "
+    "PEA Pollux \u00b7 Zero-leverage \u00b7 Execution manuelle "
     "via Discord \u00b7 Donnees: yfinance / bandeau natif \u00b7 "
     "Ceci n'est PAS un conseil en investissement."
 )
@@ -14012,7 +14472,7 @@ def render_signal_card(
 ## FILE: config/api_keys.env.example (42 lines)
 ```text
 # =============================================================================
-# PEA Sniper Terminal V-Prime - Secrets template
+# PEA Pollux — Secrets template
 # -----------------------------------------------------------------------------
 # Copy this file to `config/api_keys.env` and fill in real values.
 # `config/api_keys.env` is git-ignored and must NEVER be committed.
@@ -14058,7 +14518,7 @@ YAHOO_MAIL_APP_PASSWORD=your_yahoo_app_password_here
 ## FILE: config/earnings_calendar.yaml (18 lines)
 ```yaml
 # =============================================================================
-# PEA Sniper Terminal — Earnings / dividend blackout calendar
+# PEA Pollux — Earnings / dividend blackout calendar
 # -----------------------------------------------------------------------------
 # Per-ticker corporate events. The cascade vetoes NEW satellite buys for a
 # ticker when an event falls within EARNINGS_BLACKOUT_DAYS (risk_params.yaml).
@@ -14080,7 +14540,7 @@ events: {}
 ## FILE: config/macro_calendar.yaml (17 lines)
 ```yaml
 # =============================================================================
-# PEA Sniper Terminal V-Prime - Macro Event Calendar (dummy / seed data)
+# PEA Pollux - Macro Event Calendar (dummy / seed data)
 # -----------------------------------------------------------------------------
 # High-impact macro events that trigger a hard veto on new offensive signals
 # within MACRO_VETO_DAYS_BEFORE (see risk_params.yaml).
@@ -14100,7 +14560,7 @@ events:
 
 ## FILE: config/pea_universe.yaml (1901 lines)
 ```yaml
-# PEA Sniper Terminal V-Prime - investable universe
+# PEA Pollux - investable universe
 # Synced from Boursorama Eligibilité PEA filter (tools/sync_universe_from_bourso.py).
 # Extra flags: srd=true (liquid SRD), pea_pme=true.
 
@@ -16006,7 +16466,7 @@ universe:
 ## FILE: config/risk_params.yaml (56 lines)
 ```yaml
 # =============================================================================
-# PEA Sniper Terminal V-Prime - Institutional Risk Parameters
+# PEA Pollux - Institutional Risk Parameters
 # -----------------------------------------------------------------------------
 # These limits are NON-NEGOTIABLE. They are enforced by the Correlation Firewall
 # (03_risk_portfolio), the Position Sizer, and the Macro Veto Engine.
@@ -16065,7 +16525,7 @@ REBALANCE_ATR_STOP_MULT: 2.5
 
 ## FILE: docker-compose.yml (71 lines)
 ```yaml
-# PEA Sniper Terminal V-Prime - fleet.
+# PEA Pollux - fleet.
 #   daemon    : always-on backend (scheduled analysis, weekly report, rebalance)
 #   dashboard : Streamlit command center on :8501
 # Both share the same image, the database volume, and the config directory.
@@ -16073,7 +16533,7 @@ REBALANCE_ATR_STOP_MULT: 2.5
 services:
   daemon:
     build: .
-    image: pea_sniper_terminal:latest
+    image: pea_pollux:latest
     container_name: pea_daemon
     restart: unless-stopped
     mem_limit: 1024m
@@ -16094,7 +16554,7 @@ services:
 
   dashboard:
     build: .
-    image: pea_sniper_terminal:latest
+    image: pea_pollux:latest
     container_name: pea_dashboard
     restart: unless-stopped
     depends_on:
@@ -16126,7 +16586,7 @@ services:
   # Optional: enable the interactive Discord bot (approve/revoke buttons).
   # discord:
   #   build: .
-  #   image: pea_sniper_terminal:latest
+  #   image: pea_pollux:latest
   #   container_name: pea_discord
   #   restart: unless-stopped
   #   env_file:
@@ -16140,7 +16600,7 @@ services:
 
 ## FILE: Dockerfile (30 lines)
 ```text
-# PEA Sniper Terminal V-Prime - single image, two roles (daemon + dashboard).
+# PEA Pollux - single image, two roles (daemon + dashboard).
 # Python 3.11 (x64) is required: streamlit's pyarrow has no 3.13/arm64 wheel.
 FROM python:3.11-slim
 
@@ -16172,1291 +16632,9 @@ EXPOSE 8501
 CMD ["python", "main_scheduler.py"]
 ```
 
-## FILE: experiments/newsletter_ingest/ingest/__init__.py (1 lines)
-```python
-# Package marker for newsletter ingest sandbox.
-```
-
-## FILE: experiments/newsletter_ingest/ingest/dedupe.py (51 lines)
-```python
-"""Simple near-duplicate headline collapse (no ML)."""
-
-from __future__ import annotations
-
-import logging
-import re
-from typing import List
-
-logger = logging.getLogger(__name__)
-
-
-def _norm(title: str) -> str:
-    t = (title or "").lower()
-    t = re.sub(r"[^a-z0-9àâäéèêëïîôùûüç\s]", " ", t)
-    t = re.sub(r"\s+", " ", t).strip()
-    return t
-
-
-def _token_set(title: str) -> set[str]:
-    return {w for w in _norm(title).split() if len(w) > 2}
-
-
-def _similar(a: str, b: str, threshold: float = 0.72) -> bool:
-    """Jaccard similarity on token sets — cheap and good enough for newsletters."""
-    ta, tb = _token_set(a), _token_set(b)
-    if not ta or not tb:
-        return _norm(a) == _norm(b) and bool(_norm(a))
-    inter = len(ta & tb)
-    union = len(ta | tb)
-    return (inter / union) >= threshold if union else False
-
-
-def dedupe_articles(articles: List[dict]) -> List[dict]:
-    """Drop near-identical titles republished the same day across digests.
-
-    Keeps the first occurrence (stable order). Logs how many were removed.
-    """
-    kept: List[dict] = []
-    for art in articles:
-        title = art.get("title") or ""
-        if any(_similar(title, k.get("title") or "") for k in kept):
-            continue
-        # Also collapse exact same cleaned URL
-        url = art.get("url") or ""
-        if url and any(url == (k.get("url") or "") for k in kept):
-            continue
-        kept.append(art)
-    removed = len(articles) - len(kept)
-    if removed:
-        logger.info("Removed %d near-duplicate headline(s).", removed)
-    return kept
-```
-
-## FILE: experiments/newsletter_ingest/ingest/env_loader.py (36 lines)
-```python
-"""Load sandbox ``.env`` without touching production ``config/api_keys.env``."""
-
-from __future__ import annotations
-
-import logging
-from pathlib import Path
-
-logger = logging.getLogger(__name__)
-
-
-def load_sandbox_env(path: Path) -> dict[str, str]:
-    """Parse a simple KEY=VALUE env file into a dict.
-
-    Args:
-        path: Path to the sandbox ``.env``.
-
-    Returns:
-        dict[str, str]: Uppercase keys; empty dict if file missing.
-    """
-    out: dict[str, str] = {}
-    if not path.exists():
-        logger.warning("Sandbox env file not found: %s", path)
-        return out
-    try:
-        for line in path.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, _, val = line.partition("=")
-            key = key.strip()
-            val = val.strip().strip('"').strip("'")
-            if key:
-                out[key] = val
-    except OSError as exc:
-        logger.error("Could not read %s: %s", path, exc)
-    return out
-```
-
-## FILE: experiments/newsletter_ingest/ingest/html_parser.py (116 lines)
-```python
-"""Extract article titles/links from verbose newsletter HTML."""
-
-from __future__ import annotations
-
-import logging
-import re
-from typing import Any
-from urllib.parse import urlparse, urlunparse
-
-from bs4 import BeautifulSoup
-
-from ingest.imap_client import RawMessage
-
-logger = logging.getLogger(__name__)
-
-_TRACKER_HOST_BITS = (
-    "doubleclick", "googleadservices", "facebook.com/tr", "mailchi.mp/track",
-    "list-manage.com/track", "click.", "/track/", "utm_source=",
-)
-
-
-def _clean_url(url: str) -> str:
-    """Strip common tracking query noise while keeping the path."""
-    try:
-        p = urlparse(url)
-        # Drop obvious click-wrappers with empty path
-        if any(b in url.lower() for b in ("unsubscribe", "mailto:")):
-            return ""
-        # Keep scheme/netloc/path; drop query/fragment for stable dedupe keys.
-        return urlunparse((p.scheme, p.netloc, p.path, "", "", ""))
-    except Exception:  # noqa: BLE001
-        return url.strip()
-
-
-def _looks_like_article(title: str, href: str) -> bool:
-    t = (title or "").strip()
-    if len(t) < 18:
-        return False
-    # Skip chrome / CTAs
-    bad = (
-        "unsubscribe", "view in browser", "voir dans le navigateur",
-        "privacy", "preferences", "manage subscription", "ouvrir dans",
-        "share on", "twitter", "linkedin", "facebook", "instagram",
-    )
-    low = t.lower()
-    if any(b in low for b in bad):
-        return False
-    if not href.startswith("http"):
-        return False
-    if any(b in href.lower() for b in _TRACKER_HOST_BITS) and "http" in href:
-        # Still allow if path looks real after clean
-        cleaned = _clean_url(href)
-        if not cleaned or cleaned.count("/") < 3:
-            return False
-    return True
-
-
-def parse_newsletter(msg: RawMessage) -> dict[str, Any]:
-    """Parse one email into metadata + article candidates.
-
-    Args:
-        msg: Raw IMAP message.
-
-    Returns:
-        dict: subject/sender/date + ``articles`` list of
-        ``{title, url, source_subject, source_sender, date}``.
-    """
-    html = msg.html or ""
-    text = msg.text or ""
-    articles: list[dict[str, str]] = []
-    seen_href: set[str] = set()
-
-    if html:
-        soup = BeautifulSoup(html, "html.parser")
-        for a in soup.find_all("a", href=True):
-            title = a.get_text(" ", strip=True)
-            href = a["href"].strip()
-            if not _looks_like_article(title, href):
-                continue
-            clean = _clean_url(href) or href
-            if clean in seen_href:
-                continue
-            seen_href.add(clean)
-            articles.append({
-                "title": re.sub(r"\s+", " ", title)[:240],
-                "url": clean,
-                "source_subject": msg.subject,
-                "source_sender": msg.sender,
-                "date": msg.date,
-            })
-    elif text:
-        # Fallback: plain URLs in text body
-        for m in re.finditer(r"https?://\S+", text):
-            href = m.group(0).rstrip(").,]")
-            title = href
-            if not _looks_like_article(title, href):
-                continue
-            clean = _clean_url(href) or href
-            if clean in seen_href:
-                continue
-            seen_href.add(clean)
-            articles.append({
-                "title": title[:240],
-                "url": clean,
-                "source_subject": msg.subject,
-                "source_sender": msg.sender,
-                "date": msg.date,
-            })
-
-    return {
-        "uid": msg.uid,
-        "subject": msg.subject,
-        "sender": msg.sender,
-        "date": msg.date,
-        "articles": articles,
-    }
-```
-
-## FILE: experiments/newsletter_ingest/ingest/imap_client.py (167 lines)
-```python
-"""Read-only Yahoo Mail IMAP client (SSL, app password)."""
-
-from __future__ import annotations
-
-import email
-import imaplib
-import logging
-from dataclasses import dataclass
-from email.header import decode_header
-from typing import List, Optional
-
-logger = logging.getLogger(__name__)
-
-_HOST = "imap.mail.yahoo.com"
-_PORT = 993
-
-
-@dataclass
-class RawMessage:
-    """Minimal email payload for the HTML parser."""
-
-    uid: str
-    subject: str
-    sender: str
-    date: str
-    html: str
-    text: str
-
-
-def _decode_mime(value: Optional[str]) -> str:
-    if not value:
-        return ""
-    parts = []
-    for chunk, enc in decode_header(value):
-        if isinstance(chunk, bytes):
-            parts.append(chunk.decode(enc or "utf-8", errors="replace"))
-        else:
-            parts.append(str(chunk))
-    return " ".join(parts).strip()
-
-
-class YahooImapClient:
-    """Connect, fetch recent messages, always close cleanly.
-
-    Never deletes, moves, or flags messages as deleted.
-    """
-
-    def __init__(self, user: str, app_password: str) -> None:
-        self.user = user
-        self.app_password = app_password
-        self._conn: Optional[imaplib.IMAP4_SSL] = None
-
-    def connect(self) -> None:
-        """Open an SSL IMAP session."""
-        logger.info("Connecting to %s:%s as %s …", _HOST, _PORT, self.user)
-        self._conn = imaplib.IMAP4_SSL(_HOST, _PORT)
-        self._conn.login(self.user, self.app_password)
-        logger.info("IMAP login OK.")
-
-    def close(self) -> None:
-        """Logout and close; swallow errors (never crash the CLI)."""
-        if self._conn is None:
-            return
-        try:
-            self._conn.close()
-        except Exception:  # noqa: BLE001
-            pass
-        try:
-            self._conn.logout()
-        except Exception:  # noqa: BLE001
-            pass
-        self._conn = None
-        logger.info("IMAP session closed.")
-
-    def fetch_recent(self, folder: str = "Finance", limit: int = 20) -> List[RawMessage]:
-        """Fetch the ``limit`` most recent messages from ``folder`` (read-only).
-
-        Args:
-            folder: IMAP mailbox / Yahoo label name.
-            limit: Max messages to return (newest first).
-
-        Returns:
-            list[RawMessage]: Parsed envelopes + body parts.
-        """
-        if self._conn is None:
-            self.connect()
-        assert self._conn is not None
-
-        # Yahoo labels often appear as folder names; try a few variants.
-        candidates = [folder, f'"{folder}"', "INBOX"]
-        selected = None
-        for name in candidates:
-            typ, _ = self._conn.select(name, readonly=True)
-            if typ == "OK":
-                selected = name
-                break
-        if selected is None:
-            raise RuntimeError(
-                f"Could not SELECT folder '{folder}' (tried {candidates}). "
-                "Create the Yahoo label/folder and feed it with filters."
-            )
-        logger.info("Selected folder %s (readonly).", selected)
-
-        typ, data = self._conn.search(None, "ALL")
-        if typ != "OK" or not data or not data[0]:
-            logger.warning("No messages in folder %s.", selected)
-            return []
-
-        ids = data[0].split()
-        ids = ids[-max(1, limit) :]  # newest are usually last
-        ids = list(reversed(ids))  # newest first in output
-        out: List[RawMessage] = []
-        for mid in ids:
-            try:
-                typ, msg_data = self._conn.fetch(mid, "(RFC822)")
-                if typ != "OK" or not msg_data or not msg_data[0]:
-                    continue
-                raw = msg_data[0][1]
-                if not isinstance(raw, (bytes, bytearray)):
-                    continue
-                msg = email.message_from_bytes(raw)
-                html, text = self._extract_bodies(msg)
-                out.append(
-                    RawMessage(
-                        uid=mid.decode() if isinstance(mid, bytes) else str(mid),
-                        subject=_decode_mime(msg.get("Subject")),
-                        sender=_decode_mime(msg.get("From")),
-                        date=_decode_mime(msg.get("Date")),
-                        html=html,
-                        text=text,
-                    )
-                )
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("Skip message %s: %s", mid, exc)
-        return out
-
-    @staticmethod
-    def _extract_bodies(msg: email.message.Message) -> tuple[str, str]:
-        html, text = "", ""
-        if msg.is_multipart():
-            for part in msg.walk():
-                ctype = part.get_content_type()
-                disp = str(part.get("Content-Disposition") or "")
-                if "attachment" in disp.lower():
-                    continue
-                try:
-                    payload = part.get_payload(decode=True) or b""
-                    charset = part.get_content_charset() or "utf-8"
-                    body = payload.decode(charset, errors="replace")
-                except Exception:  # noqa: BLE001
-                    continue
-                if ctype == "text/html" and not html:
-                    html = body
-                elif ctype == "text/plain" and not text:
-                    text = body
-        else:
-            try:
-                payload = msg.get_payload(decode=True) or b""
-                charset = msg.get_content_charset() or "utf-8"
-                body = payload.decode(charset, errors="replace")
-            except Exception:  # noqa: BLE001
-                body = ""
-            if msg.get_content_type() == "text/html":
-                html = body
-            else:
-                text = body
-        return html, text
-```
-
-## FILE: experiments/newsletter_ingest/ingest/whitelist.py (44 lines)
-```python
-"""Strict sender whitelist for newsletter IMAP ingest.
-
-Only these From addresses are parsed; receipts / security alerts are skipped.
-"""
-
-from __future__ import annotations
-
-import re
-from typing import FrozenSet
-
-# Exact email addresses allowed (case-insensitive match on extracted address).
-ALLOWED_SENDERS: FrozenSet[str] = frozenset({
-    # Phase 18 core digests
-    "dan@tldrnewsletter.com",
-    "luc@the-nbs.fr",
-    "thevccorner@substack.com",
-    "theaicorner1@substack.com",
-    "hello@brief.me",
-    "daily@timetosignoff.fr",
-    "hello@brief.eco",
-    "newsletter@thedeepview.co",
-    "laura@lbkconsulting.fr",
-    "hello@brief.science",
-    # FR / PEA-oriented additions
-    "contact@cafedelabourse.com",
-    "charlessterlings@substack.com",
-    "plancash@substack.com",
-})
-
-_EMAIL_RE = re.compile(r"[\w.+-]+@[\w.-]+\.\w+", re.IGNORECASE)
-
-
-def extract_sender_email(from_header: str) -> str:
-    """Pull the bare email from a From header (``Name <a@b.c>`` or bare)."""
-    if not from_header:
-        return ""
-    match = _EMAIL_RE.search(from_header)
-    return match.group(0).lower() if match else ""
-
-
-def is_allowed_sender(from_header: str) -> bool:
-    """Return True iff the From address is on the newsletter whitelist."""
-    email = extract_sender_email(from_header)
-    return bool(email) and email in ALLOWED_SENDERS
-```
-
-## FILE: experiments/newsletter_ingest/ingest/writer.py (33 lines)
-```python
-"""Write timestamped JSON under the sandbox ``output/`` folder only."""
-
-from __future__ import annotations
-
-import json
-import logging
-from datetime import datetime, timezone
-from pathlib import Path
-from typing import Any
-
-logger = logging.getLogger(__name__)
-
-
-def write_output(payload: dict[str, Any], out_dir: Path) -> Path:
-    """Serialize ``payload`` to ``output/ingest_YYYYMMDD_HHMMSS.json``.
-
-    Args:
-        payload: JSON-serializable ingest result.
-        out_dir: Destination directory (created if needed).
-
-    Returns:
-        Path: Written file path.
-    """
-    out_dir.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    path = out_dir / f"ingest_{stamp}.json"
-    body = {
-        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
-        **payload,
-    }
-    path.write_text(json.dumps(body, indent=2, ensure_ascii=False), encoding="utf-8")
-    logger.info("Sandbox output written (%d bytes).", path.stat().st_size)
-    return path
-```
-
-## FILE: experiments/newsletter_ingest/output/ingest_20260723_140121.json (618 lines)
-```json
-{
-  "generated_at_utc": "2026-07-23T14:01:21.539343+00:00",
-  "folder": "Finance",
-  "limit": 20,
-  "articles_raw": 93,
-  "articles_deduped": 87,
-  "articles": [
-    {
-      "title": "Gérer les mots de passe des applications",
-      "url": "https://login.yahoo.com/myaccount/security/app-password",
-      "source_subject": "Un mot de passe d’application a été généré pour votre compte Yahoo",
-      "source_sender": "Yahoo <no-reply@cc.yahoo.com>",
-      "date": "Thu, 23 Jul 2026 13:58:40 +0000 (UTC)"
-    },
-    {
-      "title": "Conditions Générales d'Utilisation",
-      "url": "https://legal.yahoo.com/ie/fr/yahoo/terms/otos/index.html",
-      "source_subject": "Un mot de passe d’application a été généré pour votre compte Yahoo",
-      "source_sender": "Yahoo <no-reply@cc.yahoo.com>",
-      "date": "Thu, 23 Jul 2026 13:58:40 +0000 (UTC)"
-    },
-    {
-      "title": "Politique de confidentialité",
-      "url": "https://legal.yahoo.com/ie/fr/yahoo/privacy/index.html",
-      "source_subject": "Un mot de passe d’application a été généré pour votre compte Yahoo",
-      "source_sender": "Yahoo <no-reply@cc.yahoo.com>",
-      "date": "Thu, 23 Jul 2026 13:58:40 +0000 (UTC)"
-    },
-    {
-      "title": "View membership plans →",
-      "url": "https://www.kimi.com/membership/pricing",
-      "source_subject": "You’re Now Eligible to Purchase a Kimi Membership",
-      "source_sender": "\"Kimi\" <noreply@notice.kimi.ai>",
-      "date": "Thu, 23 Jul 2026 21:42:02 +0800"
-    },
-    {
-      "title": "Chime launches in-app investing (3 minute read)",
-      "url": "https://tracking.tldrnewsletter.com/CL0/https:%2F%2Ffinovate.com%2Fchime-launches-in-app-investing%2F%3Futm_source=tldrfintech/1/0100019f8f2a5b8a-2a7a65c6-8f43-46d4-8f59-dc878d2ae46c-000000/PkIhNZroIwVxx_krvDRII0FBOS2Xq9sBc4u4PE4zJGI=452",
-      "source_subject": "Chime launches in-app investing  💰,  Intuit launches credit card  💳,  Natural raises $30M 💸",
-      "source_sender": "TLDR Fintech <dan@tldrnewsletter.com>",
-      "date": "Thu, 23 Jul 2026 13:29:05 +0000"
-    },
-    {
-      "title": "Intuit launches business credit card that syncs natively with QuickBooks (2 minute read)",
-      "url": "https://tracking.tldrnewsletter.com/CL0/https:%2F%2Flinks.tldrnewsletter.com%2FWiuSnQ/1/0100019f8f2a5b8a-2a7a65c6-8f43-46d4-8f59-dc878d2ae46c-000000/0Tz7mvPc6YV-4brMZbK62SuzpJirhHmjxVFFIsyxxYk=452",
-      "source_subject": "Chime launches in-app investing  💰,  Intuit launches credit card  💳,  Natural raises $30M 💸",
-      "source_sender": "TLDR Fintech <dan@tldrnewsletter.com>",
-      "date": "Thu, 23 Jul 2026 13:29:05 +0000"
-    },
-    {
-      "title": "Natural raises $30M to build payments infrastructure for AI agents (3 minute read)",
-      "url": "https://tracking.tldrnewsletter.com/CL0/https:%2F%2Ftechcrunch.com%2F2026%2F07%2F20%2Fnatural-raises-30m-to-reinvent-payments-for-ai-agents-and-take-on-stripe%2F%3Futm_source=tldrfintech/1/0100019f8f2a5b8a-2a7a65c6-8f43-46d4-8f59-dc878d2ae46c-000000/qXIPWsi70pCNR73spI9WSTm09TkfozTF4cleOV7fYc4=452",
-      "source_subject": "Chime launches in-app investing  💰,  Intuit launches credit card  💳,  Natural raises $30M 💸",
-      "source_sender": "TLDR Fintech <dan@tldrnewsletter.com>",
-      "date": "Thu, 23 Jul 2026 13:29:05 +0000"
-    },
-    {
-      "title": "Payments M&A spools up (6 minute read)",
-      "url": "https://tracking.tldrnewsletter.com/CL0/https:%2F%2Fwww.paymentsdive.com%2Fnews%2Fpayments-ma-spools-up%2F825653%2F%3Futm_source=tldrfintech/1/0100019f8f2a5b8a-2a7a65c6-8f43-46d4-8f59-dc878d2ae46c-000000/ewtnn93sLEB2kfe9ZAY3PLEUZf_cKYyXs0_GvFt_XY4=452",
-      "source_subject": "Chime launches in-app investing  💰,  Intuit launches credit card  💳,  Natural raises $30M 💸",
-      "source_sender": "TLDR Fintech <dan@tldrnewsletter.com>",
-      "date": "Thu, 23 Jul 2026 13:29:05 +0000"
-    },
-    {
-      "title": "Big banks' record Wall Street profits are increasingly tied to AI (3 minute read)",
-      "url": "https://tracking.tldrnewsletter.com/CL0/https:%2F%2Ffinance.yahoo.com%2Fmarkets%2Farticle%2Fbig-banks-record-wall-street-profits-are-increasingly-tied-to-ai-115540382.html%3Futm_source=tldrfintech/1/0100019f8f2a5b8a-2a7a65c6-8f43-46d4-8f59-dc878d2ae46c-000000/fTr-4l5f3cD3a_tSb_b3JqSiW6uUbd-AbNBZTBafLx8=452",
-      "source_subject": "Chime launches in-app investing  💰,  Intuit launches credit card  💳,  Natural raises $30M 💸",
-      "source_sender": "TLDR Fintech <dan@tldrnewsletter.com>",
-      "date": "Thu, 23 Jul 2026 13:29:05 +0000"
-    },
-    {
-      "title": "MassMutual: why is finance advice demand rising? (3 minute read)",
-      "url": "https://tracking.tldrnewsletter.com/CL0/https:%2F%2Ffintechmagazine.com%2Fnews%2Fmassmutual-why-is-finance-advice-demand-rising%2F%3Futm_source=tldrfintech/1/0100019f8f2a5b8a-2a7a65c6-8f43-46d4-8f59-dc878d2ae46c-000000/K6Nv-5naVE9QkPGpTWKstEGXgVg8bewOFa2u1TeLaWM=452",
-      "source_subject": "Chime launches in-app investing  💰,  Intuit launches credit card  💳,  Natural raises $30M 💸",
-      "source_sender": "TLDR Fintech <dan@tldrnewsletter.com>",
-      "date": "Thu, 23 Jul 2026 13:29:05 +0000"
-    },
-    {
-      "title": "Amazon Business adds Affirm as its first BNPL option at checkout (2 minute read)",
-      "url": "https://tracking.tldrnewsletter.com/CL0/https:%2F%2Fwww.aboutamazon.com%2Fnews%2Fsmall-business%2Famazon-business-affirm-buy-now-pay-later%3F_sp=1e577e5e-b66a-4ed0-91cc-a7da3e6e9a09%26utm_source=tldrfintech/1/0100019f8f2a5b8a-2a7a65c6-8f43-46d4-8f59-dc878d2ae46c-000000/Ub98AbGzexjZooPdOaR7wf8JrGC42Oe9uQiWZh3QMks=452",
-      "source_subject": "Chime launches in-app investing  💰,  Intuit launches credit card  💳,  Natural raises $30M 💸",
-      "source_sender": "TLDR Fintech <dan@tldrnewsletter.com>",
-      "date": "Thu, 23 Jul 2026 13:29:05 +0000"
-    },
-    {
-      "title": "Samsung launches Galaxy Card seven years after Apple Card (3 minute read)",
-      "url": "https://tracking.tldrnewsletter.com/CL0/https:%2F%2Fappleinsider.com%2Farticles%2F26%2F07%2F21%2Fseven-years-after-apple-card-samsung-leaps-into-fintech-with-its-own-credit-card%3Futm_source=tldrfintech/1/0100019f8f2a5b8a-2a7a65c6-8f43-46d4-8f59-dc878d2ae46c-000000/50Z9FuGzzYZHiVQFCxeEuLVenWtzfZQk2bU8smnJCfc=452",
-      "source_subject": "Chime launches in-app investing  💰,  Intuit launches credit card  💳,  Natural raises $30M 💸",
-      "source_sender": "TLDR Fintech <dan@tldrnewsletter.com>",
-      "date": "Thu, 23 Jul 2026 13:29:05 +0000"
-    },
-    {
-      "title": "Ramp launches AI token spend controls (4 minute read)",
-      "url": "https://tracking.tldrnewsletter.com/CL0/https:%2F%2Ffinance.yahoo.com%2Ftechnology%2Fai%2Farticles%2Framp-launches-ai-token-spend-130000381.html%3Futm_source=tldrfintech/1/0100019f8f2a5b8a-2a7a65c6-8f43-46d4-8f59-dc878d2ae46c-000000/RUi8IiCeITbplV3kPVbSeeq_VmR5kMYkN5Qp17OFAmo=452",
-      "source_subject": "Chime launches in-app investing  💰,  Intuit launches credit card  💳,  Natural raises $30M 💸",
-      "source_sender": "TLDR Fintech <dan@tldrnewsletter.com>",
-      "date": "Thu, 23 Jul 2026 13:29:05 +0000"
-    },
-    {
-      "title": "Broker Alpaca raises $435M and explores prime brokerage expansion (3 minute read)",
-      "url": "https://tracking.tldrnewsletter.com/CL0/https:%2F%2Flinks.tldrnewsletter.com%2FdlgGPe/1/0100019f8f2a5b8a-2a7a65c6-8f43-46d4-8f59-dc878d2ae46c-000000/mKwoDeIWdd_a5A7YBUDAQA0e4htgYCdXK434_W9ETFg=452",
-      "source_subject": "Chime launches in-app investing  💰,  Intuit launches credit card  💳,  Natural raises $30M 💸",
-      "source_sender": "TLDR Fintech <dan@tldrnewsletter.com>",
-      "date": "Thu, 23 Jul 2026 13:29:05 +0000"
-    },
-    {
-      "title": "Data centers on track to suck up a fifth of US power use by 2035 (2 minute read)",
-      "url": "https://tracking.tldrnewsletter.com/CL0/https:%2F%2Ffinance.yahoo.com%2Ftechnology%2Fai%2Farticles%2Fdata-centers-track-suck-fifth-110000467.html%3Futm_source=tldrfintech/1/0100019f8f2a5b8a-2a7a65c6-8f43-46d4-8f59-dc878d2ae46c-000000/QZ78sBMOW4vWhcZebwmVmejN_QUxbCmYcGWtNYPfbVM=452",
-      "source_subject": "Chime launches in-app investing  💰,  Intuit launches credit card  💳,  Natural raises $30M 💸",
-      "source_sender": "TLDR Fintech <dan@tldrnewsletter.com>",
-      "date": "Thu, 23 Jul 2026 13:29:05 +0000"
-    },
-    {
-      "title": "Ant International raises $1.2B for global expansion (2 minute read)",
-      "url": "https://tracking.tldrnewsletter.com/CL0/https:%2F%2Flinks.tldrnewsletter.com%2FjyZgy4/1/0100019f8f2a5b8a-2a7a65c6-8f43-46d4-8f59-dc878d2ae46c-000000/MEl-f9d53cjp4p2MsrkXXODEt8TSX8p-U7n0S8Eegx8=452",
-      "source_subject": "Chime launches in-app investing  💰,  Intuit launches credit card  💳,  Natural raises $30M 💸",
-      "source_sender": "TLDR Fintech <dan@tldrnewsletter.com>",
-      "date": "Thu, 23 Jul 2026 13:29:05 +0000"
-    },
-    {
-      "title": "Nubank to acquire Banco Porto Real de Investimentos, strengthen Brazil operation (2 minute read)",
-      "url": "https://tracking.tldrnewsletter.com/CL0/https:%2F%2Flinks.tldrnewsletter.com%2FoXrtIo/1/0100019f8f2a5b8a-2a7a65c6-8f43-46d4-8f59-dc878d2ae46c-000000/RX74SsDmv0T811TC12qlHuG4qu_EK1Vale1lZD-5dYI=452",
-      "source_subject": "Chime launches in-app investing  💰,  Intuit launches credit card  💳,  Natural raises $30M 💸",
-      "source_sender": "TLDR Fintech <dan@tldrnewsletter.com>",
-      "date": "Thu, 23 Jul 2026 13:29:05 +0000"
-    },
-    {
-      "title": "Juspay integrates with Recurly to enable faster go-to-market for subscription businesses (2 minute read)",
-      "url": "https://tracking.tldrnewsletter.com/CL0/https:%2F%2Flinks.tldrnewsletter.com%2FW9HWaA/1/0100019f8f2a5b8a-2a7a65c6-8f43-46d4-8f59-dc878d2ae46c-000000/ZhI5Uwh87kChjdtTjnyk9iypyKYxzNncfdFtrUVKyio=452",
-      "source_subject": "Chime launches in-app investing  💰,  Intuit launches credit card  💳,  Natural raises $30M 💸",
-      "source_sender": "TLDR Fintech <dan@tldrnewsletter.com>",
-      "date": "Thu, 23 Jul 2026 13:29:05 +0000"
-    },
-    {
-      "title": "Augustus secures $180 million Series B (2 minute read)",
-      "url": "https://tracking.tldrnewsletter.com/CL0/https:%2F%2Flinks.tldrnewsletter.com%2FymJcaE/1/0100019f8f2a5b8a-2a7a65c6-8f43-46d4-8f59-dc878d2ae46c-000000/Bq5_F1fPA7uvei-XcjJI1mh_9QOMj1vsP0IZ1BocT0o=452",
-      "source_subject": "Chime launches in-app investing  💰,  Intuit launches credit card  💳,  Natural raises $30M 💸",
-      "source_sender": "TLDR Fintech <dan@tldrnewsletter.com>",
-      "date": "Thu, 23 Jul 2026 13:29:05 +0000"
-    },
-    {
-      "title": "https://refer.tldr.tech/20e6110b/12",
-      "url": "https://tracking.tldrnewsletter.com/CL0/https:%2F%2Frefer.tldr.tech%2F20e6110b%2F12/1/0100019f8f2a5b8a-2a7a65c6-8f43-46d4-8f59-dc878d2ae46c-000000/_8JUqFg_F7CZMjBbsN4ux8SvDLPfpNaa53oYya31PAs=452",
-      "source_subject": "Chime launches in-app investing  💰,  Intuit launches credit card  💳,  Natural raises $30M 💸",
-      "source_sender": "TLDR Fintech <dan@tldrnewsletter.com>",
-      "date": "Thu, 23 Jul 2026 13:29:05 +0000"
-    },
-    {
-      "title": "Track your referrals here.",
-      "url": "https://tracking.tldrnewsletter.com/CL0/https:%2F%2Fhub.sparklp.co%2Fsub_c6f0b2ccaced%2F12/1/0100019f8f2a5b8a-2a7a65c6-8f43-46d4-8f59-dc878d2ae46c-000000/tpyBB6ipaYAScy5yD5gHEyNyrrYnFQEJe_O8TBdxGYA=452",
-      "source_subject": "Chime launches in-app investing  💰,  Intuit launches credit card  💳,  Natural raises $30M 💸",
-      "source_sender": "TLDR Fintech <dan@tldrnewsletter.com>",
-      "date": "Thu, 23 Jul 2026 13:29:05 +0000"
-    },
-    {
-      "title": "create your own role",
-      "url": "https://tracking.tldrnewsletter.com/CL0/https:%2F%2Fjobs.ashbyhq.com%2Ftldr.tech%2Fc227b917-a6a4-40ce-8950-d3e165357871/1/0100019f8f2a5b8a-2a7a65c6-8f43-46d4-8f59-dc878d2ae46c-000000/SEx9Nq5_P0AHcTeF30HlWwrQ4Khc67e1bTqzHN296Hg=452",
-      "source_subject": "Chime launches in-app investing  💰,  Intuit launches credit card  💳,  Natural raises $30M 💸",
-      "source_sender": "TLDR Fintech <dan@tldrnewsletter.com>",
-      "date": "Thu, 23 Jul 2026 13:29:05 +0000"
-    },
-    {
-      "title": "Inc.'s Best Bootstrapped businesses",
-      "url": "https://tracking.tldrnewsletter.com/CL0/https:%2F%2Fwww.linkedin.com%2Ffeed%2Fupdate%2Furn:li:activity:7401699691039830016%2F/1/0100019f8f2a5b8a-2a7a65c6-8f43-46d4-8f59-dc878d2ae46c-000000/5fXBWVQcb80b3GXfJQrArE6FKdNYaqUmrHPrpAKKs2k=452",
-      "source_subject": "Chime launches in-app investing  💰,  Intuit launches credit card  💳,  Natural raises $30M 💸",
-      "source_sender": "TLDR Fintech <dan@tldrnewsletter.com>",
-      "date": "Thu, 23 Jul 2026 13:29:05 +0000"
-    },
-    {
-      "title": "Manage your subscriptions",
-      "url": "https://tracking.tldrnewsletter.com/CL0/https:%2F%2Ftldr.tech%2Ffintech%2Fmanage%3Femail=polluxgronier%2540yahoo.com/1/0100019f8f2a5b8a-2a7a65c6-8f43-46d4-8f59-dc878d2ae46c-000000/ED1m4OeF4dyaJVKoc8QxjlRNi6-PqTroY03xTTwvXis=452",
-      "source_subject": "Chime launches in-app investing  💰,  Intuit launches credit card  💳,  Natural raises $30M 💸",
-      "source_sender": "TLDR Fintech <dan@tldrnewsletter.com>",
-      "date": "Thu, 23 Jul 2026 13:29:05 +0000"
-    },
-    {
-      "title": "review your account security",
-      "url": "https://u20216706.ct.sendgrid.net/ls/click",
-      "source_subject": "New sign-in to your OpenAI account",
-      "source_sender": "OpenAI <noreply@tm.openai.com>",
-      "date": "Thu, 23 Jul 2026 13:11:04 +0000 (UTC)"
-    },
-    {
-      "title": "un mail par jour ou mettre en pause les envois",
-      "url": "https://click.by.seloger.com/",
-      "source_subject": "1 nouvelle annonce : Cergy",
-      "source_sender": "\"SeLoger\" <annonces@alertes.seloger.com>",
-      "date": "Thu, 23 Jul 2026 07:06:25 -0600"
-    },
-    {
-      "title": "no other major industry player would agree to it.",
-      "url": "https://elink983.thedeepview.co/ss/c/u001.wZPohD0JH12EksCsbt8ZeFCsxgaiiSFhhEZXgbyLVQFB6OkklKKhVNSWEtPUpq1k094h7QwEnOqbpxZa43FfVidq-K5De4Xc9NPjjOow0A-2Bsi3Bs8TlKR5P74WfSJZohRvrjsa4iCctn7Vj29XWwZJpuB1ldOfB_eWml0pqZD0lqTM6GF71-j0phQjnN_9Exbl2dL5v3ppTnXTQxZZ82OMsLEy_BK6Za8OHde_FMPlrLw5egUJb8nqVkZmNfWa8zZS9eIYl01m40KPM9xduhUWffYtEVKOGKoeeZ-3JzWg3ZpvW6Xy7t6dJ1QhYXDiQuvMbDu_AjwUif8NlOHBPw/4sk/1QuGkupiT5it0BSRYwOpuw/h7/h001.cRnHxM7lLC_iZaOTEikzUZrV37Ij4mW3lu8dT4ng-co",
-      "source_subject": "⚙️  OpenAI's Hugging Face breach shifts safety debate",
-      "source_sender": "The Deep View <newsletter@thedeepview.co>",
-      "date": "Thu, 23 Jul 2026 12:35:26 +0000 (UTC)"
-    },
-    {
-      "title": "using model distillation",
-      "url": "https://elink983.thedeepview.co/ss/c/u001.wZPohD0JH12EksCsbt8ZeFCsxgaiiSFhhEZXgbyLVQFB6OkklKKhVNSWEtPUpq1kMfOk3piFMCfcLnFT4i6N9TQdFZg62Woh8jEOnv0LBo_emiswEYrZvq6e5hcaQ3mjcPk6IYYF_eA336njqzgUfx5AMbvCheJkg4FFAn5pIF9tbuRkU12K7yVGP0fYO_GboRZPUBO5_62jPdX3rqBKJQbh8kvrJb8j8pias3_4o9OQWLj7kdqqE190pTAe_9FjltLU0yYJ8kvnsTzegtNEW2yIAJBJTf64P9sHm0P3VFCLUuWqUejMsi7ahF35XYJKH_DOmwH59CzgB_MYpBYQHA/4sk/1QuGkupiT5it0BSRYwOpuw/h8/h001.j6a9C7k0RmmxBrwnuz_oV2G46udStl_DyWLH9GJxYXM",
-      "source_subject": "⚙️  OpenAI's Hugging Face breach shifts safety debate",
-      "source_sender": "The Deep View <newsletter@thedeepview.co>",
-      "date": "Thu, 23 Jul 2026 12:35:26 +0000 (UTC)"
-    },
-    {
-      "title": "Moonshot's Kimi K3",
-      "url": "https://elink983.thedeepview.co/ss/c/u001.7zYFXt5AA3Px2NyJbPz6hHFnNzi3nnZsNerIvu91XrE73NQAlt4R3EUGpcykReDVdE-uBN1i6d43UX1CrL7wDRPCNGb7VON5blzyiERepCKkyYWSD7py4Bi9zxsxe_yqynsq_01fJ84V-wbngQnJl3ruu6VJesoobC1_1qOhunVeewwX2nF5XwXrAljxq_imalZDKmXe6urW5aeAr6yPviMtgiNZkyzARwr8ooYvtDYq0g57FM5alKunwPjK_bz9l1pCglpja-nx1QEwo-W_JHRCVP6b8PUBoLGVv2-Lydg/4sk/1QuGkupiT5it0BSRYwOpuw/h9/h001.rnmLn9nhxUYAA0fZ1mxnatdOIcYOl5IR3Fp42sfIoF4",
-      "source_subject": "⚙️  OpenAI's Hugging Face breach shifts safety debate",
-      "source_sender": "The Deep View <newsletter@thedeepview.co>",
-      "date": "Thu, 23 Jul 2026 12:35:26 +0000 (UTC)"
-    },
-    {
-      "title": "Crusoe Serverless Fine-Tuning",
-      "url": "https://elink983.thedeepview.co/ss/c/u001.wZPohD0JH12EksCsbt8ZeDHj_3lFvhYHAVLfDQV-MgR-KnhYpBxMTlcrvfaNQGGBexryBMYnFGjzCO0JCM0D3JZBKXfB8lH1GQnphvdq2QEcFgSi2TXyRERXRdpSJhYjg_crbQwAU52wwkfJveabYYN4L1FJKWMBsHhwNHbjSJIETW-zfKJxFbsvdrzYH-o4pij31H_g6QBRBB-jc3_AHG_uGnYig9Y_FNwqBUo1vfo/4sk/1QuGkupiT5it0BSRYwOpuw/h12/h001.a4xMC6gEZ7KBRiSKcXWPS1DGkikHbX36hixskMKTveo",
-      "source_subject": "⚙️  OpenAI's Hugging Face breach shifts safety debate",
-      "source_sender": "The Deep View <newsletter@thedeepview.co>",
-      "date": "Thu, 23 Jul 2026 12:35:26 +0000 (UTC)"
-    },
-    {
-      "title": "Attio’s new workflows engine",
-      "url": "https://elink983.thedeepview.co/ss/c/u001.gKxW2KpP8aPe_QMyOQduomW7O7ckHMtmrS6NYH3mQC5keps3TYKVVvYqsU5vcITulOyJVg1tH03aR1U_XPaovLJ1L7s7mpJjAcQR6n1jEJadwCsF0mTprIMoe6LpLpXwc9WfzQSx-oWN9PrbATI2x7Bbe72EXDfma4R69WDujT_VrKnik7Q88nCzXRbO_jq7Y-BecjMNc_hPGa4XVB8h1YANEpT59xi2AF3mO6_4INk/4sk/1QuGkupiT5it0BSRYwOpuw/h17/h001.hJ-u5pUZ281HAZoYPGNKFFhGr6kNKPkPiyYBOBalHvg",
-      "source_subject": "⚙️  OpenAI's Hugging Face breach shifts safety debate",
-      "source_sender": "The Deep View <newsletter@thedeepview.co>",
-      "date": "Thu, 23 Jul 2026 12:35:26 +0000 (UTC)"
-    },
-    {
-      "title": "Try Attio for free",
-      "url": "https://elink983.thedeepview.co/ss/c/u001.gKxW2KpP8aPe_QMyOQduomW7O7ckHMtmrS6NYH3mQC5keps3TYKVVvYqsU5vcITulOyJVg1tH03aR1U_XPaovLJ1L7s7mpJjAcQR6n1jEJadwCsF0mTprIMoe6LpLpXwc9WfzQSx-oWN9PrbATI2xwUvHf31zaCP5xR13OGs_F7baQe0HxXS19ZA5MfaPOzDuQBd0CbLjsp7aL26CRGxqB2Gb1HR5m7IILsxi2XMRzE/4sk/1QuGkupiT5it0BSRYwOpuw/h18/h001.uxKvNT2Q27CEUWtgF2X_8J5KRciGRuk-yQAZJ8Bej8g",
-      "source_subject": "⚙️  OpenAI's Hugging Face breach shifts safety debate",
-      "source_sender": "The Deep View <newsletter@thedeepview.co>",
-      "date": "Thu, 23 Jul 2026 12:35:26 +0000 (UTC)"
-    },
-    {
-      "title": "A16z podcast interview",
-      "url": "https://elink983.thedeepview.co/ss/c/u001.gKxW2KpP8aPe_QMyOQduogETA3gJ6bp0zVUPyfGJ-hwCAuuy8sC4KcKu_OYS6X0Q9fWyz-9tT_U2qHvZtTukTiIazPVueAcbqJMpFUaq40AhkYs26OEKFjS0UQENJxQQwNwmEtOiAGZ8oV_krQDLG1Me1DO7ewzw0sjhw_b_BlNzH-yr09IMRK6kb_vNhRVI40u-PVv-hRvu-2Vh92MaldyqL2trRbMT1rIPvKdPVDp7jhn_9FhHH8O159vZFsi4AHGt_bR2QqJvs8aVSckg05L-OiA453p1jYCKWAqU9PDeOYJxzPEHeTlQPbHHYoKaOdK2JlRZ1VVSOddvXQmkdaZwAKaWO9GFHl6qiTIlGl4/4sk/1QuGkupiT5it0BSRYwOpuw/h21/h001.fZ-zS8LcA2ONdV3BBHuCsLEDRH1yi5hwjoYWMtWLEmw",
-      "source_subject": "⚙️  OpenAI's Hugging Face breach shifts safety debate",
-      "source_sender": "The Deep View <newsletter@thedeepview.co>",
-      "date": "Thu, 23 Jul 2026 12:35:26 +0000 (UTC)"
-    },
-    {
-      "title": "Click here to read the entire interview on The Deep View.",
-      "url": "https://elink983.thedeepview.co/ss/c/u001.wZPohD0JH12EksCsbt8ZeFCsxgaiiSFhhEZXgbyLVQFa4B8DkD_B62At4w-tcrxx7Q9HOG4N1i8HYPg_SWzAncWGjvU1hpNvo4FlsOCMtPTbkWL2txfkYLty7gJ4ocOXe1hZ8UseMVWKbP25WaZu2KOjj9C6paX4WEdKYMfgpXdtGmpUT0qXvZIEetDdD2kTGtaVhXKiDO4oTQxYJUe5Y8PaFaj-DzKPqz7An83t77bbawHcN3O6viJrvPZtgVjPTUgR5px1-lbbqXdE_7T1kdVNRkKVQFAEzlIseq6UTJou2iyZ9UIdFM4HpSjrZKQWpDU_4ZhEI8-g3Au3HH--6w/4sk/1QuGkupiT5it0BSRYwOpuw/h22/h001.cutXljWTuNimhb6A_-rorhr_ka4Y2N3rYXZDaiDkQuc",
-      "source_subject": "⚙️  OpenAI's Hugging Face breach shifts safety debate",
-      "source_sender": "The Deep View <newsletter@thedeepview.co>",
-      "date": "Thu, 23 Jul 2026 12:35:26 +0000 (UTC)"
-    },
-    {
-      "title": "Moonshot distilled Kimi K3 from Anthropic's Fable",
-      "url": "https://elink983.thedeepview.co/ss/c/u001.7zYFXt5AA3Px2NyJbPz6hHFnNzi3nnZsNerIvu91XrE73NQAlt4R3EUGpcykReDVdE-uBN1i6d43UX1CrL7wDRPCNGb7VON5blzyiERepCKkyYWSD7py4Bi9zxsxe_yqynsq_01fJ84V-wbngQnJl3ruu6VJesoobC1_1qOhunVeewwX2nF5XwXrAljxq_imalZDKmXe6urW5aeAr6yPvti-spKYPykbGqh9AXQ5GZ0g2Hx5CuMn0j2AoOmnlNj4I8_h5rCwzMsfIpnV7PayroXWzFMqmr2d8kSRGkud218/4sk/1QuGkupiT5it0BSRYwOpuw/h24/h001.69yp2jhShpOFFZWEeB_SCGySx4nP2o6Hc1h2Bc8m97U",
-      "source_subject": "⚙️  OpenAI's Hugging Face breach shifts safety debate",
-      "source_sender": "The Deep View <newsletter@thedeepview.co>",
-      "date": "Thu, 23 Jul 2026 12:35:26 +0000 (UTC)"
-    },
-    {
-      "title": "spend $30 billion on 3.2GW data center",
-      "url": "https://elink983.thedeepview.co/ss/c/u001.wZPohD0JH12EksCsbt8ZeND5z3fn2eA5HMQUmmQlReaKu1tOr8zLo4GQnPW2OaCheFK8eB3qA0e22uVil0pLYSg9mxkpMGiXEyW9yk8Jpp6F2ha26PpxWLQQfrbLlpDrtATdgqmZo1hDh2-j4w3YrdCWJ6vPE7LLLFNuTDtcUEy0fYFsLhlL8lyRbLZ9UOPkQDAz3-LevG9aAU2hzPt1jCa3bVwq0wDSpoiu2I5VNZy2burw-U-Fs5n9MUtQyThPCju4pRs6HaDW-ptXc9qwQQd3u5-3IEPeleNXbTN7pgkxY9xXchDrJbr3fStB6dWUP3idwk_AlF57fiSLoZuUP-coDl4zSgnrv5InnnAnA8E/4sk/1QuGkupiT5it0BSRYwOpuw/h25/h001.6HW3-rwsmKdgMNlV-YnDFC5lYUPDlNCG16-cwBnxjS8",
-      "source_subject": "⚙️  OpenAI's Hugging Face breach shifts safety debate",
-      "source_sender": "The Deep View <newsletter@thedeepview.co>",
-      "date": "Thu, 23 Jul 2026 12:35:26 +0000 (UTC)"
-    },
-    {
-      "title": "now has 950 million monthly active users",
-      "url": "https://elink983.thedeepview.co/ss/c/u001.wZPohD0JH12EksCsbt8ZeMD43dek_BQ0n1EigGCY7chJqASvlRZbZef7gHuDvNQLtYMMf84P7q8rnzmrzyQ8Mg2bkvh3ui9qP5YQgg7JJ9f3hBUmYhVQpn-j7qAlIWXyztgh7uk7yhabJmVjk71wQ11lNP-SzsD0_nRoV-eEX7unDGQqocR9q_tguabOSNb8a_iSghX3aMGWLsubFMRG7ND_6WC5y-fK9Essaf_cJ70ZhASYomSrUtn1cp8UUySwEhUL3krG__KZDH2BPwKs-Iuq-xQJyjWuaaSmsOzJgq0PDa7YxYOt6ADF9Y3eOkcyYFnJbHO-UBWT5x4gIKGqNw/4sk/1QuGkupiT5it0BSRYwOpuw/h26/h001.x0Sy62lPbogjWgaPNMcWZvLRWLkHMhsCQbtNiMO47jw",
-      "source_subject": "⚙️  OpenAI's Hugging Face breach shifts safety debate",
-      "source_sender": "The Deep View <newsletter@thedeepview.co>",
-      "date": "Thu, 23 Jul 2026 12:35:26 +0000 (UTC)"
-    },
-    {
-      "title": "robotics firm Atoms raises $1.7 billion",
-      "url": "https://elink983.thedeepview.co/ss/c/u001.5sXVVvymMF6ZsL5-zBaSfABNV3SXC2nR-1ffnN8nMOe-GEYlLXA8QsrCAhTGghRU-SOFz-nb0pzHZWt5AB400RlptV_MGhBWu09hmVIsW01o9uKbLriZayP5A6zj7-0pl9rDiuY-N6JZR5nF8HT3Irjw30ZSJGJ7raE0byKa0gyyzZ4L5-gE3LOcxyRC9hwze19dvei72s_u-PSYZFiQn7efFcrCYTYR-Ld0t12aswJBVG4nvCFtuLmL7jyRs4CQ4na_DUe0wuUcFaoobdxeTStys5F63v8jIakEoOKuoZ7DsmKNzot-7ZyER9cFkUFcVeqpDpkHcsV3-TjPA53WtA/4sk/1QuGkupiT5it0BSRYwOpuw/h27/h001.YSExsaA0BsQD2A7Agv9k6vcQVo8eCdzqS0Alhedv3qo",
-      "source_subject": "⚙️  OpenAI's Hugging Face breach shifts safety debate",
-      "source_sender": "The Deep View <newsletter@thedeepview.co>",
-      "date": "Thu, 23 Jul 2026 12:35:26 +0000 (UTC)"
-    },
-    {
-      "title": "invest $17 million in researchers",
-      "url": "https://elink983.thedeepview.co/ss/c/u001.WHId9TPFGnUe-Jr4g0PigwA6vjAJst-7UUbP3eG-EkF0KybGH2N-ZEazn9bYPX_-odKy1PYRpMFjRPIdLRAtVS6aPh8aNEG5jWqLBSUkBDa8pbsLAXwWHRYh7Dr9dyEWXYPSImKJ_uevhT8ttlDip7oZZPTrjN1UDyy654m4ayqn4sKfjRZIgx852A21GndAUtMAryALjBKixVzbHeGBRtGp3gDyK_6JnFF2p41iCw6larL0ICTaEsVy3rGdVr75ettJ2cg5PDsMBTurYy-yaWKiFHcn_KQmpYq3sS-mOKj8qS4pgdmVUDEw7RtHLVmB/4sk/1QuGkupiT5it0BSRYwOpuw/h28/h001.X2MfZY5P8Xckzrab5GFsBhoHmDPPHBZi5RDRknCaHd0",
-      "source_subject": "⚙️  OpenAI's Hugging Face breach shifts safety debate",
-      "source_sender": "The Deep View <newsletter@thedeepview.co>",
-      "date": "Thu, 23 Jul 2026 12:35:26 +0000 (UTC)"
-    },
-    {
-      "title": "Jensen Huang touts Moonshot's Kimi K3",
-      "url": "https://elink983.thedeepview.co/ss/c/u001.wZPohD0JH12EksCsbt8ZeF_q12zPaNrF03aEtFoZY9Uplig6oxmMNSIkB_ZrkjtxUre57qmdzdyq5U7r8n2EloBIkALiY7Ss6vzS9b6vGFi0TeFwmCaRxke5WhcaCyAhCapNYJ8vgQpSPQQX3lKVHhVq_c-yuSPx0JAdYFhfsQwowzOZJeXiLKlz8DKgePsSM1oFJw3FzIlw5OEdX97Ml_xNIUb2IR2BRo2DxqRPi-T-9U-JYRgvyvX-DxeZBOQtb-Q5wpd5mTZprbmtPAUwO9mdAI79aCVLyd3zhMCYpmXcMVv8t9MLg2tGLAZzhI-D/4sk/1QuGkupiT5it0BSRYwOpuw/h29/h001.0cHvIvwjlmt3OHWEXH6DzZ_p_3l2bWrEk3gPRZ9PVcE",
-      "source_subject": "⚙️  OpenAI's Hugging Face breach shifts safety debate",
-      "source_sender": "The Deep View <newsletter@thedeepview.co>",
-      "date": "Thu, 23 Jul 2026 12:35:26 +0000 (UTC)"
-    },
-    {
-      "title": "Anthropic Economic Index",
-      "url": "https://elink983.thedeepview.co/ss/c/u001.wZPohD0JH12EksCsbt8ZeKZ879DulReCOiaFyaf_FYwzIYfOEhQ0VfgfOIYwxbANLJieXH4v1swQGCGGlqyCi-EuK8OLEwk2-2Bcw_lYl9boLjSMVCQYmoS2y4vrV_AAFIYmQrNIoFBJPwcc0g3CyFxTdshRddTtmhDfMUfBYnE9wOqlx1J18jsJw1WCjn7B4jga4GYK5V5OqSUw3pNFSvrT_jROXZj_v85jPUmeHTBnJvRqIhgkPiFPfOhds3mDApKI92iqssDs4eNZ1VnVWmBqMLpjfkA88jUEnT5poDGfzrrlOZ3S4usvR_U_I_07/4sk/1QuGkupiT5it0BSRYwOpuw/h32/h001.pkDaQFXQr9dNjTXh20vfuntUNZdcSGR02bM0X_bl-hM",
-      "source_subject": "⚙️  OpenAI's Hugging Face breach shifts safety debate",
-      "source_sender": "The Deep View <newsletter@thedeepview.co>",
-      "date": "Thu, 23 Jul 2026 12:35:26 +0000 (UTC)"
-    },
-    {
-      "title": "Other (Tell us more!)",
-      "url": "https://elink983.thedeepview.co/ss/c/u001.gKxW2KpP8aPe_QMyOQduokBEDIe6892b9r6MySOyoYULbW3lzFJJiAm8CliuBy3f0KWNgPVOedfwRDz1WvgZ_AzV8QrfSD91IW8vGtzbiXaCcXP7PHstBIHCogBqKiaO6TOugWG7nKfTnox5lf1cazyPX4uur1SW_iwVihj6ztY9wGSo08xxVnnFY20zbMd0dEHgnWVEN_OaWG6zMQjia0wrGe42hEq_0c11rq6rNA4uB-rdop-KCwN3mtWshNLhBDHSblEYFvUHHQavXZHU2KUWPZtMJ8JoDjnFvjDi6cc7GsRVmnB0aZT9e0svQzZPwtUlFT0N9wACOZlAqnlfVSCsin_N7lb5F3PiZNXGMzOsCr8Exvljp_n1kGcYRmNhSdnHASkP7nTGx5vikFr05bZ0uZUwyH-znXred6uvsISx4Cb_mH1UuOuWTetUy0Q557xnKn8RtziyXb4zhFcQjjRsBrtXKGRdjAkiPv7-rD1cuMEs_VS7G2i7RYmf5m1GHnS3zt5iXBnBPvzM_oiCqAZFYy5uoORyisw-LaLFEE0FyhMO7WLs7DOACnMTu2SDOD2v5SopVu-JM_ieb4K4vvdRw6nZBCCTQ-XpHkPCVlnGr-eePhJ58zsG_hO5l6luzqkV-tOQSZpASUZFgXEQ9agO1Dob-38KGaZl6_Zzq_HVWIocWukFHluGwlCOAaVh4epoMEfFNX8-f_4nKReXog1EBACdiuaHi411mrqk0ji9Y1uYGd-VSFRlXDyFtZhTNlH9lCijoSuRyikj-7Pbnhn7B89vU49LSmyqcum_3znLIcqcw3ZCDxiGrql-ZHi7WXxFw_ejlifZ4i-_Zi3HciAsa1eWfF7IHI52e3FDOVV0aOpfbvA85iW0DQ9t5uWJlHkO-6dJC2KP94i1CoBcxklS9TORPRdQUmlHYoe3rxB-isMz53wfTaRWaBCTdeGFFa1Wy2k7jbRdoNQDTPZv4WnjfcMaIP2TY_xwIafmmtG7RBEi8zV79w_2EQal0J4qHvPfa_S61X5exVBcLEFPrI6oBBOhB7PaQ8VODdBYITE/4sk/1QuGkupiT5it0BSRYwOpuw/h43/h001.Zjdm1Q6uZbu_ZWgMoy2gM-Zwx0yW5fdciIHVmVnr0Fc",
-      "source_subject": "⚙️  OpenAI's Hugging Face breach shifts safety debate",
-      "source_sender": "The Deep View <newsletter@thedeepview.co>",
-      "date": "Thu, 23 Jul 2026 12:35:26 +0000 (UTC)"
-    },
-    {
-      "title": "Link to the original",
-      "url": "https://elink983.thedeepview.co/ss/c/u001._eRcgL6IV0j0vCz64F9DYsTYv7xewIT1mxEGOx1gWqXWwoBAUJqOVCzXxyALXBtHHmM7sPI-2fOxFy073i_sqP5aLwYVBsOmzZ8AWjUCoXZWkIT5qTIguYatdJni94Y24r7cXMw9uQpYvJYEeI_H-d9PrBUYW_RdHX6DXBXml9HS6eTK76lCAPrembK4nbHcaLPM6XKkY2oqq1_U8VmStEyzBUKqZSSaiZbInFpOTr6gV8CjoEakgo6QNP_nc6e7WWIwAWFteuyvADxoESfB1U4cozd-PSoA78Z6tC-h3xY8xZn7SgDJF7VNAwSs4znsfKxDrwbFusGGfoMwqczA3w/4sk/1QuGkupiT5it0BSRYwOpuw/h45/h001._puYanzEihrhhSGHw_tcPMG_stR4E6RaCnW6LvlQK_U",
-      "source_subject": "⚙️  OpenAI's Hugging Face breach shifts safety debate",
-      "source_sender": "The Deep View <newsletter@thedeepview.co>",
-      "date": "Thu, 23 Jul 2026 12:35:26 +0000 (UTC)"
-    },
-    {
-      "title": "Link to the AI image",
-      "url": "https://elink983.thedeepview.co/ss/c/u001.8tm-lavloxZbk7LH_fkTGH2M10dfrhzpV-xamfuX9OneSxbqx-SYcPyoGQ2pXs-c7PSALh8fqINsP4vFd3zxAUEhNtT8sWo1Yg-HxVURY-PtZpPfgWQYae7Y2rEKh-a5uUYHYBBy_4fhusknhk1TRkWsm4fk-fC2bRoRgJIcsRZNMGDulBun0YWY2C1WgUTWp91ognW31qSxSB4_9mQZymSnJ2G9CiJUwptxuAT71kt9xfha_DPBlBu-Au7TeaY4x8DVmEA4PdrUHMqnv2Xc4vGnkLE9l91FIsenJByaCr0/4sk/1QuGkupiT5it0BSRYwOpuw/h48/h001.WuHlW6g99wmDIuW0nSUVi0lxsa58TGXd13V8Ks92XTA",
-      "source_subject": "⚙️  OpenAI's Hugging Face breach shifts safety debate",
-      "source_sender": "The Deep View <newsletter@thedeepview.co>",
-      "date": "Thu, 23 Jul 2026 12:35:26 +0000 (UTC)"
-    },
-    {
-      "title": "GET IN TOUCH WITH US HERE",
-      "url": "https://elink983.thedeepview.co/ss/c/u001.wZPohD0JH12EksCsbt8ZeOU7-9u7BNepXcod3_vWkrsWJBK23t_W38AjyePA3RTZ6iLWgmyecnzocUvI0eq75y7BuwTYL-dpKulcqWpiT-zFC9RTVuvFKsZ756MWiUJ_ed-RDdPibrnmevYXCHSECq0mbGnp-y4xvE3SZv91ZiWbtueJScf4PZfZdiImi9tryJs6nkDeig6Hq-cw7wUhxWL5HvwLQ4vu_E1yGP-iPKKCzHnOZiRREx3uOQG_-Vai8gcwE4l477l3tN4Xqb9pCQ/4sk/1QuGkupiT5it0BSRYwOpuw/h51/h001.w3GDZkp5rwtZiAUsq4_zUtGd6jZHohGxeGIZ8Qehobc",
-      "source_subject": "⚙️  OpenAI's Hugging Face breach shifts safety debate",
-      "source_sender": "The Deep View <newsletter@thedeepview.co>",
-      "date": "Thu, 23 Jul 2026 12:35:26 +0000 (UTC)"
-    },
-    {
-      "title": "Je crée mon mot de passe",
-      "url": "https://dossierlocataire.twenty-campus.com/bienvenue",
-      "source_subject": "Activation du compte Twenty Campus",
-      "source_sender": "Twenty Campus <info@twenty-campus.sergic.com>",
-      "date": "Thu, 23 Jul 2026 12:21:33 +0000"
-    },
-    {
-      "title": "Title 9 Sports Grill",
-      "url": "https://elinkc20.the-nbs.fr/ss/c/u001.K0dpp5tj80tsLj-AhDS5DLcwmY9uO4h-iaMXc4OvtqN2JohZJFFURcrT7NlWN1NuDD_zUOH3cG_ksXFW2OPCKaVDpvJBxgnXqPFKHETcwzna_LtumJU9F5DGfdGqtpGTO1if3UReMqSXH8KigVjk12uCbaDIDxkaxQY1fO5HPYdNoqzuazOgJjUnz5vkkgUNYH1tbbDvlNEGsYp0fWRGQby6Nkhsl5707Z37zvBHVjCEokkvJuuE1IfTrB0TKYWS/4sk/A6KxLIx6TjuL8wO9LAZOFA/h2/h001.DiGKGU8Kw7NxOhrxRgImk898Yjm4PTxgf23g1vMD04k",
-      "source_subject": "🏆 Le Nouveau Streamer n°1",
-      "source_sender": "The Next Big Sh*t <luc@the-nbs.fr>",
-      "date": "Thu, 23 Jul 2026 07:01:59 +0000 (UTC)"
-    },
-    {
-      "title": "Whiskey Girl Tavern",
-      "url": "https://elinkc20.the-nbs.fr/ss/c/u001.K0dpp5tj80tsLj-AhDS5DGlgML5eOfaTDhXTpYOZ4PD-vLddqc1YYMM6DD4eSxR9dyOafWj0LjMP0bkmiNVDS0v_EgCRldChbXjbAUzJzxoSe5xcWWH8ewqWk10Dkb6TXSbkgJadNOoU_HNvsiP9lXtHSYURVbICp94Jlc0SMgz6Ua-d47jitOEw3Ut1WZquFIR7JY6GQaHNEzdu252JYRF8zs-vpeqcHm6EZlURhXI/4sk/A6KxLIx6TjuL8wO9LAZOFA/h3/h001.2YaTKhRmI471A0OSuET38_U6Z0ZGSZ_b4E18YBHHhOA",
-      "source_subject": "🏆 Le Nouveau Streamer n°1",
-      "source_sender": "The Next Big Sh*t <luc@the-nbs.fr>",
-      "date": "Thu, 23 Jul 2026 07:01:59 +0000 (UTC)"
-    },
-    {
-      "title": "Découvrez Enky et obtenez jusqu’à 300€ de crédits",
-      "url": "https://elinkc20.the-nbs.fr/ss/c/u001.PLpPUF7NN1RlxFc7TvCeGDnwUmTnBM8iPEksIMgC7rvdOiFRdCaNejyoVWtj3C7bXLPiJrosmDBarDfNxE-WUtbRHmcagdBPMr7_zQb8B1t2_1bML0cYVpaR97BEzAlv25fUH2Xgqel1L_uSCZqfATd7jCHxInNplY3aqnDf6DWWTOBIAwX0LxQO2umODYS1Nd6zJnMiU7KzExSUnUOEWTLnW6WbPPtRikYHILQoMZ8Mtn20J_fO4sHKs1ZtEKba1tHhlaT7HzxReCu__FcvJZvHQ6BwU1L8Im_j9J2gRCw/4sk/A6KxLIx6TjuL8wO9LAZOFA/h8/h001.t2nc_zcKxYkJGejLyJxSnW2wsUa7pRsJHtWG6l9FYJM",
-      "source_subject": "🏆 Le Nouveau Streamer n°1",
-      "source_sender": "The Next Big Sh*t <luc@the-nbs.fr>",
-      "date": "Thu, 23 Jul 2026 07:01:59 +0000 (UTC)"
-    },
-    {
-      "title": "entièrement dédié à l'IA appliquée au café",
-      "url": "https://elinkc20.the-nbs.fr/ss/c/u001.K0dpp5tj80tsLj-AhDS5DD8rIK9UMRzpIBpXzEIN394llIyM7hFFMJ4Oy6kknoBTFh36QseGIbWQ0ZoCng9bHbRFps2hk6OyyKwdct2YVYcgp0SIFrl-syF5BLInt15knsbmgMt1WgMTsc-1BeRNOcjpfwoEDloOKY3AvTYTHiYw_TOWS-JMSQcthaJwIk2KB-EAMLVOEppEe2mUanXPc9qB0d_DDJduzH1xHRY8L1ojpqolUJKytyzHPcKHTbwF88WxdyK0EpOhnGskP_8R94K36MfeIq8SguyvoFPc7r4/4sk/A6KxLIx6TjuL8wO9LAZOFA/h10/h001.hKM6OBqt0oWZtzG0WaxVTYjTXNoqYF6hAdesmFdT6Ck",
-      "source_subject": "🏆 Le Nouveau Streamer n°1",
-      "source_sender": "The Next Big Sh*t <luc@the-nbs.fr>",
-      "date": "Thu, 23 Jul 2026 07:01:59 +0000 (UTC)"
-    },
-    {
-      "title": "vient de lever 1,7Md$",
-      "url": "https://elinkc20.the-nbs.fr/ss/c/u001.B1fXFmnPVE1YTJKcpoBEcjg3QKoMGASuhjUnyHHNaMM4xG49TUOg2NLqEMTKCOxIgvME6thw7l_yaikoDWyrJPCyLcM5NMU-nUfXVj5i70SmDDt7cMhne56EChd3BNwHlknMW-rVcdq_CPWoZ205xV3jIsgtOXmLyrwuwTZzp_NkmOmnCICPP3W5cGyzuUNXSuuS0f_YkLbafk8U8HaOBF_sZ2cLbtMB16z-ITylk5heZABTcVCBve5MuLU2BDZoGLoXStul82HCBcD-DCPiJtoYe5jc53qfBsN8hat_Jo7pMj0vkrm9wbL-xEhSbeA3/4sk/A6KxLIx6TjuL8wO9LAZOFA/h11/h001.0K7IkXR4GePJcMLHOZF5CxJxWC_G-Q3_8JCnaH_1wXM",
-      "source_subject": "🏆 Le Nouveau Streamer n°1",
-      "source_sender": "The Next Big Sh*t <luc@the-nbs.fr>",
-      "date": "Thu, 23 Jul 2026 07:01:59 +0000 (UTC)"
-    },
-    {
-      "title": "signe avec Nayeema Raza",
-      "url": "https://elinkc20.the-nbs.fr/ss/c/u001.RXKx_vrLqSlXCZkknLyEiz5qNiAEzJfye930ae4tKh0lHwkVOUJMebtyOWPAzA7fIPR3vJ8uqRcWjJKBQLNXxCW15J0XBTb3bjg0vGTvmJbqH5FSe1Fl6WZvNZc_upUfoXC1cc654Z3D_NSz5gfYQijJcqstLyRx6bUUasd8Owv7mnuvmzgvTz1lU61I6mDeNV2E6L8l2wgUAJTw0cOUAdlJPk_FR06hfG7Olr6I4SaDqpkIHirqicQQzFTgkIIHmd6PWf7MUyJXyhTna6wJtAEmkiDsmfnqnsUf-havW-s/4sk/A6KxLIx6TjuL8wO9LAZOFA/h13/h001.eQuO0_Ru4XdXRxaUpM0eL4keqBu3P8vE5mEorGvk1YM",
-      "source_subject": "🏆 Le Nouveau Streamer n°1",
-      "source_sender": "The Next Big Sh*t <luc@the-nbs.fr>",
-      "date": "Thu, 23 Jul 2026 07:01:59 +0000 (UTC)"
-    },
-    {
-      "title": "grâce au pétrole vénézuélien",
-      "url": "https://elinkc20.the-nbs.fr/ss/c/u001.HRJG-WGaVlwgCVNuhbms0eINH5CfBTxpWpgAqhEjh5R7Z3K6VCa1QJy-bQbsYPQE5xdTh7JmMUkCkXYwShxw7hE-jQIzEWu0AuEnJRl9gDgvB1z3erRDYMHD0zmLXge1jNfuuiUf0sQJQxw-RVXQwyYEjE4W1NM3qWm8Ubt3WkwFgEo5BL2NZBJhjsusna1xLZ1syuEkI4ArMTSvFAW-7XjNJob_LZVE8BJGyi7_FzSiU8OCoQEEnZ3ycqQr4wRXNDgczpJjnPGaQQsrbYbE5us_sPr07gTzfOKhKlcS2CkxUsS87RyzK61IZeqC5TAmY-5YY3N0-dcRWsgUHaT6MG5vOfKJfwpyeogTg5iZ1rk/4sk/A6KxLIx6TjuL8wO9LAZOFA/h14/h001.9dWyTfWj_GayCOtxpM4w46o0IhIlaGcs5b7dkhf5y2w",
-      "source_subject": "🏆 Le Nouveau Streamer n°1",
-      "source_sender": "The Next Big Sh*t <luc@the-nbs.fr>",
-      "date": "Thu, 23 Jul 2026 07:01:59 +0000 (UTC)"
-    },
-    {
-      "title": "Mathieu Pigasse qui délire",
-      "url": "https://elinkc20.the-nbs.fr/ss/c/u001.Orb_IEoSNl6rNOTBDQV05cte6QUuTRjdh5VSvjHaZf3dqR8J3mGF7B7QcsVuc6BuRroQN3LYtbVk_5Le92QngVBYRSPUPpS67PZdLPpEL5hf5owqbxyZcAJokntF-U893Xv_kod58ofN51i_CpupxOJ8yx2oHizudtHHfNqIBMiVCZ1PTpFnhy47Tb53JH2VPVihAQ4FfIS17s43PsQt_sr-y974GUy-P8-C_rrpZGZGQ7LMnCE9PrB-LWbyaBAEnDVZ08sAouFLfXLcKgqTcA/4sk/A6KxLIx6TjuL8wO9LAZOFA/h18/h001.J-s8qx9cNTfkRKWDaNMxlk7c-nZiHzX3uP5fHQCghrc",
-      "source_subject": "🏆 Le Nouveau Streamer n°1",
-      "source_sender": "The Next Big Sh*t <luc@the-nbs.fr>",
-      "date": "Thu, 23 Jul 2026 07:01:59 +0000 (UTC)"
-    },
-    {
-      "title": "ascenseurs de la tour Eiffel",
-      "url": "https://elinkc20.the-nbs.fr/ss/c/u001.K0dpp5tj80tsLj-AhDS5DDhzbQWS-S0UKOfmhnxb__N_OYPVn0lYPkXDUb1VeBbnWI6unFrX2i_GrlUyfzr9x3K_Ig5JSyd4gkJrnJAkkI63-I7eoTjWG_BkhOyykrI55kWwSZo-eYbTiyP84h5W3jmTPbfeGi1mnPDVYJU4jeFyeutMXxSF9sVQbbgfRpe-SHQGmBdGANpiLccTv4-PjnCWWa9LDPp-lRlMsTwQBj3R-m0cI1IhZ5ZXcmczbUvU/4sk/A6KxLIx6TjuL8wO9LAZOFA/h19/h001.l7YlLb-rMqvLWjFcva2vM3MHInHQfBGf5PA1km1Ywm8",
-      "source_subject": "🏆 Le Nouveau Streamer n°1",
-      "source_sender": "The Next Big Sh*t <luc@the-nbs.fr>",
-      "date": "Thu, 23 Jul 2026 07:01:59 +0000 (UTC)"
-    },
-    {
-      "title": "vient de passer en NEGATIF",
-      "url": "https://elinkc20.the-nbs.fr/ss/c/u001.Orb_IEoSNl6rNOTBDQV05SdTw4Qq_41qUbKpm82yOlkayP0RRmOLDV3uxuhKZ9Ox7uIjPcw5ksAtWPnR-KLs59kPsKhzX95ufkDAUIS5omkCAl55vLceVqPYX5aOzn-C0GV2NfHYQGdJSsVz20C0rG2OxJTTIOMK9EkzXdvp-MKZJMkivSVvpL1109v3fvz9FkeRQss_j3hbp-l8QnIOz6oZMRU2FpeAakXeZEFy7oeLUu4EEN8i2Obgp-qlvzlDN_ATXw10h5WBL2OLQG0iGA/4sk/A6KxLIx6TjuL8wO9LAZOFA/h20/h001.o-JOOynxOs4RptccOCUTSlJUL-04OGdKVUXDwq6-kE0",
-      "source_subject": "🏆 Le Nouveau Streamer n°1",
-      "source_sender": "The Next Big Sh*t <luc@the-nbs.fr>",
-      "date": "Thu, 23 Jul 2026 07:01:59 +0000 (UTC)"
-    },
-    {
-      "title": "noter votre visage",
-      "url": "https://elinkc20.the-nbs.fr/ss/c/u001.Orb_IEoSNl6rNOTBDQV05ZSnag6tAF7MNohl1OLVVPJoI8FM6m1pcmqzAhEAEtCgHfH2p6RX_xfn8DjeOZCF1UQQ0JTVWLQzZLnRqafBd69a2RDcle0HFgUAXL_tUErPraPFziRnHi-S0XzvZxPvgP0-66Ez4ipGU0_lQYrhUUKJLYMMcffZeEpBDSu23oL4_CUlmO-ppWSoZZaaiFsenByZ53Br4ID5CU98qkZLg-IugchqQMSwbV0o12DOVjon9Zvbuyw5d0PJQfF8tSIt7Q/4sk/A6KxLIx6TjuL8wO9LAZOFA/h21/h001.F5_SPFEbs5fCKkmqC8zAlvA2UE0sjNMjEb8cxwK04Do",
-      "source_subject": "🏆 Le Nouveau Streamer n°1",
-      "source_sender": "The Next Big Sh*t <luc@the-nbs.fr>",
-      "date": "Thu, 23 Jul 2026 07:01:59 +0000 (UTC)"
-    },
-    {
-      "title": "Rejoignez notre waitlist de partenaires en cliquant ici",
-      "url": "https://elinkc20.the-nbs.fr/ss/c/u001.B1fXFmnPVE1YTJKcpoBEcsCn1j8cRxVcFdWdB-qJw1aTPubfeAXtFVLtPh-5ogLW2HDrLM_oA0q22w3SAQuVpW09Qohe816tRZLYmOTgdLI-93uiRB24z4WU0T_m7ILb0xdqsYJ4GxYBUeJHxvM9HZomdVF7pMj_nadUgxtcbkXG_jytpaDpwIeWx6gZbsXj8MBxdK2veOTQYsEeRbXX_iirOojKGa4Mjb35HJca0JM/4sk/A6KxLIx6TjuL8wO9LAZOFA/h25/h001.eXWov5Z2MZLLnA9Xa75s7c4hxRUXHtGCWJV8h-sTNy8",
-      "source_subject": "🏆 Le Nouveau Streamer n°1",
-      "source_sender": "The Next Big Sh*t <luc@the-nbs.fr>",
-      "date": "Thu, 23 Jul 2026 07:01:59 +0000 (UTC)"
-    },
-    {
-      "title": "The Forward Deployed Engineer Playbookhe Forward Deployed Engineer Playbook",
-      "url": "https://substack.com/app-link/post",
-      "source_subject": "The Forward Deployed Engineer Playbookhe Forward Deployed Engineer Playbook",
-      "source_sender": "The VC Corner <thevccorner@substack.com>",
-      "date": "Wed, 22 Jul 2026 17:45:08 +0000"
-    },
-    {
-      "title": "Get 50% off forever",
-      "url": "https://substack.com/redirect/88af097d-bd06-444e-841d-bf46125a7f3b",
-      "source_subject": "The Forward Deployed Engineer Playbookhe Forward Deployed Engineer Playbook",
-      "source_sender": "The VC Corner <thevccorner@substack.com>",
-      "date": "Wed, 22 Jul 2026 17:45:08 +0000"
-    },
-    {
-      "title": "Lire nos explications d’hier sur cette loi.",
-      "url": "https://url3003.brief.me/ss/c/u001.hf-M34aGHDlozTgUz86LqjCdueelSkvsG-kPapjd8iuNfqSR7Cy8JptULlhrNEUWVp7oQLLEj3J1lesNLW1ASzfU8tqpq4o9hiO90szOU8UXk7QePPeXQv1JwyU9xABOuN0T49XO6ZSVlYEbmSIb7-QX4IXeKfj-Sr9YwsmStIVbiXIja7pt3F-5jlDfq3Z15VlO9KOm0oztqcf78IHyctfl_r7oANpMW9Ggq5q-kkEcnpVZgogVmcdIf0YxPNC6SpAA6Y-MEWVuZCI1L9fsAQ/4sj/_bLrcnmRR7W44HO90Yk_LQ/h0/h001.ksVoME96jG--S6CVLwCEdFXThPfPBctMfRFPHP5qprc",
-      "source_subject": "Interdiction des  réseaux  sociaux au moins de 15 ans | Accord entre Microsoft et Mistral AI",
-      "source_sender": "\"Brief.me\" <hello@brief.me>",
-      "date": "Wed, 22 Jul 2026 16:34:38 +0000 (UTC)"
-    },
-    {
-      "title": "Lire notre article sur l’usage du protoxyde d’azote.",
-      "url": "https://url3003.brief.me/ss/c/u001.hf-M34aGHDlozTgUz86LqjCdueelSkvsG-kPapjd8is5S6C_2bBtfNkHRypKlLrQDJ5j6U47MOeCmBkpgxJGNl21FeMQD9073-NVH4JA71cqwQ8QG8_YbzSQZOqq9hfCTn84LolvUhWBJuJeXQYsd7yK-2SaWaTQbgtjF_aI6Qddx4BeOzWnzAqqUX2w89masvbwJgZecE8OInHDeYfiadvpcTroR5Y8DOn9lSaCSb7uiTYB_99wvuoDp3FTbmPA/4sj/_bLrcnmRR7W44HO90Yk_LQ/h1/h001.xUpMaJNjdgSmynO3_L3qpLbAXVEc7OlzYbpdoDPlChc",
-      "source_subject": "Interdiction des  réseaux  sociaux au moins de 15 ans | Accord entre Microsoft et Mistral AI",
-      "source_sender": "\"Brief.me\" <hello@brief.me>",
-      "date": "Wed, 22 Jul 2026 16:34:38 +0000 (UTC)"
-    },
-    {
-      "title": "Lire notre article relatant ces divergences.",
-      "url": "https://url3003.brief.me/ss/c/u001.hf-M34aGHDlozTgUz86LqjCdueelSkvsG-kPapjd8iuG-1sQI5nVrfGQs3Y43cAThkesb6xQzRhcwi3jsWLMD5ksiDJdQSUk7xtpMyF7eppUDm5rwRstfnpV1H622pyURoHtaXivCKjbFXgg8BvBh4Gg3rLtpl9ceVlQokSM4sfmwEC3XQIX2rhnRM25f5jfzbxOHUI8rAXUUdh6Sq8jTfLmxCzZ3PthGe5-5CZyfGM/4sj/_bLrcnmRR7W44HO90Yk_LQ/h2/h001.I9cbgdvO_1NOQKfr9VbAEGva37tIRSdUt0lRibrecWM",
-      "source_subject": "Interdiction des  réseaux  sociaux au moins de 15 ans | Accord entre Microsoft et Mistral AI",
-      "source_sender": "\"Brief.me\" <hello@brief.me>",
-      "date": "Wed, 22 Jul 2026 16:34:38 +0000 (UTC)"
-    },
-    {
-      "title": "commission mixte paritaire",
-      "url": "https://url3003.brief.me/ss/c/u001.hf-M34aGHDlozTgUz86LqviVXMgTgR6S7z0M_KESWZlzmrbOTJIcZRuNfa_AZ5NruiShl2-e_EOkkkr8xHO1X7H8DthNqjT1AkEc2KjT2-OcUAacHork3bx-GSBHOr0uS6f6acqIhzkw-o1LcdkbCmatpQaq0UGS2ODmJ2iMa58rHqpe3x0e3pFghfatLyj41IsIPms-vyN3RerLBomj-SX_4FUzGb9D3LVUP0-esLNc6zD0reaU8YsOtHY3g27McWBWYlHbvw8RwBNwcRtV-diL9MO6jCqO20zmNviPhC7NUnb4t7jVRx0sYdoiYau7dvsKdJbKRwQtZciDqwfFmvDuTdt24Aq6FAEANERRxgx7hDKGN7Z9BMYrFqblwrmbK9bfEVttjWwXKic4lrq1EA/4sj/_bLrcnmRR7W44HO90Yk_LQ/h3/h001.Rg_m1fGrWqMBeSQR3VXIaGMZUSQWOAhOhZhVPBYrrZE",
-      "source_subject": "Interdiction des  réseaux  sociaux au moins de 15 ans | Accord entre Microsoft et Mistral AI",
-      "source_sender": "\"Brief.me\" <hello@brief.me>",
-      "date": "Wed, 22 Jul 2026 16:34:38 +0000 (UTC)"
-    },
-    {
-      "title": "Lire un dossier de Brief‌.‌science sur l’impact des réseaux sociaux sur la santé mentale.",
-      "url": "https://url3003.brief.me/ss/c/u001.hf-M34aGHDlozTgUz86Lqs8LFUXiu6Gx3qKY_fALiWVhbMJFnywPPtmaKICBdV-irKeuLC2HX9KtGH23FDe8dvT6cmxzxM_D2n4bmnQYl7N9N1AlOGTiSUHdspa8JSe6oIsqw9PQDOrYS6dmP7phNSD06Y1evR3x-P6mIAzJ0ZK6FOt9uuZXhxkVCK0X6ATDUmC3e-9EFrnd0aBqkUvXiF33Q1sjfs9p2DipABvlZNI/4sj/_bLrcnmRR7W44HO90Yk_LQ/h4/h001.IqZRH7H8l2TrSrjnQBJKpjr8s4ryioHsM6UpYdYqIvw",
-      "source_subject": "Interdiction des  réseaux  sociaux au moins de 15 ans | Accord entre Microsoft et Mistral AI",
-      "source_sender": "\"Brief.me\" <hello@brief.me>",
-      "date": "Wed, 22 Jul 2026 16:34:38 +0000 (UTC)"
-    },
-    {
-      "title": "intelligence artificielle",
-      "url": "https://url3003.brief.me/ss/c/u001.hf-M34aGHDlozTgUz86LqviVXMgTgR6S7z0M_KESWZlzmrbOTJIcZRuNfa_AZ5NruiShl2-e_EOkkkr8xHO1X7H8DthNqjT1AkEc2KjT2-OcUAacHork3bx-GSBHOr0uS6f6acqIhzkw-o1LcdkbCmatpQaq0UGS2ODmJ2iMa58rHqpe3x0e3pFghfatLyj41IsIPms-vyN3RerLBomj-SX_4FUzGb9D3LVUP0-esLNc6zD0reaU8YsOtHY3g27McWBWYlHbvw8RwBNwcRtV-diL9MO6jCqO20zmNviPhC4SVQlPzyTuWWk6kNAVWal7ip9Hg3NBuHOoIVKXdjqTfCbKvQNe8G19UX0ZLVs3vW1nQb458ABR7rIissmEB5h0EKXXXXMBHgkrzmj1Q8ofqQ/4sj/_bLrcnmRR7W44HO90Yk_LQ/h5/h001.guJaTBqSKJhnjZAM-G2uF2w1EfVEH5tG-AIrDRV177M",
-      "source_subject": "Interdiction des  réseaux  sociaux au moins de 15 ans | Accord entre Microsoft et Mistral AI",
-      "source_sender": "\"Brief.me\" <hello@brief.me>",
-      "date": "Wed, 22 Jul 2026 16:34:38 +0000 (UTC)"
-    },
-    {
-      "title": "Toutes nos éditions",
-      "url": "https://app.brief.me/",
-      "source_subject": "Interdiction des  réseaux  sociaux au moins de 15 ans | Accord entre Microsoft et Mistral AI",
-      "source_sender": "\"Brief.me\" <hello@brief.me>",
-      "date": "Wed, 22 Jul 2026 16:34:38 +0000 (UTC)"
-    },
-    {
-      "title": "À propos de Brief.‌me",
-      "url": "https://www.brief.me/en-bref/",
-      "source_subject": "Interdiction des  réseaux  sociaux au moins de 15 ans | Accord entre Microsoft et Mistral AI",
-      "source_sender": "\"Brief.me\" <hello@brief.me>",
-      "date": "Wed, 22 Jul 2026 16:34:38 +0000 (UTC)"
-    },
-    {
-      "title": "Préférences de réception",
-      "url": "https://url3003.brief.me/ss/c/u001.hf-M34aGHDlozTgUz86Lqjf8ICxFDKsHam3v8IbO2790jgmTch4onlliOBa9fV1HlJBKHwpDDmPhwFOOOqIe2_mSJ3RK2-mm31fIFdie_4HbMPhFVL3BxGlT6cXY60ZqwdDrJAwAJJ6rKOKPtE2Ti6EiebfqgVXapZV-6qp4tGOYEOP1A6Id4agEnnFEePWG/4sj/_bLrcnmRR7W44HO90Yk_LQ/h8/h001.-YnwuE9JVecCzGVTbZIEs2uOLwpIoFMjAm8rr9vFFkE",
-      "source_subject": "Interdiction des  réseaux  sociaux au moins de 15 ans | Accord entre Microsoft et Mistral AI",
-      "source_sender": "\"Brief.me\" <hello@brief.me>",
-      "date": "Wed, 22 Jul 2026 16:34:38 +0000 (UTC)"
-    },
-    {
-      "title": "Terms & Conditions",
-      "url": "https://static.toogoodtogo.com/general-terms-conditions/fr-fr/index.html",
-      "source_subject": "Your invoice from Too Good To Go",
-      "source_sender": "Too Good To Go <no-reply@toogoodtogo.com>",
-      "date": "Wed, 22 Jul 2026 16:25:57 +0000"
-    },
-    {
-      "title": "\"poursuivre sa mission\"",
-      "url": "https://r.timetosignoff.fr/lnk/AcsAADluaRQAAc3lvPgAALdx0y4AAAAAtZ4AAC8UAAk9yQBqYO30RRNt_2bQQq2h0lKG7yJLBwAIwzU/3/qzL1BpitpbHkhw177ENqeg/aHR0cHM6Ly93d3cuYmZtdHYuY29tL3BvbGl0aXF1ZS9nb3V2ZXJuZW1lbnQvbW9uaXF1ZS1iYXJidXQtYWNjZXB0ZS1maW5hbGVtZW50LWRlLXBvdXJzdWl2cmUtc2EtbWlzc2lvbi1hcHJlcy1hdm9pci1hbm5vbmNlLXNhLWRlbWlzc2lvbl9BTi0yMDI2MDcyMjAzNTUuaHRtbA",
-      "source_subject": "Tout va bien",
-      "source_sender": "Time To Sign Off <daily@timetosignoff.fr>",
-      "date": "Wed, 22 Jul 2026 16:21:08 +0000"
-    },
-    {
-      "title": "\"recul environnemental de trop\"",
-      "url": "https://r.timetosignoff.fr/lnk/AcsAADluaRQAAc3lvPgAALdx0y4AAAAAtZ4AAC8UAAk9yQBqYO30RRNt_2bQQq2h0lKG7yJLBwAIwzU/5/eZnL1go0o2rEpXHadavxmg/aHR0cHM6Ly93d3cubGVtb25kZS5mci9wb2xpdGlxdWUvYXJ0aWNsZS8yMDI2LzA3LzIyL2FwcmVzLWF2b2lyLXByZXNlbnRlLXNhLWRlbWlzc2lvbi1sYS1taW5pc3RyZS1tb25pcXVlLWJhcmJ1dC1hLWFjY2VwdGUtZGUtcG91cnN1aXZyZS1zYS1taXNzaW9uLWEtbGEtZGVtYW5kZS1kLWVtbWFudWVsLW1hY3Jvbl82NzI5OTk0XzgyMzQ0OS5odG1sP3Nyc2x0aWQ9QWZtQk9vcHJzOXBycWdNQi1LQ0l2UHVIUld0R1dtR3F3cTFJT09kVXdYRnpvNTRYTmtqcmhZZ1c",
-      "source_subject": "Tout va bien",
-      "source_sender": "Time To Sign Off <daily@timetosignoff.fr>",
-      "date": "Wed, 22 Jul 2026 16:21:08 +0000"
-    },
-    {
-      "title": "27% dans le budget 2026",
-      "url": "https://r.timetosignoff.fr/lnk/AcsAADluaRQAAc3lvPgAALdx0y4AAAAAtZ4AAC8UAAk9yQBqYO30RRNt_2bQQq2h0lKG7yJLBwAIwzU/7/rGK9Wn_cA7l6j5NxuHCtNQ/aHR0cHM6Ly94LmNvbS9mcmFuY29pc3ZpL3N0YXR1cy8yMDc5OTEwMjU5MzM0Nzc4OTUzP3M9MjA",
-      "source_subject": "Tout va bien",
-      "source_sender": "Time To Sign Off <daily@timetosignoff.fr>",
-      "date": "Wed, 22 Jul 2026 16:21:08 +0000"
-    },
-    {
-      "title": "1 salarié français sur 2 considère l’IA comme un danger",
-      "url": "https://r.timetosignoff.fr/lnk/AcsAADluaRQAAc3lvPgAALdx0y4AAAAAtZ4AAC8UAAk9yQBqYO30RRNt_2bQQq2h0lKG7yJLBwAIwzU/8/nGfRSC0dhw0o0lX6sOo4kQ/aHR0cHM6Ly93d3cubGVzZWNob3MuZnIvaW5kdXN0cmllLXNlcnZpY2VzL3NlcnZpY2VzLWNvbnNlaWxzL2ludGVsbGlnZW5jZS1hcnRpZmljaWVsbGUtcG91cnF1b2ktbGVzLWVudHJlcHJpc2VzLWZyYW5jYWlzZXMtcGVpbmVudC1hLWZyYW5jaGlyLWxlLWNhcC0yMjQzNTU3P1Jlc2VhdXgrc29jaWF1eCs9Q01fTmV3c19Ud2l0dGVyJnV0bV9jYW1wYWlnbj1DTV9OZXdzX1R3aXR0ZXImdXRtX21lZGl1bT1SZXNlYXV4K3NvY2lhdXgr",
-      "source_subject": "Tout va bien",
-      "source_sender": "Time To Sign Off <daily@timetosignoff.fr>",
-      "date": "Wed, 22 Jul 2026 16:21:08 +0000"
-    },
-    {
-      "title": "\"cyberincident sans précédent\"",
-      "url": "https://r.timetosignoff.fr/lnk/AcsAADluaRQAAc3lvPgAALdx0y4AAAAAtZ4AAC8UAAk9yQBqYO30RRNt_2bQQq2h0lKG7yJLBwAIwzU/11/C2ah1ozDWdNqvUEpuhCOfg/aHR0cHM6Ly93d3cuYmZtdHYuY29tL3RlY2gvaW50ZWxsaWdlbmNlLWFydGlmaWNpZWxsZS91bi1jeWJlcmluY2lkZW50LXNhbnMtcHJlY2VkZW50LW9wZW4tYWktcmV2ZWxlLXF1ZS1kZXV4LWRlLWNlcy1tb2RlbGVzLWQtaWEtb250LXBpcmF0ZS11bmUtcGxhdGVmb3JtZS1wb3VyLXRyaWNoZXItbG9ycy1kLXVuLXRlc3QtZGUtc2VjdXJpdGUtYWxvcnMtcXUtaWxzLW4tYXZhaWVudC1xdS11bi1hY2Nlcy1saW1pdGUtYS1pbnRlcm5ldF9BRC0yMDI2MDcyMjAzMTUuaHRtbA",
-      "source_subject": "Tout va bien",
-      "source_sender": "Time To Sign Off <daily@timetosignoff.fr>",
-      "date": "Wed, 22 Jul 2026 16:21:08 +0000"
-    },
-    {
-      "title": "En lire plus dans Le Figaro →",
-      "url": "https://r.timetosignoff.fr/lnk/AcsAADluaRQAAc3lvPgAALdx0y4AAAAAtZ4AAC8UAAk9yQBqYO30RRNt_2bQQq2h0lKG7yJLBwAIwzU/12/aew2sdKze4hcsvZsdBiwGw/aHR0cHM6Ly93d3cubGVmaWdhcm8uZnIvc2VjdGV1ci9oaWdoLXRlY2gvY2hhdGdwdC1lc3QtaWwtaG9ycy1kZS1jb250cm9sZS1jb21tZW50LWxhLWNlbGVicmUtaWEtYS1lY2hhcHBlLWEtb3Blbi1haS1ldC1pbmZpbHRyZS1odWdnaW5nLWZhY2UtbGEtbGljb3JuZS1mb25kZWUtZW4tZnJhbmNlLTIwMjYwNzIy",
-      "source_subject": "Tout va bien",
-      "source_sender": "Time To Sign Off <daily@timetosignoff.fr>",
-      "date": "Wed, 22 Jul 2026 16:21:08 +0000"
-    },
-    {
-      "title": "une étude publiée par le",
-      "url": "https://r.timetosignoff.fr/lnk/AcsAADluaRQAAc3lvPgAALdx0y4AAAAAtZ4AAC8UAAk9yQBqYO30RRNt_2bQQq2h0lKG7yJLBwAIwzU/13/gLf9JrbC1gALpFFvjATKiA/aHR0cHM6Ly90dHNvLnBhcmlzLzIwMjQtMTItMTgvcGFydGV6LWF1LWJvcmQtZGUtbGVhdQ",
-      "source_subject": "Tout va bien",
-      "source_sender": "Time To Sign Off <daily@timetosignoff.fr>",
-      "date": "Wed, 22 Jul 2026 16:21:08 +0000"
-    },
-    {
-      "title": "Journal of Environmental Psychology",
-      "url": "https://r.timetosignoff.fr/lnk/AcsAADluaRQAAc3lvPgAALdx0y4AAAAAtZ4AAC8UAAk9yQBqYO30RRNt_2bQQq2h0lKG7yJLBwAIwzU/14/SU8ow5Tgk_sk1BvYU_nuKA/aHR0cHM6Ly90dHNvLnBhcmlzLzIwMjQtMTItMTgvcGFydGV6LWF1LWJvcmQtZGUtbGVhdQ",
-      "source_subject": "Tout va bien",
-      "source_sender": "Time To Sign Off <daily@timetosignoff.fr>",
-      "date": "Wed, 22 Jul 2026 16:21:08 +0000"
-    },
-    {
-      "title": "une série récente de neuf études",
-      "url": "https://r.timetosignoff.fr/lnk/AcsAADluaRQAAc3lvPgAALdx0y4AAAAAtZ4AAC8UAAk9yQBqYO30RRNt_2bQQq2h0lKG7yJLBwAIwzU/15/mMy4jR0hR4byWmABIhQ65w/aHR0cHM6Ly90dHNvLnBhcmlzLzIwMjQtMTAtMDkvbGVubnVpLXBlcmUtZGUtdG91cy1sZXMtdmljZXM",
-      "source_subject": "Tout va bien",
-      "source_sender": "Time To Sign Off <daily@timetosignoff.fr>",
-      "date": "Wed, 22 Jul 2026 16:21:08 +0000"
-    },
-    {
-      "title": "vous ne retiendrez que deux moments de vos vacances",
-      "url": "https://r.timetosignoff.fr/lnk/AcsAADluaRQAAc3lvPgAALdx0y4AAAAAtZ4AAC8UAAk9yQBqYO30RRNt_2bQQq2h0lKG7yJLBwAIwzU/16/Zv-kgG4DslsJBWTL58PK_g/aHR0cHM6Ly90dHNvLnBhcmlzLzIwMjQtMDgtMjgvc291dmVuaXJzLWRlLXZhY2FuY2Vz",
-      "source_subject": "Tout va bien",
-      "source_sender": "Time To Sign Off <daily@timetosignoff.fr>",
-      "date": "Wed, 22 Jul 2026 16:21:08 +0000"
-    },
-    {
-      "title": "\"Faut-il encore décider ? La décision humaine à l'ère de l'Intelligence Artificielle\"",
-      "url": "https://r.timetosignoff.fr/lnk/AcsAADluaRQAAc3lvPgAALdx0y4AAAAAtZ4AAC8UAAk9yQBqYO30RRNt_2bQQq2h0lKG7yJLBwAIwzU/18/X_2VK0TUppSzkam9vcWfbw/aHR0cHM6Ly93d3cubGlicmFpcmllc2luZGVwZW5kYW50ZXMuY29tL3Byb2R1Y3QvOTc4MjA4MDE0NjY4Ny8",
-      "source_subject": "Tout va bien",
-      "source_sender": "Time To Sign Off <daily@timetosignoff.fr>",
-      "date": "Wed, 22 Jul 2026 16:21:08 +0000"
-    },
-    {
-      "title": "le deuxième poste d’indemnisation des assureurs en France",
-      "url": "https://r.timetosignoff.fr/lnk/AcsAADluaRQAAc3lvPgAALdx0y4AAAAAtZ4AAC8UAAk9yQBqYO30RRNt_2bQQq2h0lKG7yJLBwAIwzU/20/vdmvObRXMRS5UVHXqJQGeg/aHR0cHM6Ly9ibG9nLWFzc3VyYWJpbGl0ZS1hbGxpYW56LmZyL2Jsb2cvbGUtcmV0cmFpdC1nb25mbGVtZW50LWRlcy1hcmdpbGVz",
-      "source_subject": "Tout va bien",
-      "source_sender": "Time To Sign Off <daily@timetosignoff.fr>",
-      "date": "Wed, 22 Jul 2026 16:21:08 +0000"
-    },
-    {
-      "title": "La réponse sur le blog Comprendre l’Assurabilité.",
-      "url": "https://r.timetosignoff.fr/lnk/AcsAADluaRQAAc3lvPgAALdx0y4AAAAAtZ4AAC8UAAk9yQBqYO30RRNt_2bQQq2h0lKG7yJLBwAIwzU/21/jDtSpUSTOZZkIl3Oo5CeJA/aHR0cHM6Ly9ibG9nLWFzc3VyYWJpbGl0ZS1hbGxpYW56LmZyL2Jsb2cvbGUtcmV0cmFpdC1nb25mbGVtZW50LWRlcy1hcmdpbGVz",
-      "source_subject": "Tout va bien",
-      "source_sender": "Time To Sign Off <daily@timetosignoff.fr>",
-      "date": "Wed, 22 Jul 2026 16:21:08 +0000"
-    },
-    {
-      "title": "Voir la vidéo explicative →",
-      "url": "https://r.timetosignoff.fr/lnk/AcsAADluaRQAAc3lvPgAALdx0y4AAAAAtZ4AAC8UAAk9yQBqYO30RRNt_2bQQq2h0lKG7yJLBwAIwzU/22/NAywMXnEKOUknWERMN0lww/aHR0cHM6Ly9ibG9nLWFzc3VyYWJpbGl0ZS1hbGxpYW56LmZyL2Jsb2cvbGUtcmV0cmFpdC1nb25mbGVtZW50LWRlcy1hcmdpbGVz",
-      "source_subject": "Tout va bien",
-      "source_sender": "Time To Sign Off <daily@timetosignoff.fr>",
-      "date": "Wed, 22 Jul 2026 16:21:08 +0000"
-    },
-    {
-      "title": "Conditions d'utilisation",
-      "url": "https://r.timetosignoff.fr/lnk/AcsAADluaRQAAc3lvPgAALdx0y4AAAAAtZ4AAC8UAAk9yQBqYO30RRNt_2bQQq2h0lKG7yJLBwAIwzU/29/vPHktsJAOWzy-b3lNxpotw/aHR0cHM6Ly90dHNvLnBhcmlzL2NndQ",
-      "source_subject": "Tout va bien",
-      "source_sender": "Time To Sign Off <daily@timetosignoff.fr>",
-      "date": "Wed, 22 Jul 2026 16:21:08 +0000"
-    },
-    {
-      "title": "Afficher dans le navigateur",
-      "url": "https://6aj5v.r.ag.d.sendibm3.com/mk/mr/sh/1t6AVsd2XFnIGFBWFEYv8sv3Vzfe6t/5BpXTwA9XaHQ",
-      "source_subject": "Adam Beyer de retour à Paris samedi !",
-      "source_sender": "Mia Mao <contact@miamao.fr>",
-      "date": "Wed, 22 Jul 2026 15:31:46 +0000"
-    },
-    {
-      "title": "Gérer mes préférences de réception",
-      "url": "https://url8143.brief.eco/ss/c/u001.R6L9XlEiCW3KCQva8_7nDF31G6yg7-G35ZFV2vme2JMZ15gWUrOyPYnMHgyUdrvpIGAW2dQANlfM9IU3-pgnd_mCPej_4Cvzy2PXW1zwZj0aZC3SdCk3_ZMlt99YSzzNXPBWo9nSH8k8B1y_tTC0BYoUDlW2tBMovAtZfyDFvsY/4sj/drQ6NY2SQpikaspj0xJlEg/h5/h001.27yOHYKHOiCj5Z6ymDvjV1QakrGXjNMRxIqBPQLG8hQ",
-      "source_subject": "Plus  qu’un  clic pour vous connecter à  Brief.eco",
-      "source_sender": "\"Brief.eco\" <hello@brief.eco>",
-      "date": "Wed, 22 Jul 2026 13:47:52 +0000 (UTC)"
-    }
-  ]
-}
-```
-
-## FILE: experiments/newsletter_ingest/README.md (26 lines)
-```markdown
-# Newsletter ingest sandbox (Yahoo Mail IMAP → local JSON)
-
-Isolated from `00_`–`05_` production code. **No SQLite/DuckDB writes.**
-
-## Setup
-
-1. Enable Yahoo 2FA and create an **app password**.
-2. `cp .env.example .env` and fill `YAHOO_MAIL_USER` / `YAHOO_MAIL_APP_PASSWORD`.
-3. Create a Yahoo Mail folder/label (e.g. `Finance`) and route newsletters into it.
-4. Run:
-
-``​`bash
-python experiments/newsletter_ingest/run_ingest.py --limit 20 --folder Finance
-python experiments/newsletter_ingest/run_ingest.py --dry-run --limit 5
-``​`
-
-Output JSON lands in `experiments/newsletter_ingest/output/`.
-
-## Acceptance
-
-- IMAP connects and always closes.
-- **Sender whitelist** — only listed newsletter From addresses are parsed;
-  receipts / security mail are skipped (`ingest/whitelist.py`).
-- Titles/links extracted from varied HTML digests.
-- Deduper collapses obvious same-day reprints.
-- Zero mailbox mutations; zero production DB I/O.
-```
-
-## FILE: experiments/newsletter_ingest/run_ingest.py (150 lines)
-```python
-"""Yahoo Mail newsletter ingest — isolated sandbox (no production DB writes).
-
-Connects read-only via IMAP SSL, parses HTML newsletters, dedupes headlines,
-and writes a timestamped JSON under ``output/``.
-
-Secrets live in a local ``.env`` next to this folder (never commit them).
-"""
-
-from __future__ import annotations
-
-import argparse
-import logging
-import sys
-from pathlib import Path
-
-# Keep this sandbox hermetic: only local imports under experiments/.
-_HERE = Path(__file__).resolve().parent
-if str(_HERE) not in sys.path:
-    sys.path.insert(0, str(_HERE))
-
-from ingest.env_loader import load_sandbox_env  # noqa: E402
-from ingest.imap_client import YahooImapClient  # noqa: E402
-from ingest.html_parser import parse_newsletter  # noqa: E402
-from ingest.dedupe import dedupe_articles  # noqa: E402
-from ingest.writer import write_output  # noqa: E402
-from ingest.whitelist import (  # noqa: E402
-    ALLOWED_SENDERS,
-    extract_sender_email,
-    is_allowed_sender,
-)
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)-7s | %(name)s | %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
-logger = logging.getLogger("newsletter_ingest")
-
-
-def main() -> int:
-    """CLI entry — same spirit as ``seed_account.py``."""
-    parser = argparse.ArgumentParser(
-        description="Ingest financial newsletters from Yahoo Mail (read-only)."
-    )
-    parser.add_argument(
-        "--limit", type=int, default=20, help="Max emails to fetch (default 20)."
-    )
-    parser.add_argument(
-        "--folder",
-        default="Finance",
-        help="IMAP folder/label name (default: Finance).",
-    )
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Parse and print summary without writing JSON.",
-    )
-    parser.add_argument(
-        "--env",
-        default=str(_HERE / ".env"),
-        help="Path to sandbox .env (YAHOO_MAIL_USER / YAHOO_MAIL_APP_PASSWORD).",
-    )
-    args = parser.parse_args()
-
-    creds = load_sandbox_env(Path(args.env))
-    if not creds.get("YAHOO_MAIL_USER") or not creds.get("YAHOO_MAIL_APP_PASSWORD"):
-        logger.error(
-            "Missing YAHOO_MAIL_USER / YAHOO_MAIL_APP_PASSWORD in %s "
-            "(copy .env.example → .env and use a Yahoo *app password*).",
-            args.env,
-        )
-        return 2
-
-    client = YahooImapClient(
-        user=creds["YAHOO_MAIL_USER"],
-        app_password=creds["YAHOO_MAIL_APP_PASSWORD"],
-    )
-    articles = []
-    allowed_msgs = 0
-    ignored_msgs = 0
-    try:
-        # Over-fetch: whitelist drops receipts/alerts before parse.
-        scan_limit = max(int(args.limit) * 5, 50)
-        messages = client.fetch_recent(folder=args.folder, limit=scan_limit)
-        logger.info(
-            "Fetched %d raw message(s) from '%s' (whitelist=%d senders, "
-            "scan_limit=%d).",
-            len(messages),
-            args.folder,
-            len(ALLOWED_SENDERS),
-            scan_limit,
-        )
-        for msg in messages:
-            try:
-                if not is_allowed_sender(msg.sender):
-                    ignored_msgs += 1
-                    logger.debug(
-                        "Ignored email from %s",
-                        extract_sender_email(msg.sender) or msg.sender,
-                    )
-                    continue
-                allowed_msgs += 1
-                parsed = parse_newsletter(msg)
-                articles.extend(parsed.get("articles") or [])
-                logger.info(
-                    "Parsed '%s' ← %s → %d article link(s).",
-                    parsed.get("subject", "?")[:80],
-                    extract_sender_email(msg.sender),
-                    len(parsed.get("articles") or []),
-                )
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("Parse failed for one message: %s", exc)
-    except Exception as exc:  # noqa: BLE001
-        logger.error("IMAP ingest failed: %s", exc, exc_info=True)
-        return 1
-    finally:
-        client.close()
-
-    logger.info(
-        "Whitelist filter: kept %d newsletter(s), ignored %d other message(s).",
-        allowed_msgs,
-        ignored_msgs,
-    )
-
-    before = len(articles)
-    articles = dedupe_articles(articles)
-    logger.info("Dedupe: %d → %d article(s).", before, len(articles))
-
-    payload = {
-        "folder": args.folder,
-        "limit": args.limit,
-        "whitelist_kept": allowed_msgs,
-        "whitelist_ignored": ignored_msgs,
-        "articles_raw": before,
-        "articles_deduped": len(articles),
-        "articles": articles,
-    }
-    if args.dry_run:
-        logger.info("Dry-run — not writing JSON. Sample titles:")
-        for a in articles[:10]:
-            logger.info("  • %s", (a.get("title") or "")[:100])
-        return 0
-
-    out = write_output(payload, _HERE / "output")
-    logger.info("Wrote %s", out)
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
-```
-
 ## FILE: main_scheduler.py (662 lines)
 ```python
-"""Root daemon scheduler for PEA Sniper Terminal V-Prime.
+"""Root daemon scheduler for PEA Pollux.
 
 Ties the whole pipeline together and runs it on the multi-pass European market
 schedule (09:00, 13:30, 17:10 Paris time, weekdays only):
@@ -17886,7 +17064,7 @@ async def run_weekly_report_async() -> None:
 
     report = await historian.generate_weekly_report(pdb, explainer=explainer)
     header = (
-        "\U0001F4C8 **PEA Sniper Terminal - Weekly Risk & Performance Digest**\n"
+        "\U0001F4C8 **PEA Pollux - Weekly Risk & Performance Digest**\n"
         f"_(generated {datetime.now().strftime('%Y-%m-%d %H:%M')} Paris)_\n\n"
     )
     sent = await _post_webhook(header + report)
@@ -18048,7 +17226,7 @@ def main() -> None:
     """Entry point: parse CLI args and either run once or loop forever."""
     setup_app_logging(level=logging.INFO, console=True)
 
-    parser = argparse.ArgumentParser(description="PEA Sniper Terminal daemon.")
+    parser = argparse.ArgumentParser(description="PEA Pollux daemon.")
     parser.add_argument(
         "--now",
         action="store_true",
@@ -18102,7 +17280,7 @@ def main() -> None:
         return
 
     _schedule_passes()
-    logger.info("\U0001F6E1\uFE0F PEA Sniper Terminal Daemon started. "
+    logger.info("\U0001F6E1\uFE0F PEA Pollux Daemon started. "
                 "Waiting for scheduled runs...")
     while True:
         try:
@@ -18120,25 +17298,35 @@ if __name__ == "__main__":
     main()
 ```
 
-## FILE: README.md (663 lines)
+## FILE: README.md (696 lines)
 ```markdown
-# PEA Sniper Terminal — V-Prime 3.0 (Phase 32)
+# PEA Pollux — Terminal quantitatif personnel
 
-> **Sovereign execution. Kinetic risk management. Absolute quantitative transparency.**
+> **Un bureau d'analyse quantitatif pour votre PEA — transparent, manuel, sans exécution automatique.**
 
-Zero-leverage quantitative **decision support** for a personal French **PEA**
-(Plan d'Épargne en Actions). The stack ingests market data, runs a deterministic
-quant engine, filters every idea through a multi-layer risk cascade, then surfaces
-highly curated proposals to a **Discord Copilot** and the **Streamlit Command Center**
-for **manual** execution. A Bloomberg-inspired **Streamlit** terminal is the
-day-to-day command center (Mission Control, equity curve, rich trade cards,
-morning Zeitgeist, log viewer).
+**PEA Pollux** est un terminal de recherche et de suivi de portefeuille conçu pour un
+**PEA personnel** (Plan d'Épargne en Actions). Il ingère les données de marché,
+calcule des signaux multi-facteurs, applique une cascade de risque stricte, puis
+présente des propositions **à valider manuellement** dans le dashboard Streamlit
+ou via Discord.
 
-**The system never sends orders to a broker.** Maths decides *what* is worth
-considering; AI only *explains* (rationale, news score, weekly CIO digest,
-newsletter Zeitgeist). **This is not investment advice.**
+**Le système n'envoie jamais d'ordres à un courtier.** Les modèles quantitatifs
+décident *ce qui mérite d'être étudié* ; l'IA *explique* (rationale, sentiment,
+briefing hebdo, red teaming Bull/Bear). **Ce n'est pas un conseil en investissement.**
 
 Repo: [github.com/Polluxgnr/Peatrading](https://github.com/Polluxgnr/Peatrading)
+
+---
+
+## Pourquoi PEA Pollux ?
+
+| Besoin | Réponse |
+|--------|---------|
+| Comprendre *pourquoi* un signal apparaît | Score multi-modèle + Data Lake transparent |
+| Gérer le risque avant d'acheter | Cascade VIX, corrélation, liquidité, earnings blackout |
+| Suivre la performance | Courbe d'equity, VaR/CVaR, Monte Carlo corrélé |
+| Challenger une idée | Red teaming IA (Bull vs Bear + Judge) |
+| Déployer proprement | Docker, healthchecks, logs rotatifs, CI pytest |
 
 ---
 
@@ -18155,13 +17343,13 @@ Repo: [github.com/Polluxgnr/Peatrading](https://github.com/Polluxgnr/Peatrading)
 9. [Configuration](#-configuration)
 10. [Usage](#-usage)
 11. [Dashboard](#-dashboard)
-12. [Experiments / sandboxes](#-experiments--sandboxes)
-13. [LLM full dump](#-llm-full-dump)
-14. [Deployment](#-deployment)
-15. [Scheduling](#-scheduling)
-16. [Roadmap](#-roadmap--future-improvements)
-17. [Troubleshooting](#-troubleshooting)
-18. [Disclaimer](#-disclaimer)
+12. [LLM full dump](#-llm-full-dump)
+13. [Deployment](#-deployment)
+14. [Scheduling](#-scheduling)
+15. [Roadmap](#-roadmap--future-improvements)
+16. [Troubleshooting](#-troubleshooting)
+17. [Disclaimer](#-disclaimer)
+18. [English guide](#english-guide)
 
 ---
 
@@ -18336,7 +17524,7 @@ debug a silent day, without enterprise noise.
 |-------|------|
 | `01_memory_core/logging_setup.py` | Console (compact INFO) + rotating **DEBUG** files |
 | `logs/<component>.log` | Per-component trails (`scheduler`, `dashboard`, `cascade`, …) |
-| `logs/pea_sniper_all.log` | Fan-in of everything |
+| `logs/pea_pollux_all.log` | Fan-in of everything |
 | `database/pipeline_status.json` | Last pass health for Mission Control (green / amber / red) |
 | Dashboard → **Architecture & Logs** | Pick a file, tail N lines, select/copy |
 
@@ -18378,8 +17566,13 @@ is git-ignored.
 | `tools/build_llm_dump.py` | Regenerate `PROJECT_FULL_DUMP_FOR_LLM.md` |
 | `tools/sync_universe_from_bourso.py` | Refresh PEA universe YAML |
 | `00_data_sensors/newsletter_api.py` | IMAP headlines + LLM morning Zeitgeist |
+| `00_data_sensors/newsletter_ingest/` | Modules IMAP (whitelist, dedupe, parse) |
+| `00_data_sensors/fundamentals_api.py` | Finnhub + yfinance (Value/Quality) |
+| `02_quant_engine/quantitative_math.py` | VaR, CVaR, Z-Score, variance (NumPy pur) |
+| `02_quant_engine/stochastic_models.py` | Monte Carlo corrélé (Cholesky + GBM) |
+| `03_risk_portfolio/stress_tester.py` | Stress tests historiques (2008/2020/2022) |
+| `04_orchestrator_ai/red_team_agent.py` | Débat Bull/Bear/Judge (OpenRouter) |
 | `02_quant_engine/walk_forward_backtester.py` | Walk-forward equity scaffold on DuckDB |
-| `experiments/newsletter_ingest/` | Yahoo Mail IMAP sandbox → local JSON only |
 | `tests/` | pytest foundations (sizing, equity metrics, cards, dedupe) |
 | `.github/workflows/ci.yml` | CI on push/PR |
 
@@ -18411,8 +17604,8 @@ Graceful degradation: missing sources return **neutral** values; the daemon does
 > Streamlit depends on `pyarrow` → use **Python 3.11 or 3.12 x64** (`venv_x64`).
 
 ``​`bash
-git clone https://github.com/Polluxgnr/Peatrading.git pea_sniper_terminal
-cd pea_sniper_terminal
+git clone https://github.com/Polluxgnr/Peatrading.git pea_pollux
+cd pea_pollux
 
 python3.11 -m venv venv_x64
 # Windows:  venv_x64\Scripts\Activate.ps1
@@ -18551,21 +17744,6 @@ For each PENDING BUY the card shows:
 
 ---
 
-## Experiments / sandboxes
-
-### `experiments/newsletter_ingest/` + production `NewsletterSensor`
-
-Sandbox CLI remains under `experiments/newsletter_ingest/`. **Production** lives in
-`00_data_sensors/newsletter_api.py` (`NewsletterSensor`): read-only IMAP → whitelist
-→ deduped headlines → OpenRouter Zeitgeist → `database/morning_briefing.json`.
-
-Scheduler: **08:25 Paris** (`python main_scheduler.py --briefing` to run now).
-Secrets: `YAHOO_MAIL_USER` / `YAHOO_MAIL_APP_PASSWORD` (+ `OPENROUTER_API_KEY`).
-
-Whitelist includes Café de la Bourse, Le monde d'après, Plan Cash, Brief.*, TLDR, etc.
-
----
-
 ## LLM full dump
 
 For one-shot context in another LLM / agent:
@@ -18596,7 +17774,7 @@ Regenerate after meaningful code or README changes so external agents stay in sy
 
 - **persistent volumes**:
   - `./database:/app/database` (SQLite + DuckDB + heartbeat JSON)
-  - `./logs:/app/logs` (component logs + `pea_sniper_all.log`)
+  - `./logs:/app/logs` (component logs + `pea_pollux_all.log`)
   - `./config:/app/config` (risk params, calendars, universe, env template)
 - **timezone pinned**:
   - `TZ=Europe/Paris` in both `daemon` and `dashboard`
@@ -18704,7 +17882,10 @@ sources over furtive HTML scraping.
 | **Bandeau natif + news SQLite + exploration universelle** | ✅ Phase 27 — marquee HTML/CSS, `news_history`, dates exactes, selectbox 600+ tickers |
 | **Télémétrie live Architecture & Logs** | ✅ Phase 28 — health check sources, risk_params actifs, expanders logique quant |
 | **UX rename + clickable tape + news history** | ✅ Phase 29 — Pollux branding, query-param tape, Synthèse IA, full news DB |
-| **Native env + AMF ODS + TV EURONEXT + uncapped lists** | ✅ Phase 32 — no-dotenv loader, AMF Opendatasoft/BDIF back API, Polymarket JSON guard, full universe/logs |
+| **Native env + AMF ODS + TV EURONEXT + uncapped lists** | ✅ Phase 32 |
+| **Multi-factor + Finnhub + Data Lake analyste** | ✅ Phase 35–36 |
+| **VaR/CVaR + Z-Score académique** | ✅ Phase 37 |
+| **Monte Carlo + stress tests + red teaming IA** | ✅ Phase 38 |
 | pytest + GitHub Actions CI | Expand coverage over time |
 
 ### Next (highest leverage)
@@ -18756,40 +17937,70 @@ Decision-support and educational tool only. **No automated execution. No financi
 advice.** You are solely responsible for every trade. Past or backtested results
 do not guarantee future performance.
 
-© 2026 Pollux Quantitative Research — V-Prime 3.0 (Phase 32).
+© 2026 Pollux Gronier — PEA Pollux.
 
 ---
 
-## English quick guide
+## English guide
 
-PEA Sniper Terminal is a **quantitative decision-support stack** for a personal
-French PEA account. It does not place broker orders automatically.
+**PEA Pollux** is a personal quantitative research terminal for a French **PEA**
+( tax-advantaged equity savings plan ). It helps you *research*, *size*, and *risk-manage*
+ideas — but **never places broker orders**.
 
-### What is new in Phase 38
+### What it does
 
-- **Correlated Monte Carlo engine** (`02_quant_engine/stochastic_models.py`)
-  - Vectorized NumPy simulation using Cholesky decomposition
-  - GBM portfolio projections with percentile fan chart (5/25/50/75/95)
-- **Historical black swan stress testing** (`03_risk_portfolio/stress_tester.py`)
-  - Replays major shock windows (2008, 2020, 2022)
-  - Estimates worst scenario drawdown for current holdings
-- **LLM red teaming** (`04_orchestrator_ai/red_team_agent.py`)
-  - Bull vs Bear debate in parallel with `asyncio.gather`
-  - Judge agent outputs a concise final verdict
-- **Dashboard integration**
-  - Portfolio tab: on-demand Monte Carlo + stress table
-  - Exploration tab: one-click Bull/Bear/Judge analysis
+1. **Ingests data** — OHLCV (yfinance → DuckDB), insiders (AMF → FMP → Yahoo),
+   news, newsletters, macro proxies (VIX, Polymarket).
+2. **Scores opportunities** — multi-model ensemble (Trend, Mean-Reversion, Breakout,
+   Context) with fundamentals (Finnhub) and sentiment modifiers.
+3. **Filters through risk** — VIX panic, sector caps, correlation firewall, earnings
+   blackout, liquidity floor, vol-parity sizing (whole shares only).
+4. **Surfaces decisions** — Streamlit dashboard + optional Discord copilot for
+   manual approve/reject.
+5. **Explains & challenges** — LLM rationales, weekly digest, Bull/Bear red teaming.
+
+### Phase 38 highlights
+
+| Feature | Module | Description |
+|---------|--------|-------------|
+| Monte Carlo fan chart | `stochastic_models.py` | Correlated GBM via Cholesky, P05–P95 paths |
+| Black swan replay | `stress_tester.py` | 2008, 2020, 2022 drawdown scenarios |
+| Tail risk metrics | `quantitative_math.py` | Historical VaR & CVaR (pure NumPy) |
+| AI red team | `red_team_agent.py` | Parallel Bull/Bear agents + Judge verdict |
+
+### Architecture (high level)
+
+``​`
+Data sensors → DuckDB/SQLite → Quant engine → Risk cascade → UI (Streamlit/Discord)
+                                      ↓
+                         Stochastic models + stress tests + LLM explainers
+``​`
+
+### Quick start
+
+``​`bash
+git clone https://github.com/Polluxgnr/Peatrading.git pea_pollux
+cd pea_pollux
+python3.11 -m venv venv_x64 && source venv_x64/bin/activate  # or Windows Activate.ps1
+pip install -r requirements.txt
+cp config/api_keys.env.example config/api_keys.env
+python seed_account.py --cash 10000
+python main_scheduler.py --now
+streamlit run 05_interfaces/terminal_dashboard.py
+``​`
 
 ### Design principles
 
-- **Math-first, AI-second:** models score and risk-filter signals; AI explains.
-- **Vectorized calculations:** no loop-based price-path simulations.
-- **Non-blocking UX:** heavy analytics run on-demand and are cached.
+- **Math-first, AI-second** — models decide eligibility; LLMs only explain or debate.
+- **Manual execution** — you always confirm trades.
+- **Graceful degradation** — missing API keys → neutral fallbacks, no crashes.
+- **Vectorized math** — NumPy/Pandas for VaR, Monte Carlo, Z-Scores.
+- **On-demand heavy compute** — Monte Carlo runs behind a button + cache, not on every page load.
 ```
 
 ## FILE: requirements.txt (37 lines)
 ```text
-# PEA Sniper Terminal V-Prime - Python 3.11+
+# PEA Pollux - Python 3.11+
 # Phase 1 only needs pydantic + pyyaml; the rest is pinned for the roadmap.
 
 # --- Core / data contracts (Phase 1) ---
@@ -18830,7 +18041,7 @@ pytest>=8.0
 
 ## FILE: run_dashboard.ps1 (15 lines)
 ```powershell
-# Launch PEA Sniper Terminal dashboard.
+# Launch PEA Pollux dashboard.
 # Streamlit opens the browser itself when headless=false — do NOT also Start-Process
 # (that caused a double browser tab).
 $ErrorActionPreference = "Stop"
@@ -18843,13 +18054,13 @@ if (-not (Test-Path $py)) {
     exit 1
 }
 
-Write-Host "Starting PEA Sniper Terminal on http://localhost:8501 ..." -ForegroundColor Green
+Write-Host "Starting PEA Pollux on http://localhost:8501 ..." -ForegroundColor Green
 & $py run "05_interfaces/terminal_dashboard.py" --server.headless false --browser.gatherUsageStats false --server.port 8501
 ```
 
 ## FILE: run_discord.py (100 lines)
 ```python
-"""Entry point to launch the PEA Sniper Terminal Discord Copilot.
+"""Entry point to launch the PEA Pollux Discord Copilot.
 
 Usage:
     1. Copy config/api_keys.env.example -> config/api_keys.env and fill in:
@@ -18953,7 +18164,7 @@ if __name__ == "__main__":
 
 ## FILE: seed_account.py (129 lines)
 ```python
-"""Account seeding CLI for PEA Sniper Terminal V-Prime.
+"""Account seeding CLI for PEA Pollux.
 
 Bootstraps (or resets) the SQLite portfolio so the daemon, sizer and dashboard
 have a real starting capital to work from. Without this, the account is empty
@@ -19166,7 +18377,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "experiments" / "newsletter_ingest"))
+sys.path.insert(0, str(ROOT / "00_data_sensors" / "newsletter_ingest"))
 
 from ingest.whitelist import (  # noqa: E402
     extract_sender_email,
@@ -19293,7 +18504,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 for sub in ("01_memory_core", "03_risk_portfolio", "05_interfaces"):
     sys.path.insert(0, str(ROOT / sub))
-sys.path.insert(0, str(ROOT / "experiments" / "newsletter_ingest"))
+sys.path.insert(0, str(ROOT / "00_data_sensors" / "newsletter_ingest"))
 
 from data_models import Position, PortfolioState, Signal, SignalType  # noqa: E402
 from pea_position_sizer import PeaSizer  # noqa: E402
@@ -19350,7 +18561,7 @@ def test_newsletter_dedupe_collapses_near_dupes():
     assert len(out) == 2
 ```
 
-## FILE: tools/build_llm_dump.py (228 lines)
+## FILE: tools/build_llm_dump.py (232 lines)
 ```python
 #!/usr/bin/env python3
 """Regenerate PROJECT_FULL_DUMP_FOR_LLM.md for one-shot LLM context.
@@ -19421,8 +18632,12 @@ PRIORITY_FILES = [
     "01_memory_core/sqlite_portfolio.py",
     "01_memory_core/duckdb_manager.py",
     "02_quant_engine/technical_scorer.py",
+    "02_quant_engine/quantitative_math.py",
+    "02_quant_engine/stochastic_models.py",
+    "03_risk_portfolio/stress_tester.py",
     "03_risk_portfolio/pea_position_sizer.py",
     "04_orchestrator_ai/signal_priority_cascade.py",
+    "04_orchestrator_ai/red_team_agent.py",
     "05_interfaces/terminal_dashboard.py",
     "main_scheduler.py",
 ]
@@ -19456,9 +18671,9 @@ def _read_phase_from_readme() -> str:
     try:
         first = README.read_text(encoding="utf-8").splitlines()[0]
         m = re.search(r"Phase\s+[\d–\-]+", first)
-        return m.group(0) if m else "V-Prime 3.0"
+        return m.group(0) if m else "PEA Pollux"
     except OSError:
-        return "V-Prime 3.0"
+        return "PEA Pollux"
 
 
 def _lang(path: Path) -> str:
@@ -19535,7 +18750,7 @@ def main() -> None:
     phase = _read_phase_from_readme()
 
     lines: list[str] = [
-        "# PEA Sniper Terminal — Full Project Dump for LLM",
+        "# PEA Pollux — Full Project Dump for LLM",
         "",
         f"> **{phase}** · Generated `{stamp}` · Root `{ROOT}`",
         "",
@@ -19584,7 +18799,7 @@ if __name__ == "__main__":
 
 ## FILE: tools/build_universe.py (273 lines)
 ```python
-"""Universe builder for PEA Sniper Terminal V-Prime.
+"""Universe builder for PEA Pollux.
 
 Writes ``config/pea_universe.yaml`` from a CURATED, authoritative map of
 Euronext Paris tickers (correctness > automation: yfinance search often returns
@@ -19843,7 +19058,7 @@ def main() -> None:
 
     payload = {"universe": {k: buckets[k] for k in sorted(buckets)}}
     with open(_UNIVERSE_PATH, "w", encoding="utf-8") as fh:
-        fh.write("# PEA Sniper Terminal V-Prime - investable universe\n")
+        fh.write("# PEA Pollux - investable universe\n")
         fh.write("# Curated Euronext Paris tickers, validated against Yahoo "
                  "Finance.\n")
         fh.write("# Regenerate with: python tools/build_universe.py\n\n")
@@ -19853,6 +19068,75 @@ def main() -> None:
     total = sum(len(v) for v in buckets.values())
     logger.info("Wrote %d tickers across %d sectors to %s",
                 total, len(buckets), _UNIVERSE_PATH)
+
+
+if __name__ == "__main__":
+    main()
+```
+
+## FILE: tools/rebrand_pea_pollux.py (65 lines)
+```python
+#!/usr/bin/env python3
+"""One-shot UTF-8 safe rebrand: PEA Pollux -> PEA Pollux."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+
+SKIP_DIRS = {
+    ".git",
+    "venv_x64",
+    "venv",
+    ".venv",
+    "__pycache__",
+    ".pytest_cache",
+    "database",
+    "logs",
+    "node_modules",
+}
+
+EXTS = {".py", ".yaml", ".yml", ".md", ".ps1", ".txt", ".json", ".ini", ".cfg"}
+NAMES = {"Dockerfile", "docker-compose.yml", "requirements.txt", ".gitignore"}
+
+REPLACEMENTS = [
+    ("PEA Pollux", "PEA Pollux"),
+    ("PEA Pollux", "PEA Pollux"),
+    ("pea_pollux", "pea_pollux"),
+    ("pea_pollux_all.log", "pea_pollux_all.log"),
+    ("PEA-Pollux", "PEA-Pollux"),
+    ("PEA Pollux | Terminal", "PEA Pollux | Terminal"),
+    ("PEA Pollux", "PEA Pollux"),
+    ("PEA Pollux", "PEA Pollux"),
+    ("Pollux Gronier — PEA Pollux", "Pollux Gronier — PEA Pollux"),
+    ("Pollux Gronier — PEA Pollux", "Pollux Gronier — PEA Pollux"),
+]
+
+
+def should_touch(path: Path) -> bool:
+    if path.name == "PROJECT_FULL_DUMP_FOR_LLM.md":
+        return False
+    if any(p in SKIP_DIRS for p in path.parts):
+        return False
+    if path.name in NAMES:
+        return True
+    return path.suffix.lower() in EXTS
+
+
+def main() -> None:
+    changed = 0
+    for path in sorted(ROOT.rglob("*")):
+        if not path.is_file() or not should_touch(path):
+            continue
+        text = path.read_text(encoding="utf-8")
+        orig = text
+        for old, new in REPLACEMENTS:
+            text = text.replace(old, new)
+        if text != orig:
+            path.write_text(text, encoding="utf-8", newline="\n")
+            changed += 1
+    print(f"Rebranded {changed} files.")
 
 
 if __name__ == "__main__":
@@ -20086,7 +19370,7 @@ def main() -> None:
         return
 
     with open(_UNIVERSE, "w", encoding="utf-8") as fh:
-        fh.write("# PEA Sniper Terminal V-Prime - investable universe\n")
+        fh.write("# PEA Pollux - investable universe\n")
         fh.write("# Synced from Boursorama Eligibilité PEA filter "
                  "(tools/sync_universe_from_bourso.py).\n")
         fh.write("# Extra flags: srd=true (liquid SRD), pea_pme=true.\n\n")
