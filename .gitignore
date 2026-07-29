@@ -38,4 +38,5 @@ Thumbs.db
 *.log
 logs/
 data/
+database/backups/
 

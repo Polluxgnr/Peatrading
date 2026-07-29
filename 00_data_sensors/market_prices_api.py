@@ -60,7 +60,7 @@ class MarketDataFetcher:
                 tickers,
                 start=start_date,
                 progress=False,
-                auto_adjust=False,
+                auto_adjust=True,
                 group_by="column",
                 threads=True,
             )

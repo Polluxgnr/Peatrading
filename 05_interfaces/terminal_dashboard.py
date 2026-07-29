@@ -2032,6 +2032,7 @@ def _native_tape_perf(period: str) -> pd.DataFrame:
         return pd.DataFrame()
 
 
+@st.fragment(run_every=120)
 def render_native_ticker_tape(period: str = "1d") -> None:
     """Render a CSS marquee ticker tape (no TradingView dependency)."""
     perf = _native_tape_perf(period)
@@ -6400,7 +6401,4 @@ st.caption(
 )
 
 if auto_refresh:
-    import time as _time
-
-    _time.sleep(int(refresh_secs))
-    st.rerun()
+    pass  # Auto-refresh handled by @st.fragment(run_every=...) on ticker tape & HUD

@@ -37,6 +37,7 @@ from correlation_firewall import CorrelationFirewall  # noqa: E402
 from pea_position_sizer import PeaSizer  # noqa: E402
 from macro_veto import MacroVetoEngine  # noqa: E402
 from earnings_blackout import EarningsBlackoutEngine  # noqa: E402
+from drawdown_breaker import DrawdownBreaker  # noqa: E402
 from quantitative_math import calculate_annualized_volatility  # noqa: E402
 
 logger = logging.getLogger(__name__)
@@ -80,6 +81,7 @@ class SignalOrchestrator:
         self.earnings_blackout = EarningsBlackoutEngine(config_path)
         self.firewall = CorrelationFirewall(config_path)
         self.sizer = PeaSizer(config_path)
+        self.drawdown_breaker = DrawdownBreaker(config_path)
 
         logger.debug("SignalOrchestrator initialized with config at %s", config_path)
 
@@ -152,6 +154,12 @@ class SignalOrchestrator:
         today = datetime.now(timezone.utc).date()
         processed: List[Signal] = []
         satellite_lines = self._satellite_line_count(portfolio)
+
+        # Drawdown circuit breaker: veto all new buys if loss limits breached.
+        dd_breached, dd_reason = self.drawdown_breaker.check(self.portfolio_db)
+        if dd_breached:
+            logger.warning("Drawdown breaker activated: %s", dd_reason)
+            return [self._reject(s, dd_reason) for s in raw_signals]
 
         # Market-wide panic brake: evaluated once for the whole batch.
         vix_ok = self.firewall.check_vix_panic(vix_level) if vix_level is not None else True

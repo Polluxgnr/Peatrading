@@ -1,6 +1,6 @@
 # PEA Pollux — Full Project Dump for LLM
 
-> **PEA Pollux** · Generated `2026-07-29 09:18 UTC` · Root `C:\Users\PolluxGronier\Downloads\pea_sniper_terminal`
+> **PEA Pollux** · Generated `2026-07-29 10:04 UTC` · Root `C:\Users\PolluxGronier\Downloads\pea_sniper_terminal`
 
 One-shot context for external LLM agents. Includes source, configs, and docs.
 Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
@@ -48,30 +48,31 @@ Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
 - `main_scheduler.py`
 
 ---
-## File index (73 files)
+## File index (77 files)
 ### `(root)/`
-- `.gitignore` (41 lines)
+- `.gitignore` (42 lines)
 - `docker-compose.yml` (71 lines)
 - `Dockerfile` (30 lines)
 - `main_scheduler.py` (783 lines) ⭐
-- `README.md` (730 lines) ⭐
+- `README.md` (733 lines) ⭐
 - `requirements.txt` (37 lines)
 - `run_dashboard.ps1` (15 lines)
 - `run_discord.py` (100 lines)
 - `seed_account.py` (129 lines)
 
 ### `.github/workflows/`
-- `.github/workflows/ci.yml` (23 lines)
+- `.github/workflows/ci.yml` (33 lines)
 
 ### `.streamlit/`
 - `.streamlit/config.toml` (25 lines)
 
 ### `00_data_sensors/`
 - `00_data_sensors/__init__.py` (0 lines)
-- `00_data_sensors/fundamentals_api.py` (144 lines)
+- `00_data_sensors/fundamentals_api.py` (187 lines)
 - `00_data_sensors/macro_alpha_api.py` (491 lines)
 - `00_data_sensors/market_prices_api.py` (197 lines)
 - `00_data_sensors/newsletter_api.py` (207 lines)
+- `00_data_sensors/symbol_mapper.py` (179 lines)
 
 ### `00_data_sensors/newsletter_ingest/ingest/`
 - `00_data_sensors/newsletter_ingest/ingest/__init__.py` (1 lines)
@@ -102,12 +103,13 @@ Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
 - `02_quant_engine/quantitative_math.py` (104 lines) ⭐
 - `02_quant_engine/smart_dca_engine.py` (223 lines)
 - `02_quant_engine/stochastic_models.py` (87 lines) ⭐
-- `02_quant_engine/technical_scorer.py` (620 lines) ⭐
-- `02_quant_engine/walk_forward_backtester.py` (200 lines)
+- `02_quant_engine/technical_scorer.py` (616 lines) ⭐
+- `02_quant_engine/walk_forward_backtester.py` (220 lines)
 
 ### `03_risk_portfolio/`
 - `03_risk_portfolio/__init__.py` (0 lines)
 - `03_risk_portfolio/correlation_firewall.py` (291 lines)
+- `03_risk_portfolio/drawdown_breaker.py` (90 lines)
 - `03_risk_portfolio/equity_metrics.py` (143 lines)
 - `03_risk_portfolio/monthly_rebalancer.py` (232 lines)
 - `03_risk_portfolio/pea_position_sizer.py` (262 lines) ⭐
@@ -120,22 +122,25 @@ Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
 - `04_orchestrator_ai/news_sentiment_llm.py` (144 lines)
 - `04_orchestrator_ai/red_team_agent.py` (78 lines) ⭐
 - `04_orchestrator_ai/revocation_engine.py` (135 lines)
-- `04_orchestrator_ai/signal_priority_cascade.py` (339 lines) ⭐
+- `04_orchestrator_ai/signal_priority_cascade.py` (347 lines) ⭐
 - `04_orchestrator_ai/weekly_historian.py` (226 lines)
 
 ### `05_interfaces/`
 - `05_interfaces/__init__.py` (0 lines)
 - `05_interfaces/discord_copilot.py` (384 lines)
 - `05_interfaces/llm_explainer.py` (272 lines)
-- `05_interfaces/terminal_dashboard.py` (6406 lines) ⭐
+- `05_interfaces/terminal_dashboard.py` (6404 lines) ⭐
 - `05_interfaces/trade_cards.py` (166 lines)
 
+### `05_interfaces/components/`
+- `05_interfaces/components/__init__.py` (1 lines)
+
 ### `config/`
-- `config/api_keys.env.example` (42 lines)
+- `config/api_keys.env.example` (48 lines)
 - `config/earnings_calendar.yaml` (18 lines)
 - `config/macro_calendar.yaml` (17 lines)
 - `config/pea_universe.yaml` (1901 lines) ⭐
-- `config/risk_params.yaml` (57 lines) ⭐
+- `config/risk_params.yaml` (53 lines) ⭐
 
 ### `tests/`
 - `tests/__init__.py` (1 lines)
@@ -145,13 +150,14 @@ Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
 - `tests/test_ui_and_sandbox.py` (66 lines)
 
 ### `tools/`
+- `tools/backup_databases.py` (52 lines)
 - `tools/build_llm_dump.py` (232 lines)
 - `tools/build_universe.py` (273 lines)
 - `tools/rebrand_pea_pollux.py` (65 lines)
 - `tools/sync_universe_from_bourso.py` (236 lines)
 
 ---
-## FILE: .github/workflows/ci.yml (23 lines)
+## FILE: .github/workflows/ci.yml (33 lines)
 ```yaml
 # PEA Pollux — CI
 name: ci
@@ -163,6 +169,16 @@ on:
     branches: [main, master]
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install ruff
+      - run: ruff check . --select E,F,W --ignore E501
+
   pytest:
     runs-on: ubuntu-latest
     steps:
@@ -173,12 +189,12 @@ jobs:
       - name: Install deps
         run: |
           python -m pip install --upgrade pip
-          pip install pytest pandas numpy pyyaml pydantic pandas-ta-classic
+          pip install -r requirements.txt
       - name: Run tests
         run: python -m pytest -q
 ```
 
-## FILE: .gitignore (41 lines)
+## FILE: .gitignore (42 lines)
 ```text
 # --- Secrets & config ---
 config/api_keys.env
@@ -220,6 +236,7 @@ Thumbs.db
 *.log
 logs/
 data/
+database/backups/
 ```
 
 ## FILE: .streamlit/config.toml (25 lines)
@@ -256,7 +273,7 @@ port = 8501
 
 ```
 
-## FILE: 00_data_sensors/fundamentals_api.py (144 lines)
+## FILE: 00_data_sensors/fundamentals_api.py (187 lines)
 ```python
 """Fundamental data sensor with Finnhub primary + yfinance fallback.
 
@@ -395,11 +412,54 @@ class FundamentalsSensor:
             logger.debug("yfinance fundamentals failed for %s: %s", ticker, exc)
             return blank
 
+    def _from_alphavantage(self, ticker: str) -> dict:
+        blank = {
+            "pe_ratio": None, "pb_ratio": None, "roe": None,
+            "debt_to_equity": None, "source": "none",
+        }
+        av_key = (os.getenv("ALPHAVANTAGE_API_KEY") or "").strip()
+        if not av_key:
+            return blank
+        symbol = self._map_symbol(ticker)
+        try:
+            resp = self._session.get(
+                "https://www.alphavantage.co/query",
+                params={"function": "OVERVIEW", "symbol": symbol, "apikey": av_key},
+                timeout=12,
+            )
+            if resp.status_code != 200:
+                return blank
+            data = resp.json()
+            if not isinstance(data, dict) or "Symbol" not in data:
+                return blank
+            pe = _to_float(data.get("TrailingPE"))
+            pb = _to_float(data.get("PriceToBookRatio"))
+            roe = _to_float(data.get("ReturnOnEquityTTM"))
+            debt = _to_float(data.get("DebtToEquity"))
+            if debt is not None and debt > 50:
+                debt = debt / 100.0
+            out = {
+                "pe_ratio": pe, "pb_ratio": pb, "roe": roe,
+                "debt_to_equity": debt, "source": "alphavantage",
+            }
+            if any(v is not None for k, v in out.items() if k != "source"):
+                return out
+            return blank
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Alpha Vantage failed for %s: %s", ticker, exc)
+            return blank
+
     def get_basic_financials(self, ticker: str) -> dict:
-        """Return normalized factors: PE, PB, ROE, debt/equity."""
+        """Return normalized factors: PE, PB, ROE, debt/equity.
+
+        Cascade: Finnhub -> Alpha Vantage -> yfinance.
+        """
         fh = self._from_finnhub(ticker)
         if any(fh.get(k) is not None for k in ("pe_ratio", "pb_ratio", "roe", "debt_to_equity")):
             return fh
+        av = self._from_alphavantage(ticker)
+        if any(av.get(k) is not None for k in ("pe_ratio", "pb_ratio", "roe", "debt_to_equity")):
+            return av
         return self._from_yfinance(ticker)
 ```
 
@@ -962,7 +1022,7 @@ class MarketDataFetcher:
                 tickers,
                 start=start_date,
                 progress=False,
-                auto_adjust=False,
+                auto_adjust=True,
                 group_by="column",
                 threads=True,
             )
@@ -2998,6 +3058,189 @@ class BoursoramaScraper:
             return value
 ```
 
+## FILE: 00_data_sensors/symbol_mapper.py (179 lines)
+```python
+"""Symbol mapper using OpenFIGI API — resolves Yahoo tickers to ISIN/FIGI.
+
+Caches results in SQLite to avoid rate limits (200 req/min free tier).
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+import sqlite3
+from pathlib import Path
+
+import requests
+
+logger = logging.getLogger(__name__)
+
+_ROOT = Path(__file__).resolve().parent.parent
+_DB_PATH = _ROOT / "database" / "portfolio.db"
+
+
+class SymbolMapper:
+    """Maps Yahoo Finance tickers to ISIN/FIGI/Finnhub symbols via OpenFIGI."""
+
+    OPENFIGI_URL = "https://api.openfigi.com/v3/mapping"
+
+    def __init__(self) -> None:
+        self.api_key = (os.getenv("OPENFIGI_API_KEY") or "").strip()
+        self._session = requests.Session()
+        if self.api_key:
+            self._session.headers["X-OPENFIGI-APIKEY"] = self.api_key
+        self._ensure_table()
+
+    def _ensure_table(self) -> None:
+        _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with sqlite3.connect(str(_DB_PATH)) as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS symbol_map (
+                    yahoo_ticker TEXT PRIMARY KEY,
+                    isin TEXT,
+                    figi TEXT,
+                    finnhub_symbol TEXT,
+                    name TEXT,
+                    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+    def _cache_get(self, ticker: str) -> dict | None:
+        try:
+            with sqlite3.connect(str(_DB_PATH)) as conn:
+                row = conn.execute(
+                    "SELECT isin, figi, finnhub_symbol, name FROM symbol_map WHERE yahoo_ticker = ?",
+                    (ticker,),
+                ).fetchone()
+            if row:
+                return {"isin": row[0], "figi": row[1], "finnhub_symbol": row[2], "name": row[3]}
+        except Exception:  # noqa: BLE001
+            pass
+        return None
+
+    def _cache_put(self, ticker: str, data: dict) -> None:
+        try:
+            with sqlite3.connect(str(_DB_PATH)) as conn:
+                conn.execute(
+                    """INSERT OR REPLACE INTO symbol_map
+                       (yahoo_ticker, isin, figi, finnhub_symbol, name, updated_at)
+                       VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)""",
+                    (ticker, data.get("isin"), data.get("figi"),
+                     data.get("finnhub_symbol"), data.get("name")),
+                )
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _yahoo_to_exchange(self, ticker: str) -> tuple[str, str]:
+        """Parse 'MC.PA' -> ('MC', 'PA') exchange code."""
+        parts = ticker.rsplit(".", 1)
+        if len(parts) == 2:
+            return parts[0], parts[1]
+        return ticker, ""
+
+    def _exchange_to_mic(self, exch: str) -> str:
+        mapping = {
+            "PA": "XPAR", "AS": "XAMS", "DE": "XETR", "MI": "XMIL",
+            "BR": "XBRU", "LS": "XLIS", "MC": "XMAD", "HE": "XHEL",
+        }
+        return mapping.get(exch.upper(), "")
+
+    def resolve(self, ticker: str) -> dict:
+        """Return {'isin', 'figi', 'finnhub_symbol', 'name'} for a Yahoo ticker."""
+        cached = self._cache_get(ticker)
+        if cached:
+            return cached
+
+        symbol, exch = self._yahoo_to_exchange(ticker)
+        mic = self._exchange_to_mic(exch)
+
+        payload = [{"idType": "TICKER", "idValue": symbol}]
+        if mic:
+            payload[0]["exchCode"] = mic
+
+        try:
+            resp = self._session.post(
+                self.OPENFIGI_URL,
+                json=payload,
+                timeout=10,
+            )
+            if resp.status_code != 200:
+                logger.debug("OpenFIGI HTTP %s for %s", resp.status_code, ticker)
+                return {"isin": None, "figi": None, "finnhub_symbol": None, "name": None}
+
+            results = resp.json()
+            if not results or not isinstance(results, list):
+                return {"isin": None, "figi": None, "finnhub_symbol": None, "name": None}
+
+            data_list = results[0].get("data", [])
+            if not data_list:
+                return {"isin": None, "figi": None, "finnhub_symbol": None, "name": None}
+
+            best = data_list[0]
+            out = {
+                "isin": best.get("shareClassFIGI") or None,
+                "figi": best.get("figi") or None,
+                "finnhub_symbol": ticker,  # Finnhub uses Yahoo format for most EU
+                "name": best.get("name") or None,
+            }
+            self._cache_put(ticker, out)
+            return out
+
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("OpenFIGI failed for %s: %s", ticker, exc)
+            return {"isin": None, "figi": None, "finnhub_symbol": None, "name": None}
+
+    def resolve_batch(self, tickers: list[str]) -> dict[str, dict]:
+        """Resolve multiple tickers, using cache where possible."""
+        results = {}
+        to_fetch = []
+        for t in tickers:
+            cached = self._cache_get(t)
+            if cached:
+                results[t] = cached
+            else:
+                to_fetch.append(t)
+
+        # OpenFIGI accepts up to 100 items per request
+        for i in range(0, len(to_fetch), 100):
+            batch = to_fetch[i:i + 100]
+            payload = []
+            for t in batch:
+                symbol, exch = self._yahoo_to_exchange(t)
+                mic = self._exchange_to_mic(exch)
+                entry = {"idType": "TICKER", "idValue": symbol}
+                if mic:
+                    entry["exchCode"] = mic
+                payload.append(entry)
+
+            try:
+                resp = self._session.post(self.OPENFIGI_URL, json=payload, timeout=15)
+                if resp.status_code != 200:
+                    continue
+                api_results = resp.json()
+                for j, t in enumerate(batch):
+                    if j >= len(api_results):
+                        break
+                    data_list = api_results[j].get("data", [])
+                    if data_list:
+                        best = data_list[0]
+                        out = {
+                            "isin": best.get("shareClassFIGI"),
+                            "figi": best.get("figi"),
+                            "finnhub_symbol": t,
+                            "name": best.get("name"),
+                        }
+                    else:
+                        out = {"isin": None, "figi": None, "finnhub_symbol": t, "name": None}
+                    self._cache_put(t, out)
+                    results[t] = out
+            except Exception:  # noqa: BLE001
+                pass
+
+        return results
+```
+
 ## FILE: 01_memory_core/__init__.py (0 lines)
 ```python
 
@@ -5008,7 +5251,7 @@ def run_correlated_monte_carlo(
     )
 ```
 
-## FILE: 02_quant_engine/technical_scorer.py (620 lines)
+## FILE: 02_quant_engine/technical_scorer.py (616 lines)
 ```python
 """Quantitative signal engine for PEA Pollux.
 
@@ -5023,6 +5266,7 @@ scores survivors' technical / alt-data axes (0–100) and emits when ≥ 65.
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import logging
 import os
 import sys
@@ -5063,7 +5307,22 @@ _SENSORS_DIR = _PROJECT_ROOT / "00_data_sensors"
 # Minimum history required to compute a valid SMA-200.
 _MIN_ROWS = 200
 _DEFAULT_RSI_OVERSOLD = 30.0
-_CONVICTION_EMIT_FLOOR = 65.0
+
+
+def _load_conviction_floor() -> float:
+    """Read CONVICTION_EMIT_FLOOR from risk_params.yaml (default 65)."""
+    try:
+        path = _PROJECT_ROOT / "config" / "risk_params.yaml"
+        if path.exists():
+            with open(path, "r", encoding="utf-8") as fh:
+                cfg = yaml.safe_load(fh) or {}
+            return float(cfg.get("CONVICTION_EMIT_FLOOR", 65.0))
+    except Exception:  # noqa: BLE001
+        pass
+    return 65.0
+
+
+_CONVICTION_EMIT_FLOOR = _load_conviction_floor()
 
 # Proxy for institutional quality (Fundsmith / Amundi-style large holdings).
 # Also mirrored on MacroAlphaSensor.get_institutional_consensus.
@@ -5447,26 +5706,15 @@ class SignalGenerator:
             factors.append(f"NEWS-15 Bearish sentiment ({news_score:.0f})")
         news_component = max(0.0, min(100.0, 50.0 + news_mod))
 
-        # Polymarket integration via existing macro sensor.
-        if sensor is not None:
-            try:
-                poly_prob = float(sensor.get_polymarket_sentiment(f"{ticker} outlook"))
-                if poly_prob >= 0.62:
-                    poly_mod = 12.0
-                    factors.append(f"POLY+10 YES={poly_prob:.2f}")
-                elif poly_prob <= 0.38:
-                    poly_mod = -12.0
-                    factors.append(f"POLY-10 YES={poly_prob:.2f}")
-            except Exception as exc:  # noqa: BLE001
-                logger.debug("Polymarket sentiment failed for %s: %s", ticker, exc)
-        poly_component = max(0.0, min(100.0, 50.0 + poly_mod))
+        # Polymarket removed from per-ticker scoring (Phase 42): almost always
+        # returns the deterministic stub. Polymarket is now macro-only.
+        poly_component = 50.0  # neutral placeholder for backward-compat output
 
         # Context model combines fundamentals + sentiment + insiders.
         context_score = (
-            0.45 * fundamentals_score
+            0.50 * fundamentals_score
             + 0.25 * insider_score
-            + 0.20 * news_component
-            + 0.10 * poly_component
+            + 0.25 * news_component
         )
         context_score = max(0.0, min(100.0, context_score))
 
@@ -5531,37 +5779,21 @@ class SignalGenerator:
         signals: List[Signal] = []
         sensor = self._macro_sensor()
 
-        for ticker in tickers:
+        def _eval_ticker(ticker: str) -> Signal | None:
             df = db_manager.get_historical_prices(ticker, days=252)
             if df is None or df.empty or len(df) < _MIN_ROWS:
-                logger.debug(
-                    "Skipping %s: insufficient history (%d rows).",
-                    ticker,
-                    0 if df is None else len(df),
-                )
-                continue
-
+                return None
             if apply_quality_filter and not self.is_profitable(ticker):
-                logger.info("Quality filter blocked %s (EPS < 0).", ticker)
-                continue
-
+                return None
             conv = self.evaluate(ticker, df, macro_sensor=sensor)
             total = float(conv.get("total") or 0.0)
             if total < float(conviction_floor):
-                logger.debug(
-                    "Skip %s: conviction %.0f < %.0f (%s).",
-                    ticker,
-                    total,
-                    conviction_floor,
-                    ", ".join(conv.get("factors") or []) or "no factors",
-                )
-                continue
-
+                return None
             reason = (
                 f"Conviction {total:.0f}/100 ≥ {conviction_floor:.0f} | "
                 + " · ".join(conv.get("factors") or ["ensemble"])
             )
-            signal = Signal(
+            return Signal(
                 id=str(uuid.uuid4()),
                 ticker=ticker,
                 signal_type=SignalType.BUY,
@@ -5571,13 +5803,20 @@ class SignalGenerator:
                 created_at=datetime.now(timezone.utc),
                 reason=reason,
             )
-            signals.append(signal)
-            logger.info(
-                "BUY signal %s for %s (conviction=%.0f).",
-                signal.id[:8],
-                ticker,
-                total,
-            )
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+            futures = {pool.submit(_eval_ticker, t): t for t in tickers}
+            for fut in concurrent.futures.as_completed(futures):
+                try:
+                    sig = fut.result()
+                    if sig is not None:
+                        signals.append(sig)
+                        logger.info(
+                            "BUY signal %s for %s (conviction=%.0f).",
+                            sig.id[:8], sig.ticker, sig.score,
+                        )
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug("Eval failed for %s: %s", futures[fut], exc)
 
         return signals
 
@@ -5632,7 +5871,7 @@ if __name__ == "__main__":
         print(f"  reason: {s.reason}")
 ```
 
-## FILE: 02_quant_engine/walk_forward_backtester.py (200 lines)
+## FILE: 02_quant_engine/walk_forward_backtester.py (220 lines)
 ```python
 """Walk-forward backtester scaffold (Phase 20 companion).
 
@@ -5748,10 +5987,40 @@ def run_walk_forward(
     logger.info("Walk-forward %s → %s (%d sessions, %d names).",
                 start, end_ts.date(), len(dates), len(tickers))
 
+    pending_entries: list[tuple[str, float]] = []  # (ticker, conviction) to fill next day
+
     for i, day in enumerate(dates):
         day_ts = pd.Timestamp(day)
         n_sig = 0
-        # Mark-to-market + optional new entries every ~5 sessions to keep runtime sane.
+
+        # Execute pending entries at today's Open (signals from T-1).
+        for ticker, _conv_score in pending_entries:
+            if ticker in book:
+                continue
+            try:
+                hist = db.get_historical_prices(ticker, days=5)
+                if hist is None or hist.empty:
+                    continue
+                if "Date" in hist.columns:
+                    sub = hist[pd.to_datetime(hist["Date"]) <= day_ts]
+                else:
+                    sub = hist[pd.to_datetime(hist.index) <= day_ts]
+                if sub.empty:
+                    continue
+                open_px = float(sub["Open"].iloc[-1]) if "Open" in sub.columns else float(sub["Close"].iloc[-1])
+                if open_px <= 0 or cash < notional_per_trade:
+                    continue
+                qty = int(notional_per_trade // open_px)
+                if qty < 1:
+                    continue
+                cost = qty * open_px
+                cash -= cost
+                book[ticker] = {"qty": qty, "cost": cost, "px": open_px}
+            except Exception:  # noqa: BLE001
+                pass
+        pending_entries = []
+
+        # Generate signals on day T (evaluated on Close) — executed at Open T+1.
         if i % 5 == 0:
             for ticker in tickers:
                 try:
@@ -5768,17 +6037,7 @@ def run_walk_forward(
                     if float(conv.get("total") or 0) < conviction_floor:
                         continue
                     n_sig += 1
-                    px = float(conv.get("close") or 0)
-                    if px <= 0 or cash < notional_per_trade:
-                        continue
-                    if ticker in book:
-                        continue
-                    qty = int(notional_per_trade // px)
-                    if qty < 1:
-                        continue
-                    cost = qty * px
-                    cash -= cost
-                    book[ticker] = {"qty": qty, "cost": cost, "px": px}
+                    pending_entries.append((ticker, float(conv.get("total") or 0)))
                 except Exception as exc:  # noqa: BLE001
                     logger.debug("WF skip %s @ %s: %s", ticker, day_ts.date(), exc)
 
@@ -6134,6 +6393,100 @@ if __name__ == "__main__":
                      positions=[saf, orp], last_updated=datetime.now(timezone.utc))
     ok, msg = fw.check_correlation("AIR.PA", portfolio2, _MockDB())
     print(f"AIR.PA correlation check -> {ok}: {msg}")
+```
+
+## FILE: 03_risk_portfolio/drawdown_breaker.py (90 lines)
+```python
+"""Drawdown circuit breaker — enforces DAILY/WEEKLY/MONTHLY_MAX_LOSS_PCT.
+
+Reads portfolio_history from SQLite to calculate rolling PnL and vetoes
+all new BUY signals when any threshold is breached.
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+import sys
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+import yaml
+
+_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_ROOT / "01_memory_core"))
+
+from sqlite_portfolio import PortfolioDB  # noqa: E402
+
+logger = logging.getLogger(__name__)
+
+_DEFAULT_CONFIG = _ROOT / "config"
+
+
+class DrawdownBreaker:
+    """Hard veto when rolling PnL breaches configured loss limits."""
+
+    def __init__(self, config_dir: Path | str | None = None) -> None:
+        cfg_path = Path(config_dir) if config_dir else _DEFAULT_CONFIG
+        risk_file = cfg_path / "risk_params.yaml"
+        risk: dict = {}
+        if risk_file.exists():
+            with open(risk_file, "r", encoding="utf-8") as fh:
+                risk = yaml.safe_load(fh) or {}
+
+        self.daily_limit = float(risk.get("DAILY_MAX_LOSS_PCT", -0.005))
+        self.weekly_limit = float(risk.get("WEEKLY_MAX_LOSS_PCT", -0.02))
+        self.monthly_limit = float(risk.get("MONTHLY_MAX_LOSS_PCT", -0.05))
+
+    def check(self, portfolio_db: PortfolioDB | None = None) -> tuple[bool, str]:
+        """Return (is_breached, reason). True means VETO all new buys."""
+        if portfolio_db is None:
+            return False, ""
+
+        try:
+            history = portfolio_db.get_portfolio_history(days=31)
+        except Exception:  # noqa: BLE001
+            return False, ""
+
+        if not history or len(history) < 2:
+            return False, ""
+
+        # history is list of dicts with 'date' and 'total_value' keys
+        sorted_hist = sorted(history, key=lambda r: r.get("date", ""))
+        if len(sorted_hist) < 2:
+            return False, ""
+
+        latest_val = float(sorted_hist[-1].get("total_value", 0))
+        if latest_val <= 0:
+            return False, ""
+
+        now = datetime.now(timezone.utc).date()
+
+        def _pnl_since(days_back: int) -> float | None:
+            cutoff = now - timedelta(days=days_back)
+            candidates = [
+                r for r in sorted_hist
+                if str(r.get("date", ""))[:10] <= str(cutoff)
+            ]
+            if not candidates:
+                return None
+            ref_val = float(candidates[-1].get("total_value", 0))
+            if ref_val <= 0:
+                return None
+            return (latest_val - ref_val) / ref_val
+
+        daily_pnl = _pnl_since(1)
+        weekly_pnl = _pnl_since(7)
+        monthly_pnl = _pnl_since(30)
+
+        if daily_pnl is not None and daily_pnl < self.daily_limit:
+            return True, f"DRAWDOWN VETO: daily PnL {daily_pnl:.2%} < {self.daily_limit:.2%}"
+        if weekly_pnl is not None and weekly_pnl < self.weekly_limit:
+            return True, f"DRAWDOWN VETO: weekly PnL {weekly_pnl:.2%} < {self.weekly_limit:.2%}"
+        if monthly_pnl is not None and monthly_pnl < self.monthly_limit:
+            return True, f"DRAWDOWN VETO: monthly PnL {monthly_pnl:.2%} < {self.monthly_limit:.2%}"
+
+        return False, ""
 ```
 
 ## FILE: 03_risk_portfolio/equity_metrics.py (143 lines)
@@ -7516,7 +7869,7 @@ if __name__ == "__main__":
     print(f"status={s3.status.value} | reason='{s3.reason}'")
 ```
 
-## FILE: 04_orchestrator_ai/signal_priority_cascade.py (339 lines)
+## FILE: 04_orchestrator_ai/signal_priority_cascade.py (347 lines)
 ```python
 """Signal Priority Cascade for PEA Pollux.
 
@@ -7557,6 +7910,7 @@ from correlation_firewall import CorrelationFirewall  # noqa: E402
 from pea_position_sizer import PeaSizer  # noqa: E402
 from macro_veto import MacroVetoEngine  # noqa: E402
 from earnings_blackout import EarningsBlackoutEngine  # noqa: E402
+from drawdown_breaker import DrawdownBreaker  # noqa: E402
 from quantitative_math import calculate_annualized_volatility  # noqa: E402
 
 logger = logging.getLogger(__name__)
@@ -7600,6 +7954,7 @@ class SignalOrchestrator:
         self.earnings_blackout = EarningsBlackoutEngine(config_path)
         self.firewall = CorrelationFirewall(config_path)
         self.sizer = PeaSizer(config_path)
+        self.drawdown_breaker = DrawdownBreaker(config_path)
 
         logger.debug("SignalOrchestrator initialized with config at %s", config_path)
 
@@ -7672,6 +8027,12 @@ class SignalOrchestrator:
         today = datetime.now(timezone.utc).date()
         processed: List[Signal] = []
         satellite_lines = self._satellite_line_count(portfolio)
+
+        # Drawdown circuit breaker: veto all new buys if loss limits breached.
+        dd_breached, dd_reason = self.drawdown_breaker.check(self.portfolio_db)
+        if dd_breached:
+            logger.warning("Drawdown breaker activated: %s", dd_reason)
+            return [self._reject(s, dd_reason) for s in raw_signals]
 
         # Market-wide panic brake: evaluated once for the whole batch.
         vix_ok = self.firewall.check_vix_panic(vix_level) if vix_level is not None else True
@@ -8092,6 +8453,11 @@ if __name__ == "__main__":
 ## FILE: 05_interfaces/__init__.py (0 lines)
 ```python
 
+```
+
+## FILE: 05_interfaces/components/__init__.py (1 lines)
+```python
+"""Dashboard component modules — extracted from terminal_dashboard.py (Phase 42)."""
 ```
 
 ## FILE: 05_interfaces/discord_copilot.py (384 lines)
@@ -8758,7 +9124,7 @@ if __name__ == "__main__":
     asyncio.run(_demo())
 ```
 
-## FILE: 05_interfaces/terminal_dashboard.py (6406 lines)
+## FILE: 05_interfaces/terminal_dashboard.py (6404 lines)
 ```python
 """Web Terminal (Streamlit dashboard) for PEA Pollux.
 
@@ -10794,6 +11160,7 @@ def _native_tape_perf(period: str) -> pd.DataFrame:
         return pd.DataFrame()
 
 
+@st.fragment(run_every=120)
 def render_native_ticker_tape(period: str = "1d") -> None:
     """Render a CSS marquee ticker tape (no TradingView dependency)."""
     perf = _native_tape_perf(period)
@@ -15162,10 +15529,7 @@ st.caption(
 )
 
 if auto_refresh:
-    import time as _time
-
-    _time.sleep(int(refresh_secs))
-    st.rerun()
+    pass  # Auto-refresh handled by @st.fragment(run_every=...) on ticker tape & HUD
 ```
 
 ## FILE: 05_interfaces/trade_cards.py (166 lines)
@@ -15338,7 +15702,7 @@ def render_signal_card(
 """
 ```
 
-## FILE: config/api_keys.env.example (42 lines)
+## FILE: config/api_keys.env.example (48 lines)
 ```text
 # =============================================================================
 # PEA Pollux — Secrets template
@@ -15382,6 +15746,12 @@ EODHD_API_KEY=your_eodhd_api_key_here
 # Yahoo Mail IMAP for Morning Briefing (use an App Password, SSL 993).
 YAHOO_MAIL_USER=your_yahoo_email@yahoo.com
 YAHOO_MAIL_APP_PASSWORD=your_yahoo_app_password_here
+
+# Alpha Vantage (https://www.alphavantage.co/) — fundamentals fallback.
+ALPHAVANTAGE_API_KEY=your_alphavantage_key_here
+
+# OpenFIGI (Bloomberg) — symbol/ISIN resolution.
+OPENFIGI_API_KEY=your_openfigi_key_here
 ```
 
 ## FILE: config/earnings_calendar.yaml (18 lines)
@@ -17332,7 +17702,7 @@ universe:
     srd: true
 ```
 
-## FILE: config/risk_params.yaml (57 lines)
+## FILE: config/risk_params.yaml (53 lines)
 ```yaml
 # =============================================================================
 # PEA Pollux - Institutional Risk Parameters
@@ -17359,7 +17729,7 @@ MAX_CORRELATION_SAME_SECTOR: 0.80   # Stricter allowance within same sector.
 CORRELATION_LOOKBACK_DAYS: 60       # Trading days for Pearson window.
 
 # --- Signals -----------------------------------------------------------------
-SIGNAL_BUY_THRESHOLD: 75         # Minimum score (0-100) to emit a BUY.
+CONVICTION_EMIT_FLOOR: 65.0      # Minimum conviction score (0-100) to emit a BUY.
 SIGNAL_SELL_THRESHOLD: 35        # Score below which a SELL is considered.
 SIGNAL_VALIDITY_HOURS: 12        # Signal expires after 12h.
 MACRO_VETO_DAYS_BEFORE: 3        # Veto new trades within N days of macro event.
@@ -17367,10 +17737,6 @@ EARNINGS_BLACKOUT_DAYS: 2        # Per-ticker earnings/div blackout window.
 RSI_OVERSOLD_THRESHOLD: 30.0     # MRE trigger; later walk-forward calibrable.
 MIN_LIQUIDITY_ADV: 50000         # Min average daily € volume (20d) for new buys.
 MAX_POSITIONS_TOTAL: 12          # Cap on simultaneous satellite lines.
-
-# --- Exits -------------------------------------------------------------------
-PROFIT_TARGET_PCT: 0.10          # Limit sell at +10% from entry.
-STOP_LOSS_PCT: -0.05             # Legacy hard stop (ATR stop is primary).
 
 # --- Core / Satellite model (Phase 10) --------------------------------------
 CORE_TICKER: "CW8.PA"            # Amundi MSCI World UCITS ETF (PEA eligible).
@@ -18289,7 +18655,7 @@ if __name__ == "__main__":
     main()
 ```
 
-## FILE: README.md (730 lines)
+## FILE: README.md (733 lines)
 ```markdown
 # PEA Pollux — Terminal quantitatif personnel
 
@@ -18635,6 +19001,8 @@ python main_scheduler.py --now    # first fetch + equity snapshot
 | `AMF_API_KEY` | placeholder | Public ODS/BDIF — use `free_public_ods_api` |
 | `YAHOO_MAIL_USER` / `YAHOO_MAIL_APP_PASSWORD` | briefing | Morning Briefing IMAP |
 | `EODHD_API_KEY` | optional | Reserved for paid EU market data |
+| `ALPHAVANTAGE_API_KEY` | optional | Fundamentals fallback (Finnhub → Alpha Vantage → yfinance) |
+| `OPENFIGI_API_KEY` | optional | Bloomberg OpenFIGI symbol/ISIN mapper (cached in SQLite) |
 
 Keys are loaded by a **native** parser (`01_memory_core/env_loader.py`) —
 **no `python-dotenv` required**. `main_scheduler.py` and the Streamlit dashboard
@@ -18887,6 +19255,7 @@ sources over furtive HTML scraping.
 | **UX (tape fix, briefing async, near-miss radar, ML export)** | ✅ Phase 39 |
 | **Cash sweep, Discord daily digest, 10y backfill, forward curve, ML store** | ✅ Phase 40 |
 | **AMF semantic parsing (legal FR regex), fluid log viewer, system telemetry** | ✅ Phase 41 |
+| **Institutional Overhaul: data quality (auto_adjust), parallel I/O, drawdown breaker, OpenFIGI, Alpha Vantage, backtester look-ahead fix, CI ruff** | ✅ Phase 42 |
 | pytest + GitHub Actions CI | Expand coverage over time |
 
 ### Next (highest leverage)
@@ -19584,6 +19953,62 @@ def test_newsletter_dedupe_collapses_near_dupes():
     ]
     out = dedupe_articles(arts)
     assert len(out) == 2
+```
+
+## FILE: tools/backup_databases.py (52 lines)
+```python
+"""Export key SQLite tables to Parquet for backup and portability.
+
+Usage:
+    python tools/backup_databases.py
+"""
+
+from __future__ import annotations
+
+import sqlite3
+from datetime import datetime
+from pathlib import Path
+
+import pandas as pd
+
+_ROOT = Path(__file__).resolve().parent.parent
+_DB_PATH = _ROOT / "database" / "portfolio.db"
+_BACKUP_DIR = _ROOT / "database" / "backups"
+
+TABLES_TO_EXPORT = ["portfolio_history", "audit_log", "news_history"]
+
+
+def main() -> None:
+    _BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    if not _DB_PATH.exists():
+        print(f"Database not found: {_DB_PATH}")
+        return
+
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    conn = sqlite3.connect(str(_DB_PATH))
+
+    existing = {
+        r[0]
+        for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()
+    }
+
+    for table in TABLES_TO_EXPORT:
+        if table not in existing:
+            print(f"  [skip] {table} (not found)")
+            continue
+        df = pd.read_sql_query(f"SELECT * FROM {table}", conn)  # noqa: S608
+        out_path = _BACKUP_DIR / f"{table}_{stamp}.parquet"
+        df.to_parquet(out_path, index=False)
+        print(f"  [ok] {table} -> {out_path.name} ({len(df)} rows)")
+
+    conn.close()
+    print("Backup complete.")
+
+
+if __name__ == "__main__":
+    main()
 ```
 
 ## FILE: tools/build_llm_dump.py (232 lines)

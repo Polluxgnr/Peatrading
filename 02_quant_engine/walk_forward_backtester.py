@@ -112,10 +112,40 @@ def run_walk_forward(
     logger.info("Walk-forward %s → %s (%d sessions, %d names).",
                 start, end_ts.date(), len(dates), len(tickers))
 
+    pending_entries: list[tuple[str, float]] = []  # (ticker, conviction) to fill next day
+
     for i, day in enumerate(dates):
         day_ts = pd.Timestamp(day)
         n_sig = 0
-        # Mark-to-market + optional new entries every ~5 sessions to keep runtime sane.
+
+        # Execute pending entries at today's Open (signals from T-1).
+        for ticker, _conv_score in pending_entries:
+            if ticker in book:
+                continue
+            try:
+                hist = db.get_historical_prices(ticker, days=5)
+                if hist is None or hist.empty:
+                    continue
+                if "Date" in hist.columns:
+                    sub = hist[pd.to_datetime(hist["Date"]) <= day_ts]
+                else:
+                    sub = hist[pd.to_datetime(hist.index) <= day_ts]
+                if sub.empty:
+                    continue
+                open_px = float(sub["Open"].iloc[-1]) if "Open" in sub.columns else float(sub["Close"].iloc[-1])
+                if open_px <= 0 or cash < notional_per_trade:
+                    continue
+                qty = int(notional_per_trade // open_px)
+                if qty < 1:
+                    continue
+                cost = qty * open_px
+                cash -= cost
+                book[ticker] = {"qty": qty, "cost": cost, "px": open_px}
+            except Exception:  # noqa: BLE001
+                pass
+        pending_entries = []
+
+        # Generate signals on day T (evaluated on Close) — executed at Open T+1.
         if i % 5 == 0:
             for ticker in tickers:
                 try:
@@ -132,17 +162,7 @@ def run_walk_forward(
                     if float(conv.get("total") or 0) < conviction_floor:
                         continue
                     n_sig += 1
-                    px = float(conv.get("close") or 0)
-                    if px <= 0 or cash < notional_per_trade:
-                        continue
-                    if ticker in book:
-                        continue
-                    qty = int(notional_per_trade // px)
-                    if qty < 1:
-                        continue
-                    cost = qty * px
-                    cash -= cost
-                    book[ticker] = {"qty": qty, "cost": cost, "px": px}
+                    pending_entries.append((ticker, float(conv.get("total") or 0)))
                 except Exception as exc:  # noqa: BLE001
                     logger.debug("WF skip %s @ %s: %s", ticker, day_ts.date(), exc)
 

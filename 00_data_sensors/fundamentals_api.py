@@ -135,10 +135,53 @@ class FundamentalsSensor:
             logger.debug("yfinance fundamentals failed for %s: %s", ticker, exc)
             return blank
 
+    def _from_alphavantage(self, ticker: str) -> dict:
+        blank = {
+            "pe_ratio": None, "pb_ratio": None, "roe": None,
+            "debt_to_equity": None, "source": "none",
+        }
+        av_key = (os.getenv("ALPHAVANTAGE_API_KEY") or "").strip()
+        if not av_key:
+            return blank
+        symbol = self._map_symbol(ticker)
+        try:
+            resp = self._session.get(
+                "https://www.alphavantage.co/query",
+                params={"function": "OVERVIEW", "symbol": symbol, "apikey": av_key},
+                timeout=12,
+            )
+            if resp.status_code != 200:
+                return blank
+            data = resp.json()
+            if not isinstance(data, dict) or "Symbol" not in data:
+                return blank
+            pe = _to_float(data.get("TrailingPE"))
+            pb = _to_float(data.get("PriceToBookRatio"))
+            roe = _to_float(data.get("ReturnOnEquityTTM"))
+            debt = _to_float(data.get("DebtToEquity"))
+            if debt is not None and debt > 50:
+                debt = debt / 100.0
+            out = {
+                "pe_ratio": pe, "pb_ratio": pb, "roe": roe,
+                "debt_to_equity": debt, "source": "alphavantage",
+            }
+            if any(v is not None for k, v in out.items() if k != "source"):
+                return out
+            return blank
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Alpha Vantage failed for %s: %s", ticker, exc)
+            return blank
+
     def get_basic_financials(self, ticker: str) -> dict:
-        """Return normalized factors: PE, PB, ROE, debt/equity."""
+        """Return normalized factors: PE, PB, ROE, debt/equity.
+
+        Cascade: Finnhub -> Alpha Vantage -> yfinance.
+        """
         fh = self._from_finnhub(ticker)
         if any(fh.get(k) is not None for k in ("pe_ratio", "pb_ratio", "roe", "debt_to_equity")):
             return fh
+        av = self._from_alphavantage(ticker)
+        if any(av.get(k) is not None for k in ("pe_ratio", "pb_ratio", "roe", "debt_to_equity")):
+            return av
         return self._from_yfinance(ticker)
 

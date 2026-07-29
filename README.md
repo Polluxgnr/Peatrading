@@ -342,6 +342,8 @@ python main_scheduler.py --now    # first fetch + equity snapshot
 | `AMF_API_KEY` | placeholder | Public ODS/BDIF — use `free_public_ods_api` |
 | `YAHOO_MAIL_USER` / `YAHOO_MAIL_APP_PASSWORD` | briefing | Morning Briefing IMAP |
 | `EODHD_API_KEY` | optional | Reserved for paid EU market data |
+| `ALPHAVANTAGE_API_KEY` | optional | Fundamentals fallback (Finnhub → Alpha Vantage → yfinance) |
+| `OPENFIGI_API_KEY` | optional | Bloomberg OpenFIGI symbol/ISIN mapper (cached in SQLite) |
 
 Keys are loaded by a **native** parser (`01_memory_core/env_loader.py`) —
 **no `python-dotenv` required**. `main_scheduler.py` and the Streamlit dashboard
@@ -594,6 +596,7 @@ sources over furtive HTML scraping.
 | **UX (tape fix, briefing async, near-miss radar, ML export)** | ✅ Phase 39 |
 | **Cash sweep, Discord daily digest, 10y backfill, forward curve, ML store** | ✅ Phase 40 |
 | **AMF semantic parsing (legal FR regex), fluid log viewer, system telemetry** | ✅ Phase 41 |
+| **Institutional Overhaul: data quality (auto_adjust), parallel I/O, drawdown breaker, OpenFIGI, Alpha Vantage, backtester look-ahead fix, CI ruff** | ✅ Phase 42 |
 | pytest + GitHub Actions CI | Expand coverage over time |
 
 ### Next (highest leverage)

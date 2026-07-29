@@ -11,6 +11,7 @@ scores survivors' technical / alt-data axes (0–100) and emits when ≥ 65.
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import logging
 import os
 import sys
@@ -51,7 +52,22 @@ _SENSORS_DIR = _PROJECT_ROOT / "00_data_sensors"
 # Minimum history required to compute a valid SMA-200.
 _MIN_ROWS = 200
 _DEFAULT_RSI_OVERSOLD = 30.0
-_CONVICTION_EMIT_FLOOR = 65.0
+
+
+def _load_conviction_floor() -> float:
+    """Read CONVICTION_EMIT_FLOOR from risk_params.yaml (default 65)."""
+    try:
+        path = _PROJECT_ROOT / "config" / "risk_params.yaml"
+        if path.exists():
+            with open(path, "r", encoding="utf-8") as fh:
+                cfg = yaml.safe_load(fh) or {}
+            return float(cfg.get("CONVICTION_EMIT_FLOOR", 65.0))
+    except Exception:  # noqa: BLE001
+        pass
+    return 65.0
+
+
+_CONVICTION_EMIT_FLOOR = _load_conviction_floor()
 
 # Proxy for institutional quality (Fundsmith / Amundi-style large holdings).
 # Also mirrored on MacroAlphaSensor.get_institutional_consensus.
@@ -435,26 +451,15 @@ class SignalGenerator:
             factors.append(f"NEWS-15 Bearish sentiment ({news_score:.0f})")
         news_component = max(0.0, min(100.0, 50.0 + news_mod))
 
-        # Polymarket integration via existing macro sensor.
-        if sensor is not None:
-            try:
-                poly_prob = float(sensor.get_polymarket_sentiment(f"{ticker} outlook"))
-                if poly_prob >= 0.62:
-                    poly_mod = 12.0
-                    factors.append(f"POLY+10 YES={poly_prob:.2f}")
-                elif poly_prob <= 0.38:
-                    poly_mod = -12.0
-                    factors.append(f"POLY-10 YES={poly_prob:.2f}")
-            except Exception as exc:  # noqa: BLE001
-                logger.debug("Polymarket sentiment failed for %s: %s", ticker, exc)
-        poly_component = max(0.0, min(100.0, 50.0 + poly_mod))
+        # Polymarket removed from per-ticker scoring (Phase 42): almost always
+        # returns the deterministic stub. Polymarket is now macro-only.
+        poly_component = 50.0  # neutral placeholder for backward-compat output
 
         # Context model combines fundamentals + sentiment + insiders.
         context_score = (
-            0.45 * fundamentals_score
+            0.50 * fundamentals_score
             + 0.25 * insider_score
-            + 0.20 * news_component
-            + 0.10 * poly_component
+            + 0.25 * news_component
         )
         context_score = max(0.0, min(100.0, context_score))
 
@@ -519,37 +524,21 @@ class SignalGenerator:
         signals: List[Signal] = []
         sensor = self._macro_sensor()
 
-        for ticker in tickers:
+        def _eval_ticker(ticker: str) -> Signal | None:
             df = db_manager.get_historical_prices(ticker, days=252)
             if df is None or df.empty or len(df) < _MIN_ROWS:
-                logger.debug(
-                    "Skipping %s: insufficient history (%d rows).",
-                    ticker,
-                    0 if df is None else len(df),
-                )
-                continue
-
+                return None
             if apply_quality_filter and not self.is_profitable(ticker):
-                logger.info("Quality filter blocked %s (EPS < 0).", ticker)
-                continue
-
+                return None
             conv = self.evaluate(ticker, df, macro_sensor=sensor)
             total = float(conv.get("total") or 0.0)
             if total < float(conviction_floor):
-                logger.debug(
-                    "Skip %s: conviction %.0f < %.0f (%s).",
-                    ticker,
-                    total,
-                    conviction_floor,
-                    ", ".join(conv.get("factors") or []) or "no factors",
-                )
-                continue
-
+                return None
             reason = (
                 f"Conviction {total:.0f}/100 ≥ {conviction_floor:.0f} | "
                 + " · ".join(conv.get("factors") or ["ensemble"])
             )
-            signal = Signal(
+            return Signal(
                 id=str(uuid.uuid4()),
                 ticker=ticker,
                 signal_type=SignalType.BUY,
@@ -559,13 +548,20 @@ class SignalGenerator:
                 created_at=datetime.now(timezone.utc),
                 reason=reason,
             )
-            signals.append(signal)
-            logger.info(
-                "BUY signal %s for %s (conviction=%.0f).",
-                signal.id[:8],
-                ticker,
-                total,
-            )
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+            futures = {pool.submit(_eval_ticker, t): t for t in tickers}
+            for fut in concurrent.futures.as_completed(futures):
+                try:
+                    sig = fut.result()
+                    if sig is not None:
+                        signals.append(sig)
+                        logger.info(
+                            "BUY signal %s for %s (conviction=%.0f).",
+                            sig.id[:8], sig.ticker, sig.score,
+                        )
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug("Eval failed for %s: %s", futures[fut], exc)
 
         return signals
 
