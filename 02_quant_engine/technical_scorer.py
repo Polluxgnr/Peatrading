@@ -549,6 +549,7 @@ class SignalGenerator:
         """
         signals: list[Signal] = []
         macro = self._macro_sensor()
+        from market_regime import MarketRegimeClassifier
         mr_classifier = MarketRegimeClassifier()
 
         def _eval_ticker(ticker: str) -> Signal | None:
