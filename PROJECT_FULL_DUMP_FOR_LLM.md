@@ -1,6 +1,6 @@
 # PEA Pollux — Full Project Dump for LLM
 
-> **PEA Pollux** · Generated `2026-07-29 13:03 UTC` · Root `C:\Users\PolluxGronier\Downloads\pea_sniper_terminal`
+> **PEA Pollux** · Generated `2026-07-29 14:41 UTC` · Root `C:\Users\PolluxGronier\Downloads\pea_sniper_terminal`
 
 One-shot context for external LLM agents. Includes source, configs, and docs.
 Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
@@ -48,13 +48,13 @@ Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
 - `main_scheduler.py`
 
 ---
-## File index (80 files)
+## File index (81 files)
 ### `(root)/`
 - `.gitignore` (42 lines)
 - `docker-compose.yml` (71 lines)
 - `Dockerfile` (30 lines)
 - `main_scheduler.py` (788 lines) ⭐
-- `README.md` (735 lines) ⭐
+- `README.md` (737 lines) ⭐
 - `requirements.txt` (38 lines)
 - `run_dashboard.ps1` (15 lines)
 - `run_discord.py` (100 lines)
@@ -106,7 +106,7 @@ Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
 - `02_quant_engine/quantitative_math.py` (107 lines) ⭐
 - `02_quant_engine/smart_dca_engine.py` (216 lines)
 - `02_quant_engine/stochastic_models.py` (87 lines) ⭐
-- `02_quant_engine/technical_scorer.py` (657 lines) ⭐
+- `02_quant_engine/technical_scorer.py` (664 lines) ⭐
 - `02_quant_engine/walk_forward_backtester.py` (277 lines)
 
 ### `03_risk_portfolio/`
@@ -122,7 +122,7 @@ Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
 - `04_orchestrator_ai/__init__.py` (0 lines)
 - `04_orchestrator_ai/earnings_blackout.py` (92 lines)
 - `04_orchestrator_ai/macro_veto.py` (125 lines)
-- `04_orchestrator_ai/news_sentiment_llm.py` (144 lines)
+- `04_orchestrator_ai/news_sentiment_llm.py` (142 lines)
 - `04_orchestrator_ai/red_team_agent.py` (98 lines) ⭐
 - `04_orchestrator_ai/revocation_engine.py` (135 lines)
 - `04_orchestrator_ai/signal_priority_cascade.py` (344 lines) ⭐
@@ -130,7 +130,7 @@ Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
 
 ### `05_interfaces/`
 - `05_interfaces/__init__.py` (0 lines)
-- `05_interfaces/discord_copilot.py` (384 lines)
+- `05_interfaces/discord_copilot.py` (120 lines)
 - `05_interfaces/llm_explainer.py` (272 lines)
 - `05_interfaces/terminal_dashboard.py` (6463 lines) ⭐
 - `05_interfaces/trade_cards.py` (166 lines)
@@ -154,6 +154,7 @@ Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
 
 ### `tools/`
 - `tools/backup_databases.py` (52 lines)
+- `tools/bootstrap_ml_dataset.py` (136 lines)
 - `tools/build_llm_dump.py` (232 lines)
 - `tools/build_universe.py` (273 lines)
 - `tools/rebrand_pea_pollux.py` (65 lines)
@@ -5633,7 +5634,7 @@ def run_correlated_monte_carlo(
     )
 ```
 
-## FILE: 02_quant_engine/technical_scorer.py (657 lines)
+## FILE: 02_quant_engine/technical_scorer.py (664 lines)
 ```python
 """Quantitative signal engine for PEA Pollux.
 
@@ -5750,6 +5751,7 @@ class SignalGenerator:
         self,
         config_path: str | Path | None = None,
         macro_sensor: Any | None = None,
+        portfolio_db: Any | None = None,
     ) -> None:
         """Load optional thresholds from ``risk_params.yaml``.
 
@@ -5761,6 +5763,7 @@ class SignalGenerator:
         path = Path(config_path) if config_path else _DEFAULT_CONFIG_DIR
         risk = load_risk_config(path)
         self._macro = macro_sensor
+        self.portfolio_db = portfolio_db
         
         try:
             from market_regime import MarketRegimeClassifier
@@ -5779,11 +5782,13 @@ class SignalGenerator:
             self.conviction_floor = float(risk.CONVICTION_EMIT_FLOOR)
 
     @staticmethod
-    def _load_fundamentals_from_sources(ticker: str) -> dict:
+    def _load_fundamentals_from_sources(ticker: str, pdb: Any = None) -> dict:
         """Fetch fundamentals via SQLite cache -> Finnhub/yfinance sensor."""
         try:
-            pdb = PortfolioDB()
-            pdb.init_db()
+            if pdb is None:
+                from sqlite_portfolio import PortfolioDB
+                pdb = PortfolioDB()
+                pdb.init_db()
             cache = pdb.get_cached_fundamentals(ticker, max_age_days=7)
             if cache:
                 return cache
@@ -5806,8 +5811,10 @@ class SignalGenerator:
             for k in ("pe_ratio", "pb_ratio", "roe", "debt_to_equity")
         ):
             try:
-                pdb = PortfolioDB()
-                pdb.init_db()
+                if pdb is None:
+                    from sqlite_portfolio import PortfolioDB
+                    pdb = PortfolioDB()
+                    pdb.init_db()
                 pdb.upsert_fundamentals(ticker, data)
             except Exception as exc:  # noqa: BLE001
                 logger.debug("Fundamentals cache upsert failed for %s: %s", ticker, exc)
@@ -6009,7 +6016,7 @@ class SignalGenerator:
             insider_score = 35.0
 
         # Value/Quality axis (fundamentals) with graceful fallback.
-        fundamentals = self._load_fundamentals_from_sources(ticker)
+        fundamentals = self._load_fundamentals_from_sources(ticker, pdb=self.portfolio_db)
         pe = fundamentals.get("pe_ratio")
         pb = fundamentals.get("pb_ratio")
         roe = fundamentals.get("roe")
@@ -6186,6 +6193,7 @@ class SignalGenerator:
         """
         signals: list[Signal] = []
         macro = self._macro_sensor()
+        from market_regime import MarketRegimeClassifier
         mr_classifier = MarketRegimeClassifier()
 
         def _eval_ticker(ticker: str) -> Signal | None:
@@ -7986,7 +7994,7 @@ if __name__ == "__main__":
         print(f"{d}: vetoed={vetoed} -> {msg}")
 ```
 
-## FILE: 04_orchestrator_ai/news_sentiment_llm.py (144 lines)
+## FILE: 04_orchestrator_ai/news_sentiment_llm.py (142 lines)
 ```python
 """News sentiment scorer for PEA Pollux (Phase 11).
 
@@ -8081,13 +8089,11 @@ class NewsSentimentScorer:
         if not self.api_key:
             return _NEUTRAL_SCORE
 
-        joined = "\n".join(f"- {h}" for h in headlines[:15])
+        joined = "\n".join(f"- {h}" for h in headlines[:10])
         system_prompt = (
-            "You are a deterministic quantitative NLP sentiment model. You read "
-            "financial news headlines and output market sentiment as a single "
-            "integer between -100 (extremely bearish) and +100 (extremely "
-            "bullish), where 0 is neutral. Output ONLY the integer. No words, no "
-            "symbols, no explanation, no punctuation."
+            "You are a quantitative NLP model. Output NOTHING EXCEPT a single "
+            "integer between -100 and 100. Do not wrap the integer in markdown "
+            "or backticks."
         )
         user_prompt = (
             f"Ticker: {ticker}\nHeadlines:\n{joined}\n\n"
@@ -8963,20 +8969,16 @@ if __name__ == "__main__":
 """Dashboard component modules — extracted from terminal_dashboard.py (Phase 42)."""
 ```
 
-## FILE: 05_interfaces/discord_copilot.py (384 lines)
+## FILE: 05_interfaces/discord_copilot.py (120 lines)
 ```python
-"""Discord Copilot for PEA Pollux.
+"""Discord Copilot Webhook for PEA Pollux.
 
-Pushes interactive trade alerts to Discord and waits for the human to approve
-or reject. Execution is manual: approving records the trade in SQLite (status
-EXECUTED, cash deducted, position added) - it never sends an order to a broker.
-
-STRICT: the LLM only writes the explanation text (Phase 7.1). Buttons and DB
-logic here are deterministic.
+Pushes trade alerts directly to Discord using a simple Webhook.
+Replaces the old discord.py Client which had channel/intent issues.
+Execution is manual via the Streamlit Dashboard.
 
 .env requirements (config/api_keys.env):
-    DISCORD_TOKEN        - the bot token.
-    DISCORD_CHANNEL_ID   - numeric channel ID for alerts.
+    DISCORD_WEBHOOK_URL  - webhook for trade alerts.
     OPENROUTER_API_KEY   - used by NarrativeExplainer (optional; has fallback).
 """
 
@@ -8985,7 +8987,8 @@ import os
 import sys
 from pathlib import Path
 
-import discord
+import aiohttp
+import json
 
 try:
     _CORE = Path(__file__).resolve().parent.parent / "01_memory_core"
@@ -9007,348 +9010,87 @@ _CORE_DIR = os.path.join(os.path.dirname(_INTERFACES_DIR), "01_memory_core")
 sys.path.insert(0, _INTERFACES_DIR)
 sys.path.insert(0, _CORE_DIR)
 
-from data_models import PortfolioState, Position, Signal, SignalStatus, SignalType  # noqa: E402
+from data_models import PortfolioState, Signal, SignalStatus, SignalType  # noqa: E402
 from llm_explainer import NarrativeExplainer  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
-_GREEN = discord.Color.from_str("#00E676")
-_RED = discord.Color.from_str("#FF3B30")
+_GREEN = 59006
+_RED = 16726832
 
+class DiscordCopilot:
+    """Aiohttp-based Discord webhook sender for PEA Pollux alerts."""
 
-class TradeActionView(discord.ui.View):
-    """Interactive Approve/Reject buttons attached to a trade alert.
-
-    Approving persists the trade to SQLite via the provided ``PortfolioDB``.
-    Both callbacks immediately edit the message so Discord never shows a stuck
-    "thinking" state.
-    """
-
-    def __init__(
-        self,
-        signal: Signal,
-        portfolio_db,
-        current_price: float,
-        timeout: float | None = 3600,
-    ) -> None:
-        """Initialize the view.
-
-        Args:
-            signal: The approved signal this alert represents.
-            portfolio_db: A ``PortfolioDB`` used to persist an execution.
-            current_price: Price per share used to compute the cash outlay.
-            timeout: Seconds before the buttons auto-disable (default 1h).
-        """
-        super().__init__(timeout=timeout)
-        self.signal = signal
-        self.portfolio_db = portfolio_db
-        self.current_price = current_price
-
-    def _disable_all(self) -> None:
-        """Disable every child button (post-decision)."""
-        for child in self.children:
-            child.disabled = True
-
-    def _execute_in_db(self) -> float:
-        """Persist the executed trade to SQLite and return the cash spent.
-
-        Deducts the notional from cash, adds/merges the position, refreshes
-        equity, and logs the signal as EXECUTED.
-
-        Returns:
-            float: The cash amount spent on the trade.
-        """
-        qty = self.signal.target_qty or 0
-        cost = qty * self.current_price
-
-        state = self.portfolio_db.get_portfolio_state()
-        state.cash_available = max(0.0, state.cash_available - cost)
-
-        # Merge into an existing position (weighted avg) or append a new one.
-        existing = next(
-            (p for p in state.positions if p.ticker == self.signal.ticker), None
-        )
-        if existing is not None:
-            total_qty = existing.qty_shares + qty
-            if total_qty > 0:
-                existing.avg_entry_price = (
-                    existing.avg_entry_price * existing.qty_shares
-                    + self.current_price * qty
-                ) / total_qty
-            existing.qty_shares = total_qty
-            existing.current_price = self.current_price
-        else:
-            state.positions.append(
-                Position(
-                    ticker=self.signal.ticker,
-                    qty_shares=qty,
-                    avg_entry_price=self.current_price,
-                    current_price=self.current_price,
-                    sector=self._infer_sector(),
-                )
-            )
-
-        state.total_equity = state.cash_available + sum(
-            p.market_value for p in state.positions
-        )
-        self.portfolio_db.update_portfolio(state)
-
-        self.signal.status = SignalStatus.EXECUTED
-        self.portfolio_db.log_signal(self.signal)
-        return cost
-
-    def _infer_sector(self) -> str:
-        """Best-effort sector lookup from the universe file (falls back)."""
-        try:
-            import yaml
-
-            universe_path = (
-                Path(__file__).resolve().parent.parent / "config" / "pea_universe.yaml"
-            )
-            with open(universe_path, "r", encoding="utf-8") as fh:
-                universe = yaml.safe_load(fh) or {}
-            for sector, members in universe.get("universe", {}).items():
-                for entry in members:
-                    if entry["ticker"] == self.signal.ticker:
-                        return sector
-        except Exception:  # noqa: BLE001
-            pass
-        return "UNKNOWN"
-
-    @discord.ui.button(label="Approuver le Trade", style=discord.ButtonStyle.success,
-                       emoji="\U0001F7E2")
-    async def approve(
-        self, interaction: discord.Interaction, button: discord.ui.Button
-    ) -> None:
-        """Persist the execution and update the message."""
-        try:
-            cost = self._execute_in_db()
-            self._disable_all()
-            embed = interaction.message.embeds[0] if interaction.message.embeds else discord.Embed()
-            embed.color = _GREEN
-            embed.title = f"\u2705 TRADE EXECUTED : {self.signal.ticker}"
-            embed.add_field(
-                name="Execution",
-                value=(
-                    f"{self.signal.target_qty} action(s) @ {self.current_price:.2f} EUR "
-                    f"(co\u00fbt {cost:.2f} EUR)"
-                ),
-                inline=False,
-            )
-            await interaction.response.edit_message(embed=embed, view=self)
-            logger.info("Trade EXECUTED for %s by %s.", self.signal.ticker, interaction.user)
-        except Exception:  # noqa: BLE001 - always answer the interaction.
-            logger.exception("Approve callback failed for %s.", self.signal.ticker)
-            if not interaction.response.is_done():
-                await interaction.response.send_message(
-                    "\u26a0\ufe0f Erreur lors de l'ex\u00e9cution en base.", ephemeral=True
-                )
-        finally:
-            self.stop()
-
-    @discord.ui.button(label="Rejeter", style=discord.ButtonStyle.danger,
-                       emoji="\U0001F534")
-    async def reject(
-        self, interaction: discord.Interaction, button: discord.ui.Button
-    ) -> None:
-        """Mark the alert rejected by the user and update the message."""
-        try:
-            self.signal.status = SignalStatus.REJECTED
-            if self.portfolio_db is not None:
-                self.portfolio_db.log_signal(self.signal)
-            self._disable_all()
-            embed = interaction.message.embeds[0] if interaction.message.embeds else discord.Embed()
-            embed.color = _RED
-            embed.title = f"\u274c TRADE REJECTED BY USER : {self.signal.ticker}"
-            await interaction.response.edit_message(embed=embed, view=self)
-            logger.info("Trade REJECTED for %s by %s.", self.signal.ticker, interaction.user)
-        except Exception:  # noqa: BLE001
-            logger.exception("Reject callback failed for %s.", self.signal.ticker)
-            if not interaction.response.is_done():
-                await interaction.response.send_message(
-                    "\u26a0\ufe0f Erreur.", ephemeral=True
-                )
-        finally:
-            self.stop()
-
-
-class DiscordCopilot(discord.Client):
-    """Discord client that posts trade alerts and handles approvals."""
-
-    def __init__(self, portfolio_db=None, explainer: NarrativeExplainer | None = None) -> None:
-        """Initialize the client with a portfolio DB and an LLM explainer.
-
-        Args:
-            portfolio_db: A ``PortfolioDB`` for persisting executions.
-            explainer: A ``NarrativeExplainer`` (created if not provided).
-        """
-        intents = discord.Intents.default()
-        super().__init__(intents=intents)
-        self.portfolio_db = portfolio_db
-        self.explainer = explainer or NarrativeExplainer()
-        self.channel_id = int(os.getenv("DISCORD_CHANNEL_ID", "0"))
-
-    async def on_ready(self) -> None:
-        """Log a confirmation once the bot has connected."""
-        logger.info("Discord Copilot connected as %s (channel_id=%s).",
-                    self.user, self.channel_id)
-
-    def build_embed(self, signal: Signal, explanation: str) -> discord.Embed:
-        """Build the alert embed for a signal.
-
-        Args:
-            signal: The approved signal.
-            explanation: The LLM-generated rationale.
-
-        Returns:
-            discord.Embed: The formatted alert embed.
-        """
-        is_buy = signal.signal_type == SignalType.BUY
-        embed = discord.Embed(
-            title=f"\U0001F6A8 PEA OPPORTUNIT\u00c9 : {signal.signal_type.name} {signal.ticker}",
-            color=_GREEN if is_buy else _RED,
-        )
-        embed.add_field(name="Quantit\u00e9", value=f"{signal.target_qty} actions", inline=True)
-        embed.add_field(name="Score Technique", value=f"{signal.score:.1f}/100", inline=True)
-        embed.add_field(name="Analyse IA", value=explanation, inline=False)
-        return embed
+    def __init__(self) -> None:
+        self.webhook_url = os.getenv("DISCORD_WEBHOOK_URL")
 
     async def send_signal_alert(
         self,
         signal: Signal,
         portfolio: PortfolioState,
+        *,
         explainer: NarrativeExplainer | None = None,
         current_price: float = 0.0,
-    ) -> discord.Message | None:
-        """Generate an explanation and post an interactive alert.
+    ) -> None:
+        """Post an embedded trade alert to the Discord webhook.
 
         Args:
-            signal: The approved, sized signal.
-            portfolio: Current portfolio snapshot (for LLM context).
-            explainer: Optional explainer override (defaults to ``self.explainer``).
-            current_price: Price per share used for execution accounting.
-
-        Returns:
-            discord.Message | None: The sent message, or ``None`` if the channel
-            could not be resolved.
+            signal: The signal (BUY or SELL).
+            portfolio: Current portfolio state.
+            explainer: Optional LLM explainer for the narrative.
+            current_price: The live ticker price.
         """
-        explainer = explainer or self.explainer
-        explanation = await explainer.explain_trade(signal, portfolio)
+        if not self.webhook_url:
+            logger.warning("DISCORD_WEBHOOK_URL not set; skipping alert.")
+            return
 
-        embed = self.build_embed(signal, explanation)
-        view = TradeActionView(signal, self.portfolio_db, current_price)
+        is_buy = signal.signal_type == SignalType.BUY
+        color = _GREEN if is_buy else _RED
+        title_emoji = "🟢" if is_buy else "🔴"
+        notional = (signal.target_qty or 0) * current_price
 
-        channel = self.get_channel(self.channel_id)
-        if channel is None:
+        # Default narrative fallback
+        narrative = f"{signal.reason}\n\n*Signal généré par l'algorithme.*"
+        
+        # LLM generated narrative
+        if explainer is not None:
             try:
-                channel = await self.fetch_channel(self.channel_id)
-            except Exception:  # noqa: BLE001
-                logger.error("Could not resolve channel %s.", self.channel_id)
-                return None
+                narrative = await explainer.explain_trade(signal, portfolio)
+            except Exception as exc:  # noqa: BLE001
+                logger.error("LLM failed to explain %s: %s", signal.ticker, exc)
 
-        message = await channel.send(embed=embed, view=view)
-        logger.info("Alert sent for %s to channel %s.", signal.ticker, self.channel_id)
-        return message
-
-
-async def send_daily_concise_report(
-    *,
-    equity: float,
-    day_change_pct: float | None,
-    investment_rate_pct: float,
-    top_positions: list[dict] | None = None,
-    near_miss: list[dict] | None = None,
-    vix: float | None = None,
-    webhook_url: str | None = None,
-) -> bool:
-    """Post a sleek daily end-of-day digest via Discord webhook.
-
-    Designed for the 17:10 Paris pass. Uses ``DISCORD_WEBHOOK_URL`` by default
-    (no bot token required).
-
-    Args:
-        equity: Total portfolio value (EUR).
-        day_change_pct: Daily equity change in percent, or None.
-        investment_rate_pct: Invested / equity * 100.
-        top_positions: Optional ``[{ticker, weight_pct, pnl_pct}, ...]``.
-        near_miss: Optional ``[{ticker, score, missing}, ...]`` top opportunities.
-        vix: Latest VIX / VSTOXX level.
-        webhook_url: Override webhook URL.
-
-    Returns:
-        bool: True if Discord accepted the payload.
-    """
-    import aiohttp
-
-    url = webhook_url or os.getenv("DISCORD_WEBHOOK_URL")
-    if not url:
-        logger.warning("DISCORD_WEBHOOK_URL unset; daily report skipped.")
-        return False
-
-    day_txt = "n/a" if day_change_pct is None else f"{day_change_pct:+.2f}%"
-    vix_txt = "n/a" if vix is None else f"{vix:.1f}"
-    pos_lines = []
-    for p in (top_positions or [])[:5]:
-        pos_lines.append(
-            f"• **{p.get('ticker', '?')}** — "
-            f"{float(p.get('weight_pct') or 0):.1f}% equity · "
-            f"PnL {float(p.get('pnl_pct') or 0):+.1f}%"
-        )
-    if not pos_lines:
-        pos_lines = ["• Aucune position ouverte"]
-
-    miss_lines = []
-    for m in (near_miss or [])[:3]:
-        miss_lines.append(
-            f"• **{m.get('ticker', '?')}** — score {int(m.get('score') or 0)}/100"
-            f" · {m.get('missing') or 'en surveillance'}"
-        )
-    if not miss_lines:
-        miss_lines = ["• Aucun near-miss notable"]
-
-    embed = {
-        "title": "📊 PEA Pollux — Rapport Quotidien",
-        "color": 0x00E676 if (day_change_pct or 0) >= 0 else 0xFF3B30,
-        "fields": [
-            {
-                "name": "Portefeuille",
-                "value": (
-                    f"**{equity:,.0f} €** · Δ jour **{day_txt}**\n"
-                    f"Taux d'investissement : **{investment_rate_pct:.1f}%**"
-                ),
-                "inline": False,
+        embed = {
+            "title": f"{title_emoji} {signal.signal_type.value} {signal.ticker}",
+            "description": narrative,
+            "color": color,
+            "fields": [
+                {
+                    "name": "Score Technique",
+                    "value": f"{signal.score:.0f}/100",
+                    "inline": True,
+                },
+                {
+                    "name": "Quantité Cible",
+                    "value": f"{signal.target_qty} (≈ {notional:,.0f} €)",
+                    "inline": True,
+                },
+            ],
+            "footer": {
+                "text": "Validation manuelle requise via le Command Center du Dashboard Streamlit."
             },
-            {
-                "name": "Positions actives",
-                "value": "\n".join(pos_lines)[:1000],
-                "inline": False,
-            },
-            {
-                "name": "Radar Near-Miss (Top 3)",
-                "value": "\n".join(miss_lines)[:800],
-                "inline": False,
-            },
-            {
-                "name": "Macro",
-                "value": f"VIX / VSTOXX : **{vix_txt}**",
-                "inline": True,
-            },
-        ],
-        "footer": {"text": "PEA Pollux · exécution manuelle · pas un conseil"},
-    }
-    try:
-        timeout = aiohttp.ClientTimeout(total=20)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.post(url, json={"embeds": [embed]}) as resp:
-                if resp.status not in (200, 204):
-                    body = await resp.text()
-                    logger.error("Daily report webhook HTTP %s: %s", resp.status, body[:200])
-                    return False
-        logger.info("Daily concise report posted to Discord webhook.")
-        return True
-    except Exception:  # noqa: BLE001
-        logger.exception("Daily concise report failed.")
-        return False
+        }
+
+        payload = {"embeds": [embed]}
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(self.webhook_url, json=payload) as response:
+                    if response.status not in (200, 204):
+                        logger.error(f"Failed to post to webhook: {response.status}")
+                    else:
+                        logger.info("Discord Webhook alert sent for %s.", signal.ticker)
+        except Exception as exc:
+            logger.exception("Aiohttp webhook post failed for %s.", signal.ticker)
 ```
 
 ## FILE: 05_interfaces/llm_explainer.py (272 lines)
@@ -18669,12 +18411,12 @@ async def run_pipeline_async() -> None:
     pdb = PortfolioDB()
     pdb.init_db()
     fetcher = MarketDataFetcher()
-    generator = SignalGenerator()
+    generator = SignalGenerator(portfolio_db=pdb)
     orchestrator = SignalOrchestrator(
         config_dir=_CONFIG_DIR, portfolio_db=pdb, timeseries_db=tsdb
     )
     explainer = NarrativeExplainer()
-    copilot = DiscordCopilot(portfolio_db=pdb, explainer=explainer)
+    copilot = DiscordCopilot()
 
     core_engine = SmartDcaCore(_CONFIG_DIR)
     macro_alpha = MacroAlphaSensor()
@@ -18796,9 +18538,9 @@ async def run_pipeline_async() -> None:
         logger.info("No APPROVED/REVOKED signals to push to Discord this pass.")
         return
 
-    if not os.getenv("DISCORD_TOKEN"):
+    if not os.getenv("DISCORD_WEBHOOK_URL"):
         logger.warning(
-            "DISCORD_TOKEN not set; %d alert(s) computed but not sent.",
+            "DISCORD_WEBHOOK_URL not set; %d alert(s) computed but not sent.",
             len(alertable),
         )
         return
@@ -19222,7 +18964,7 @@ if __name__ == "__main__":
     main()
 ```
 
-## FILE: README.md (735 lines)
+## FILE: README.md (737 lines)
 ```markdown
 # PEA Pollux — Terminal quantitatif personnel
 
@@ -19825,6 +19567,8 @@ sources over furtive HTML scraping.
 | **Institutional Overhaul: data quality (auto_adjust), parallel I/O, drawdown breaker, OpenFIGI, Alpha Vantage, backtester look-ahead fix, CI ruff** | ✅ Phase 42 |
 | **Pydantic config validation, backtester exits, dashboard DuckDB dedup, XGBoost ML, Devil's Advocate PEA** | ✅ Phase 44 |
 | **Dynamic Market Regime, EWMA Risk Math, Pipeline Idempotency** | ✅ Phase 45 |
+| **ML Historical Bootstrapper, Gemini 2.5 Optimization** | ✅ Phase 46 |
+| **Ultimate Performance (SQLite I/O fix), Pure Webhooks for Discord** | ✅ Phase 47 |
 | pytest + GitHub Actions CI | Expand coverage over time |
 
 ### Next (highest leverage)
@@ -20576,6 +20320,146 @@ def main() -> None:
     conn.close()
     print("Backup complete.")
 
+
+if __name__ == "__main__":
+    main()
+```
+
+## FILE: tools/bootstrap_ml_dataset.py (136 lines)
+```python
+"""ML Historical Bootstrapper for PEA Pollux.
+
+Simulates the last 10 years to generate XGBoost training features.
+Uses multiprocessing to scan tickers x 10 years efficiently.
+"""
+
+import concurrent.futures
+import datetime
+import logging
+import os
+import sys
+from pathlib import Path
+from typing import List, Dict
+
+import pandas as pd
+
+_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_ROOT))
+sys.path.insert(0, str(_ROOT / "01_memory_core"))
+sys.path.insert(0, str(_ROOT / "02_quant_engine"))
+sys.path.insert(0, str(_ROOT / "00_data_sensors"))
+
+from duckdb_manager import TimeSeriesDB
+from technical_scorer import SignalGenerator
+from ml_feature_store import build_ml_feature_row
+from build_universe import load_universe
+
+logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+logger = logging.getLogger(__name__)
+
+# Constants
+START_DATE = datetime.datetime.now() - datetime.timedelta(days=365 * 10)
+END_DATE = datetime.datetime.now() - datetime.timedelta(days=35)
+STEP_DAYS = 5
+MIN_ROWS = 252
+
+def _process_ticker_dates(ticker: str) -> List[Dict]:
+    """Evaluate historical dates for a single ticker."""
+    tsdb = TimeSeriesDB(read_only=True)
+    generator = SignalGenerator() 
+    
+    try:
+        df = tsdb.get_historical_prices(ticker, days=4000)
+    except Exception:
+        return []
+        
+    if df is None or df.empty or "Close" not in df.columns or len(df) < MIN_ROWS:
+        return []
+        
+    df = df.sort_values("Date")
+    close_series = df["Close"].astype(float)
+    
+    results = []
+    
+    current_date = pd.to_datetime(START_DATE).tz_localize(None)
+    end_date = pd.to_datetime(END_DATE).tz_localize(None)
+    
+    dates_to_check = []
+    while current_date <= end_date:
+        dates_to_check.append(current_date)
+        current_date += datetime.timedelta(days=STEP_DAYS)
+        
+    df["Date_dt"] = pd.to_datetime(df["Date"]).dt.tz_localize(None)
+    
+    for d in dates_to_check:
+        mask = df["Date_dt"] <= d
+        valid_hist = df[mask]
+        
+        if len(valid_hist) < MIN_ROWS:
+            continue
+            
+        asof_idx = len(valid_hist) - 1
+        
+        try:
+            conv = generator.evaluate(ticker, valid_hist, macro_sensor=None)
+            total = float(conv.get("total") or 0.0)
+            
+            if total >= 65.0:
+                feat = build_ml_feature_row(
+                    ticker,
+                    close=close_series,
+                    reason="historical bootstrap",
+                    pdb=None,
+                    asof_idx=asof_idx
+                )
+                if feat.get("label_fwd_gt_2pct") is not None and not pd.isna(feat["label_fwd_gt_2pct"]):
+                    feat["conviction_score"] = total
+                    results.append(feat)
+        except Exception:
+            continue
+            
+    return results
+
+def main() -> None:
+    universe = load_universe()
+    tickers = [t["ticker"] for t in universe]
+    logger.info(f"Loaded {len(tickers)} tickers for ML bootstrap.")
+    
+    all_features = []
+    
+    with concurrent.futures.ProcessPoolExecutor() as executor:
+        futures = {executor.submit(_process_ticker_dates, ticker): ticker for ticker in tickers}
+        completed = 0
+        
+        for future in concurrent.futures.as_completed(futures):
+            ticker = futures[future]
+            try:
+                res = future.result()
+                all_features.extend(res)
+            except Exception as exc:
+                logger.error(f"Ticker {ticker} generated an exception: {exc}")
+            
+            completed += 1
+            if completed % 10 == 0:
+                logger.info(f"Progress: {completed}/{len(tickers)} tickers processed. Collected {len(all_features)} signals.")
+                
+    if not all_features:
+        logger.error("No features generated. Exiting.")
+        return
+        
+    out_df = pd.DataFrame(all_features)
+    out_path = _ROOT / "database" / "ml_training_dataset.csv"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_df.to_csv(out_path, index=False)
+    logger.info(f"Saved {len(out_df)} rows to {out_path}.")
+    
+    try:
+        from ml_trainer import train_model
+        logger.info("Training XGBoost model...")
+        train_model(dataset_path=str(out_path))
+        logger.info("Training complete.")
+    except Exception as e:
+        logger.exception("Failed to train model.")
 
 if __name__ == "__main__":
     main()

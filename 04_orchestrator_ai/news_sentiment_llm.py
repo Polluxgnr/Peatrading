@@ -91,13 +91,11 @@ class NewsSentimentScorer:
         if not self.api_key:
             return _NEUTRAL_SCORE
 
-        joined = "\n".join(f"- {h}" for h in headlines[:15])
+        joined = "\n".join(f"- {h}" for h in headlines[:10])
         system_prompt = (
-            "You are a deterministic quantitative NLP sentiment model. You read "
-            "financial news headlines and output market sentiment as a single "
-            "integer between -100 (extremely bearish) and +100 (extremely "
-            "bullish), where 0 is neutral. Output ONLY the integer. No words, no "
-            "symbols, no explanation, no punctuation."
+            "You are a quantitative NLP model. Output NOTHING EXCEPT a single "
+            "integer between -100 and 100. Do not wrap the integer in markdown "
+            "or backticks."
         )
         user_prompt = (
             f"Ticker: {ticker}\nHeadlines:\n{joined}\n\n"

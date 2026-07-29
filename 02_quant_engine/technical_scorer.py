@@ -113,6 +113,7 @@ class SignalGenerator:
         self,
         config_path: str | Path | None = None,
         macro_sensor: Any | None = None,
+        portfolio_db: Any | None = None,
     ) -> None:
         """Load optional thresholds from ``risk_params.yaml``.
 
@@ -124,6 +125,7 @@ class SignalGenerator:
         path = Path(config_path) if config_path else _DEFAULT_CONFIG_DIR
         risk = load_risk_config(path)
         self._macro = macro_sensor
+        self.portfolio_db = portfolio_db
         
         try:
             from market_regime import MarketRegimeClassifier
@@ -142,11 +144,13 @@ class SignalGenerator:
             self.conviction_floor = float(risk.CONVICTION_EMIT_FLOOR)
 
     @staticmethod
-    def _load_fundamentals_from_sources(ticker: str) -> dict:
+    def _load_fundamentals_from_sources(ticker: str, pdb: Any = None) -> dict:
         """Fetch fundamentals via SQLite cache -> Finnhub/yfinance sensor."""
         try:
-            pdb = PortfolioDB()
-            pdb.init_db()
+            if pdb is None:
+                from sqlite_portfolio import PortfolioDB
+                pdb = PortfolioDB()
+                pdb.init_db()
             cache = pdb.get_cached_fundamentals(ticker, max_age_days=7)
             if cache:
                 return cache
@@ -169,8 +173,10 @@ class SignalGenerator:
             for k in ("pe_ratio", "pb_ratio", "roe", "debt_to_equity")
         ):
             try:
-                pdb = PortfolioDB()
-                pdb.init_db()
+                if pdb is None:
+                    from sqlite_portfolio import PortfolioDB
+                    pdb = PortfolioDB()
+                    pdb.init_db()
                 pdb.upsert_fundamentals(ticker, data)
             except Exception as exc:  # noqa: BLE001
                 logger.debug("Fundamentals cache upsert failed for %s: %s", ticker, exc)
@@ -372,7 +378,7 @@ class SignalGenerator:
             insider_score = 35.0
 
         # Value/Quality axis (fundamentals) with graceful fallback.
-        fundamentals = self._load_fundamentals_from_sources(ticker)
+        fundamentals = self._load_fundamentals_from_sources(ticker, pdb=self.portfolio_db)
         pe = fundamentals.get("pe_ratio")
         pb = fundamentals.get("pb_ratio")
         roe = fundamentals.get("roe")

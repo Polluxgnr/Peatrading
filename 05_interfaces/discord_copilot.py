@@ -1,15 +1,11 @@
-"""Discord Copilot for PEA Pollux.
+"""Discord Copilot Webhook for PEA Pollux.
 
-Pushes interactive trade alerts to Discord and waits for the human to approve
-or reject. Execution is manual: approving records the trade in SQLite (status
-EXECUTED, cash deducted, position added) - it never sends an order to a broker.
-
-STRICT: the LLM only writes the explanation text (Phase 7.1). Buttons and DB
-logic here are deterministic.
+Pushes trade alerts directly to Discord using a simple Webhook.
+Replaces the old discord.py Client which had channel/intent issues.
+Execution is manual via the Streamlit Dashboard.
 
 .env requirements (config/api_keys.env):
-    DISCORD_TOKEN        - the bot token.
-    DISCORD_CHANNEL_ID   - numeric channel ID for alerts.
+    DISCORD_WEBHOOK_URL  - webhook for trade alerts.
     OPENROUTER_API_KEY   - used by NarrativeExplainer (optional; has fallback).
 """
 
@@ -18,7 +14,8 @@ import os
 import sys
 from pathlib import Path
 
-import discord
+import aiohttp
+import json
 
 try:
     _CORE = Path(__file__).resolve().parent.parent / "01_memory_core"
@@ -40,345 +37,84 @@ _CORE_DIR = os.path.join(os.path.dirname(_INTERFACES_DIR), "01_memory_core")
 sys.path.insert(0, _INTERFACES_DIR)
 sys.path.insert(0, _CORE_DIR)
 
-from data_models import PortfolioState, Position, Signal, SignalStatus, SignalType  # noqa: E402
+from data_models import PortfolioState, Signal, SignalStatus, SignalType  # noqa: E402
 from llm_explainer import NarrativeExplainer  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
-_GREEN = discord.Color.from_str("#00E676")
-_RED = discord.Color.from_str("#FF3B30")
+_GREEN = 59006
+_RED = 16726832
 
+class DiscordCopilot:
+    """Aiohttp-based Discord webhook sender for PEA Pollux alerts."""
 
-class TradeActionView(discord.ui.View):
-    """Interactive Approve/Reject buttons attached to a trade alert.
-
-    Approving persists the trade to SQLite via the provided ``PortfolioDB``.
-    Both callbacks immediately edit the message so Discord never shows a stuck
-    "thinking" state.
-    """
-
-    def __init__(
-        self,
-        signal: Signal,
-        portfolio_db,
-        current_price: float,
-        timeout: float | None = 3600,
-    ) -> None:
-        """Initialize the view.
-
-        Args:
-            signal: The approved signal this alert represents.
-            portfolio_db: A ``PortfolioDB`` used to persist an execution.
-            current_price: Price per share used to compute the cash outlay.
-            timeout: Seconds before the buttons auto-disable (default 1h).
-        """
-        super().__init__(timeout=timeout)
-        self.signal = signal
-        self.portfolio_db = portfolio_db
-        self.current_price = current_price
-
-    def _disable_all(self) -> None:
-        """Disable every child button (post-decision)."""
-        for child in self.children:
-            child.disabled = True
-
-    def _execute_in_db(self) -> float:
-        """Persist the executed trade to SQLite and return the cash spent.
-
-        Deducts the notional from cash, adds/merges the position, refreshes
-        equity, and logs the signal as EXECUTED.
-
-        Returns:
-            float: The cash amount spent on the trade.
-        """
-        qty = self.signal.target_qty or 0
-        cost = qty * self.current_price
-
-        state = self.portfolio_db.get_portfolio_state()
-        state.cash_available = max(0.0, state.cash_available - cost)
-
-        # Merge into an existing position (weighted avg) or append a new one.
-        existing = next(
-            (p for p in state.positions if p.ticker == self.signal.ticker), None
-        )
-        if existing is not None:
-            total_qty = existing.qty_shares + qty
-            if total_qty > 0:
-                existing.avg_entry_price = (
-                    existing.avg_entry_price * existing.qty_shares
-                    + self.current_price * qty
-                ) / total_qty
-            existing.qty_shares = total_qty
-            existing.current_price = self.current_price
-        else:
-            state.positions.append(
-                Position(
-                    ticker=self.signal.ticker,
-                    qty_shares=qty,
-                    avg_entry_price=self.current_price,
-                    current_price=self.current_price,
-                    sector=self._infer_sector(),
-                )
-            )
-
-        state.total_equity = state.cash_available + sum(
-            p.market_value for p in state.positions
-        )
-        self.portfolio_db.update_portfolio(state)
-
-        self.signal.status = SignalStatus.EXECUTED
-        self.portfolio_db.log_signal(self.signal)
-        return cost
-
-    def _infer_sector(self) -> str:
-        """Best-effort sector lookup from the universe file (falls back)."""
-        try:
-            import yaml
-
-            universe_path = (
-                Path(__file__).resolve().parent.parent / "config" / "pea_universe.yaml"
-            )
-            with open(universe_path, "r", encoding="utf-8") as fh:
-                universe = yaml.safe_load(fh) or {}
-            for sector, members in universe.get("universe", {}).items():
-                for entry in members:
-                    if entry["ticker"] == self.signal.ticker:
-                        return sector
-        except Exception:  # noqa: BLE001
-            pass
-        return "UNKNOWN"
-
-    @discord.ui.button(label="Approuver le Trade", style=discord.ButtonStyle.success,
-                       emoji="\U0001F7E2")
-    async def approve(
-        self, interaction: discord.Interaction, button: discord.ui.Button
-    ) -> None:
-        """Persist the execution and update the message."""
-        try:
-            cost = self._execute_in_db()
-            self._disable_all()
-            embed = interaction.message.embeds[0] if interaction.message.embeds else discord.Embed()
-            embed.color = _GREEN
-            embed.title = f"\u2705 TRADE EXECUTED : {self.signal.ticker}"
-            embed.add_field(
-                name="Execution",
-                value=(
-                    f"{self.signal.target_qty} action(s) @ {self.current_price:.2f} EUR "
-                    f"(co\u00fbt {cost:.2f} EUR)"
-                ),
-                inline=False,
-            )
-            await interaction.response.edit_message(embed=embed, view=self)
-            logger.info("Trade EXECUTED for %s by %s.", self.signal.ticker, interaction.user)
-        except Exception:  # noqa: BLE001 - always answer the interaction.
-            logger.exception("Approve callback failed for %s.", self.signal.ticker)
-            if not interaction.response.is_done():
-                await interaction.response.send_message(
-                    "\u26a0\ufe0f Erreur lors de l'ex\u00e9cution en base.", ephemeral=True
-                )
-        finally:
-            self.stop()
-
-    @discord.ui.button(label="Rejeter", style=discord.ButtonStyle.danger,
-                       emoji="\U0001F534")
-    async def reject(
-        self, interaction: discord.Interaction, button: discord.ui.Button
-    ) -> None:
-        """Mark the alert rejected by the user and update the message."""
-        try:
-            self.signal.status = SignalStatus.REJECTED
-            if self.portfolio_db is not None:
-                self.portfolio_db.log_signal(self.signal)
-            self._disable_all()
-            embed = interaction.message.embeds[0] if interaction.message.embeds else discord.Embed()
-            embed.color = _RED
-            embed.title = f"\u274c TRADE REJECTED BY USER : {self.signal.ticker}"
-            await interaction.response.edit_message(embed=embed, view=self)
-            logger.info("Trade REJECTED for %s by %s.", self.signal.ticker, interaction.user)
-        except Exception:  # noqa: BLE001
-            logger.exception("Reject callback failed for %s.", self.signal.ticker)
-            if not interaction.response.is_done():
-                await interaction.response.send_message(
-                    "\u26a0\ufe0f Erreur.", ephemeral=True
-                )
-        finally:
-            self.stop()
-
-
-class DiscordCopilot(discord.Client):
-    """Discord client that posts trade alerts and handles approvals."""
-
-    def __init__(self, portfolio_db=None, explainer: NarrativeExplainer | None = None) -> None:
-        """Initialize the client with a portfolio DB and an LLM explainer.
-
-        Args:
-            portfolio_db: A ``PortfolioDB`` for persisting executions.
-            explainer: A ``NarrativeExplainer`` (created if not provided).
-        """
-        intents = discord.Intents.default()
-        super().__init__(intents=intents)
-        self.portfolio_db = portfolio_db
-        self.explainer = explainer or NarrativeExplainer()
-        self.channel_id = int(os.getenv("DISCORD_CHANNEL_ID", "0"))
-
-    async def on_ready(self) -> None:
-        """Log a confirmation once the bot has connected."""
-        logger.info("Discord Copilot connected as %s (channel_id=%s).",
-                    self.user, self.channel_id)
-
-    def build_embed(self, signal: Signal, explanation: str) -> discord.Embed:
-        """Build the alert embed for a signal.
-
-        Args:
-            signal: The approved signal.
-            explanation: The LLM-generated rationale.
-
-        Returns:
-            discord.Embed: The formatted alert embed.
-        """
-        is_buy = signal.signal_type == SignalType.BUY
-        embed = discord.Embed(
-            title=f"\U0001F6A8 PEA OPPORTUNIT\u00c9 : {signal.signal_type.name} {signal.ticker}",
-            color=_GREEN if is_buy else _RED,
-        )
-        embed.add_field(name="Quantit\u00e9", value=f"{signal.target_qty} actions", inline=True)
-        embed.add_field(name="Score Technique", value=f"{signal.score:.1f}/100", inline=True)
-        embed.add_field(name="Analyse IA", value=explanation, inline=False)
-        return embed
+    def __init__(self) -> None:
+        self.webhook_url = os.getenv("DISCORD_WEBHOOK_URL")
 
     async def send_signal_alert(
         self,
         signal: Signal,
         portfolio: PortfolioState,
+        *,
         explainer: NarrativeExplainer | None = None,
         current_price: float = 0.0,
-    ) -> discord.Message | None:
-        """Generate an explanation and post an interactive alert.
+    ) -> None:
+        """Post an embedded trade alert to the Discord webhook.
 
         Args:
-            signal: The approved, sized signal.
-            portfolio: Current portfolio snapshot (for LLM context).
-            explainer: Optional explainer override (defaults to ``self.explainer``).
-            current_price: Price per share used for execution accounting.
-
-        Returns:
-            discord.Message | None: The sent message, or ``None`` if the channel
-            could not be resolved.
+            signal: The signal (BUY or SELL).
+            portfolio: Current portfolio state.
+            explainer: Optional LLM explainer for the narrative.
+            current_price: The live ticker price.
         """
-        explainer = explainer or self.explainer
-        explanation = await explainer.explain_trade(signal, portfolio)
+        if not self.webhook_url:
+            logger.warning("DISCORD_WEBHOOK_URL not set; skipping alert.")
+            return
 
-        embed = self.build_embed(signal, explanation)
-        view = TradeActionView(signal, self.portfolio_db, current_price)
+        is_buy = signal.signal_type == SignalType.BUY
+        color = _GREEN if is_buy else _RED
+        title_emoji = "🟢" if is_buy else "🔴"
+        notional = (signal.target_qty or 0) * current_price
 
-        channel = self.get_channel(self.channel_id)
-        if channel is None:
+        # Default narrative fallback
+        narrative = f"{signal.reason}\n\n*Signal généré par l'algorithme.*"
+        
+        # LLM generated narrative
+        if explainer is not None:
             try:
-                channel = await self.fetch_channel(self.channel_id)
-            except Exception:  # noqa: BLE001
-                logger.error("Could not resolve channel %s.", self.channel_id)
-                return None
+                narrative = await explainer.explain_trade(signal, portfolio)
+            except Exception as exc:  # noqa: BLE001
+                logger.error("LLM failed to explain %s: %s", signal.ticker, exc)
 
-        message = await channel.send(embed=embed, view=view)
-        logger.info("Alert sent for %s to channel %s.", signal.ticker, self.channel_id)
-        return message
-
-
-async def send_daily_concise_report(
-    *,
-    equity: float,
-    day_change_pct: float | None,
-    investment_rate_pct: float,
-    top_positions: list[dict] | None = None,
-    near_miss: list[dict] | None = None,
-    vix: float | None = None,
-    webhook_url: str | None = None,
-) -> bool:
-    """Post a sleek daily end-of-day digest via Discord webhook.
-
-    Designed for the 17:10 Paris pass. Uses ``DISCORD_WEBHOOK_URL`` by default
-    (no bot token required).
-
-    Args:
-        equity: Total portfolio value (EUR).
-        day_change_pct: Daily equity change in percent, or None.
-        investment_rate_pct: Invested / equity * 100.
-        top_positions: Optional ``[{ticker, weight_pct, pnl_pct}, ...]``.
-        near_miss: Optional ``[{ticker, score, missing}, ...]`` top opportunities.
-        vix: Latest VIX / VSTOXX level.
-        webhook_url: Override webhook URL.
-
-    Returns:
-        bool: True if Discord accepted the payload.
-    """
-    import aiohttp
-
-    url = webhook_url or os.getenv("DISCORD_WEBHOOK_URL")
-    if not url:
-        logger.warning("DISCORD_WEBHOOK_URL unset; daily report skipped.")
-        return False
-
-    day_txt = "n/a" if day_change_pct is None else f"{day_change_pct:+.2f}%"
-    vix_txt = "n/a" if vix is None else f"{vix:.1f}"
-    pos_lines = []
-    for p in (top_positions or [])[:5]:
-        pos_lines.append(
-            f"• **{p.get('ticker', '?')}** — "
-            f"{float(p.get('weight_pct') or 0):.1f}% equity · "
-            f"PnL {float(p.get('pnl_pct') or 0):+.1f}%"
-        )
-    if not pos_lines:
-        pos_lines = ["• Aucune position ouverte"]
-
-    miss_lines = []
-    for m in (near_miss or [])[:3]:
-        miss_lines.append(
-            f"• **{m.get('ticker', '?')}** — score {int(m.get('score') or 0)}/100"
-            f" · {m.get('missing') or 'en surveillance'}"
-        )
-    if not miss_lines:
-        miss_lines = ["• Aucun near-miss notable"]
-
-    embed = {
-        "title": "📊 PEA Pollux — Rapport Quotidien",
-        "color": 0x00E676 if (day_change_pct or 0) >= 0 else 0xFF3B30,
-        "fields": [
-            {
-                "name": "Portefeuille",
-                "value": (
-                    f"**{equity:,.0f} €** · Δ jour **{day_txt}**\n"
-                    f"Taux d'investissement : **{investment_rate_pct:.1f}%**"
-                ),
-                "inline": False,
+        embed = {
+            "title": f"{title_emoji} {signal.signal_type.value} {signal.ticker}",
+            "description": narrative,
+            "color": color,
+            "fields": [
+                {
+                    "name": "Score Technique",
+                    "value": f"{signal.score:.0f}/100",
+                    "inline": True,
+                },
+                {
+                    "name": "Quantité Cible",
+                    "value": f"{signal.target_qty} (≈ {notional:,.0f} €)",
+                    "inline": True,
+                },
+            ],
+            "footer": {
+                "text": "Validation manuelle requise via le Command Center du Dashboard Streamlit."
             },
-            {
-                "name": "Positions actives",
-                "value": "\n".join(pos_lines)[:1000],
-                "inline": False,
-            },
-            {
-                "name": "Radar Near-Miss (Top 3)",
-                "value": "\n".join(miss_lines)[:800],
-                "inline": False,
-            },
-            {
-                "name": "Macro",
-                "value": f"VIX / VSTOXX : **{vix_txt}**",
-                "inline": True,
-            },
-        ],
-        "footer": {"text": "PEA Pollux · exécution manuelle · pas un conseil"},
-    }
-    try:
-        timeout = aiohttp.ClientTimeout(total=20)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.post(url, json={"embeds": [embed]}) as resp:
-                if resp.status not in (200, 204):
-                    body = await resp.text()
-                    logger.error("Daily report webhook HTTP %s: %s", resp.status, body[:200])
-                    return False
-        logger.info("Daily concise report posted to Discord webhook.")
-        return True
-    except Exception:  # noqa: BLE001
-        logger.exception("Daily concise report failed.")
-        return False
+        }
+
+        payload = {"embeds": [embed]}
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(self.webhook_url, json=payload) as response:
+                    if response.status not in (200, 204):
+                        logger.error(f"Failed to post to webhook: {response.status}")
+                    else:
+                        logger.info("Discord Webhook alert sent for %s.", signal.ticker)
+        except Exception as exc:
+            logger.exception("Aiohttp webhook post failed for %s.", signal.ticker)

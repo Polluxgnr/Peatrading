@@ -235,12 +235,12 @@ async def run_pipeline_async() -> None:
     pdb = PortfolioDB()
     pdb.init_db()
     fetcher = MarketDataFetcher()
-    generator = SignalGenerator()
+    generator = SignalGenerator(portfolio_db=pdb)
     orchestrator = SignalOrchestrator(
         config_dir=_CONFIG_DIR, portfolio_db=pdb, timeseries_db=tsdb
     )
     explainer = NarrativeExplainer()
-    copilot = DiscordCopilot(portfolio_db=pdb, explainer=explainer)
+    copilot = DiscordCopilot()
 
     core_engine = SmartDcaCore(_CONFIG_DIR)
     macro_alpha = MacroAlphaSensor()
@@ -362,9 +362,9 @@ async def run_pipeline_async() -> None:
         logger.info("No APPROVED/REVOKED signals to push to Discord this pass.")
         return
 
-    if not os.getenv("DISCORD_TOKEN"):
+    if not os.getenv("DISCORD_WEBHOOK_URL"):
         logger.warning(
-            "DISCORD_TOKEN not set; %d alert(s) computed but not sent.",
+            "DISCORD_WEBHOOK_URL not set; %d alert(s) computed but not sent.",
             len(alertable),
         )
         return

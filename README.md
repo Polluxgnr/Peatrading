@@ -599,6 +599,8 @@ sources over furtive HTML scraping.
 | **Institutional Overhaul: data quality (auto_adjust), parallel I/O, drawdown breaker, OpenFIGI, Alpha Vantage, backtester look-ahead fix, CI ruff** | ✅ Phase 42 |
 | **Pydantic config validation, backtester exits, dashboard DuckDB dedup, XGBoost ML, Devil's Advocate PEA** | ✅ Phase 44 |
 | **Dynamic Market Regime, EWMA Risk Math, Pipeline Idempotency** | ✅ Phase 45 |
+| **ML Historical Bootstrapper, Gemini 2.5 Optimization** | ✅ Phase 46 |
+| **Ultimate Performance (SQLite I/O fix), Pure Webhooks for Discord** | ✅ Phase 47 |
 | pytest + GitHub Actions CI | Expand coverage over time |
 
 ### Next (highest leverage)
