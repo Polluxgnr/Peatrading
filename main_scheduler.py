@@ -404,6 +404,13 @@ def run_analysis_pass() -> None:
             "elapsed_sec": round(elapsed, 2),
             "finished_at_local": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         })
+        # Phase 40: daily concise Discord digest after the evening pass.
+        local_hour = datetime.now().hour
+        if local_hour >= 17:
+            try:
+                asyncio.run(run_daily_concise_report_async())
+            except Exception:  # noqa: BLE001
+                logger.exception("Daily concise report failed after evening pass.")
     except Exception as exc:  # noqa: BLE001 - daemon must survive any failure.
         elapsed = time.perf_counter() - started
         logger.critical(
@@ -417,6 +424,100 @@ def run_analysis_pass() -> None:
             "elapsed_sec": round(elapsed, 2),
             "finished_at_local": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         })
+
+
+async def run_daily_concise_report_async() -> None:
+    """Build and post the Phase 40 end-of-day Discord webhook digest."""
+    from discord_copilot import send_daily_concise_report
+    from pea_position_sizer import PeaSizer
+
+    pdb = PortfolioDB()
+    pdb.init_db()
+    state = pdb.get_portfolio_state()
+    inv_rate = PeaSizer.investment_rate(state)
+
+    day_chg = None
+    try:
+        curve = pdb.get_equity_curve()
+        if curve is not None and not curve.empty and len(curve) >= 2:
+            eqs = curve.sort_values("date")["equity"].astype(float)
+            if float(eqs.iloc[-2]) > 0:
+                day_chg = (float(eqs.iloc[-1]) / float(eqs.iloc[-2]) - 1.0) * 100.0
+    except Exception:  # noqa: BLE001
+        day_chg = None
+
+    top_pos = []
+    for p in sorted(state.positions, key=lambda x: x.market_value, reverse=True)[:5]:
+        top_pos.append({
+            "ticker": p.ticker,
+            "weight_pct": (
+                p.market_value / state.total_equity * 100.0
+                if state.total_equity else 0.0
+            ),
+            "pnl_pct": p.unrealized_pnl_pct * 100.0,
+        })
+
+    near_miss = []
+    try:
+        rows = pdb.fetch_signals_by_status(["PENDING", "REJECTED"], limit=40)
+        for row in rows or []:
+            try:
+                sc = float(row.get("score") or 0)
+            except (TypeError, ValueError):
+                continue
+            if 40 <= sc <= 64:
+                near_miss.append({
+                    "ticker": str(row.get("ticker") or ""),
+                    "score": int(sc),
+                    "missing": str(row.get("reason") or "")[:80] or "sous le seuil 65",
+                })
+        near_miss.sort(key=lambda x: x["score"], reverse=True)
+        near_miss = near_miss[:3]
+    except Exception:  # noqa: BLE001
+        near_miss = []
+
+    vix = None
+    try:
+        vix = float(MacroAlphaSensor().get_european_vix())
+    except Exception:  # noqa: BLE001
+        vix = None
+
+    await send_daily_concise_report(
+        equity=float(state.total_equity or 0),
+        day_change_pct=day_chg,
+        investment_rate_pct=inv_rate,
+        top_positions=top_pos,
+        near_miss=near_miss,
+        vix=vix,
+    )
+
+
+def run_backfill_10y() -> None:
+    """One-shot ~10-year OHLCV backfill for the PEA universe into DuckDB."""
+    logger.info("=== 10-year OHLCV backfill starting (lookback=3650) ===")
+    tsdb = TimeSeriesDB()
+    tsdb.init_db()
+    fetcher = MarketDataFetcher()
+    tickers = _load_universe_tickers()
+    core = _core_ticker()
+    fetch_tickers = tickers + ([core] if core not in tickers else [])
+    if not fetch_tickers:
+        logger.error("No tickers to backfill.")
+        return
+    # Batch to avoid Yahoo timeouts on 600+ names × 10y.
+    batch_size = 40
+    ok_total = 0
+    for i in range(0, len(fetch_tickers), batch_size):
+        batch = fetch_tickers[i : i + batch_size]
+        logger.info(
+            "Backfill batch %d–%d / %d …",
+            i + 1,
+            min(i + batch_size, len(fetch_tickers)),
+            len(fetch_tickers),
+        )
+        if fetcher.update_database(tsdb, batch, lookback_days=3650):
+            ok_total += len(batch)
+    logger.info("=== 10-year backfill done (%d tickers attempted) ===", ok_total)
 
 
 async def run_weekly_report_async() -> None:
@@ -616,7 +717,27 @@ def main() -> None:
         action="store_true",
         help="Run morning newsletter Zeitgeist now, then exit.",
     )
+    parser.add_argument(
+        "--backfill-10y",
+        action="store_true",
+        help="Fetch ~10y OHLCV for the PEA universe into DuckDB, then exit.",
+    )
+    parser.add_argument(
+        "--daily-report",
+        action="store_true",
+        help="Send the Phase 40 daily concise Discord report now, then exit.",
+    )
     args = parser.parse_args()
+
+    if args.backfill_10y:
+        logger.info("--backfill-10y: starting long-horizon OHLCV ingest.")
+        run_backfill_10y()
+        return
+
+    if args.daily_report:
+        logger.info("--daily-report: posting concise Discord digest.")
+        asyncio.run(run_daily_concise_report_async())
+        return
 
     if args.now:
         logger.info("--now: running a single immediate pass.")

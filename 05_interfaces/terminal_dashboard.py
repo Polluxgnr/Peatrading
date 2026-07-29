@@ -3663,6 +3663,8 @@ unrealized = sum((p.current_price - p.avg_entry_price) * p.qty_shares for p in p
 unrealized_pct = (unrealized / invested * 100) if invested else 0.0
 cash_pct = (portfolio.cash_available / portfolio.total_equity * 100
             if portfolio.total_equity else 0.0)
+invest_rate = (invested / portfolio.total_equity * 100
+               if portfolio.total_equity else 0.0)
 
 c1, c2, c3, c4 = st.columns(4)
 with c1:
@@ -3673,11 +3675,13 @@ with c1:
                   "la valeur de marche de toutes vos actions detenues.",
     ), unsafe_allow_html=True)
 with c2:
+    inv_accent = "cyan" if invest_rate >= 95 else ("amber" if invest_rate >= 80 else "red")
     st.markdown(metric_box(
-        "Liquidites (Cash)", f"{portfolio.cash_available:,.2f} \u20ac",
-        sub=f"{cash_pct:.1f}% de l'equity", accent="muted", sub_cls="sub-muted",
-        help_text="Argent disponible non investi, pret a saisir de nouvelles "
-                  "opportunites d'achat.",
+        "Taux d'Investissement", f"{invest_rate:.1f}%",
+        sub=f"Cash idle: {cash_pct:.1f}% ({portfolio.cash_available:,.0f} \u20ac)",
+        accent=inv_accent, sub_cls="sub-muted",
+        help_text="Part de l'equity déjà investie. Objectif Phase 40 : cash idle "
+                  "≤ 2% — l'excédent est balayé automatiquement vers CW8.PA.",
     ), unsafe_allow_html=True)
 with c3:
     pnl_cls = "sub-green" if unrealized >= 0 else "sub-red"
@@ -4523,6 +4527,75 @@ with tab_pf:
                     "métriques partagées (`equity_metrics`) — mêmes formules "
                     "que le futur backtester."
                 )
+
+            # Phase 40 — forward tracking vs MSCI World PEA (CW8.PA)
+            st.markdown("#### 📈 Tracking en Direct des Recommandations (Forward Curve)")
+            try:
+                from duckdb_manager import TimeSeriesDB as _TSDBFwd
+
+                _dbf = _TSDBFwd(read_only=True)
+                cw8 = _dbf.get_historical_prices(_CORE_TICKER, days=800)
+                if (
+                    cw8 is not None
+                    and not cw8.empty
+                    and "Close" in cw8.columns
+                    and eq is not None
+                    and not eq.empty
+                ):
+                    bench = cw8[["Date", "Close"]].copy()
+                    bench["Date"] = pd.to_datetime(bench["Date"], errors="coerce")
+                    bench = bench.dropna().sort_values("Date")
+                    pf = eq[["date", "equity"]].copy()
+                    pf["date"] = pd.to_datetime(pf["date"], errors="coerce")
+                    pf = pf.dropna().sort_values("date")
+                    merged = pd.merge_asof(
+                        pf.rename(columns={"date": "Date"}),
+                        bench,
+                        on="Date",
+                        direction="backward",
+                    ).dropna()
+                    if len(merged) >= 2:
+                        merged["PF_idx"] = (
+                            merged["equity"] / float(merged["equity"].iloc[0]) * 100.0
+                        )
+                        merged["CW8_idx"] = (
+                            merged["Close"] / float(merged["Close"].iloc[0]) * 100.0
+                        )
+                        fig_fwd = go.Figure()
+                        fig_fwd.add_trace(go.Scatter(
+                            x=merged["Date"], y=merged["PF_idx"],
+                            mode="lines", name="Portefeuille",
+                            line=dict(color=_NEON, width=2),
+                        ))
+                        fig_fwd.add_trace(go.Scatter(
+                            x=merged["Date"], y=merged["CW8_idx"],
+                            mode="lines", name="CW8.PA (MSCI World)",
+                            line=dict(color=_CYAN, width=2, dash="dot"),
+                        ))
+                        fig_fwd.update_layout(
+                            title="Performance cumulée (base 100) vs benchmark",
+                            yaxis_title="Index (base 100)",
+                            height=360,
+                            margin=dict(t=40, l=20, r=20, b=20),
+                            legend=dict(orientation="h"),
+                        )
+                        _style_dark_fig(fig_fwd)
+                        st.plotly_chart(fig_fwd, width="stretch", key="pf_forward_vs_cw8")
+                        pf_ret = float(merged["PF_idx"].iloc[-1] - 100.0)
+                        bm_ret = float(merged["CW8_idx"].iloc[-1] - 100.0)
+                        st.caption(
+                            f"Depuis inception affichée : portefeuille {pf_ret:+.1f}% · "
+                            f"CW8 {bm_ret:+.1f}% · écart {pf_ret - bm_ret:+.1f} pts"
+                        )
+                    else:
+                        st.caption("Historique insuffisant pour le tracking vs CW8.")
+                else:
+                    st.caption(
+                        "CW8.PA ou equity curve manquant — lance "
+                        "`python main_scheduler.py --backfill-10y` ou `--now`."
+                    )
+            except Exception as exc:  # noqa: BLE001
+                st.caption(f"Forward curve indisponible ({exc}).")
 
             st.markdown("#### 📉 Métriques de Risque Académique (Tail Risk)")
             if (
@@ -5658,9 +5731,26 @@ with tab_mkt:
             for n in news
             if str(n.get("title") or "").strip()
         )
-        with st.spinner("IA en cours d'analyse..."):
-            deep = get_deep_news_synthesis(selected, headlines_tuple)
-        st.info(f"🧠 **Synthèse IA (cache 24h)**\n\n{deep}")
+        deep = ""
+        try:
+            with st.spinner("IA en cours d'analyse..."):
+                deep = get_deep_news_synthesis(selected, headlines_tuple) or ""
+        except Exception as exc:  # noqa: BLE001
+            deep = ""
+            st.caption(f"Synthèse IA indisponible ({exc}). Affichage des articles bruts.")
+        deep_l = str(deep).strip().casefold()
+        if (
+            deep
+            and deep_l
+            and not deep_l.startswith("indisponible")
+            and "erreur" not in deep_l[:40]
+            and "unavailable" not in deep_l[:40]
+        ):
+            st.info(f"🧠 **Synthèse IA (cache 24h)**\n\n{deep}")
+        else:
+            st.caption(
+                "Synthèse IA indisponible ou vide — articles bruts avec timestamps ci-dessous."
+            )
         ndisp = pd.DataFrame([{
             "Source": str(n.get("provider") or "")[:56],
             "Date": str(n.get("date") or "")[:16],
@@ -6135,37 +6225,130 @@ Le dashboard lit l'etat en continu. L'editeur de wallet peut ecrire
 cash/positions. Les ordres restent Discord + scheduler.
 """)
 
+    # --- System Telemetry ----------------------------------------------------
+    st.markdown("---")
+    st.markdown("### 🖥️ Télémétrie Système")
+    _tel_c1, _tel_c2, _tel_c3, _tel_c4 = st.columns(4)
+    with _tel_c1:
+        st.metric("CPU cores", os.cpu_count() or "?")
+    with _tel_c2:
+        try:
+            _mem_blocks = sys.getallocatedblocks()
+            st.metric("Python mem blocks", f"{_mem_blocks:,}")
+        except Exception:
+            st.metric("Python mem blocks", "n/a")
+    with _tel_c3:
+        _sqlite_size = "n/a"
+        if _SQLITE_PATH.exists():
+            _sqlite_size = f"{_SQLITE_PATH.stat().st_size / 1_048_576:.1f} MB"
+        st.metric("SQLite", _sqlite_size)
+        st.caption(str(_SQLITE_PATH.name))
+    with _tel_c4:
+        _duckdb_path = _ROOT / "database" / "timeseries.duckdb"
+        _duck_size = "n/a"
+        if _duckdb_path.exists():
+            _duck_size = f"{_duckdb_path.stat().st_size / 1_048_576:.1f} MB"
+        st.metric("DuckDB", _duck_size)
+        st.caption(str(_duckdb_path.name))
+
+    # --- Fluid Log Viewer (filtered + color-coded) --------------------------
     st.markdown("---")
     st.markdown("### 📋 Logs détaillés (copie / audit)")
     st.markdown(
         "<div class='info-text'>Fichiers rotatifs sous <code>logs/</code> — "
-        "un par composant + <code>pea_pollux_all.log</code>. Format détaillé "
-        "(fichier:ligne:fonction). Lecture seule ici ; rien n'est modifié.</div>",
+        "un par composant + <code>pea_pollux_all.log</code>. Filtrables par "
+        "niveau avec couleurs professionnelles (rouge = ERROR, ambre = WARNING, "
+        "cyan = INFO).</div>",
         unsafe_allow_html=True,
     )
-    if list_log_files is None or tail_log is None:
-        st.caption("Module logging indisponible.")
-    else:
-        files = list_log_files()
-        if not files:
-            st.caption(
-                "Aucun log encore. Lance `python main_scheduler.py --now` "
-                "pour peupler `logs/`."
-            )
-        else:
-            names = [p.name for p in files]
-            pick = st.selectbox("Fichier", names, key="log_file_pick")
-            nlines = st.slider("Lignes (tail)", 50, 5000, 500, 50, key="log_tail_n")
-            path = next(p for p in files if p.name == pick)
-            body = tail_log(path, nlines)
-            st.text_area(
-                "Contenu (sélectionnable / copiable)",
-                value=body,
-                height=420,
-                key="log_tail_view",
-            )
-            st.caption(str(path))
 
+    _all_log_path = _ROOT / "logs" / "pea_pollux_all.log"
+    _log_col1, _log_col2 = st.columns([1, 2])
+    with _log_col1:
+        _log_filter = st.radio(
+            "Filtrer par niveau",
+            ["TOUT", "ERROR / WARNING", "INFO uniquement"],
+            key="log_level_filter",
+            horizontal=True,
+        )
+    with _log_col2:
+        _log_lines_n = st.slider(
+            "Lignes affichées (tail)", 100, 2000, 500, 100, key="log_n_lines"
+        )
+
+    if _all_log_path.exists():
+        try:
+            _raw_lines = _all_log_path.read_text(
+                encoding="utf-8", errors="replace"
+            ).splitlines()
+        except Exception:
+            _raw_lines = ["(lecture impossible)"]
+
+        if _log_filter == "ERROR / WARNING":
+            _filtered = [
+                ln for ln in _raw_lines
+                if " ERROR " in ln or " WARNING " in ln or " CRITICAL " in ln
+            ]
+        elif _log_filter == "INFO uniquement":
+            _filtered = [ln for ln in _raw_lines if " INFO " in ln]
+        else:
+            _filtered = _raw_lines
+
+        _display_lines = _filtered[-_log_lines_n:]
+
+        _html_parts = []
+        for ln in _display_lines:
+            escaped = (
+                ln.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            )
+            if " ERROR " in ln or " CRITICAL " in ln:
+                color = "#FF3B30"
+            elif " WARNING " in ln:
+                color = "#FFD60A"
+            elif " INFO " in ln:
+                color = "#00B4D8"
+            else:
+                color = "#888888"
+            _html_parts.append(
+                f'<div style="color:{color};font-family:Courier New,monospace;'
+                f'font-size:11px;line-height:1.35;white-space:pre-wrap;">'
+                f'{escaped}</div>'
+            )
+        _log_html = (
+            '<div style="background:#0a0a0a;padding:12px;border-radius:6px;'
+            'max-height:500px;overflow-y:auto;">'
+            + "\n".join(_html_parts)
+            + "</div>"
+        )
+        st.markdown(_log_html, unsafe_allow_html=True)
+        st.caption(
+            f"{len(_display_lines)} / {len(_filtered)} lignes filtrées "
+            f"(total fichier : {len(_raw_lines)})"
+        )
+    else:
+        st.caption("Fichier non trouvé. Lance une analyse pour générer des logs.")
+
+    # Also keep per-component log selector for deep-dive
+    if list_log_files is not None and tail_log is not None:
+        files = list_log_files()
+        if files:
+            with st.expander("📂 Logs par composant (détail)", expanded=False):
+                names = [p.name for p in files]
+                pick = st.selectbox("Fichier", names, key="log_file_pick")
+                nlines = st.slider(
+                    "Lignes (tail)", 50, 5000, 500, 50, key="log_tail_n"
+                )
+                path = next(p for p in files if p.name == pick)
+                body = tail_log(path, nlines)
+                st.text_area(
+                    "Contenu (sélectionnable / copiable)",
+                    value=body,
+                    height=380,
+                    key="log_tail_view",
+                )
+                st.caption(str(path))
+
+    # --- ML Data Export -----------------------------------------------------
     st.markdown("#### 🧠 Machine Learning Data Export")
     st.markdown(
         "<div class='info-text'>Exportez les données brutes pour entraîner un modèle "
@@ -6205,17 +6388,6 @@ cash/positions. Les ordres restent Discord + scheduler.
             st.caption(f"{len(_audit_df)} lignes")
         except Exception:
             st.caption("Table audit_log indisponible.")
-
-    st.markdown("#### 📜 Log complet (pea_pollux_all.log)")
-    _all_log_path = _ROOT / "logs" / "pea_pollux_all.log"
-    if _all_log_path.exists():
-        try:
-            _all_log_txt = _all_log_path.read_text(encoding="utf-8", errors="replace")
-        except Exception:
-            _all_log_txt = "(lecture impossible)"
-        st.code(_all_log_txt[-50_000:] if len(_all_log_txt) > 50_000 else _all_log_txt, language="log")
-    else:
-        st.caption("Fichier non trouvé. Lance une analyse pour générer des logs.")
 
 # =============================================================================
 # Footer + optional auto-refresh

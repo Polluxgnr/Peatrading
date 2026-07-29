@@ -101,23 +101,30 @@ Capital is split so the PEA stays diversified even when stock-picking is quiet:
   Also capped by `MAX_POSITIONS_TOTAL` so the 30% budget is not fragmented into
   too many tiny lines.
 
-### 2. Satellite signal (Ensemble Conviction — Phase 20)
+### 2. Empreinte Multi-Stratégies (how signals are scored)
 
-`SignalGenerator.evaluate` scores four axes (**total 100**). A raw BUY is emitted
-only when **conviction ≥ 65**. Hard vetoes (VIX, **EPS &lt; 0**) stay on the
-Orchestrator — scoring runs after an idea is worth evaluating on price/alt-data.
+Every ticker receives a **score from 0 to 100** called the **Empreinte**
+(fingerprint). It combines four weighted axes into a single conviction number.
+A BUY signal is only emitted when **conviction ≥ 65**. Hard vetoes (VIX,
+EPS < 0) are enforced later in the risk cascade — scoring runs first.
 
-| Axis | Max | Rule |
-|------|-----|------|
-| Mean Reversion | 35 | RSI&lt;30 + Close&gt;SMA200 → 35; RSI&lt;40 + Close&gt;SMA200 → 15 |
-| Volume Breakout | 25 | Close = 50d high **and** Volume &gt; 2× ADV20 |
-| Insider Clustering | 20 | Buy-cluster ≥2 → 20; ==1 → 10 (`get_insider_buy_cluster`) |
-| Institutional Quality | 20 | Ticker in hardcoded EU blue-chip proxy set |
-| **News sentiment** | +10 / −15 | LLM or heuristic: score &gt;30 → +10; &lt;−30 → −15 |
-| **Polymarket macro** | +10 / −10 | YES prob ≥0.62 → +10; ≤0.38 → −10 (context only) |
+| Abbreviation | Axis | Weight | What it measures |
+|:------------:|------|:------:|------------------|
+| **MR** | Mean Reversion | 35 % | Statistical under-valuation: RSI-14 oversold + price above long-term SMA-200. A Z-Score < −2 on a 50-day window adds a bonus. |
+| **Mom** | Momentum | 25 % | Trend strength: Close > SMA-5 > SMA-50 > SMA-200, MACD histogram positive and growing, close near upper Bollinger Band. |
+| **Q/V** | Quality / Value | 20 % | Fundamentals from Finnhub or yfinance: low P/E (< 15 = high score), low P/B (< 2 = bonus), high ROE (> 15 %), low Debt/Equity. |
+| **Ins** | Insider Confidence | 20 % | Directors buying their own stock: AMF/FMP/EODHD buy-cluster ≥ 2 = max, single buy = half. |
 
-The continuous score (0–100) is clamped after modifiers; the dashboard colours PENDING
-scores (**amber 65–75**, **neon 76–100**) and shows a polar radar in Exploration.
+**Modifiers** applied on top of the base score:
+
+| Modifier | Range | Source |
+|----------|-------|--------|
+| News sentiment | +10 / −15 | LLM integer score (−100…+100) or heuristic keyword fallback |
+| Polymarket macro | +10 / −10 | YES probability ≥ 0.62 → bullish, ≤ 0.38 → bearish (context only) |
+
+The final score is clamped to 0–100 and displayed in the dashboard as a
+**polar radar chart** (Exploration tab). Colour coding: **amber 65–75** /
+**neon 76–100**.
 
 ### 3. Risk cascade (order matters — cheap checks first)
 
@@ -584,6 +591,9 @@ sources over furtive HTML scraping.
 | **Multi-factor + Finnhub + Data Lake analyste** | ✅ Phase 35–36 |
 | **VaR/CVaR + Z-Score académique** | ✅ Phase 37 |
 | **Monte Carlo + stress tests + red teaming IA** | ✅ Phase 38 |
+| **UX (tape fix, briefing async, near-miss radar, ML export)** | ✅ Phase 39 |
+| **Cash sweep, Discord daily digest, 10y backfill, forward curve, ML store** | ✅ Phase 40 |
+| **AMF semantic parsing (legal FR regex), fluid log viewer, system telemetry** | ✅ Phase 41 |
 | pytest + GitHub Actions CI | Expand coverage over time |
 
 ### Next (highest leverage)
@@ -672,14 +682,23 @@ ideas — but **never places broker orders**.
    manual approve/reject.
 5. **Explains & challenges** — LLM rationales, weekly digest, Bull/Bear red teaming.
 
-### Phase 38 highlights
+### Phase 38–41 highlights
 
-| Feature | Module | Description |
-|---------|--------|-------------|
-| Monte Carlo fan chart | `stochastic_models.py` | Correlated GBM via Cholesky, P05–P95 paths |
-| Black swan replay | `stress_tester.py` | 2008, 2020, 2022 drawdown scenarios |
-| Tail risk metrics | `quantitative_math.py` | Historical VaR & CVaR (pure NumPy) |
-| AI red team | `red_team_agent.py` | Parallel Bull/Bear agents + Judge verdict |
+| Feature | Module | Phase |
+|---------|--------|:-----:|
+| Monte Carlo fan chart | `stochastic_models.py` | 38 |
+| Black swan replay | `stress_tester.py` | 38 |
+| Tail risk VaR & CVaR | `quantitative_math.py` | 37 |
+| AI red team (Bull/Bear/Judge) | `red_team_agent.py` | 38 |
+| Ticker tape 1d fix + near-miss radar | `terminal_dashboard.py` | 39 |
+| ML feature store + CSV export | `ml_feature_store.py` | 40 |
+| Cash sweep (zero idle cash) | `smart_dca_engine.py` | 40 |
+| Discord daily concise report | `discord_copilot.py` | 40 |
+| 10-year OHLCV backfill (`--backfill-10y`) | `main_scheduler.py` | 40 |
+| Forward equity curve vs CW8 benchmark | `terminal_dashboard.py` | 40 |
+| AMF semantic parsing (FR legal regex) | `amf_scraper.py` | 41 |
+| Filtered + color-coded log viewer | `terminal_dashboard.py` | 41 |
+| System telemetry (DB sizes, CPU, mem) | `terminal_dashboard.py` | 41 |
 
 ### Architecture (high level)
 

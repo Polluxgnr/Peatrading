@@ -282,3 +282,103 @@ class DiscordCopilot(discord.Client):
         message = await channel.send(embed=embed, view=view)
         logger.info("Alert sent for %s to channel %s.", signal.ticker, self.channel_id)
         return message
+
+
+async def send_daily_concise_report(
+    *,
+    equity: float,
+    day_change_pct: float | None,
+    investment_rate_pct: float,
+    top_positions: list[dict] | None = None,
+    near_miss: list[dict] | None = None,
+    vix: float | None = None,
+    webhook_url: str | None = None,
+) -> bool:
+    """Post a sleek daily end-of-day digest via Discord webhook.
+
+    Designed for the 17:10 Paris pass. Uses ``DISCORD_WEBHOOK_URL`` by default
+    (no bot token required).
+
+    Args:
+        equity: Total portfolio value (EUR).
+        day_change_pct: Daily equity change in percent, or None.
+        investment_rate_pct: Invested / equity * 100.
+        top_positions: Optional ``[{ticker, weight_pct, pnl_pct}, ...]``.
+        near_miss: Optional ``[{ticker, score, missing}, ...]`` top opportunities.
+        vix: Latest VIX / VSTOXX level.
+        webhook_url: Override webhook URL.
+
+    Returns:
+        bool: True if Discord accepted the payload.
+    """
+    import aiohttp
+
+    url = webhook_url or os.getenv("DISCORD_WEBHOOK_URL")
+    if not url:
+        logger.warning("DISCORD_WEBHOOK_URL unset; daily report skipped.")
+        return False
+
+    day_txt = "n/a" if day_change_pct is None else f"{day_change_pct:+.2f}%"
+    vix_txt = "n/a" if vix is None else f"{vix:.1f}"
+    pos_lines = []
+    for p in (top_positions or [])[:5]:
+        pos_lines.append(
+            f"• **{p.get('ticker', '?')}** — "
+            f"{float(p.get('weight_pct') or 0):.1f}% equity · "
+            f"PnL {float(p.get('pnl_pct') or 0):+.1f}%"
+        )
+    if not pos_lines:
+        pos_lines = ["• Aucune position ouverte"]
+
+    miss_lines = []
+    for m in (near_miss or [])[:3]:
+        miss_lines.append(
+            f"• **{m.get('ticker', '?')}** — score {int(m.get('score') or 0)}/100"
+            f" · {m.get('missing') or 'en surveillance'}"
+        )
+    if not miss_lines:
+        miss_lines = ["• Aucun near-miss notable"]
+
+    embed = {
+        "title": "📊 PEA Pollux — Rapport Quotidien",
+        "color": 0x00E676 if (day_change_pct or 0) >= 0 else 0xFF3B30,
+        "fields": [
+            {
+                "name": "Portefeuille",
+                "value": (
+                    f"**{equity:,.0f} €** · Δ jour **{day_txt}**\n"
+                    f"Taux d'investissement : **{investment_rate_pct:.1f}%**"
+                ),
+                "inline": False,
+            },
+            {
+                "name": "Positions actives",
+                "value": "\n".join(pos_lines)[:1000],
+                "inline": False,
+            },
+            {
+                "name": "Radar Near-Miss (Top 3)",
+                "value": "\n".join(miss_lines)[:800],
+                "inline": False,
+            },
+            {
+                "name": "Macro",
+                "value": f"VIX / VSTOXX : **{vix_txt}**",
+                "inline": True,
+            },
+        ],
+        "footer": {"text": "PEA Pollux · exécution manuelle · pas un conseil"},
+    }
+    try:
+        timeout = aiohttp.ClientTimeout(total=20)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(url, json={"embeds": [embed]}) as resp:
+                if resp.status not in (200, 204):
+                    body = await resp.text()
+                    logger.error("Daily report webhook HTTP %s: %s", resp.status, body[:200])
+                    return False
+        logger.info("Daily concise report posted to Discord webhook.")
+        return True
+    except Exception:  # noqa: BLE001
+        logger.exception("Daily concise report failed.")
+        return False

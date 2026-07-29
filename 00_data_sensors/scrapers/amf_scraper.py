@@ -8,6 +8,7 @@ Any failure returns an empty DataFrame so callers fall back gracefully.
 from __future__ import annotations
 
 import logging
+import os
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -125,11 +126,34 @@ class AmfInsiderScraper:
                 rows = self._search_bdif(isin.split("_")[0], isin=isin)
 
             if not rows:
-                self.last_error = self.last_error or "no AMF/ODS rows"
+                # 3) Paid API fallback when AMF returns empty / ambiguous.
+                rows = self._search_fmp_insiders(ticker)
+            if not rows:
+                rows = self._search_eodhd_insiders(ticker)
+
+            if not rows:
+                self.last_error = self.last_error or "no AMF/ODS/FMP/EODHD rows"
                 logger.debug(
                     "AMF empty for %s (%s / %s).", ticker, name, isin
                 )
                 return pd.DataFrame()
+
+            # Reclassify generic "Declaration" using title keywords.
+            for r in rows:
+                tx = str(r.get("Transaction") or "")
+                if tx.casefold() in ("declaration", "déclar", ""):
+                    blob = f"{r.get('Title') or ''} {r.get('Transaction') or ''}"
+                    r["Transaction"] = self._classify_transaction(blob)
+
+            # If still all ambiguous Declarations, prefer FMP/EODHD detail.
+            ambiguous = all(
+                str(r.get("Transaction") or "").casefold() == "declaration"
+                for r in rows
+            )
+            if ambiguous:
+                paid = self._search_fmp_insiders(ticker) or self._search_eodhd_insiders(ticker)
+                if paid:
+                    rows = paid
 
             df = pd.DataFrame(rows)
             keep = [c for c in (
@@ -149,6 +173,164 @@ class AmfInsiderScraper:
             isin=profile.get("isin"),
             issuer=profile.get("name"),
         )
+
+    # --- Strict French legal-vocabulary regex for transaction classification ----
+    _RE_ACHAT = re.compile(
+        r"\b(achat|acquisition|souscription|exercice|attribution|"
+        r"conversion|apport|purchase|buy)\b",
+        re.IGNORECASE,
+    )
+    _RE_VENTE = re.compile(
+        r"\b(vente|cession|ali[eé]nation|disposal|sale|sell|rachat|"
+        r"transfert|remise)\b",
+        re.IGNORECASE,
+    )
+    _RE_EUR_VALUE = re.compile(
+        r"(\d[\d\s]*[.,]?\d*)\s*(?:€|EUR|eur)", re.IGNORECASE
+    )
+    _RE_SHARES = re.compile(
+        r"(\d[\d\s]*)\s*(?:actions?|titres?|parts?|shares?)\b", re.IGNORECASE
+    )
+
+    @classmethod
+    def _classify_transaction(cls, blob: str) -> str:
+        """Classify transaction type using strict French legal vocabulary.
+
+        Uses word-boundary regex to avoid false positives on substrings
+        (e.g. 'cession' inside 'accession').
+        """
+        text = (blob or "")
+        if cls._RE_ACHAT.search(text):
+            return "Achat"
+        if cls._RE_VENTE.search(text):
+            return "Vente"
+        return "Declaration"
+
+    @classmethod
+    def _extract_value_from_text(cls, text: str) -> float | None:
+        """Try to extract a EUR value from free-text description."""
+        m = cls._RE_EUR_VALUE.search(text or "")
+        if not m:
+            return None
+        try:
+            raw = m.group(1).replace(" ", "").replace(",", ".")
+            return float(raw)
+        except (ValueError, TypeError):
+            return None
+
+    @classmethod
+    def _extract_shares_from_text(cls, text: str) -> int | None:
+        """Try to extract a share count from free-text description."""
+        m = cls._RE_SHARES.search(text or "")
+        if not m:
+            return None
+        try:
+            raw = m.group(1).replace(" ", "")
+            return int(raw)
+        except (ValueError, TypeError):
+            return None
+
+    def _search_fmp_insiders(self, ticker: str) -> list[dict]:
+        """Fallback: FMP ``/api/v4/insider-trading`` with share counts."""
+        api_key = (os.getenv("FMP_API_KEY") or "").strip()
+        if not api_key:
+            return []
+        symbol = ticker.replace(".PA", "").replace(".AS", "").upper()
+        try:
+            resp = self._session.get(
+                "https://financialmodelingprep.com/api/v4/insider-trading",
+                params={"symbol": symbol, "limit": 25, "apikey": api_key},
+                timeout=12,
+            )
+            if resp.status_code != 200:
+                return []
+            data = resp.json()
+            if not isinstance(data, list):
+                return []
+            rows = []
+            for item in data[:25]:
+                if not isinstance(item, dict):
+                    continue
+                tx_raw = str(
+                    item.get("transactionType")
+                    or item.get("acquistionOrDisposition")
+                    or ""
+                )
+                tx = self._classify_transaction(tx_raw)
+                if tx == "Declaration":
+                    # FMP uses A/D codes sometimes
+                    code = str(item.get("acquistionOrDisposition") or "").upper()
+                    if code == "A":
+                        tx = "Achat"
+                    elif code == "D":
+                        tx = "Vente"
+                shares = item.get("securitiesTransacted") or item.get("securitiesOwned")
+                price = item.get("price")
+                value = None
+                try:
+                    if shares is not None and price is not None:
+                        value = float(shares) * float(price)
+                except (TypeError, ValueError):
+                    value = None
+                rows.append({
+                    "Date": str(item.get("transactionDate") or item.get("filingDate") or "")[:10],
+                    "Insider": item.get("reportingName") or item.get("reporter") or "Insider",
+                    "Transaction": tx,
+                    "Value": value,
+                    "Shares": shares,
+                    "Volume": shares,
+                    "Price": price,
+                    "Title": f"FMP: {tx_raw}"[:240],
+                    "ISIN": "",
+                    "Source": "FMP",
+                })
+            return rows
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("FMP insider fallback failed for %s: %s", ticker, exc)
+            return []
+
+    def _search_eodhd_insiders(self, ticker: str) -> list[dict]:
+        """Fallback: EODHD insider transactions (when ``EODHD_API_KEY`` set)."""
+        api_key = (os.getenv("EODHD_API_KEY") or "").strip()
+        if not api_key:
+            return []
+        # EODHD expects exchange suffix like KER.PA
+        symbol = ticker if "." in ticker else f"{ticker}.PA"
+        try:
+            resp = self._session.get(
+                f"https://eodhd.com/api/insider-transactions",
+                params={"code": symbol, "api_token": api_key, "fmt": "json"},
+                timeout=12,
+            )
+            if resp.status_code != 200:
+                return []
+            data = resp.json()
+            if not isinstance(data, list):
+                return []
+            rows = []
+            for item in data[:25]:
+                if not isinstance(item, dict):
+                    continue
+                tx_raw = str(item.get("transactionType") or item.get("ownerType") or "")
+                tx = self._classify_transaction(tx_raw)
+                shares = item.get("transactionAmount") or item.get("shares")
+                price = item.get("transactionPrice") or item.get("price")
+                rows.append({
+                    "Date": str(item.get("date") or item.get("reportDate") or "")[:10],
+                    "Insider": item.get("ownerName") or item.get("name") or "Insider",
+                    "Transaction": tx,
+                    "Value": item.get("transactionValue"),
+                    "Shares": shares,
+                    "Volume": shares,
+                    "Price": price,
+                    "Title": f"EODHD: {tx_raw}"[:240],
+                    "ISIN": "",
+                    "Source": "EODHD",
+                })
+            return rows
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("EODHD insider fallback failed for %s: %s", ticker, exc)
+            return []
 
     def _search_ods_api(self, query: str) -> list[dict]:
         """Fetch AMF data via Opendatasoft v2.1 API using ODSQL (public)."""
@@ -198,12 +380,21 @@ class AmfInsiderScraper:
                 for item in (data.get("results") or []):
                     if not isinstance(item, dict):
                         continue
-                    tx_raw = str(
-                        item.get("type_transaction")
-                        or item.get("nature_transaction")
-                        or item.get("typesDocument")
-                        or ""
-                    ).lower()
+                    full_blob = " ".join(
+                        str(item.get(k) or "")
+                        for k in (
+                            "type_transaction", "nature_transaction",
+                            "typesDocument", "titre", "resume",
+                            "description", "objet", "declarant", "nom",
+                        )
+                    )
+                    tx = self._classify_transaction(full_blob)
+                    raw_value = item.get("montant") or item.get("valeur")
+                    raw_shares = item.get("volume") or item.get("quantite")
+                    if raw_value is None:
+                        raw_value = self._extract_value_from_text(full_blob)
+                    if raw_shares is None:
+                        raw_shares = self._extract_shares_from_text(full_blob)
                     results.append({
                         "Date": str(
                             item.get("date_publication")
@@ -217,14 +408,10 @@ class AmfInsiderScraper:
                             or item.get("raison_sociale")
                             or "Dirigeant"
                         ),
-                        "Transaction": (
-                            "Achat" if "achat" in tx_raw or "acquisition" in tx_raw
-                            else ("Vente" if "vente" in tx_raw or "cession" in tx_raw
-                                  else "Declaration")
-                        ),
-                        "Value": item.get("montant") or item.get("valeur"),
-                        "Shares": item.get("volume") or item.get("quantite"),
-                        "Volume": item.get("volume") or item.get("quantite"),
+                        "Transaction": tx,
+                        "Value": raw_value,
+                        "Shares": raw_shares,
+                        "Volume": raw_shares,
                         "Title": f"ODS API: {q}",
                         "ISIN": item.get("isin") or "",
                         "Source": "AMF Opendatasoft",
@@ -278,12 +465,16 @@ class AmfInsiderScraper:
                     src.get("titre")
                     or f"Declaration dirigeants — {names or q}"
                 )
-                blob = f"{title} {names}".casefold()
-                tx = (
-                    "Achat" if any(w in blob for w in ("achat", "acquisition"))
-                    else ("Vente" if any(w in blob for w in ("vente", "cession"))
-                          else "Declaration")
-                )
+                full_blob = " ".join(
+                    str(src.get(k) or "")
+                    for k in (
+                        "titre", "resume", "description", "objet",
+                        "typeDocument", "typeInformation",
+                    )
+                ) + " " + names
+                tx = self._classify_transaction(full_blob)
+                extracted_val = self._extract_value_from_text(full_blob)
+                extracted_shares = self._extract_shares_from_text(full_blob)
                 rows.append({
                     "Date": str(
                         src.get("datePublication")
@@ -293,9 +484,9 @@ class AmfInsiderScraper:
                     )[:10],
                     "Insider": names or "Dirigeant",
                     "Transaction": tx,
-                    "Value": None,
-                    "Shares": None,
-                    "Volume": None,
+                    "Value": extracted_val,
+                    "Shares": extracted_shares,
+                    "Volume": extracted_shares,
                     "Title": str(title)[:240],
                     "ISIN": "",
                     "Source": "AMF BDIF Back API",
@@ -412,11 +603,7 @@ class AmfInsiderScraper:
             if not (is_dd or matches_issuer or matches_isin):
                 continue
 
-            tx_type = "Achat" if any(
-                w in blob for w in ("achat", "acquisition", "souscription")
-            ) else ("Vente" if any(
-                w in blob for w in ("vente", "cession", "disposal")
-            ) else "Declaration")
+            tx_type = AmfInsiderScraper._classify_transaction(blob)
 
             date_raw = (
                 item.get("datePublication") or item.get("date")
@@ -429,6 +616,10 @@ class AmfInsiderScraper:
             value = item.get("montant") or item.get("valeur") or item.get("value")
             volume = item.get("volume") or item.get("quantite") or item.get("shares")
             price = item.get("prix") or item.get("price") or item.get("prixUnitaire")
+            if value is None:
+                value = AmfInsiderScraper._extract_value_from_text(blob)
+            if volume is None:
+                volume = AmfInsiderScraper._extract_shares_from_text(blob)
             doc_isin = item.get("isin") or isin_clean or ""
 
             rows.append({

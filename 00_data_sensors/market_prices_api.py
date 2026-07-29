@@ -35,7 +35,8 @@ class MarketDataFetcher:
 
         Args:
             tickers: List of Yahoo Finance ticker symbols.
-            lookback_days: Calendar days of history to request (default 252).
+            lookback_days: Calendar days of history to request.
+                Use ``3650`` (~10 years) for long-horizon / ML backfills.
 
         Returns:
             pd.DataFrame: Cleaned, flat OHLCV data. Empty DataFrame (with the

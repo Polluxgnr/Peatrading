@@ -191,6 +191,23 @@ class PeaSizer:
             - self._satellite_value(portfolio)
         )
 
+    @staticmethod
+    def investment_rate(portfolio: PortfolioState) -> float:
+        """Percentage of equity currently invested (100 − cash drag)."""
+        if portfolio is None or portfolio.total_equity <= 0:
+            return 0.0
+        invested = sum(float(p.market_value) for p in portfolio.positions)
+        return float(max(0.0, min(100.0, invested / portfolio.total_equity * 100.0)))
+
+    @staticmethod
+    def idle_cash_pct(portfolio: PortfolioState) -> float:
+        """Cash as a percentage of total equity."""
+        if portfolio is None or portfolio.total_equity <= 0:
+            return 0.0
+        return float(
+            max(0.0, min(100.0, portfolio.cash_available / portfolio.total_equity * 100.0))
+        )
+
     def calculate_target_qty(
         self,
         signal: Signal,

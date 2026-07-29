@@ -1,6 +1,6 @@
 # PEA Pollux — Full Project Dump for LLM
 
-> **PEA Pollux** · Generated `2026-07-29 08:26 UTC` · Root `C:\Users\PolluxGronier\Downloads\pea_sniper_terminal`
+> **PEA Pollux** · Generated `2026-07-29 09:18 UTC` · Root `C:\Users\PolluxGronier\Downloads\pea_sniper_terminal`
 
 One-shot context for external LLM agents. Includes source, configs, and docs.
 Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
@@ -48,13 +48,13 @@ Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
 - `main_scheduler.py`
 
 ---
-## File index (72 files)
+## File index (73 files)
 ### `(root)/`
 - `.gitignore` (41 lines)
 - `docker-compose.yml` (71 lines)
 - `Dockerfile` (30 lines)
-- `main_scheduler.py` (662 lines) ⭐
-- `README.md` (711 lines) ⭐
+- `main_scheduler.py` (783 lines) ⭐
+- `README.md` (730 lines) ⭐
 - `requirements.txt` (37 lines)
 - `run_dashboard.ps1` (15 lines)
 - `run_discord.py` (100 lines)
@@ -70,7 +70,7 @@ Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
 - `00_data_sensors/__init__.py` (0 lines)
 - `00_data_sensors/fundamentals_api.py` (144 lines)
 - `00_data_sensors/macro_alpha_api.py` (491 lines)
-- `00_data_sensors/market_prices_api.py` (196 lines)
+- `00_data_sensors/market_prices_api.py` (197 lines)
 - `00_data_sensors/newsletter_api.py` (207 lines)
 
 ### `00_data_sensors/newsletter_ingest/ingest/`
@@ -85,7 +85,7 @@ Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
 ### `00_data_sensors/scrapers/`
 - `00_data_sensors/scrapers/__init__.py` (18 lines)
 - `00_data_sensors/scrapers/_http.py` (72 lines)
-- `00_data_sensors/scrapers/amf_scraper.py` (445 lines)
+- `00_data_sensors/scrapers/amf_scraper.py` (636 lines)
 - `00_data_sensors/scrapers/bourso_scraper.py` (470 lines)
 
 ### `01_memory_core/`
@@ -98,8 +98,9 @@ Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
 
 ### `02_quant_engine/`
 - `02_quant_engine/__init__.py` (0 lines)
+- `02_quant_engine/ml_feature_store.py` (290 lines)
 - `02_quant_engine/quantitative_math.py` (104 lines) ⭐
-- `02_quant_engine/smart_dca_engine.py` (207 lines)
+- `02_quant_engine/smart_dca_engine.py` (223 lines)
 - `02_quant_engine/stochastic_models.py` (87 lines) ⭐
 - `02_quant_engine/technical_scorer.py` (620 lines) ⭐
 - `02_quant_engine/walk_forward_backtester.py` (200 lines)
@@ -109,7 +110,7 @@ Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
 - `03_risk_portfolio/correlation_firewall.py` (291 lines)
 - `03_risk_portfolio/equity_metrics.py` (143 lines)
 - `03_risk_portfolio/monthly_rebalancer.py` (232 lines)
-- `03_risk_portfolio/pea_position_sizer.py` (245 lines) ⭐
+- `03_risk_portfolio/pea_position_sizer.py` (262 lines) ⭐
 - `03_risk_portfolio/stress_tester.py` (130 lines) ⭐
 
 ### `04_orchestrator_ai/`
@@ -124,9 +125,9 @@ Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
 
 ### `05_interfaces/`
 - `05_interfaces/__init__.py` (0 lines)
-- `05_interfaces/discord_copilot.py` (284 lines)
+- `05_interfaces/discord_copilot.py` (384 lines)
 - `05_interfaces/llm_explainer.py` (272 lines)
-- `05_interfaces/terminal_dashboard.py` (6234 lines) ⭐
+- `05_interfaces/terminal_dashboard.py` (6406 lines) ⭐
 - `05_interfaces/trade_cards.py` (166 lines)
 
 ### `config/`
@@ -134,7 +135,7 @@ Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
 - `config/earnings_calendar.yaml` (18 lines)
 - `config/macro_calendar.yaml` (17 lines)
 - `config/pea_universe.yaml` (1901 lines) ⭐
-- `config/risk_params.yaml` (56 lines) ⭐
+- `config/risk_params.yaml` (57 lines) ⭐
 
 ### `tests/`
 - `tests/__init__.py` (1 lines)
@@ -897,7 +898,7 @@ if __name__ == "__main__":
     print("Polymarket stub    :", sensor.get_polymarket_sentiment("recession 2026"))
 ```
 
-## FILE: 00_data_sensors/market_prices_api.py (196 lines)
+## FILE: 00_data_sensors/market_prices_api.py (197 lines)
 ```python
 """Market data ingestion for PEA Pollux.
 
@@ -936,7 +937,8 @@ class MarketDataFetcher:
 
         Args:
             tickers: List of Yahoo Finance ticker symbols.
-            lookback_days: Calendar days of history to request (default 252).
+            lookback_days: Calendar days of history to request.
+                Use ``3650`` (~10 years) for long-horizon / ML backfills.
 
         Returns:
             pd.DataFrame: Cleaned, flat OHLCV data. Empty DataFrame (with the
@@ -1882,7 +1884,7 @@ def safe_get(
         return None
 ```
 
-## FILE: 00_data_sensors/scrapers/amf_scraper.py (445 lines)
+## FILE: 00_data_sensors/scrapers/amf_scraper.py (636 lines)
 ```python
 """AMF insider-declaration scraper (antifragile, multi-source).
 
@@ -1894,6 +1896,7 @@ Any failure returns an empty DataFrame so callers fall back gracefully.
 from __future__ import annotations
 
 import logging
+import os
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -2011,11 +2014,34 @@ class AmfInsiderScraper:
                 rows = self._search_bdif(isin.split("_")[0], isin=isin)
 
             if not rows:
-                self.last_error = self.last_error or "no AMF/ODS rows"
+                # 3) Paid API fallback when AMF returns empty / ambiguous.
+                rows = self._search_fmp_insiders(ticker)
+            if not rows:
+                rows = self._search_eodhd_insiders(ticker)
+
+            if not rows:
+                self.last_error = self.last_error or "no AMF/ODS/FMP/EODHD rows"
                 logger.debug(
                     "AMF empty for %s (%s / %s).", ticker, name, isin
                 )
                 return pd.DataFrame()
+
+            # Reclassify generic "Declaration" using title keywords.
+            for r in rows:
+                tx = str(r.get("Transaction") or "")
+                if tx.casefold() in ("declaration", "déclar", ""):
+                    blob = f"{r.get('Title') or ''} {r.get('Transaction') or ''}"
+                    r["Transaction"] = self._classify_transaction(blob)
+
+            # If still all ambiguous Declarations, prefer FMP/EODHD detail.
+            ambiguous = all(
+                str(r.get("Transaction") or "").casefold() == "declaration"
+                for r in rows
+            )
+            if ambiguous:
+                paid = self._search_fmp_insiders(ticker) or self._search_eodhd_insiders(ticker)
+                if paid:
+                    rows = paid
 
             df = pd.DataFrame(rows)
             keep = [c for c in (
@@ -2035,6 +2061,164 @@ class AmfInsiderScraper:
             isin=profile.get("isin"),
             issuer=profile.get("name"),
         )
+
+    # --- Strict French legal-vocabulary regex for transaction classification ----
+    _RE_ACHAT = re.compile(
+        r"\b(achat|acquisition|souscription|exercice|attribution|"
+        r"conversion|apport|purchase|buy)\b",
+        re.IGNORECASE,
+    )
+    _RE_VENTE = re.compile(
+        r"\b(vente|cession|ali[eé]nation|disposal|sale|sell|rachat|"
+        r"transfert|remise)\b",
+        re.IGNORECASE,
+    )
+    _RE_EUR_VALUE = re.compile(
+        r"(\d[\d\s]*[.,]?\d*)\s*(?:€|EUR|eur)", re.IGNORECASE
+    )
+    _RE_SHARES = re.compile(
+        r"(\d[\d\s]*)\s*(?:actions?|titres?|parts?|shares?)\b", re.IGNORECASE
+    )
+
+    @classmethod
+    def _classify_transaction(cls, blob: str) -> str:
+        """Classify transaction type using strict French legal vocabulary.
+
+        Uses word-boundary regex to avoid false positives on substrings
+        (e.g. 'cession' inside 'accession').
+        """
+        text = (blob or "")
+        if cls._RE_ACHAT.search(text):
+            return "Achat"
+        if cls._RE_VENTE.search(text):
+            return "Vente"
+        return "Declaration"
+
+    @classmethod
+    def _extract_value_from_text(cls, text: str) -> float | None:
+        """Try to extract a EUR value from free-text description."""
+        m = cls._RE_EUR_VALUE.search(text or "")
+        if not m:
+            return None
+        try:
+            raw = m.group(1).replace(" ", "").replace(",", ".")
+            return float(raw)
+        except (ValueError, TypeError):
+            return None
+
+    @classmethod
+    def _extract_shares_from_text(cls, text: str) -> int | None:
+        """Try to extract a share count from free-text description."""
+        m = cls._RE_SHARES.search(text or "")
+        if not m:
+            return None
+        try:
+            raw = m.group(1).replace(" ", "")
+            return int(raw)
+        except (ValueError, TypeError):
+            return None
+
+    def _search_fmp_insiders(self, ticker: str) -> list[dict]:
+        """Fallback: FMP ``/api/v4/insider-trading`` with share counts."""
+        api_key = (os.getenv("FMP_API_KEY") or "").strip()
+        if not api_key:
+            return []
+        symbol = ticker.replace(".PA", "").replace(".AS", "").upper()
+        try:
+            resp = self._session.get(
+                "https://financialmodelingprep.com/api/v4/insider-trading",
+                params={"symbol": symbol, "limit": 25, "apikey": api_key},
+                timeout=12,
+            )
+            if resp.status_code != 200:
+                return []
+            data = resp.json()
+            if not isinstance(data, list):
+                return []
+            rows = []
+            for item in data[:25]:
+                if not isinstance(item, dict):
+                    continue
+                tx_raw = str(
+                    item.get("transactionType")
+                    or item.get("acquistionOrDisposition")
+                    or ""
+                )
+                tx = self._classify_transaction(tx_raw)
+                if tx == "Declaration":
+                    # FMP uses A/D codes sometimes
+                    code = str(item.get("acquistionOrDisposition") or "").upper()
+                    if code == "A":
+                        tx = "Achat"
+                    elif code == "D":
+                        tx = "Vente"
+                shares = item.get("securitiesTransacted") or item.get("securitiesOwned")
+                price = item.get("price")
+                value = None
+                try:
+                    if shares is not None and price is not None:
+                        value = float(shares) * float(price)
+                except (TypeError, ValueError):
+                    value = None
+                rows.append({
+                    "Date": str(item.get("transactionDate") or item.get("filingDate") or "")[:10],
+                    "Insider": item.get("reportingName") or item.get("reporter") or "Insider",
+                    "Transaction": tx,
+                    "Value": value,
+                    "Shares": shares,
+                    "Volume": shares,
+                    "Price": price,
+                    "Title": f"FMP: {tx_raw}"[:240],
+                    "ISIN": "",
+                    "Source": "FMP",
+                })
+            return rows
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("FMP insider fallback failed for %s: %s", ticker, exc)
+            return []
+
+    def _search_eodhd_insiders(self, ticker: str) -> list[dict]:
+        """Fallback: EODHD insider transactions (when ``EODHD_API_KEY`` set)."""
+        api_key = (os.getenv("EODHD_API_KEY") or "").strip()
+        if not api_key:
+            return []
+        # EODHD expects exchange suffix like KER.PA
+        symbol = ticker if "." in ticker else f"{ticker}.PA"
+        try:
+            resp = self._session.get(
+                f"https://eodhd.com/api/insider-transactions",
+                params={"code": symbol, "api_token": api_key, "fmt": "json"},
+                timeout=12,
+            )
+            if resp.status_code != 200:
+                return []
+            data = resp.json()
+            if not isinstance(data, list):
+                return []
+            rows = []
+            for item in data[:25]:
+                if not isinstance(item, dict):
+                    continue
+                tx_raw = str(item.get("transactionType") or item.get("ownerType") or "")
+                tx = self._classify_transaction(tx_raw)
+                shares = item.get("transactionAmount") or item.get("shares")
+                price = item.get("transactionPrice") or item.get("price")
+                rows.append({
+                    "Date": str(item.get("date") or item.get("reportDate") or "")[:10],
+                    "Insider": item.get("ownerName") or item.get("name") or "Insider",
+                    "Transaction": tx,
+                    "Value": item.get("transactionValue"),
+                    "Shares": shares,
+                    "Volume": shares,
+                    "Price": price,
+                    "Title": f"EODHD: {tx_raw}"[:240],
+                    "ISIN": "",
+                    "Source": "EODHD",
+                })
+            return rows
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("EODHD insider fallback failed for %s: %s", ticker, exc)
+            return []
 
     def _search_ods_api(self, query: str) -> list[dict]:
         """Fetch AMF data via Opendatasoft v2.1 API using ODSQL (public)."""
@@ -2084,12 +2268,21 @@ class AmfInsiderScraper:
                 for item in (data.get("results") or []):
                     if not isinstance(item, dict):
                         continue
-                    tx_raw = str(
-                        item.get("type_transaction")
-                        or item.get("nature_transaction")
-                        or item.get("typesDocument")
-                        or ""
-                    ).lower()
+                    full_blob = " ".join(
+                        str(item.get(k) or "")
+                        for k in (
+                            "type_transaction", "nature_transaction",
+                            "typesDocument", "titre", "resume",
+                            "description", "objet", "declarant", "nom",
+                        )
+                    )
+                    tx = self._classify_transaction(full_blob)
+                    raw_value = item.get("montant") or item.get("valeur")
+                    raw_shares = item.get("volume") or item.get("quantite")
+                    if raw_value is None:
+                        raw_value = self._extract_value_from_text(full_blob)
+                    if raw_shares is None:
+                        raw_shares = self._extract_shares_from_text(full_blob)
                     results.append({
                         "Date": str(
                             item.get("date_publication")
@@ -2103,14 +2296,10 @@ class AmfInsiderScraper:
                             or item.get("raison_sociale")
                             or "Dirigeant"
                         ),
-                        "Transaction": (
-                            "Achat" if "achat" in tx_raw or "acquisition" in tx_raw
-                            else ("Vente" if "vente" in tx_raw or "cession" in tx_raw
-                                  else "Declaration")
-                        ),
-                        "Value": item.get("montant") or item.get("valeur"),
-                        "Shares": item.get("volume") or item.get("quantite"),
-                        "Volume": item.get("volume") or item.get("quantite"),
+                        "Transaction": tx,
+                        "Value": raw_value,
+                        "Shares": raw_shares,
+                        "Volume": raw_shares,
                         "Title": f"ODS API: {q}",
                         "ISIN": item.get("isin") or "",
                         "Source": "AMF Opendatasoft",
@@ -2164,12 +2353,16 @@ class AmfInsiderScraper:
                     src.get("titre")
                     or f"Declaration dirigeants — {names or q}"
                 )
-                blob = f"{title} {names}".casefold()
-                tx = (
-                    "Achat" if any(w in blob for w in ("achat", "acquisition"))
-                    else ("Vente" if any(w in blob for w in ("vente", "cession"))
-                          else "Declaration")
-                )
+                full_blob = " ".join(
+                    str(src.get(k) or "")
+                    for k in (
+                        "titre", "resume", "description", "objet",
+                        "typeDocument", "typeInformation",
+                    )
+                ) + " " + names
+                tx = self._classify_transaction(full_blob)
+                extracted_val = self._extract_value_from_text(full_blob)
+                extracted_shares = self._extract_shares_from_text(full_blob)
                 rows.append({
                     "Date": str(
                         src.get("datePublication")
@@ -2179,9 +2372,9 @@ class AmfInsiderScraper:
                     )[:10],
                     "Insider": names or "Dirigeant",
                     "Transaction": tx,
-                    "Value": None,
-                    "Shares": None,
-                    "Volume": None,
+                    "Value": extracted_val,
+                    "Shares": extracted_shares,
+                    "Volume": extracted_shares,
                     "Title": str(title)[:240],
                     "ISIN": "",
                     "Source": "AMF BDIF Back API",
@@ -2298,11 +2491,7 @@ class AmfInsiderScraper:
             if not (is_dd or matches_issuer or matches_isin):
                 continue
 
-            tx_type = "Achat" if any(
-                w in blob for w in ("achat", "acquisition", "souscription")
-            ) else ("Vente" if any(
-                w in blob for w in ("vente", "cession", "disposal")
-            ) else "Declaration")
+            tx_type = AmfInsiderScraper._classify_transaction(blob)
 
             date_raw = (
                 item.get("datePublication") or item.get("date")
@@ -2315,6 +2504,10 @@ class AmfInsiderScraper:
             value = item.get("montant") or item.get("valeur") or item.get("value")
             volume = item.get("volume") or item.get("quantite") or item.get("shares")
             price = item.get("prix") or item.get("price") or item.get("prixUnitaire")
+            if value is None:
+                value = AmfInsiderScraper._extract_value_from_text(blob)
+            if volume is None:
+                volume = AmfInsiderScraper._extract_shares_from_text(blob)
             doc_isin = item.get("isin") or isin_clean or ""
 
             rows.append({
@@ -4097,6 +4290,300 @@ class PortfolioDB:
 
 ```
 
+## FILE: 02_quant_engine/ml_feature_store.py (290 lines)
+```python
+"""Machine Learning feature store for PEA Pollux (Phase 40).
+
+Builds a supervised training matrix from SQLite audit/news history and DuckDB
+OHLCV. Pure offline engineering — no live trading side-effects.
+
+Features
+--------
+RSI14, Z-Score 50, Volatility 20d, Insider Net Score, Finnhub ROE/PE,
+News Sentiment Score (−100…+100).
+
+Target
+------
+Binary label: 30-day forward return > 2.0% → 1, else 0.
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+import sys
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+import pandas as pd
+
+_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_ROOT / "01_memory_core"))
+sys.path.insert(0, str(_ROOT / "02_quant_engine"))
+
+logger = logging.getLogger(__name__)
+
+_DEFAULT_OUT = _ROOT / "database" / "ml_training_dataset.csv"
+_FORWARD_DAYS = 30
+_TARGET_RETURN = 0.02
+
+
+def _safe_float(x: Any, default: float = np.nan) -> float:
+    try:
+        if x is None or (isinstance(x, float) and np.isnan(x)):
+            return default
+        return float(x)
+    except (TypeError, ValueError):
+        return default
+
+
+def _rsi14(close: pd.Series) -> float:
+    if close is None or len(close) < 15:
+        return np.nan
+    delta = close.astype(float).diff()
+    gain = delta.clip(lower=0.0).rolling(14, min_periods=14).mean()
+    loss = (-delta.clip(upper=0.0)).rolling(14, min_periods=14).mean()
+    rs = gain / loss.replace(0.0, np.nan)
+    rsi = 100.0 - (100.0 / (1.0 + rs))
+    val = float(rsi.iloc[-1]) if len(rsi) else np.nan
+    return val if np.isfinite(val) else np.nan
+
+
+def _zscore50(close: pd.Series) -> float:
+    try:
+        from quantitative_math import calculate_z_score
+
+        z = calculate_z_score(close.astype(float))
+        val = float(z.iloc[-1]) if len(z) else np.nan
+        return val if np.isfinite(val) else np.nan
+    except Exception:  # noqa: BLE001
+        if close is None or len(close) < 50:
+            return np.nan
+        window = close.astype(float).tail(50)
+        std = float(window.std(ddof=0))
+        if std <= 0:
+            return np.nan
+        return float((window.iloc[-1] - window.mean()) / std)
+
+
+def _vol20(close: pd.Series) -> float:
+    if close is None or len(close) < 21:
+        return np.nan
+    rets = close.astype(float).pct_change().dropna().tail(20)
+    if rets.empty:
+        return np.nan
+    return float(rets.std(ddof=0) * np.sqrt(252.0))
+
+
+def _forward_return(close: pd.Series, asof_idx: int, days: int = _FORWARD_DAYS) -> float:
+    """Return close[asof+days]/close[asof] - 1 when available."""
+    if close is None or asof_idx < 0 or asof_idx + days >= len(close):
+        return np.nan
+    base = float(close.iloc[asof_idx])
+    fut = float(close.iloc[asof_idx + days])
+    if base <= 0 or not np.isfinite(base) or not np.isfinite(fut):
+        return np.nan
+    return fut / base - 1.0
+
+
+def _insider_net_from_reason(reason: str) -> float:
+    """Cheap proxy from audit reason text (−1…+1)."""
+    blob = (reason or "").casefold()
+    buys = sum(blob.count(w) for w in ("insider buy", "achat dirigeant", "cluster buy", "ins+"))
+    sells = sum(blob.count(w) for w in ("insider sell", "vente dirigeant", "ins-"))
+    if buys == sells == 0:
+        if "insider" in blob and "buy" in blob:
+            return 0.5
+        return 0.0
+    return float(np.clip((buys - sells) / max(1, buys + sells), -1.0, 1.0))
+
+
+def _news_sentiment_proxy(ticker: str, pdb: Any) -> float:
+    """Average heuristic sentiment from archived headlines (−100…+100)."""
+    try:
+        rows = pdb.get_news_history(ticker, limit=20) if pdb else []
+    except Exception:  # noqa: BLE001
+        rows = []
+    if not rows:
+        return 0.0
+    pos = ("hausse", "record", "croissance", "beat", "upgrade", "rachat", "dividende")
+    neg = ("baisse", "chute", "perte", "downgrade", "licenciement", "fraude", "amende")
+    scores = []
+    for r in rows:
+        title = str(r.get("title") or "").casefold()
+        s = 0
+        s += 20 * sum(1 for w in pos if w in title)
+        s -= 20 * sum(1 for w in neg if w in title)
+        # Prefer stored sentiment when present
+        raw = r.get("sentiment_score")
+        if raw is not None:
+            try:
+                scores.append(float(raw))
+                continue
+            except (TypeError, ValueError):
+                pass
+        scores.append(float(np.clip(s, -100, 100)))
+    return float(np.mean(scores)) if scores else 0.0
+
+
+def _fundamentals(ticker: str, pdb: Any) -> tuple[float, float]:
+    """Return (roe, pe) from SQLite cache or Finnhub/yfinance sensor."""
+    pe = np.nan
+    roe = np.nan
+    try:
+        cached = pdb.get_cached_fundamentals(ticker, max_age_days=30) if pdb else None
+        if cached:
+            pe = _safe_float(cached.get("pe_ratio"))
+            roe = _safe_float(cached.get("roe"))
+            if np.isfinite(pe) or np.isfinite(roe):
+                return roe, pe
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        sys.path.insert(0, str(_ROOT / "00_data_sensors"))
+        from fundamentals_api import FundamentalsSensor
+
+        data = FundamentalsSensor().get_basic_financials(ticker)
+        pe = _safe_float(data.get("pe_ratio"))
+        roe = _safe_float(data.get("roe"))
+    except Exception:  # noqa: BLE001
+        pass
+    return roe, pe
+
+
+def build_ml_feature_row(
+    ticker: str,
+    *,
+    close: pd.Series | None = None,
+    reason: str = "",
+    pdb: Any = None,
+    asof_idx: int | None = None,
+) -> dict:
+    """Engineer one feature row for ``ticker``."""
+    series = close.astype(float).dropna() if close is not None else pd.Series(dtype=float)
+    idx = asof_idx if asof_idx is not None else (len(series) - 1 if len(series) else -1)
+    hist = series.iloc[: idx + 1] if idx >= 0 else series
+
+    rsi = _rsi14(hist)
+    z50 = _zscore50(hist)
+    vol = _vol20(hist)
+    insider = _insider_net_from_reason(reason)
+    news_sent = _news_sentiment_proxy(ticker, pdb)
+    roe, pe = _fundamentals(ticker, pdb)
+    fwd = _forward_return(series, idx, _FORWARD_DAYS) if idx >= 0 else np.nan
+    label = int(fwd > _TARGET_RETURN) if np.isfinite(fwd) else np.nan
+
+    return {
+        "ticker": ticker,
+        "rsi14": rsi,
+        "zscore_50": z50,
+        "vol_20d_ann": vol,
+        "insider_net_score": insider,
+        "finnhub_roe": roe,
+        "finnhub_pe": pe,
+        "news_sentiment": news_sent,
+        "fwd_ret_30d": fwd,
+        "label_fwd_gt_2pct": label,
+    }
+
+
+def build_ml_dataset(
+    portfolio_db: Any | None = None,
+    timeseries_db: Any | None = None,
+    max_signals: int = 500,
+) -> pd.DataFrame:
+    """Build a feature matrix from audit_logs + OHLCV (+ news/fundamentals).
+
+    Args:
+        portfolio_db: ``PortfolioDB`` instance (created if None).
+        timeseries_db: ``TimeSeriesDB`` instance (created if None).
+        max_signals: Cap on audit rows scanned.
+
+    Returns:
+        DataFrame ready for XGBoost/NLP training.
+    """
+    from duckdb_manager import TimeSeriesDB
+    from sqlite_portfolio import PortfolioDB
+
+    pdb = portfolio_db or PortfolioDB()
+    try:
+        pdb.init_db()
+    except Exception:  # noqa: BLE001
+        pass
+    tdb = timeseries_db or TimeSeriesDB(read_only=True)
+
+    try:
+        rows = pdb.fetch_signals_by_status(
+            ["APPROVED", "EXECUTED", "REJECTED", "PENDING", "REVOKED", "EXPIRED"],
+            limit=max_signals,
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("Could not load audit_logs for ML dataset.")
+        rows = []
+
+    out: list[dict] = []
+    seen: set[str] = set()
+    for row in rows or []:
+        ticker = str(row.get("ticker") or "").strip()
+        if not ticker or ticker in seen:
+            continue
+        seen.add(ticker)
+        try:
+            hist = tdb.get_historical_prices(ticker, days=400)
+        except Exception:  # noqa: BLE001
+            hist = pd.DataFrame()
+        close = (
+            hist["Close"]
+            if hist is not None and not hist.empty and "Close" in hist.columns
+            else pd.Series(dtype=float)
+        )
+        feat = build_ml_feature_row(
+            ticker,
+            close=close,
+            reason=str(row.get("reason") or ""),
+            pdb=pdb,
+        )
+        feat["signal_status"] = str(row.get("status") or "")
+        feat["signal_score"] = _safe_float(row.get("score"), 0.0)
+        feat["created_at"] = str(row.get("created_at") or "")[:19]
+        out.append(feat)
+
+    if not out:
+        return pd.DataFrame(
+            columns=[
+                "ticker", "rsi14", "zscore_50", "vol_20d_ann", "insider_net_score",
+                "finnhub_roe", "finnhub_pe", "news_sentiment", "fwd_ret_30d",
+                "label_fwd_gt_2pct", "signal_status", "signal_score", "created_at",
+            ]
+        )
+    return pd.DataFrame(out)
+
+
+def export_ml_dataset_csv(
+    path: Path | str | None = None,
+    portfolio_db: Any | None = None,
+    timeseries_db: Any | None = None,
+) -> Path:
+    """Build the feature matrix and write it to CSV.
+
+    Returns:
+        Path to the written CSV file.
+    """
+    out = Path(path) if path else _DEFAULT_OUT
+    out.parent.mkdir(parents=True, exist_ok=True)
+    df = build_ml_dataset(portfolio_db=portfolio_db, timeseries_db=timeseries_db)
+    df.to_csv(out, index=False, encoding="utf-8")
+    logger.info("ML dataset exported → %s (%d rows).", out, len(df))
+    return out
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    p = export_ml_dataset_csv()
+    print(f"Wrote {p}")
+```
+
 ## FILE: 02_quant_engine/quantitative_math.py (104 lines)
 ```python
 """Academic quantitative-math utilities for portfolio analytics.
@@ -4204,7 +4691,7 @@ def calculate_annualized_volatility(returns: pd.Series, periods_per_year: int = 
     return float(r.std(ddof=0) * np.sqrt(float(periods_per_year)))
 ```
 
-## FILE: 02_quant_engine/smart_dca_engine.py (207 lines)
+## FILE: 02_quant_engine/smart_dca_engine.py (223 lines)
 ```python
 """Smart DCA core engine for PEA Pollux (Phase 10).
 
@@ -4260,12 +4747,15 @@ class SmartDcaCore:
         self.target_pct: float = float(risk.get("CORE_TARGET_PCT", 0.70))
         self.crash_target_pct: float = float(risk.get("CORE_CRASH_TARGET_PCT", 0.75))
         self.max_tranche_pct: float = float(risk.get("CORE_DCA_MAX_TRANCHE_PCT", 0.05))
+        # Phase 40: idle cash above this fraction of equity is swept into Core.
+        self.max_idle_cash_pct: float = float(risk.get("MAX_IDLE_CASH_PCT", 0.02))
         logger.debug(
-            "SmartDcaCore loaded: %s target=%.2f crash=%.2f tranche<=%.2f",
+            "SmartDcaCore loaded: %s target=%.2f crash=%.2f tranche<=%.2f idle<=%.2f",
             self.core_ticker,
             self.target_pct,
             self.crash_target_pct,
             self.max_tranche_pct,
+            self.max_idle_cash_pct,
         )
 
     @staticmethod
@@ -4341,6 +4831,19 @@ class SmartDcaCore:
 
         target_value = target_pct * total_equity
         tranche_cash = min(current_cash, tranche_pct * total_equity, target_value)
+
+        # Phase 40 — zero cash drag: sweep idle cash above MAX_IDLE_CASH_PCT
+        # into the Core ETF (whole shares only; PEA forbids fractions).
+        max_idle = self.max_idle_cash_pct * total_equity
+        excess_cash = max(0.0, float(current_cash) - max_idle)
+        sweep_note = ""
+        if excess_cash >= price:
+            tranche_cash = max(tranche_cash, excess_cash)
+            sweep_note = (
+                f" Cash sweep: idle {current_cash / total_equity * 100:.1f}% > "
+                f"{self.max_idle_cash_pct * 100:.0f}% → deploy {excess_cash:.0f} EUR."
+            )
+
         qty = int(math.floor(tranche_cash / price)) if tranche_cash > 0 else 0
 
         regime_txt = (
@@ -4352,7 +4855,7 @@ class SmartDcaCore:
             f"Smart DCA {self.core_ticker}: {regime_txt}. "
             f"Price {price:.2f} vs SMA200 {sma200:.2f}. "
             f"Target core weight {target_pct * 100:.0f}% -> buy {qty} share(s) "
-            f"(~{qty * price:.0f} EUR tranche)."
+            f"(~{qty * price:.0f} EUR tranche).{sweep_note}"
         )
 
         signal = Signal(
@@ -6016,7 +6519,7 @@ class PortfolioRebalancer:
         return signals
 ```
 
-## FILE: 03_risk_portfolio/pea_position_sizer.py (245 lines)
+## FILE: 03_risk_portfolio/pea_position_sizer.py (262 lines)
 ```python
 """PEA position sizer for PEA Pollux.
 
@@ -6209,6 +6712,23 @@ class PeaSizer:
         return (
             self.satellite_max_budget * portfolio.total_equity
             - self._satellite_value(portfolio)
+        )
+
+    @staticmethod
+    def investment_rate(portfolio: PortfolioState) -> float:
+        """Percentage of equity currently invested (100 − cash drag)."""
+        if portfolio is None or portfolio.total_equity <= 0:
+            return 0.0
+        invested = sum(float(p.market_value) for p in portfolio.positions)
+        return float(max(0.0, min(100.0, invested / portfolio.total_equity * 100.0)))
+
+    @staticmethod
+    def idle_cash_pct(portfolio: PortfolioState) -> float:
+        """Cash as a percentage of total equity."""
+        if portfolio is None or portfolio.total_equity <= 0:
+            return 0.0
+        return float(
+            max(0.0, min(100.0, portfolio.cash_available / portfolio.total_equity * 100.0))
         )
 
     def calculate_target_qty(
@@ -7574,7 +8094,7 @@ if __name__ == "__main__":
 
 ```
 
-## FILE: 05_interfaces/discord_copilot.py (284 lines)
+## FILE: 05_interfaces/discord_copilot.py (384 lines)
 ```python
 """Discord Copilot for PEA Pollux.
 
@@ -7860,6 +8380,106 @@ class DiscordCopilot(discord.Client):
         message = await channel.send(embed=embed, view=view)
         logger.info("Alert sent for %s to channel %s.", signal.ticker, self.channel_id)
         return message
+
+
+async def send_daily_concise_report(
+    *,
+    equity: float,
+    day_change_pct: float | None,
+    investment_rate_pct: float,
+    top_positions: list[dict] | None = None,
+    near_miss: list[dict] | None = None,
+    vix: float | None = None,
+    webhook_url: str | None = None,
+) -> bool:
+    """Post a sleek daily end-of-day digest via Discord webhook.
+
+    Designed for the 17:10 Paris pass. Uses ``DISCORD_WEBHOOK_URL`` by default
+    (no bot token required).
+
+    Args:
+        equity: Total portfolio value (EUR).
+        day_change_pct: Daily equity change in percent, or None.
+        investment_rate_pct: Invested / equity * 100.
+        top_positions: Optional ``[{ticker, weight_pct, pnl_pct}, ...]``.
+        near_miss: Optional ``[{ticker, score, missing}, ...]`` top opportunities.
+        vix: Latest VIX / VSTOXX level.
+        webhook_url: Override webhook URL.
+
+    Returns:
+        bool: True if Discord accepted the payload.
+    """
+    import aiohttp
+
+    url = webhook_url or os.getenv("DISCORD_WEBHOOK_URL")
+    if not url:
+        logger.warning("DISCORD_WEBHOOK_URL unset; daily report skipped.")
+        return False
+
+    day_txt = "n/a" if day_change_pct is None else f"{day_change_pct:+.2f}%"
+    vix_txt = "n/a" if vix is None else f"{vix:.1f}"
+    pos_lines = []
+    for p in (top_positions or [])[:5]:
+        pos_lines.append(
+            f"• **{p.get('ticker', '?')}** — "
+            f"{float(p.get('weight_pct') or 0):.1f}% equity · "
+            f"PnL {float(p.get('pnl_pct') or 0):+.1f}%"
+        )
+    if not pos_lines:
+        pos_lines = ["• Aucune position ouverte"]
+
+    miss_lines = []
+    for m in (near_miss or [])[:3]:
+        miss_lines.append(
+            f"• **{m.get('ticker', '?')}** — score {int(m.get('score') or 0)}/100"
+            f" · {m.get('missing') or 'en surveillance'}"
+        )
+    if not miss_lines:
+        miss_lines = ["• Aucun near-miss notable"]
+
+    embed = {
+        "title": "📊 PEA Pollux — Rapport Quotidien",
+        "color": 0x00E676 if (day_change_pct or 0) >= 0 else 0xFF3B30,
+        "fields": [
+            {
+                "name": "Portefeuille",
+                "value": (
+                    f"**{equity:,.0f} €** · Δ jour **{day_txt}**\n"
+                    f"Taux d'investissement : **{investment_rate_pct:.1f}%**"
+                ),
+                "inline": False,
+            },
+            {
+                "name": "Positions actives",
+                "value": "\n".join(pos_lines)[:1000],
+                "inline": False,
+            },
+            {
+                "name": "Radar Near-Miss (Top 3)",
+                "value": "\n".join(miss_lines)[:800],
+                "inline": False,
+            },
+            {
+                "name": "Macro",
+                "value": f"VIX / VSTOXX : **{vix_txt}**",
+                "inline": True,
+            },
+        ],
+        "footer": {"text": "PEA Pollux · exécution manuelle · pas un conseil"},
+    }
+    try:
+        timeout = aiohttp.ClientTimeout(total=20)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(url, json={"embeds": [embed]}) as resp:
+                if resp.status not in (200, 204):
+                    body = await resp.text()
+                    logger.error("Daily report webhook HTTP %s: %s", resp.status, body[:200])
+                    return False
+        logger.info("Daily concise report posted to Discord webhook.")
+        return True
+    except Exception:  # noqa: BLE001
+        logger.exception("Daily concise report failed.")
+        return False
 ```
 
 ## FILE: 05_interfaces/llm_explainer.py (272 lines)
@@ -8138,7 +8758,7 @@ if __name__ == "__main__":
     asyncio.run(_demo())
 ```
 
-## FILE: 05_interfaces/terminal_dashboard.py (6234 lines)
+## FILE: 05_interfaces/terminal_dashboard.py (6406 lines)
 ```python
 """Web Terminal (Streamlit dashboard) for PEA Pollux.
 
@@ -11805,6 +12425,8 @@ unrealized = sum((p.current_price - p.avg_entry_price) * p.qty_shares for p in p
 unrealized_pct = (unrealized / invested * 100) if invested else 0.0
 cash_pct = (portfolio.cash_available / portfolio.total_equity * 100
             if portfolio.total_equity else 0.0)
+invest_rate = (invested / portfolio.total_equity * 100
+               if portfolio.total_equity else 0.0)
 
 c1, c2, c3, c4 = st.columns(4)
 with c1:
@@ -11815,11 +12437,13 @@ with c1:
                   "la valeur de marche de toutes vos actions detenues.",
     ), unsafe_allow_html=True)
 with c2:
+    inv_accent = "cyan" if invest_rate >= 95 else ("amber" if invest_rate >= 80 else "red")
     st.markdown(metric_box(
-        "Liquidites (Cash)", f"{portfolio.cash_available:,.2f} \u20ac",
-        sub=f"{cash_pct:.1f}% de l'equity", accent="muted", sub_cls="sub-muted",
-        help_text="Argent disponible non investi, pret a saisir de nouvelles "
-                  "opportunites d'achat.",
+        "Taux d'Investissement", f"{invest_rate:.1f}%",
+        sub=f"Cash idle: {cash_pct:.1f}% ({portfolio.cash_available:,.0f} \u20ac)",
+        accent=inv_accent, sub_cls="sub-muted",
+        help_text="Part de l'equity déjà investie. Objectif Phase 40 : cash idle "
+                  "≤ 2% — l'excédent est balayé automatiquement vers CW8.PA.",
     ), unsafe_allow_html=True)
 with c3:
     pnl_cls = "sub-green" if unrealized >= 0 else "sub-red"
@@ -12665,6 +13289,75 @@ with tab_pf:
                     "métriques partagées (`equity_metrics`) — mêmes formules "
                     "que le futur backtester."
                 )
+
+            # Phase 40 — forward tracking vs MSCI World PEA (CW8.PA)
+            st.markdown("#### 📈 Tracking en Direct des Recommandations (Forward Curve)")
+            try:
+                from duckdb_manager import TimeSeriesDB as _TSDBFwd
+
+                _dbf = _TSDBFwd(read_only=True)
+                cw8 = _dbf.get_historical_prices(_CORE_TICKER, days=800)
+                if (
+                    cw8 is not None
+                    and not cw8.empty
+                    and "Close" in cw8.columns
+                    and eq is not None
+                    and not eq.empty
+                ):
+                    bench = cw8[["Date", "Close"]].copy()
+                    bench["Date"] = pd.to_datetime(bench["Date"], errors="coerce")
+                    bench = bench.dropna().sort_values("Date")
+                    pf = eq[["date", "equity"]].copy()
+                    pf["date"] = pd.to_datetime(pf["date"], errors="coerce")
+                    pf = pf.dropna().sort_values("date")
+                    merged = pd.merge_asof(
+                        pf.rename(columns={"date": "Date"}),
+                        bench,
+                        on="Date",
+                        direction="backward",
+                    ).dropna()
+                    if len(merged) >= 2:
+                        merged["PF_idx"] = (
+                            merged["equity"] / float(merged["equity"].iloc[0]) * 100.0
+                        )
+                        merged["CW8_idx"] = (
+                            merged["Close"] / float(merged["Close"].iloc[0]) * 100.0
+                        )
+                        fig_fwd = go.Figure()
+                        fig_fwd.add_trace(go.Scatter(
+                            x=merged["Date"], y=merged["PF_idx"],
+                            mode="lines", name="Portefeuille",
+                            line=dict(color=_NEON, width=2),
+                        ))
+                        fig_fwd.add_trace(go.Scatter(
+                            x=merged["Date"], y=merged["CW8_idx"],
+                            mode="lines", name="CW8.PA (MSCI World)",
+                            line=dict(color=_CYAN, width=2, dash="dot"),
+                        ))
+                        fig_fwd.update_layout(
+                            title="Performance cumulée (base 100) vs benchmark",
+                            yaxis_title="Index (base 100)",
+                            height=360,
+                            margin=dict(t=40, l=20, r=20, b=20),
+                            legend=dict(orientation="h"),
+                        )
+                        _style_dark_fig(fig_fwd)
+                        st.plotly_chart(fig_fwd, width="stretch", key="pf_forward_vs_cw8")
+                        pf_ret = float(merged["PF_idx"].iloc[-1] - 100.0)
+                        bm_ret = float(merged["CW8_idx"].iloc[-1] - 100.0)
+                        st.caption(
+                            f"Depuis inception affichée : portefeuille {pf_ret:+.1f}% · "
+                            f"CW8 {bm_ret:+.1f}% · écart {pf_ret - bm_ret:+.1f} pts"
+                        )
+                    else:
+                        st.caption("Historique insuffisant pour le tracking vs CW8.")
+                else:
+                    st.caption(
+                        "CW8.PA ou equity curve manquant — lance "
+                        "`python main_scheduler.py --backfill-10y` ou `--now`."
+                    )
+            except Exception as exc:  # noqa: BLE001
+                st.caption(f"Forward curve indisponible ({exc}).")
 
             st.markdown("#### 📉 Métriques de Risque Académique (Tail Risk)")
             if (
@@ -13800,9 +14493,26 @@ with tab_mkt:
             for n in news
             if str(n.get("title") or "").strip()
         )
-        with st.spinner("IA en cours d'analyse..."):
-            deep = get_deep_news_synthesis(selected, headlines_tuple)
-        st.info(f"🧠 **Synthèse IA (cache 24h)**\n\n{deep}")
+        deep = ""
+        try:
+            with st.spinner("IA en cours d'analyse..."):
+                deep = get_deep_news_synthesis(selected, headlines_tuple) or ""
+        except Exception as exc:  # noqa: BLE001
+            deep = ""
+            st.caption(f"Synthèse IA indisponible ({exc}). Affichage des articles bruts.")
+        deep_l = str(deep).strip().casefold()
+        if (
+            deep
+            and deep_l
+            and not deep_l.startswith("indisponible")
+            and "erreur" not in deep_l[:40]
+            and "unavailable" not in deep_l[:40]
+        ):
+            st.info(f"🧠 **Synthèse IA (cache 24h)**\n\n{deep}")
+        else:
+            st.caption(
+                "Synthèse IA indisponible ou vide — articles bruts avec timestamps ci-dessous."
+            )
         ndisp = pd.DataFrame([{
             "Source": str(n.get("provider") or "")[:56],
             "Date": str(n.get("date") or "")[:16],
@@ -14277,37 +14987,130 @@ Le dashboard lit l'etat en continu. L'editeur de wallet peut ecrire
 cash/positions. Les ordres restent Discord + scheduler.
 """)
 
+    # --- System Telemetry ----------------------------------------------------
+    st.markdown("---")
+    st.markdown("### 🖥️ Télémétrie Système")
+    _tel_c1, _tel_c2, _tel_c3, _tel_c4 = st.columns(4)
+    with _tel_c1:
+        st.metric("CPU cores", os.cpu_count() or "?")
+    with _tel_c2:
+        try:
+            _mem_blocks = sys.getallocatedblocks()
+            st.metric("Python mem blocks", f"{_mem_blocks:,}")
+        except Exception:
+            st.metric("Python mem blocks", "n/a")
+    with _tel_c3:
+        _sqlite_size = "n/a"
+        if _SQLITE_PATH.exists():
+            _sqlite_size = f"{_SQLITE_PATH.stat().st_size / 1_048_576:.1f} MB"
+        st.metric("SQLite", _sqlite_size)
+        st.caption(str(_SQLITE_PATH.name))
+    with _tel_c4:
+        _duckdb_path = _ROOT / "database" / "timeseries.duckdb"
+        _duck_size = "n/a"
+        if _duckdb_path.exists():
+            _duck_size = f"{_duckdb_path.stat().st_size / 1_048_576:.1f} MB"
+        st.metric("DuckDB", _duck_size)
+        st.caption(str(_duckdb_path.name))
+
+    # --- Fluid Log Viewer (filtered + color-coded) --------------------------
     st.markdown("---")
     st.markdown("### 📋 Logs détaillés (copie / audit)")
     st.markdown(
         "<div class='info-text'>Fichiers rotatifs sous <code>logs/</code> — "
-        "un par composant + <code>pea_pollux_all.log</code>. Format détaillé "
-        "(fichier:ligne:fonction). Lecture seule ici ; rien n'est modifié.</div>",
+        "un par composant + <code>pea_pollux_all.log</code>. Filtrables par "
+        "niveau avec couleurs professionnelles (rouge = ERROR, ambre = WARNING, "
+        "cyan = INFO).</div>",
         unsafe_allow_html=True,
     )
-    if list_log_files is None or tail_log is None:
-        st.caption("Module logging indisponible.")
-    else:
-        files = list_log_files()
-        if not files:
-            st.caption(
-                "Aucun log encore. Lance `python main_scheduler.py --now` "
-                "pour peupler `logs/`."
-            )
-        else:
-            names = [p.name for p in files]
-            pick = st.selectbox("Fichier", names, key="log_file_pick")
-            nlines = st.slider("Lignes (tail)", 50, 5000, 500, 50, key="log_tail_n")
-            path = next(p for p in files if p.name == pick)
-            body = tail_log(path, nlines)
-            st.text_area(
-                "Contenu (sélectionnable / copiable)",
-                value=body,
-                height=420,
-                key="log_tail_view",
-            )
-            st.caption(str(path))
 
+    _all_log_path = _ROOT / "logs" / "pea_pollux_all.log"
+    _log_col1, _log_col2 = st.columns([1, 2])
+    with _log_col1:
+        _log_filter = st.radio(
+            "Filtrer par niveau",
+            ["TOUT", "ERROR / WARNING", "INFO uniquement"],
+            key="log_level_filter",
+            horizontal=True,
+        )
+    with _log_col2:
+        _log_lines_n = st.slider(
+            "Lignes affichées (tail)", 100, 2000, 500, 100, key="log_n_lines"
+        )
+
+    if _all_log_path.exists():
+        try:
+            _raw_lines = _all_log_path.read_text(
+                encoding="utf-8", errors="replace"
+            ).splitlines()
+        except Exception:
+            _raw_lines = ["(lecture impossible)"]
+
+        if _log_filter == "ERROR / WARNING":
+            _filtered = [
+                ln for ln in _raw_lines
+                if " ERROR " in ln or " WARNING " in ln or " CRITICAL " in ln
+            ]
+        elif _log_filter == "INFO uniquement":
+            _filtered = [ln for ln in _raw_lines if " INFO " in ln]
+        else:
+            _filtered = _raw_lines
+
+        _display_lines = _filtered[-_log_lines_n:]
+
+        _html_parts = []
+        for ln in _display_lines:
+            escaped = (
+                ln.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            )
+            if " ERROR " in ln or " CRITICAL " in ln:
+                color = "#FF3B30"
+            elif " WARNING " in ln:
+                color = "#FFD60A"
+            elif " INFO " in ln:
+                color = "#00B4D8"
+            else:
+                color = "#888888"
+            _html_parts.append(
+                f'<div style="color:{color};font-family:Courier New,monospace;'
+                f'font-size:11px;line-height:1.35;white-space:pre-wrap;">'
+                f'{escaped}</div>'
+            )
+        _log_html = (
+            '<div style="background:#0a0a0a;padding:12px;border-radius:6px;'
+            'max-height:500px;overflow-y:auto;">'
+            + "\n".join(_html_parts)
+            + "</div>"
+        )
+        st.markdown(_log_html, unsafe_allow_html=True)
+        st.caption(
+            f"{len(_display_lines)} / {len(_filtered)} lignes filtrées "
+            f"(total fichier : {len(_raw_lines)})"
+        )
+    else:
+        st.caption("Fichier non trouvé. Lance une analyse pour générer des logs.")
+
+    # Also keep per-component log selector for deep-dive
+    if list_log_files is not None and tail_log is not None:
+        files = list_log_files()
+        if files:
+            with st.expander("📂 Logs par composant (détail)", expanded=False):
+                names = [p.name for p in files]
+                pick = st.selectbox("Fichier", names, key="log_file_pick")
+                nlines = st.slider(
+                    "Lignes (tail)", 50, 5000, 500, 50, key="log_tail_n"
+                )
+                path = next(p for p in files if p.name == pick)
+                body = tail_log(path, nlines)
+                st.text_area(
+                    "Contenu (sélectionnable / copiable)",
+                    value=body,
+                    height=380,
+                    key="log_tail_view",
+                )
+                st.caption(str(path))
+
+    # --- ML Data Export -----------------------------------------------------
     st.markdown("#### 🧠 Machine Learning Data Export")
     st.markdown(
         "<div class='info-text'>Exportez les données brutes pour entraîner un modèle "
@@ -14347,17 +15150,6 @@ cash/positions. Les ordres restent Discord + scheduler.
             st.caption(f"{len(_audit_df)} lignes")
         except Exception:
             st.caption("Table audit_log indisponible.")
-
-    st.markdown("#### 📜 Log complet (pea_pollux_all.log)")
-    _all_log_path = _ROOT / "logs" / "pea_pollux_all.log"
-    if _all_log_path.exists():
-        try:
-            _all_log_txt = _all_log_path.read_text(encoding="utf-8", errors="replace")
-        except Exception:
-            _all_log_txt = "(lecture impossible)"
-        st.code(_all_log_txt[-50_000:] if len(_all_log_txt) > 50_000 else _all_log_txt, language="log")
-    else:
-        st.caption("Fichier non trouvé. Lance une analyse pour générer des logs.")
 
 # =============================================================================
 # Footer + optional auto-refresh
@@ -16540,7 +17332,7 @@ universe:
     srd: true
 ```
 
-## FILE: config/risk_params.yaml (56 lines)
+## FILE: config/risk_params.yaml (57 lines)
 ```yaml
 # =============================================================================
 # PEA Pollux - Institutional Risk Parameters
@@ -16582,6 +17374,7 @@ STOP_LOSS_PCT: -0.05             # Legacy hard stop (ATR stop is primary).
 
 # --- Core / Satellite model (Phase 10) --------------------------------------
 CORE_TICKER: "CW8.PA"            # Amundi MSCI World UCITS ETF (PEA eligible).
+MAX_IDLE_CASH_PCT: 0.02          # Phase 40: cash above 2% equity is swept to Core.
 CORE_TARGET_PCT: 0.70            # Standard core weight when market overheated.
 CORE_CRASH_TARGET_PCT: 0.75      # Larger core weight when CW8 < SMA200 (crash).
 CORE_DCA_MAX_TRANCHE_PCT: 0.05   # Max % of equity deployed to core per pass.
@@ -16709,7 +17502,7 @@ EXPOSE 8501
 CMD ["python", "main_scheduler.py"]
 ```
 
-## FILE: main_scheduler.py (662 lines)
+## FILE: main_scheduler.py (783 lines)
 ```python
 """Root daemon scheduler for PEA Pollux.
 
@@ -17117,6 +17910,13 @@ def run_analysis_pass() -> None:
             "elapsed_sec": round(elapsed, 2),
             "finished_at_local": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         })
+        # Phase 40: daily concise Discord digest after the evening pass.
+        local_hour = datetime.now().hour
+        if local_hour >= 17:
+            try:
+                asyncio.run(run_daily_concise_report_async())
+            except Exception:  # noqa: BLE001
+                logger.exception("Daily concise report failed after evening pass.")
     except Exception as exc:  # noqa: BLE001 - daemon must survive any failure.
         elapsed = time.perf_counter() - started
         logger.critical(
@@ -17130,6 +17930,100 @@ def run_analysis_pass() -> None:
             "elapsed_sec": round(elapsed, 2),
             "finished_at_local": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         })
+
+
+async def run_daily_concise_report_async() -> None:
+    """Build and post the Phase 40 end-of-day Discord webhook digest."""
+    from discord_copilot import send_daily_concise_report
+    from pea_position_sizer import PeaSizer
+
+    pdb = PortfolioDB()
+    pdb.init_db()
+    state = pdb.get_portfolio_state()
+    inv_rate = PeaSizer.investment_rate(state)
+
+    day_chg = None
+    try:
+        curve = pdb.get_equity_curve()
+        if curve is not None and not curve.empty and len(curve) >= 2:
+            eqs = curve.sort_values("date")["equity"].astype(float)
+            if float(eqs.iloc[-2]) > 0:
+                day_chg = (float(eqs.iloc[-1]) / float(eqs.iloc[-2]) - 1.0) * 100.0
+    except Exception:  # noqa: BLE001
+        day_chg = None
+
+    top_pos = []
+    for p in sorted(state.positions, key=lambda x: x.market_value, reverse=True)[:5]:
+        top_pos.append({
+            "ticker": p.ticker,
+            "weight_pct": (
+                p.market_value / state.total_equity * 100.0
+                if state.total_equity else 0.0
+            ),
+            "pnl_pct": p.unrealized_pnl_pct * 100.0,
+        })
+
+    near_miss = []
+    try:
+        rows = pdb.fetch_signals_by_status(["PENDING", "REJECTED"], limit=40)
+        for row in rows or []:
+            try:
+                sc = float(row.get("score") or 0)
+            except (TypeError, ValueError):
+                continue
+            if 40 <= sc <= 64:
+                near_miss.append({
+                    "ticker": str(row.get("ticker") or ""),
+                    "score": int(sc),
+                    "missing": str(row.get("reason") or "")[:80] or "sous le seuil 65",
+                })
+        near_miss.sort(key=lambda x: x["score"], reverse=True)
+        near_miss = near_miss[:3]
+    except Exception:  # noqa: BLE001
+        near_miss = []
+
+    vix = None
+    try:
+        vix = float(MacroAlphaSensor().get_european_vix())
+    except Exception:  # noqa: BLE001
+        vix = None
+
+    await send_daily_concise_report(
+        equity=float(state.total_equity or 0),
+        day_change_pct=day_chg,
+        investment_rate_pct=inv_rate,
+        top_positions=top_pos,
+        near_miss=near_miss,
+        vix=vix,
+    )
+
+
+def run_backfill_10y() -> None:
+    """One-shot ~10-year OHLCV backfill for the PEA universe into DuckDB."""
+    logger.info("=== 10-year OHLCV backfill starting (lookback=3650) ===")
+    tsdb = TimeSeriesDB()
+    tsdb.init_db()
+    fetcher = MarketDataFetcher()
+    tickers = _load_universe_tickers()
+    core = _core_ticker()
+    fetch_tickers = tickers + ([core] if core not in tickers else [])
+    if not fetch_tickers:
+        logger.error("No tickers to backfill.")
+        return
+    # Batch to avoid Yahoo timeouts on 600+ names × 10y.
+    batch_size = 40
+    ok_total = 0
+    for i in range(0, len(fetch_tickers), batch_size):
+        batch = fetch_tickers[i : i + batch_size]
+        logger.info(
+            "Backfill batch %d–%d / %d …",
+            i + 1,
+            min(i + batch_size, len(fetch_tickers)),
+            len(fetch_tickers),
+        )
+        if fetcher.update_database(tsdb, batch, lookback_days=3650):
+            ok_total += len(batch)
+    logger.info("=== 10-year backfill done (%d tickers attempted) ===", ok_total)
 
 
 async def run_weekly_report_async() -> None:
@@ -17329,7 +18223,27 @@ def main() -> None:
         action="store_true",
         help="Run morning newsletter Zeitgeist now, then exit.",
     )
+    parser.add_argument(
+        "--backfill-10y",
+        action="store_true",
+        help="Fetch ~10y OHLCV for the PEA universe into DuckDB, then exit.",
+    )
+    parser.add_argument(
+        "--daily-report",
+        action="store_true",
+        help="Send the Phase 40 daily concise Discord report now, then exit.",
+    )
     args = parser.parse_args()
+
+    if args.backfill_10y:
+        logger.info("--backfill-10y: starting long-horizon OHLCV ingest.")
+        run_backfill_10y()
+        return
+
+    if args.daily_report:
+        logger.info("--daily-report: posting concise Discord digest.")
+        asyncio.run(run_daily_concise_report_async())
+        return
 
     if args.now:
         logger.info("--now: running a single immediate pass.")
@@ -17375,7 +18289,7 @@ if __name__ == "__main__":
     main()
 ```
 
-## FILE: README.md (711 lines)
+## FILE: README.md (730 lines)
 ```markdown
 # PEA Pollux — Terminal quantitatif personnel
 
@@ -17480,23 +18394,30 @@ Capital is split so the PEA stays diversified even when stock-picking is quiet:
   Also capped by `MAX_POSITIONS_TOTAL` so the 30% budget is not fragmented into
   too many tiny lines.
 
-### 2. Satellite signal (Ensemble Conviction — Phase 20)
+### 2. Empreinte Multi-Stratégies (how signals are scored)
 
-`SignalGenerator.evaluate` scores four axes (**total 100**). A raw BUY is emitted
-only when **conviction ≥ 65**. Hard vetoes (VIX, **EPS &lt; 0**) stay on the
-Orchestrator — scoring runs after an idea is worth evaluating on price/alt-data.
+Every ticker receives a **score from 0 to 100** called the **Empreinte**
+(fingerprint). It combines four weighted axes into a single conviction number.
+A BUY signal is only emitted when **conviction ≥ 65**. Hard vetoes (VIX,
+EPS < 0) are enforced later in the risk cascade — scoring runs first.
 
-| Axis | Max | Rule |
-|------|-----|------|
-| Mean Reversion | 35 | RSI&lt;30 + Close&gt;SMA200 → 35; RSI&lt;40 + Close&gt;SMA200 → 15 |
-| Volume Breakout | 25 | Close = 50d high **and** Volume &gt; 2× ADV20 |
-| Insider Clustering | 20 | Buy-cluster ≥2 → 20; ==1 → 10 (`get_insider_buy_cluster`) |
-| Institutional Quality | 20 | Ticker in hardcoded EU blue-chip proxy set |
-| **News sentiment** | +10 / −15 | LLM or heuristic: score &gt;30 → +10; &lt;−30 → −15 |
-| **Polymarket macro** | +10 / −10 | YES prob ≥0.62 → +10; ≤0.38 → −10 (context only) |
+| Abbreviation | Axis | Weight | What it measures |
+|:------------:|------|:------:|------------------|
+| **MR** | Mean Reversion | 35 % | Statistical under-valuation: RSI-14 oversold + price above long-term SMA-200. A Z-Score < −2 on a 50-day window adds a bonus. |
+| **Mom** | Momentum | 25 % | Trend strength: Close > SMA-5 > SMA-50 > SMA-200, MACD histogram positive and growing, close near upper Bollinger Band. |
+| **Q/V** | Quality / Value | 20 % | Fundamentals from Finnhub or yfinance: low P/E (< 15 = high score), low P/B (< 2 = bonus), high ROE (> 15 %), low Debt/Equity. |
+| **Ins** | Insider Confidence | 20 % | Directors buying their own stock: AMF/FMP/EODHD buy-cluster ≥ 2 = max, single buy = half. |
 
-The continuous score (0–100) is clamped after modifiers; the dashboard colours PENDING
-scores (**amber 65–75**, **neon 76–100**) and shows a polar radar in Exploration.
+**Modifiers** applied on top of the base score:
+
+| Modifier | Range | Source |
+|----------|-------|--------|
+| News sentiment | +10 / −15 | LLM integer score (−100…+100) or heuristic keyword fallback |
+| Polymarket macro | +10 / −10 | YES probability ≥ 0.62 → bullish, ≤ 0.38 → bearish (context only) |
+
+The final score is clamped to 0–100 and displayed in the dashboard as a
+**polar radar chart** (Exploration tab). Colour coding: **amber 65–75** /
+**neon 76–100**.
 
 ### 3. Risk cascade (order matters — cheap checks first)
 
@@ -17963,6 +18884,9 @@ sources over furtive HTML scraping.
 | **Multi-factor + Finnhub + Data Lake analyste** | ✅ Phase 35–36 |
 | **VaR/CVaR + Z-Score académique** | ✅ Phase 37 |
 | **Monte Carlo + stress tests + red teaming IA** | ✅ Phase 38 |
+| **UX (tape fix, briefing async, near-miss radar, ML export)** | ✅ Phase 39 |
+| **Cash sweep, Discord daily digest, 10y backfill, forward curve, ML store** | ✅ Phase 40 |
+| **AMF semantic parsing (legal FR regex), fluid log viewer, system telemetry** | ✅ Phase 41 |
 | pytest + GitHub Actions CI | Expand coverage over time |
 
 ### Next (highest leverage)
@@ -18051,14 +18975,23 @@ ideas — but **never places broker orders**.
    manual approve/reject.
 5. **Explains & challenges** — LLM rationales, weekly digest, Bull/Bear red teaming.
 
-### Phase 38 highlights
+### Phase 38–41 highlights
 
-| Feature | Module | Description |
-|---------|--------|-------------|
-| Monte Carlo fan chart | `stochastic_models.py` | Correlated GBM via Cholesky, P05–P95 paths |
-| Black swan replay | `stress_tester.py` | 2008, 2020, 2022 drawdown scenarios |
-| Tail risk metrics | `quantitative_math.py` | Historical VaR & CVaR (pure NumPy) |
-| AI red team | `red_team_agent.py` | Parallel Bull/Bear agents + Judge verdict |
+| Feature | Module | Phase |
+|---------|--------|:-----:|
+| Monte Carlo fan chart | `stochastic_models.py` | 38 |
+| Black swan replay | `stress_tester.py` | 38 |
+| Tail risk VaR & CVaR | `quantitative_math.py` | 37 |
+| AI red team (Bull/Bear/Judge) | `red_team_agent.py` | 38 |
+| Ticker tape 1d fix + near-miss radar | `terminal_dashboard.py` | 39 |
+| ML feature store + CSV export | `ml_feature_store.py` | 40 |
+| Cash sweep (zero idle cash) | `smart_dca_engine.py` | 40 |
+| Discord daily concise report | `discord_copilot.py` | 40 |
+| 10-year OHLCV backfill (`--backfill-10y`) | `main_scheduler.py` | 40 |
+| Forward equity curve vs CW8 benchmark | `terminal_dashboard.py` | 40 |
+| AMF semantic parsing (FR legal regex) | `amf_scraper.py` | 41 |
+| Filtered + color-coded log viewer | `terminal_dashboard.py` | 41 |
+| System telemetry (DB sizes, CPU, mem) | `terminal_dashboard.py` | 41 |
 
 ### Architecture (high level)
 

@@ -52,12 +52,15 @@ class SmartDcaCore:
         self.target_pct: float = float(risk.get("CORE_TARGET_PCT", 0.70))
         self.crash_target_pct: float = float(risk.get("CORE_CRASH_TARGET_PCT", 0.75))
         self.max_tranche_pct: float = float(risk.get("CORE_DCA_MAX_TRANCHE_PCT", 0.05))
+        # Phase 40: idle cash above this fraction of equity is swept into Core.
+        self.max_idle_cash_pct: float = float(risk.get("MAX_IDLE_CASH_PCT", 0.02))
         logger.debug(
-            "SmartDcaCore loaded: %s target=%.2f crash=%.2f tranche<=%.2f",
+            "SmartDcaCore loaded: %s target=%.2f crash=%.2f tranche<=%.2f idle<=%.2f",
             self.core_ticker,
             self.target_pct,
             self.crash_target_pct,
             self.max_tranche_pct,
+            self.max_idle_cash_pct,
         )
 
     @staticmethod
@@ -133,6 +136,19 @@ class SmartDcaCore:
 
         target_value = target_pct * total_equity
         tranche_cash = min(current_cash, tranche_pct * total_equity, target_value)
+
+        # Phase 40 — zero cash drag: sweep idle cash above MAX_IDLE_CASH_PCT
+        # into the Core ETF (whole shares only; PEA forbids fractions).
+        max_idle = self.max_idle_cash_pct * total_equity
+        excess_cash = max(0.0, float(current_cash) - max_idle)
+        sweep_note = ""
+        if excess_cash >= price:
+            tranche_cash = max(tranche_cash, excess_cash)
+            sweep_note = (
+                f" Cash sweep: idle {current_cash / total_equity * 100:.1f}% > "
+                f"{self.max_idle_cash_pct * 100:.0f}% → deploy {excess_cash:.0f} EUR."
+            )
+
         qty = int(math.floor(tranche_cash / price)) if tranche_cash > 0 else 0
 
         regime_txt = (
@@ -144,7 +160,7 @@ class SmartDcaCore:
             f"Smart DCA {self.core_ticker}: {regime_txt}. "
             f"Price {price:.2f} vs SMA200 {sma200:.2f}. "
             f"Target core weight {target_pct * 100:.0f}% -> buy {qty} share(s) "
-            f"(~{qty * price:.0f} EUR tranche)."
+            f"(~{qty * price:.0f} EUR tranche).{sweep_note}"
         )
 
         signal = Signal(
