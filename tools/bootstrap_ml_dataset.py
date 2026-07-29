@@ -23,7 +23,7 @@ sys.path.insert(0, str(_ROOT / "00_data_sensors"))
 from duckdb_manager import TimeSeriesDB
 from technical_scorer import SignalGenerator
 from ml_feature_store import build_ml_feature_row
-from build_universe import load_universe
+import yaml
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -91,9 +91,20 @@ def _process_ticker_dates(ticker: str) -> List[Dict]:
             
     return results
 
+def load_universe_tickers() -> List[str]:
+    """Parse config/pea_universe.yaml and return a flat list of tickers."""
+    universe_path = _ROOT / "config" / "pea_universe.yaml"
+    with open(universe_path, "r", encoding="utf-8") as fh:
+        data = yaml.safe_load(fh)
+    
+    tickers = []
+    for sector, items in data.get("universe", {}).items():
+        for item in items:
+            tickers.append(item["ticker"])
+    return tickers
+
 def main() -> None:
-    universe = load_universe()
-    tickers = [t["ticker"] for t in universe]
+    tickers = load_universe_tickers()
     logger.info(f"Loaded {len(tickers)} tickers for ML bootstrap.")
     
     all_features = []
