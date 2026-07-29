@@ -1,6 +1,6 @@
 # PEA Pollux — Full Project Dump for LLM
 
-> **PEA Pollux** · Generated `2026-07-28 14:57 UTC` · Root `C:\Users\PolluxGronier\Downloads\pea_sniper_terminal`
+> **PEA Pollux** · Generated `2026-07-29 08:26 UTC` · Root `C:\Users\PolluxGronier\Downloads\pea_sniper_terminal`
 
 One-shot context for external LLM agents. Includes source, configs, and docs.
 Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
@@ -54,7 +54,7 @@ Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
 - `docker-compose.yml` (71 lines)
 - `Dockerfile` (30 lines)
 - `main_scheduler.py` (662 lines) ⭐
-- `README.md` (696 lines) ⭐
+- `README.md` (711 lines) ⭐
 - `requirements.txt` (37 lines)
 - `run_dashboard.ps1` (15 lines)
 - `run_discord.py` (100 lines)
@@ -126,7 +126,7 @@ Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
 - `05_interfaces/__init__.py` (0 lines)
 - `05_interfaces/discord_copilot.py` (284 lines)
 - `05_interfaces/llm_explainer.py` (272 lines)
-- `05_interfaces/terminal_dashboard.py` (6157 lines) ⭐
+- `05_interfaces/terminal_dashboard.py` (6234 lines) ⭐
 - `05_interfaces/trade_cards.py` (166 lines)
 
 ### `config/`
@@ -8138,7 +8138,7 @@ if __name__ == "__main__":
     asyncio.run(_demo())
 ```
 
-## FILE: 05_interfaces/terminal_dashboard.py (6157 lines)
+## FILE: 05_interfaces/terminal_dashboard.py (6234 lines)
 ```python
 """Web Terminal (Streamlit dashboard) for PEA Pollux.
 
@@ -10148,8 +10148,15 @@ def _native_tape_perf(period: str) -> pd.DataFrame:
             if series is None or len(series) < 2:
                 continue
             current = float(series.iloc[-1])
-            prev = float(series.iloc[-2])
-            if prev <= 0:
+            prev = None
+            for i in range(len(series) - 2, -1, -1):
+                p = float(series.iloc[i])
+                if p > 0 and p != current:
+                    prev = p
+                    break
+            if prev is None or prev <= 0:
+                prev = float(series.iloc[-2]) if len(series) >= 2 else None
+            if prev is None or prev <= 0:
                 continue
             rows.append(
                 {
@@ -11415,8 +11422,15 @@ def suggest_adaptive_portfolio(
         )
 
     mode_why = {
-        "MICRO": f"Capital {equity:,.0f} \u20ac : trop faible pour diversifier / acheter le Core.",
-        "STARTER": f"Capital {equity:,.0f} \u20ac : 1–2 lignes max, plafonds 15%/25% assouplis.",
+        "MICRO": (
+            f"Capital {equity:,.0f} \u20ac : capital insuffisant pour l'allocation cible complète. "
+            "Achat de 1 part pour rester exposé au marché, le reste conservé en liquidités "
+            "(Cash Runway) car le PEA interdit les fractions d'actions."
+        ),
+        "STARTER": (
+            f"Capital {equity:,.0f} \u20ac : 1–2 lignes max. "
+            "Achat de 1 part pour rester exposé, cash conservé car le PEA interdit les fractions."
+        ),
         "BUILD": f"Capital {equity:,.0f} \u20ac : construction Core-first.",
         "FULL": f"Capital {equity:,.0f} \u20ac : regles institutionnelles completes.",
     }[mode]
@@ -12008,6 +12022,14 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+if st.button("⚡ Lancer Analyse", key="mc_run_now"):
+    import subprocess
+    subprocess.Popen(
+        [sys.executable, str(_ROOT / "main_scheduler.py"), "--now"],
+        cwd=str(_ROOT),
+    )
+    st.toast("Analyse complète lancée en arrière-plan.", icon="⚡")
+
 # =============================================================================
 # Tabs
 # =============================================================================
@@ -12030,29 +12052,23 @@ with tab_gen:
 
     # --- Phase 19: Morning Briefing (Synthèse IA) — top of General ----------
     st.markdown("#### 🗞️ Morning Briefing (Synthèse IA)")
-    if "briefing_loaded" not in st.session_state:
-        st.session_state["briefing_loaded"] = False
-    with st.spinner("Synchronisation du Morning Briefing..."):
-        briefing = load_morning_briefing()
-        st.session_state["briefing_loaded"] = True
-        st.session_state["briefing_cache"] = briefing
+    briefing = load_morning_briefing()
     if not morning_briefing_is_live(briefing):
-        st.info("Briefing en attente de génération ou de chargement.")
+        gen_at_raw = str(briefing.get("generated_at") or "") if briefing else ""
+        if gen_at_raw:
+            st.caption(f"Dernière synthèse : {gen_at_raw[:16].replace('T', ' à ')}")
+        st.info("Briefing en attente de génération ou données insuffisantes.")
         if st.button(
             "Générer le Briefing maintenant",
             type="primary",
             key="gen_morning_briefing_now",
         ):
-            with st.spinner("Analyse des newsletters en cours (IMAP + IA)..."):
-                try:
-                    from newsletter_api import run_morning_briefing_sync
-
-                    run_morning_briefing_sync()
-                    st.cache_data.clear()
-                except Exception as exc:  # noqa: BLE001
-                    st.error(f"Briefing échoué : {exc}")
-                else:
-                    st.rerun()
+            import subprocess
+            subprocess.Popen(
+                [sys.executable, str(_ROOT / "main_scheduler.py"), "--briefing"],
+                cwd=str(_ROOT),
+            )
+            st.toast("Génération lancée en arrière-plan. L'IA analyse les newsletters, revenez dans 2 minutes.", icon="🗞️")
     else:
         zg = str(briefing.get("zeitgeist") or "").strip()
         headlines = briefing.get("headlines") or []
@@ -12405,7 +12421,7 @@ with tab_gen:
                     sc = int(a.get("score") or -1)
                 except Exception:  # noqa: BLE001
                     continue
-                if 55 <= sc <= 64:
+                if 40 <= sc <= 64:
                     t = str(a.get("ticker") or "")
                     if t and t not in pending_tickers:
                         near_miss.append(a)
@@ -12416,7 +12432,7 @@ with tab_gen:
         near_miss = near_miss[:10]
 
         if not near_miss:
-            st.caption("Aucun near-miss détecte (scores 55–64).")
+            st.caption("Aucun near-miss détecte (scores 40–64). Le marché ne propose rien pour l'instant.")
         else:
             rows = []
             for a in near_miss:
@@ -13765,6 +13781,16 @@ with tab_mkt:
     else:
         st.caption("Empreinte indisponible (indicateurs / valorisation manquants).")
 
+    with st.expander("Comprendre l'Empreinte (Abréviations)", expanded=False):
+        st.markdown(
+            "- **MR** — Mean Reversion : mesure la sous-évaluation statistique via le RSI et la distance au prix moyen.\n"
+            "- **Mom** — Momentum : force de la tendance (Close > SMA5 > SMA50 > SMA200).\n"
+            "- **Q/V** — Quality / Value : fondamentaux (P/E, P/B, ROE, Debt/Equity via Finnhub/yfinance).\n"
+            "- **Ins** — Insider Confidence : achats récents de dirigeants (AMF/FMP).\n\n"
+            "Le score total (0–100) est la moyenne pondérée : MR 35% + Mom 25% + Q/V 20% + Ins 20%. "
+            "Un signal BUY n'est émis que si le score dépasse **65**."
+        )
+
     # News — deep LLM synthesis (24h cache) + dark table of sources
     st.markdown(f"#### 📰 Actualites — {short_name(selected)}")
     news = get_recent_news(selected, limit=12)
@@ -14281,6 +14307,57 @@ cash/positions. Les ordres restent Discord + scheduler.
                 key="log_tail_view",
             )
             st.caption(str(path))
+
+    st.markdown("#### 🧠 Machine Learning Data Export")
+    st.markdown(
+        "<div class='info-text'>Exportez les données brutes pour entraîner un modèle "
+        "prédictif (XGBoost, NLP). <b>news_history</b> contient les titres avec timestamps, "
+        "<b>audit_logs</b> contient chaque décision avec la raison (accept/reject). "
+        "Objectif futur : prédire la probabilité de succès d'un signal.</div>",
+        unsafe_allow_html=True,
+    )
+    ml_c1, ml_c2 = st.columns(2)
+    with ml_c1:
+        try:
+            _pdb_ml = PortfolioDB(db_path=_SQLITE_PATH)
+            with _pdb_ml._connect() as conn:
+                _news_df = pd.read_sql_query("SELECT * FROM news_history ORDER BY date DESC", conn)
+            st.download_button(
+                "⬇️ Exporter news_history (CSV)",
+                data=_news_df.to_csv(index=False).encode("utf-8"),
+                file_name="news_history_export.csv",
+                mime="text/csv",
+                key="ml_export_news",
+            )
+            st.caption(f"{len(_news_df)} lignes")
+        except Exception:
+            st.caption("Table news_history indisponible.")
+    with ml_c2:
+        try:
+            _pdb_ml2 = PortfolioDB(db_path=_SQLITE_PATH)
+            with _pdb_ml2._connect() as conn:
+                _audit_df = pd.read_sql_query("SELECT * FROM audit_log ORDER BY timestamp DESC", conn)
+            st.download_button(
+                "⬇️ Exporter audit_logs (CSV)",
+                data=_audit_df.to_csv(index=False).encode("utf-8"),
+                file_name="audit_logs_export.csv",
+                mime="text/csv",
+                key="ml_export_audit",
+            )
+            st.caption(f"{len(_audit_df)} lignes")
+        except Exception:
+            st.caption("Table audit_log indisponible.")
+
+    st.markdown("#### 📜 Log complet (pea_pollux_all.log)")
+    _all_log_path = _ROOT / "logs" / "pea_pollux_all.log"
+    if _all_log_path.exists():
+        try:
+            _all_log_txt = _all_log_path.read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            _all_log_txt = "(lecture impossible)"
+        st.code(_all_log_txt[-50_000:] if len(_all_log_txt) > 50_000 else _all_log_txt, language="log")
+    else:
+        st.caption("Fichier non trouvé. Lance une analyse pour générer des logs.")
 
 # =============================================================================
 # Footer + optional auto-refresh
@@ -17298,7 +17375,7 @@ if __name__ == "__main__":
     main()
 ```
 
-## FILE: README.md (696 lines)
+## FILE: README.md (711 lines)
 ```markdown
 # PEA Pollux — Terminal quantitatif personnel
 
@@ -17897,6 +17974,21 @@ sources over furtive HTML scraping.
 | Broker CSV diff import | Keep SQLite honest vs reality |
 | Fill **earnings_calendar** (Euronext / API) | Blackout already coded |
 | Relative strength / 52w / analyst drift | Post-backtester calibration knobs |
+
+### Phase 40: Predictive Machine Learning (XGBoost / NLP)
+
+Goal: train a classifier on the `news_history` and `audit_log` SQLite tables to
+predict the probability that a given signal will result in a profitable trade.
+
+- **Features:** headline sentiment embeddings (NLP), RSI/MACD/Bollinger at signal
+  time, VIX level, sector, day-of-week, insider cluster flag.
+- **Labels:** from `audit_log` — did the signal reach +5% within 20 trading days
+  after APPROVED/EXECUTED?
+- **Model:** XGBoost gradient-boosted trees (tabular) + optional sentence-transformer
+  embeddings for headline text.
+- **Integration:** predicted probability displayed alongside the existing conviction
+  score in the dashboard (e.g., "ML confidence: 72%").
+- **Data export:** available today in the Architecture tab (CSV download of both tables).
 
 ### Later
 

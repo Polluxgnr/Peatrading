@@ -596,6 +596,21 @@ sources over furtive HTML scraping.
 | Fill **earnings_calendar** (Euronext / API) | Blackout already coded |
 | Relative strength / 52w / analyst drift | Post-backtester calibration knobs |
 
+### Phase 40: Predictive Machine Learning (XGBoost / NLP)
+
+Goal: train a classifier on the `news_history` and `audit_log` SQLite tables to
+predict the probability that a given signal will result in a profitable trade.
+
+- **Features:** headline sentiment embeddings (NLP), RSI/MACD/Bollinger at signal
+  time, VIX level, sector, day-of-week, insider cluster flag.
+- **Labels:** from `audit_log` — did the signal reach +5% within 20 trading days
+  after APPROVED/EXECUTED?
+- **Model:** XGBoost gradient-boosted trees (tabular) + optional sentence-transformer
+  embeddings for headline text.
+- **Integration:** predicted probability displayed alongside the existing conviction
+  score in the dashboard (e.g., "ML confidence: 72%").
+- **Data export:** available today in the Architecture tab (CSV download of both tables).
+
 ### Later
 
 Paid VSTOXX · AMF resilience · multi-core ETF rotation · trailing ATR after shave ·
