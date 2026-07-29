@@ -206,7 +206,13 @@ class CorrelationFirewall:
         if len(prices) < 2 or prices.shape[1] < 2:
             return True, "Correlation check passed (insufficient overlap)"
 
-        corr_matrix = prices.corr(method="pearson")
+        # EWMA correlation to react immediately to sudden market decoupling
+        num_tickers = prices.shape[1]
+        corr_multi = prices.ewm(span=self.corr_lookback_days).corr(pairwise=True)
+        # Extract the correlation matrix for the last timestamp
+        corr_matrix = corr_multi.iloc[-num_tickers:].copy()
+        corr_matrix.index = corr_matrix.index.get_level_values(1)
+        
         candidate_corr = corr_matrix[ticker].drop(labels=[ticker], errors="ignore")
 
         for existing_ticker, corr in candidate_corr.items():

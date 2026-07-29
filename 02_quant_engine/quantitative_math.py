@@ -100,5 +100,8 @@ def calculate_annualized_volatility(returns: pd.Series, periods_per_year: int = 
     r = _clean_returns(returns)
     if r.empty:
         return 0.0
-    return float(r.std(ddof=0) * np.sqrt(float(periods_per_year)))
+    std_ewm = r.ewm(span=20).std().dropna()
+    if std_ewm.empty:
+        return 0.0
+    return float(std_ewm.iloc[-1] * np.sqrt(float(periods_per_year)))
 

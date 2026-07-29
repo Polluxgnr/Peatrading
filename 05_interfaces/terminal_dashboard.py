@@ -3857,12 +3857,32 @@ _health_color = {
 }.get(_pipe_health, _AMBER)
 _mkt_color = _NEON if _mkt_health == "green" else _AMBER
 
+# Add Market Regime
+try:
+    from market_regime import MarketRegimeClassifier
+    _mr_classifier = MarketRegimeClassifier()
+    _regime = _mr_classifier.get_regime()
+    _conv_floor, _rsi_thresh = _mr_classifier.get_modulated_thresholds(
+        _regime,
+        base_conviction=float(_RISK.get("CONVICTION_EMIT_FLOOR", 65.0)),
+        base_rsi=float(_RISK.get("RSI_OVERSOLD_THRESHOLD", 30.0))
+    )
+except Exception:
+    _regime = "BULL"
+    _conv_floor = 65.0
+    _rsi_thresh = 30.0
+
+_regime_color = _NEON if _regime == "BULL" else (_RED if _regime == "BEAR" else _AMBER)
+
 st.markdown(
     f"""
 <div class="mission">
   <div class="mission-title">Mission Control · PEA personnel</div>
   <div style="display:flex;flex-wrap:wrap;gap:18px;color:{_WHITE};font-size:13px;">
     <div>Marché <b style="color:{_mkt_color};">{_mkt_label}</b></div>
+    <div>Régime <b style="color:{_regime_color};">{_regime}</b> 
+        <span style="color:{_MUTED}; font-size: 11px;">(Score ≥{_conv_floor:.0f} | RSI ≤{_rsi_thresh:.0f})</span>
+    </div>
     <div>Dernière passe
       <b style="color:{_health_color};">{_pipe_txt}</b></div>
     <div>Equity
@@ -6365,9 +6385,17 @@ cash/positions. Les ordres restent Discord + scheduler.
                 help="Accuracy on test set where model probability ≥ 0.75.",
             )
         with _ml_c2:
+            _brier = _ml_metrics.get("brier_score")
+            if pd.isna(_brier) or _brier is None:
+                _brier_display = "n/a"
+            else:
+                try:
+                    _brier_display = f"{float(_brier):.4f}"
+                except ValueError:
+                    _brier_display = str(_brier)
             st.metric(
                 "Brier Score",
-                _ml_metrics.get("brier_score", "n/a"),
+                _brier_display,
                 help="Lower is better (0 = perfect calibration).",
             )
         with _ml_c3:

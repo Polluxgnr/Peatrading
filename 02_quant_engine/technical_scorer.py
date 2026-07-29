@@ -123,8 +123,23 @@ class SignalGenerator:
         """
         path = Path(config_path) if config_path else _DEFAULT_CONFIG_DIR
         risk = load_risk_config(path)
-        self.rsi_oversold: float = float(risk.RSI_OVERSOLD_THRESHOLD)
         self._macro = macro_sensor
+        
+        try:
+            from market_regime import MarketRegimeClassifier
+            classifier = MarketRegimeClassifier()
+            self.regime = classifier.get_regime()
+            self.conviction_floor, self.rsi_oversold = classifier.get_modulated_thresholds(
+                self.regime, 
+                base_conviction=float(risk.CONVICTION_EMIT_FLOOR),
+                base_rsi=float(risk.RSI_OVERSOLD_THRESHOLD)
+            )
+            logger.info(f"SignalGenerator loaded: regime={self.regime}, floor={self.conviction_floor}, rsi={self.rsi_oversold}")
+        except Exception as exc:
+            logger.warning("Could not determine market regime (%s), using base thresholds.", exc)
+            self.regime = "BULL"
+            self.rsi_oversold = float(risk.RSI_OVERSOLD_THRESHOLD)
+            self.conviction_floor = float(risk.CONVICTION_EMIT_FLOOR)
 
     @staticmethod
     def _load_fundamentals_from_sources(ticker: str) -> dict:
@@ -518,42 +533,52 @@ class SignalGenerator:
 
     def generate_raw_signals(
         self,
-        db_manager: Any,
-        tickers: List[str],
-        apply_quality_filter: bool = False,
-        apply_momentum_filter: bool = False,
-        conviction_floor: float = _CONVICTION_EMIT_FLOOR,
-    ) -> List[Signal]:
+        timeseries_db: Any,
+        tickers: list[str],
+        conviction_floor: float | None = None,
+    ) -> list[Signal]:
         """Evaluate each ticker; emit BUY when ensemble conviction ≥ floor.
 
         Args:
-            db_manager: ``TimeSeriesDB`` with ``get_historical_prices``.
+            timeseries_db: ``TimeSeriesDB`` with ``get_historical_prices``.
             tickers: Universe symbols.
-            apply_quality_filter: Legacy EPS gate (prefer Orchestrator).
-            apply_momentum_filter: Unused in ensemble mode (kept for API compat).
-            conviction_floor: Minimum total points to emit (default 65).
+            conviction_floor: Minimum total points to emit.
 
         Returns:
             List[Signal]: PENDING BUYs with score = conviction total.
         """
-        _ = apply_momentum_filter  # ensemble replaces SMA5 knife filter
-        signals: List[Signal] = []
-        sensor = self._macro_sensor()
+        signals: list[Signal] = []
+        macro = self._macro_sensor()
+        mr_classifier = MarketRegimeClassifier()
 
         def _eval_ticker(ticker: str) -> Signal | None:
-            df = db_manager.get_historical_prices(ticker, days=252)
+            df = timeseries_db.get_historical_prices(ticker, days=252)
             if df is None or df.empty or len(df) < _MIN_ROWS:
                 return None
-            if apply_quality_filter and not self.is_profitable(ticker):
-                return None
-            conv = self.evaluate(ticker, df, macro_sensor=sensor)
+            
+            conv = self.evaluate(ticker, df, macro_sensor=macro)
             total = float(conv.get("total") or 0.0)
-            if total < float(conviction_floor):
+            actual_floor = conviction_floor if conviction_floor is not None else self.conviction_floor
+            
+            if total < float(actual_floor):
                 return None
+
+            mr = conv["model_scores"]["mean_reversion_model"]
+            mom = conv["model_scores"]["trend_model"]
+            qv = conv["context_breakdown"]["fundamentals"]
+            ins = conv["context_breakdown"]["insiders"]
+            news = conv["news_modifier"]
+            polymarket = conv["polymarket_modifier"]
+
             reason = (
-                f"Conviction {total:.0f}/100 ≥ {conviction_floor:.0f} | "
-                + " · ".join(conv.get("factors") or ["ensemble"])
+                f"Conviction {total:.0f}/100 ≥ {actual_floor:.0f} | "
+                f"MR {mr:.0f} | Mom {mom:.0f} | Q/V {qv:.0f} | Ins {ins:.0f}"
             )
+            if news != 0:
+                reason += f" | News {news:+.0f}"
+            if polymarket != 0:
+                reason += f" | Poly {polymarket:+.0f}"
+                
             return Signal(
                 id=str(uuid.uuid4()),
                 ticker=ticker,

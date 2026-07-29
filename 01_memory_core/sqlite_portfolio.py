@@ -322,6 +322,19 @@ class PortfolioDB:
         """
         try:
             with self._connect() as conn:
+                # Idempotency check: don't log duplicate signals if already approved/executed today
+                existing = conn.execute(
+                    """
+                    SELECT id FROM audit_logs
+                    WHERE ticker = ? AND signal_type = ? AND date(created_at) = date(?)
+                    AND status IN ('APPROVED', 'EXECUTED') AND id != ?
+                    """,
+                    (signal.ticker, signal.signal_type.value, signal.created_at.isoformat(), signal.id)
+                ).fetchone()
+                if existing:
+                    logger.info("Signal %s skipped (duplicate of APPROVED/EXECUTED today).", signal.id[:8])
+                    return
+
                 conn.execute(
                     """
                     INSERT INTO audit_logs
@@ -353,6 +366,22 @@ class PortfolioDB:
         except sqlite3.Error:
             logger.exception("Failed to log signal %s.", signal.id)
             raise
+
+    def has_duplicate_signal_today(self, signal: Signal) -> bool:
+        """Check if another approved/executed signal exists for this ticker/type today."""
+        try:
+            with self._connect() as conn:
+                existing = conn.execute(
+                    """
+                    SELECT id FROM audit_logs
+                    WHERE ticker = ? AND signal_type = ? AND date(created_at) = date(?)
+                    AND status IN ('APPROVED', 'EXECUTED') AND id != ?
+                    """,
+                    (signal.ticker, signal.signal_type.value, signal.created_at.isoformat(), signal.id)
+                ).fetchone()
+                return existing is not None
+        except sqlite3.Error:
+            return False
 
     def update_signal_status(
         self, signal_id: str, status: str, reason_suffix: str | None = None

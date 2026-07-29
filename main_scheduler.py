@@ -371,6 +371,11 @@ async def run_pipeline_async() -> None:
 
     for signal in alertable:
         try:
+            # Discord Spam Guard: ensure no other alert sent today for same ticker/type
+            if pdb.has_duplicate_signal_today(signal):
+                logger.info("Spam guard: %s alert already sent today, skipping Discord.", signal.ticker)
+                continue
+                
             price = current_prices.get(signal.ticker, 0.0)
             await copilot.send_signal_alert(
                 signal, portfolio, explainer=explainer, current_price=price

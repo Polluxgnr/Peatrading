@@ -1,6 +1,6 @@
 # PEA Pollux — Full Project Dump for LLM
 
-> **PEA Pollux** · Generated `2026-07-29 12:03 UTC` · Root `C:\Users\PolluxGronier\Downloads\pea_sniper_terminal`
+> **PEA Pollux** · Generated `2026-07-29 13:03 UTC` · Root `C:\Users\PolluxGronier\Downloads\pea_sniper_terminal`
 
 One-shot context for external LLM agents. Includes source, configs, and docs.
 Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
@@ -48,13 +48,13 @@ Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
 - `main_scheduler.py`
 
 ---
-## File index (79 files)
+## File index (80 files)
 ### `(root)/`
 - `.gitignore` (42 lines)
 - `docker-compose.yml` (71 lines)
 - `Dockerfile` (30 lines)
-- `main_scheduler.py` (783 lines) ⭐
-- `README.md` (734 lines) ⭐
+- `main_scheduler.py` (788 lines) ⭐
+- `README.md` (735 lines) ⭐
 - `requirements.txt` (38 lines)
 - `run_dashboard.ps1` (15 lines)
 - `run_discord.py` (100 lines)
@@ -96,21 +96,22 @@ Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
 - `01_memory_core/duckdb_manager.py` (207 lines) ⭐
 - `01_memory_core/env_loader.py` (34 lines)
 - `01_memory_core/logging_setup.py` (196 lines)
-- `01_memory_core/sqlite_portfolio.py` (664 lines) ⭐
+- `01_memory_core/sqlite_portfolio.py` (693 lines) ⭐
 
 ### `02_quant_engine/`
 - `02_quant_engine/__init__.py` (0 lines)
+- `02_quant_engine/market_regime.py` (79 lines)
 - `02_quant_engine/ml_feature_store.py` (290 lines)
 - `02_quant_engine/ml_trainer.py` (167 lines)
-- `02_quant_engine/quantitative_math.py` (104 lines) ⭐
+- `02_quant_engine/quantitative_math.py` (107 lines) ⭐
 - `02_quant_engine/smart_dca_engine.py` (216 lines)
 - `02_quant_engine/stochastic_models.py` (87 lines) ⭐
-- `02_quant_engine/technical_scorer.py` (632 lines) ⭐
+- `02_quant_engine/technical_scorer.py` (657 lines) ⭐
 - `02_quant_engine/walk_forward_backtester.py` (277 lines)
 
 ### `03_risk_portfolio/`
 - `03_risk_portfolio/__init__.py` (0 lines)
-- `03_risk_portfolio/correlation_firewall.py` (290 lines)
+- `03_risk_portfolio/correlation_firewall.py` (296 lines)
 - `03_risk_portfolio/drawdown_breaker.py` (83 lines)
 - `03_risk_portfolio/equity_metrics.py` (143 lines)
 - `03_risk_portfolio/monthly_rebalancer.py` (232 lines)
@@ -131,7 +132,7 @@ Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
 - `05_interfaces/__init__.py` (0 lines)
 - `05_interfaces/discord_copilot.py` (384 lines)
 - `05_interfaces/llm_explainer.py` (272 lines)
-- `05_interfaces/terminal_dashboard.py` (6435 lines) ⭐
+- `05_interfaces/terminal_dashboard.py` (6463 lines) ⭐
 - `05_interfaces/trade_cards.py` (166 lines)
 
 ### `05_interfaces/components/`
@@ -3962,7 +3963,7 @@ def read_pipeline_status() -> Optional[dict]:
         return None
 ```
 
-## FILE: 01_memory_core/sqlite_portfolio.py (664 lines)
+## FILE: 01_memory_core/sqlite_portfolio.py (693 lines)
 ```python
 """SQLite state manager for PEA Pollux.
 
@@ -4288,6 +4289,19 @@ class PortfolioDB:
         """
         try:
             with self._connect() as conn:
+                # Idempotency check: don't log duplicate signals if already approved/executed today
+                existing = conn.execute(
+                    """
+                    SELECT id FROM audit_logs
+                    WHERE ticker = ? AND signal_type = ? AND date(created_at) = date(?)
+                    AND status IN ('APPROVED', 'EXECUTED') AND id != ?
+                    """,
+                    (signal.ticker, signal.signal_type.value, signal.created_at.isoformat(), signal.id)
+                ).fetchone()
+                if existing:
+                    logger.info("Signal %s skipped (duplicate of APPROVED/EXECUTED today).", signal.id[:8])
+                    return
+
                 conn.execute(
                     """
                     INSERT INTO audit_logs
@@ -4319,6 +4333,22 @@ class PortfolioDB:
         except sqlite3.Error:
             logger.exception("Failed to log signal %s.", signal.id)
             raise
+
+    def has_duplicate_signal_today(self, signal: Signal) -> bool:
+        """Check if another approved/executed signal exists for this ticker/type today."""
+        try:
+            with self._connect() as conn:
+                existing = conn.execute(
+                    """
+                    SELECT id FROM audit_logs
+                    WHERE ticker = ? AND signal_type = ? AND date(created_at) = date(?)
+                    AND status IN ('APPROVED', 'EXECUTED') AND id != ?
+                    """,
+                    (signal.ticker, signal.signal_type.value, signal.created_at.isoformat(), signal.id)
+                ).fetchone()
+                return existing is not None
+        except sqlite3.Error:
+            return False
 
     def update_signal_status(
         self, signal_id: str, status: str, reason_suffix: str | None = None
@@ -4633,6 +4663,89 @@ class PortfolioDB:
 ## FILE: 02_quant_engine/__init__.py (0 lines)
 ```python
 
+```
+
+## FILE: 02_quant_engine/market_regime.py (79 lines)
+```python
+"""Market Regime Classifier for PEA Pollux.
+
+Detects current market regime (BULL, BEAR, VOLATILE) using VIX and CAC40.
+Modulates quant engine parameters like CONVICTION_EMIT_FLOOR and RSI_OVERSOLD.
+"""
+
+import logging
+from typing import Tuple
+
+import pandas as pd
+
+from duckdb_manager import TimeSeriesDB
+from macro_alpha_api import MacroAlphaSensor
+
+logger = logging.getLogger(__name__)
+
+class MarketRegimeClassifier:
+    """Classifies the market regime to modulate quant engine thresholds."""
+    
+    def __init__(self) -> None:
+        self.tsdb = TimeSeriesDB(read_only=True)
+        self.macro_sensor = MacroAlphaSensor()
+        
+    def get_regime(self) -> str:
+        """Evaluate VIX and CAC40 to return current regime.
+        
+        Returns:
+            str: 'BULL', 'BEAR', or 'VOLATILE'
+        """
+        try:
+            vix = self.macro_sensor.get_european_vix()
+        except Exception:
+            logger.warning("Could not fetch VIX. Defaulting to BULL.")
+            return "BULL"
+            
+        if vix is not None and vix > 30.0:
+            return "VOLATILE"
+            
+        try:
+            # Need enough history to compute SMA200 (200 trading days requires ~300 calendar days)
+            df = self.tsdb.get_historical_prices("^FCHI", days=400)
+            if df is None or df.empty or "Close" not in df.columns or len(df) < 200:
+                logger.warning("Not enough history for ^FCHI to compute SMA200. Defaulting to BULL.")
+                return "BULL"
+                
+            close = df["Close"].astype(float).dropna()
+            if close.empty or len(close) < 200:
+                return "BULL"
+                
+            current_price = float(close.iloc[-1])
+            sma200 = float(close.rolling(window=200).mean().iloc[-1])
+            
+            if current_price > sma200:
+                return "BULL"
+            else:
+                return "BEAR"
+        except Exception:
+            logger.exception("Failed to compute CAC40 regime. Defaulting to BULL.")
+            return "BULL"
+
+    def get_modulated_thresholds(
+        self, regime: str, base_conviction: float = 65.0, base_rsi: float = 30.0
+    ) -> Tuple[float, float]:
+        """Modulate conviction and RSI based on regime.
+        
+        Args:
+            regime: Output of get_regime().
+            base_conviction: Default floor.
+            base_rsi: Default RSI oversold threshold.
+            
+        Returns:
+            Tuple[float, float]: (conviction_floor, rsi_oversold)
+        """
+        if regime == "VOLATILE":
+            return 75.0, base_rsi
+        elif regime == "BEAR":
+            return 70.0, 25.0
+        else:
+            return base_conviction, base_rsi
 ```
 
 ## FILE: 02_quant_engine/ml_feature_store.py (290 lines)
@@ -5100,7 +5213,7 @@ if __name__ == "__main__":
     print(json.dumps(m, indent=2))
 ```
 
-## FILE: 02_quant_engine/quantitative_math.py (104 lines)
+## FILE: 02_quant_engine/quantitative_math.py (107 lines)
 ```python
 """Academic quantitative-math utilities for portfolio analytics.
 
@@ -5204,7 +5317,10 @@ def calculate_annualized_volatility(returns: pd.Series, periods_per_year: int = 
     r = _clean_returns(returns)
     if r.empty:
         return 0.0
-    return float(r.std(ddof=0) * np.sqrt(float(periods_per_year)))
+    std_ewm = r.ewm(span=20).std().dropna()
+    if std_ewm.empty:
+        return 0.0
+    return float(std_ewm.iloc[-1] * np.sqrt(float(periods_per_year)))
 ```
 
 ## FILE: 02_quant_engine/smart_dca_engine.py (216 lines)
@@ -5517,7 +5633,7 @@ def run_correlated_monte_carlo(
     )
 ```
 
-## FILE: 02_quant_engine/technical_scorer.py (632 lines)
+## FILE: 02_quant_engine/technical_scorer.py (657 lines)
 ```python
 """Quantitative signal engine for PEA Pollux.
 
@@ -5644,8 +5760,23 @@ class SignalGenerator:
         """
         path = Path(config_path) if config_path else _DEFAULT_CONFIG_DIR
         risk = load_risk_config(path)
-        self.rsi_oversold: float = float(risk.RSI_OVERSOLD_THRESHOLD)
         self._macro = macro_sensor
+        
+        try:
+            from market_regime import MarketRegimeClassifier
+            classifier = MarketRegimeClassifier()
+            self.regime = classifier.get_regime()
+            self.conviction_floor, self.rsi_oversold = classifier.get_modulated_thresholds(
+                self.regime, 
+                base_conviction=float(risk.CONVICTION_EMIT_FLOOR),
+                base_rsi=float(risk.RSI_OVERSOLD_THRESHOLD)
+            )
+            logger.info(f"SignalGenerator loaded: regime={self.regime}, floor={self.conviction_floor}, rsi={self.rsi_oversold}")
+        except Exception as exc:
+            logger.warning("Could not determine market regime (%s), using base thresholds.", exc)
+            self.regime = "BULL"
+            self.rsi_oversold = float(risk.RSI_OVERSOLD_THRESHOLD)
+            self.conviction_floor = float(risk.CONVICTION_EMIT_FLOOR)
 
     @staticmethod
     def _load_fundamentals_from_sources(ticker: str) -> dict:
@@ -6039,42 +6170,52 @@ class SignalGenerator:
 
     def generate_raw_signals(
         self,
-        db_manager: Any,
-        tickers: List[str],
-        apply_quality_filter: bool = False,
-        apply_momentum_filter: bool = False,
-        conviction_floor: float = _CONVICTION_EMIT_FLOOR,
-    ) -> List[Signal]:
+        timeseries_db: Any,
+        tickers: list[str],
+        conviction_floor: float | None = None,
+    ) -> list[Signal]:
         """Evaluate each ticker; emit BUY when ensemble conviction ≥ floor.
 
         Args:
-            db_manager: ``TimeSeriesDB`` with ``get_historical_prices``.
+            timeseries_db: ``TimeSeriesDB`` with ``get_historical_prices``.
             tickers: Universe symbols.
-            apply_quality_filter: Legacy EPS gate (prefer Orchestrator).
-            apply_momentum_filter: Unused in ensemble mode (kept for API compat).
-            conviction_floor: Minimum total points to emit (default 65).
+            conviction_floor: Minimum total points to emit.
 
         Returns:
             List[Signal]: PENDING BUYs with score = conviction total.
         """
-        _ = apply_momentum_filter  # ensemble replaces SMA5 knife filter
-        signals: List[Signal] = []
-        sensor = self._macro_sensor()
+        signals: list[Signal] = []
+        macro = self._macro_sensor()
+        mr_classifier = MarketRegimeClassifier()
 
         def _eval_ticker(ticker: str) -> Signal | None:
-            df = db_manager.get_historical_prices(ticker, days=252)
+            df = timeseries_db.get_historical_prices(ticker, days=252)
             if df is None or df.empty or len(df) < _MIN_ROWS:
                 return None
-            if apply_quality_filter and not self.is_profitable(ticker):
-                return None
-            conv = self.evaluate(ticker, df, macro_sensor=sensor)
+            
+            conv = self.evaluate(ticker, df, macro_sensor=macro)
             total = float(conv.get("total") or 0.0)
-            if total < float(conviction_floor):
+            actual_floor = conviction_floor if conviction_floor is not None else self.conviction_floor
+            
+            if total < float(actual_floor):
                 return None
+
+            mr = conv["model_scores"]["mean_reversion_model"]
+            mom = conv["model_scores"]["trend_model"]
+            qv = conv["context_breakdown"]["fundamentals"]
+            ins = conv["context_breakdown"]["insiders"]
+            news = conv["news_modifier"]
+            polymarket = conv["polymarket_modifier"]
+
             reason = (
-                f"Conviction {total:.0f}/100 ≥ {conviction_floor:.0f} | "
-                + " · ".join(conv.get("factors") or ["ensemble"])
+                f"Conviction {total:.0f}/100 ≥ {actual_floor:.0f} | "
+                f"MR {mr:.0f} | Mom {mom:.0f} | Q/V {qv:.0f} | Ins {ins:.0f}"
             )
+            if news != 0:
+                reason += f" | News {news:+.0f}"
+            if polymarket != 0:
+                reason += f" | Poly {polymarket:+.0f}"
+                
             return Signal(
                 id=str(uuid.uuid4()),
                 ticker=ticker,
@@ -6439,7 +6580,7 @@ if __name__ == "__main__":
 
 ```
 
-## FILE: 03_risk_portfolio/correlation_firewall.py (290 lines)
+## FILE: 03_risk_portfolio/correlation_firewall.py (296 lines)
 ```python
 """Correlation Firewall for PEA Pollux.
 
@@ -6649,7 +6790,13 @@ class CorrelationFirewall:
         if len(prices) < 2 or prices.shape[1] < 2:
             return True, "Correlation check passed (insufficient overlap)"
 
-        corr_matrix = prices.corr(method="pearson")
+        # EWMA correlation to react immediately to sudden market decoupling
+        num_tickers = prices.shape[1]
+        corr_multi = prices.ewm(span=self.corr_lookback_days).corr(pairwise=True)
+        # Extract the correlation matrix for the last timestamp
+        corr_matrix = corr_multi.iloc[-num_tickers:].copy()
+        corr_matrix.index = corr_matrix.index.get_level_values(1)
+        
         candidate_corr = corr_matrix[ticker].drop(labels=[ticker], errors="ignore")
 
         for existing_ticker, corr in candidate_corr.items():
@@ -9480,7 +9627,7 @@ if __name__ == "__main__":
     asyncio.run(_demo())
 ```
 
-## FILE: 05_interfaces/terminal_dashboard.py (6435 lines)
+## FILE: 05_interfaces/terminal_dashboard.py (6463 lines)
 ```python
 """Web Terminal (Streamlit dashboard) for PEA Pollux.
 
@@ -13341,12 +13488,32 @@ _health_color = {
 }.get(_pipe_health, _AMBER)
 _mkt_color = _NEON if _mkt_health == "green" else _AMBER
 
+# Add Market Regime
+try:
+    from market_regime import MarketRegimeClassifier
+    _mr_classifier = MarketRegimeClassifier()
+    _regime = _mr_classifier.get_regime()
+    _conv_floor, _rsi_thresh = _mr_classifier.get_modulated_thresholds(
+        _regime,
+        base_conviction=float(_RISK.get("CONVICTION_EMIT_FLOOR", 65.0)),
+        base_rsi=float(_RISK.get("RSI_OVERSOLD_THRESHOLD", 30.0))
+    )
+except Exception:
+    _regime = "BULL"
+    _conv_floor = 65.0
+    _rsi_thresh = 30.0
+
+_regime_color = _NEON if _regime == "BULL" else (_RED if _regime == "BEAR" else _AMBER)
+
 st.markdown(
     f"""
 <div class="mission">
   <div class="mission-title">Mission Control · PEA personnel</div>
   <div style="display:flex;flex-wrap:wrap;gap:18px;color:{_WHITE};font-size:13px;">
     <div>Marché <b style="color:{_mkt_color};">{_mkt_label}</b></div>
+    <div>Régime <b style="color:{_regime_color};">{_regime}</b> 
+        <span style="color:{_MUTED}; font-size: 11px;">(Score ≥{_conv_floor:.0f} | RSI ≤{_rsi_thresh:.0f})</span>
+    </div>
     <div>Dernière passe
       <b style="color:{_health_color};">{_pipe_txt}</b></div>
     <div>Equity
@@ -15849,9 +16016,17 @@ cash/positions. Les ordres restent Discord + scheduler.
                 help="Accuracy on test set where model probability ≥ 0.75.",
             )
         with _ml_c2:
+            _brier = _ml_metrics.get("brier_score")
+            if pd.isna(_brier) or _brier is None:
+                _brier_display = "n/a"
+            else:
+                try:
+                    _brier_display = f"{float(_brier):.4f}"
+                except ValueError:
+                    _brier_display = str(_brier)
             st.metric(
                 "Brier Score",
-                _ml_metrics.get("brier_score", "n/a"),
+                _brier_display,
                 help="Lower is better (0 = perfect calibration).",
             )
         with _ml_c3:
@@ -18255,7 +18430,7 @@ EXPOSE 8501
 CMD ["python", "main_scheduler.py"]
 ```
 
-## FILE: main_scheduler.py (783 lines)
+## FILE: main_scheduler.py (788 lines)
 ```python
 """Root daemon scheduler for PEA Pollux.
 
@@ -18630,6 +18805,11 @@ async def run_pipeline_async() -> None:
 
     for signal in alertable:
         try:
+            # Discord Spam Guard: ensure no other alert sent today for same ticker/type
+            if pdb.has_duplicate_signal_today(signal):
+                logger.info("Spam guard: %s alert already sent today, skipping Discord.", signal.ticker)
+                continue
+                
             price = current_prices.get(signal.ticker, 0.0)
             await copilot.send_signal_alert(
                 signal, portfolio, explainer=explainer, current_price=price
@@ -19042,7 +19222,7 @@ if __name__ == "__main__":
     main()
 ```
 
-## FILE: README.md (734 lines)
+## FILE: README.md (735 lines)
 ```markdown
 # PEA Pollux — Terminal quantitatif personnel
 
@@ -19644,6 +19824,7 @@ sources over furtive HTML scraping.
 | **AMF semantic parsing (legal FR regex), fluid log viewer, system telemetry** | ✅ Phase 41 |
 | **Institutional Overhaul: data quality (auto_adjust), parallel I/O, drawdown breaker, OpenFIGI, Alpha Vantage, backtester look-ahead fix, CI ruff** | ✅ Phase 42 |
 | **Pydantic config validation, backtester exits, dashboard DuckDB dedup, XGBoost ML, Devil's Advocate PEA** | ✅ Phase 44 |
+| **Dynamic Market Regime, EWMA Risk Math, Pipeline Idempotency** | ✅ Phase 45 |
 | pytest + GitHub Actions CI | Expand coverage over time |
 
 ### Next (highest leverage)
