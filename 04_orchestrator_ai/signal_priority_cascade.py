@@ -33,6 +33,7 @@ for _sub in ("01_memory_core", "03_risk_portfolio", "04_orchestrator_ai"):
 sys.path.insert(0, os.path.join(str(_ROOT), "02_quant_engine"))
 
 from data_models import PortfolioState, Signal, SignalStatus  # noqa: E402
+from config_validator import load_risk_config  # noqa: E402
 from correlation_firewall import CorrelationFirewall  # noqa: E402
 from pea_position_sizer import PeaSizer  # noqa: E402
 from macro_veto import MacroVetoEngine  # noqa: E402
@@ -68,14 +69,10 @@ class SignalOrchestrator:
         self.portfolio_db = portfolio_db
         self.timeseries_db = timeseries_db
 
-        risk_path = config_path / "risk_params.yaml"
-        risk: dict = {}
-        if risk_path.exists():
-            with open(risk_path, "r", encoding="utf-8") as fh:
-                risk = yaml.safe_load(fh) or {}
-        self.core_ticker: str = str(risk.get("CORE_TICKER", "CW8.PA"))
-        self.max_positions_total: int = int(risk.get("MAX_POSITIONS_TOTAL", 12))
-        self.min_liquidity_adv: float = float(risk.get("MIN_LIQUIDITY_ADV", 50_000))
+        risk = load_risk_config(config_path)
+        self.core_ticker: str = str(risk.CORE_TICKER)
+        self.max_positions_total: int = int(risk.MAX_POSITIONS_TOTAL)
+        self.min_liquidity_adv: float = float(risk.MIN_LIQUIDITY_ADV)
 
         self.macro_veto = MacroVetoEngine(config_path)
         self.earnings_blackout = EarningsBlackoutEngine(config_path)

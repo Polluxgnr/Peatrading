@@ -22,6 +22,7 @@ _CORE_DIR = os.path.join(
 sys.path.insert(0, _CORE_DIR)
 
 from data_models import PortfolioState, Signal  # noqa: E402
+from config_validator import load_risk_config  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -44,16 +45,14 @@ class PeaSizer:
             config_path: Path to the ``config`` directory (or a risk_params
                 YAML file). Defaults to ``<project_root>/config``.
         """
-        risk = self._load_risk_params(config_path)
-        self.kelly_fraction: float = float(risk["KELLY_FRACTION"])
-        self.max_single_position: float = float(risk["MAX_SINGLE_POSITION_PCT"])
+        risk = load_risk_config(config_path)
+        self.kelly_fraction: float = float(risk.KELLY_FRACTION)
+        self.max_single_position: float = float(risk.MAX_SINGLE_POSITION_PCT)
         # Core/Satellite + volatility-parity parameters (Phase 10).
-        self.core_ticker: str = str(risk.get("CORE_TICKER", "CW8.PA"))
-        self.satellite_max_budget: float = float(
-            risk.get("SATELLITE_MAX_BUDGET_PCT", 0.30)
-        )
-        self.vol_reference: float = float(risk.get("VOLATILITY_REFERENCE", 0.20))
-        self.vol_max_factor: float = float(risk.get("VOLATILITY_MAX_FACTOR", 1.5))
+        self.core_ticker: str = str(risk.CORE_TICKER)
+        self.satellite_max_budget: float = float(risk.SATELLITE_MAX_BUDGET_PCT)
+        self.vol_reference: float = float(risk.VOLATILITY_REFERENCE)
+        self.vol_max_factor: float = float(risk.VOLATILITY_MAX_FACTOR)
         logger.debug(
             "Sizer loaded: kelly=%.2f max_single=%.2f sat_budget=%.2f vol_ref=%.2f",
             self.kelly_fraction,
@@ -63,17 +62,9 @@ class PeaSizer:
         )
 
     @staticmethod
-    def _load_risk_params(config_path: str | Path | None) -> dict:
-        """Resolve and load the risk_params YAML into a dict."""
-        if config_path is None:
-            path = _DEFAULT_CONFIG_DIR / "risk_params.yaml"
-        else:
-            p = Path(config_path)
-            path = p if p.is_file() else p / "risk_params.yaml"
-        if not path.exists():
-            raise FileNotFoundError(f"Config file not found: {path}")
-        with open(path, "r", encoding="utf-8") as fh:
-            return yaml.safe_load(fh)
+    def _load_risk_params(config_path: str | Path | None):
+        """Resolve and load validated risk config."""
+        return load_risk_config(config_path)
 
     def _satellite_value(self, portfolio: PortfolioState) -> float:
         """Sum the market value of all non-core (satellite) holdings."""

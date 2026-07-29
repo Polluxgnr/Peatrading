@@ -28,6 +28,7 @@ _CORE_DIR = os.path.join(
 sys.path.insert(0, _CORE_DIR)
 
 from data_models import Signal, SignalStatus, SignalType  # noqa: E402
+from config_validator import load_risk_config  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -47,13 +48,13 @@ class SmartDcaCore:
             config_path: Path to the ``config`` directory (or a risk_params
                 YAML file). Defaults to ``<project_root>/config``.
         """
-        risk = self._load_risk_params(config_path)
-        self.core_ticker: str = str(risk.get("CORE_TICKER", "CW8.PA"))
-        self.target_pct: float = float(risk.get("CORE_TARGET_PCT", 0.70))
-        self.crash_target_pct: float = float(risk.get("CORE_CRASH_TARGET_PCT", 0.75))
-        self.max_tranche_pct: float = float(risk.get("CORE_DCA_MAX_TRANCHE_PCT", 0.05))
+        risk = load_risk_config(config_path)
+        self.core_ticker: str = str(risk.CORE_TICKER)
+        self.target_pct: float = float(risk.CORE_TARGET_PCT)
+        self.crash_target_pct: float = float(risk.CORE_CRASH_TARGET_PCT)
+        self.max_tranche_pct: float = float(risk.CORE_DCA_MAX_TRANCHE_PCT)
         # Phase 40: idle cash above this fraction of equity is swept into Core.
-        self.max_idle_cash_pct: float = float(risk.get("MAX_IDLE_CASH_PCT", 0.02))
+        self.max_idle_cash_pct: float = float(risk.MAX_IDLE_CASH_PCT)
         logger.debug(
             "SmartDcaCore loaded: %s target=%.2f crash=%.2f tranche<=%.2f idle<=%.2f",
             self.core_ticker,
@@ -64,17 +65,9 @@ class SmartDcaCore:
         )
 
     @staticmethod
-    def _load_risk_params(config_path: str | Path | None) -> dict:
-        """Resolve and load the risk_params YAML into a dict."""
-        if config_path is None:
-            path = _DEFAULT_CONFIG_DIR / "risk_params.yaml"
-        else:
-            p = Path(config_path)
-            path = p if p.is_file() else p / "risk_params.yaml"
-        if not path.exists():
-            raise FileNotFoundError(f"Config file not found: {path}")
-        with open(path, "r", encoding="utf-8") as fh:
-            return yaml.safe_load(fh)
+    def _load_risk_params(config_path: str | Path | None):
+        """Resolve and load validated risk config."""
+        return load_risk_config(config_path)
 
     def _neutral_signal(self, reason: str) -> Signal:
         """Return a do-nothing (score 0, qty 0) core signal with a reason."""

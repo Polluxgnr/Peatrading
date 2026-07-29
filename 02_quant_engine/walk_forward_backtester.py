@@ -33,6 +33,7 @@ for _sub in ("00_data_sensors", "01_memory_core", "02_quant_engine"):
 
 from duckdb_manager import TimeSeriesDB  # noqa: E402
 from technical_scorer import SignalGenerator, _CONVICTION_EMIT_FLOOR  # noqa: E402
+from config_validator import load_risk_config  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +69,28 @@ def _load_universe() -> list[str]:
     return ordered
 
 
+def _hist_asof(hist: pd.DataFrame, day_ts: pd.Timestamp) -> pd.DataFrame:
+    if hist is None or hist.empty:
+        return pd.DataFrame()
+    if "Date" in hist.columns:
+        return hist[pd.to_datetime(hist["Date"]) <= day_ts]
+    return hist[pd.to_datetime(hist.index) <= day_ts]
+
+
+def _latest_atr14(gen: SignalGenerator, hist: pd.DataFrame) -> float | None:
+    if hist is None or len(hist) < 20:
+        return None
+    try:
+        enriched = gen.calculate_indicators(hist)
+        atr_col = next((c for c in enriched.columns if "ATR" in str(c).upper()), None)
+        if not atr_col:
+            return None
+        val = float(enriched[atr_col].iloc[-1])
+        return val if val > 0 else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def run_walk_forward(
     start: str = "2020-01-01",
     end: str | None = None,
@@ -82,6 +105,10 @@ def run_walk_forward(
     """
     db = TimeSeriesDB()
     gen = SignalGenerator(macro_sensor=None)  # price axes only (offline-friendly)
+    risk = load_risk_config()
+    atr_mult = float(risk.REBALANCE_ATR_STOP_MULT)
+    profit_trigger = float(risk.REBALANCE_PROFIT_TRIGGER_PCT)
+    profit_shave = float(risk.REBALANCE_PROFIT_SHAVE_PCT)
     tickers = _load_universe()[:max_names]
     end_ts = pd.Timestamp(end or datetime.now(timezone.utc).date())
     start_ts = pd.Timestamp(start)
@@ -140,7 +167,7 @@ def run_walk_forward(
                     continue
                 cost = qty * open_px
                 cash -= cost
-                book[ticker] = {"qty": qty, "cost": cost, "px": open_px}
+                book[ticker] = {"qty": qty, "cost": cost, "px": open_px, "entry_px": open_px}
             except Exception:  # noqa: BLE001
                 pass
         pending_entries = []
@@ -165,6 +192,36 @@ def run_walk_forward(
                     pending_entries.append((ticker, float(conv.get("total") or 0)))
                 except Exception as exc:  # noqa: BLE001
                     logger.debug("WF skip %s @ %s: %s", ticker, day_ts.date(), exc)
+
+        # Simulate exits: ATR stop-loss and profit shave (Phase 44).
+        for ticker in list(book.keys()):
+            pos = book[ticker]
+            try:
+                hist = db.get_historical_prices(ticker, days=80)
+                sub = _hist_asof(hist, day_ts)
+                if sub.empty:
+                    continue
+                last_px = float(sub["Close"].iloc[-1])
+                entry_px = float(pos.get("entry_px") or pos.get("px") or 0)
+                if entry_px <= 0:
+                    continue
+                pnl_pct = (last_px / entry_px - 1.0) * 100.0
+
+                atr14 = _latest_atr14(gen, sub)
+                if atr14 is not None and last_px < entry_px - atr_mult * atr14:
+                    cash += pos["qty"] * last_px
+                    del book[ticker]
+                    continue
+
+                if pnl_pct >= profit_trigger:
+                    sell_qty = max(1, int(pos["qty"] * profit_shave))
+                    sell_qty = min(sell_qty, pos["qty"])
+                    cash += sell_qty * last_px
+                    pos["qty"] -= sell_qty
+                    if pos["qty"] <= 0:
+                        del book[ticker]
+            except Exception:  # noqa: BLE001
+                pass
 
         mtm = cash
         for ticker, pos in list(book.items()):

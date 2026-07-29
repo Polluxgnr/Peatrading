@@ -12,12 +12,11 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-import yaml
-
 _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT / "01_memory_core"))
 
 from sqlite_portfolio import PortfolioDB  # noqa: E402
+from config_validator import load_risk_config  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -28,16 +27,10 @@ class DrawdownBreaker:
     """Hard veto when rolling PnL breaches configured loss limits."""
 
     def __init__(self, config_dir: Path | str | None = None) -> None:
-        cfg_path = Path(config_dir) if config_dir else _DEFAULT_CONFIG
-        risk_file = cfg_path / "risk_params.yaml"
-        risk: dict = {}
-        if risk_file.exists():
-            with open(risk_file, "r", encoding="utf-8") as fh:
-                risk = yaml.safe_load(fh) or {}
-
-        self.daily_limit = float(risk.get("DAILY_MAX_LOSS_PCT", -0.005))
-        self.weekly_limit = float(risk.get("WEEKLY_MAX_LOSS_PCT", -0.02))
-        self.monthly_limit = float(risk.get("MONTHLY_MAX_LOSS_PCT", -0.05))
+        risk = load_risk_config(config_dir)
+        self.daily_limit = float(risk.DAILY_MAX_LOSS_PCT)
+        self.weekly_limit = float(risk.WEEKLY_MAX_LOSS_PCT)
+        self.monthly_limit = float(risk.MONTHLY_MAX_LOSS_PCT)
 
     def check(self, portfolio_db: PortfolioDB | None = None) -> tuple[bool, str]:
         """Return (is_breached, reason). True means VETO all new buys."""

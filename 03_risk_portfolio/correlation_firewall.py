@@ -23,6 +23,7 @@ _CORE_DIR = os.path.join(
 sys.path.insert(0, _CORE_DIR)
 
 from data_models import PortfolioState  # noqa: E402
+from config_validator import load_risk_config  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -50,16 +51,14 @@ class CorrelationFirewall:
                 YAML file). Defaults to ``<project_root>/config``.
         """
         config_dir = self._resolve_config_dir(config_path)
-        risk = self._load_yaml(config_dir / "risk_params.yaml")
+        risk = load_risk_config(config_dir)
         universe = self._load_yaml(config_dir / "pea_universe.yaml")
 
-        self.max_correlation: float = float(risk["MAX_CORRELATION_TO_PORTFOLIO"])
-        self.max_sector_weight: float = float(risk["MAX_SECTOR_WEIGHT_PCT"])
-        self.max_single_position: float = float(risk["MAX_SINGLE_POSITION_PCT"])
-        self.vix_panic_threshold: float = float(risk.get("VIX_PANIC_THRESHOLD", 30.0))
-        self.corr_lookback_days: int = int(
-            risk.get("CORRELATION_LOOKBACK_DAYS", _CORR_WINDOW_DEFAULT)
-        )
+        self.max_correlation: float = float(risk.MAX_CORRELATION_TO_PORTFOLIO)
+        self.max_sector_weight: float = float(risk.MAX_SECTOR_WEIGHT_PCT)
+        self.max_single_position: float = float(risk.MAX_SINGLE_POSITION_PCT)
+        self.vix_panic_threshold: float = float(risk.VIX_PANIC_THRESHOLD)
+        self.corr_lookback_days: int = int(risk.CORRELATION_LOOKBACK_DAYS)
         self.ticker_sectors: Dict[str, str] = self._build_sector_map(universe)
 
         logger.debug(

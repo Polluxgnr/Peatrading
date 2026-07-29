@@ -18,6 +18,7 @@ feedparser>=6.0
 # --- Quant engine (Phase 4) ---
 pandas>=2.1
 numpy>=2.0
+xgboost>=2.0
 # pandas-ta-classic is the numpy-2.x / numba-free provider of the `.ta`
 # accessor. Upstream `pandas-ta` 0.4.x requires numba (no py3.13/arm64 wheel).
 pandas-ta-classic>=0.6.0

@@ -42,6 +42,7 @@ sys.path.insert(0, _CORE_DIR)
 
 from data_models import Signal, SignalStatus, SignalType  # noqa: E402
 from sqlite_portfolio import PortfolioDB  # noqa: E402
+from config_validator import load_risk_config  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -55,16 +56,11 @@ _DEFAULT_RSI_OVERSOLD = 30.0
 
 
 def _load_conviction_floor() -> float:
-    """Read CONVICTION_EMIT_FLOOR from risk_params.yaml (default 65)."""
+    """Read CONVICTION_EMIT_FLOOR from validated risk_params.yaml."""
     try:
-        path = _PROJECT_ROOT / "config" / "risk_params.yaml"
-        if path.exists():
-            with open(path, "r", encoding="utf-8") as fh:
-                cfg = yaml.safe_load(fh) or {}
-            return float(cfg.get("CONVICTION_EMIT_FLOOR", 65.0))
+        return float(load_risk_config().CONVICTION_EMIT_FLOOR)
     except Exception:  # noqa: BLE001
-        pass
-    return 65.0
+        return 65.0
 
 
 _CONVICTION_EMIT_FLOOR = _load_conviction_floor()
@@ -126,14 +122,8 @@ class SignalGenerator:
                 institutional axes (lazy-created on first need if None).
         """
         path = Path(config_path) if config_path else _DEFAULT_CONFIG_DIR
-        risk_file = path if path.is_file() else path / "risk_params.yaml"
-        risk: dict = {}
-        if risk_file.exists():
-            with open(risk_file, "r", encoding="utf-8") as fh:
-                risk = yaml.safe_load(fh) or {}
-        self.rsi_oversold: float = float(
-            risk.get("RSI_OVERSOLD_THRESHOLD", _DEFAULT_RSI_OVERSOLD)
-        )
+        risk = load_risk_config(path)
+        self.rsi_oversold: float = float(risk.RSI_OVERSOLD_THRESHOLD)
         self._macro = macro_sensor
 
     @staticmethod
@@ -195,6 +185,7 @@ class SignalGenerator:
         out["RSI_14"] = out.ta.rsi(close=close, length=14)
         out.ta.macd(close=close, append=True)
         out.ta.bbands(close=close, append=True)
+        out.ta.atr(high=out["High"], low=out["Low"], close=close, length=14, append=True)
         out["Z_SCORE_50"] = calculate_z_score(close)
         return out
 
@@ -260,6 +251,7 @@ class SignalGenerator:
                 "insiders": 0.0,
                 "news": 0.0,
                 "polymarket": 0.0,
+                "ml": 50.0,
             },
         }
         if history is None or history.empty or len(history) < _MIN_ROWS:
@@ -451,15 +443,38 @@ class SignalGenerator:
             factors.append(f"NEWS-15 Bearish sentiment ({news_score:.0f})")
         news_component = max(0.0, min(100.0, 50.0 + news_mod))
 
-        # Polymarket removed from per-ticker scoring (Phase 42): almost always
-        # returns the deterministic stub. Polymarket is now macro-only.
-        poly_component = 50.0  # neutral placeholder for backward-compat output
+        # ML modifier (Phase 44): XGBoost probability as 5th context factor.
+        ml_component = 50.0
+        ml_prob: float | None = None
+        try:
+            from ml_feature_store import build_ml_feature_row  # noqa: WPS433
+            from ml_trainer import predict_probability  # noqa: WPS433
 
-        # Context model combines fundamentals + sentiment + insiders.
+            feat_row = build_ml_feature_row(
+                ticker,
+                close=enriched["Close"],
+                reason="",
+                pdb=None,
+            )
+            ml_prob = predict_probability(feat_row)
+            if ml_prob is not None:
+                ml_component = float(ml_prob) * 100.0
+                if ml_prob >= 0.65:
+                    factors.append(f"ML+5 prob={ml_prob:.2f}")
+                elif ml_prob <= 0.35:
+                    factors.append(f"ML-5 prob={ml_prob:.2f}")
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("ML modifier skipped for %s: %s", ticker, exc)
+
+        # Polymarket removed from per-ticker scoring (Phase 42): macro-only.
+        poly_component = 50.0
+
+        # Context model: fundamentals + insiders + news + ML ensemble.
         context_score = (
-            0.50 * fundamentals_score
-            + 0.25 * insider_score
-            + 0.25 * news_component
+            0.40 * fundamentals_score
+            + 0.20 * insider_score
+            + 0.20 * news_component
+            + 0.20 * ml_component
         )
         context_score = max(0.0, min(100.0, context_score))
 
@@ -497,6 +512,7 @@ class SignalGenerator:
                 "insiders": float(insider_score),
                 "news": float(news_component),
                 "polymarket": float(poly_component),
+                "ml": float(ml_component),
             },
         }
 

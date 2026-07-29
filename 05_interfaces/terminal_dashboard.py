@@ -215,41 +215,48 @@ def euronext_session_status() -> tuple[str, str]:
     return f"FERME · {now.strftime('%H:%M')} Paris", "amber"
 
 
-@st.cache_data(ttl=600, show_spinner=False)
-def _latest_atr14_approx(ticker: str) -> float | None:
-    """Best-effort ATR(14) for risk cards (DuckDB, else yfinance)."""
+def _period_to_days(period: str | None) -> int:
+    """Map Yahoo-style period strings to trading-day lookbacks."""
+    return {
+        "1d": 5,
+        "5d": 7,
+        "1mo": 30,
+        "3mo": 90,
+        "6mo": 180,
+        "1y": 252,
+        "2y": 504,
+        "5y": 1260,
+        "10y": 2520,
+    }.get(period or "1mo", 30)
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _db_hist(ticker: str, days: int = 252) -> pd.DataFrame:
+    """OHLCV history from DuckDB (single source of truth for dashboard prices)."""
     try:
         from duckdb_manager import TimeSeriesDB
+
         db = TimeSeriesDB(read_only=True)
-        hist = db.get_historical_prices(ticker, days=60)
-        if hist is not None and not hist.empty and len(hist) >= 20:
-            try:
-                import pandas_ta_classic as ta  # noqa: F401
-            except ImportError:
-                import pandas_ta as ta  # noqa: F401
-            work = hist.copy()
-            atr = work.ta.atr(
-                high=work["High"], low=work["Low"], close=work["Close"], length=14
-            )
-            if atr is not None:
-                if isinstance(atr, pd.DataFrame):
-                    atr = atr.iloc[:, 0]
-                val = float(atr.dropna().iloc[-1])
-                return val if val > 0 else None
+        hist = db.get_historical_prices(ticker, days=days)
+        return hist if hist is not None else pd.DataFrame()
     except Exception:  # noqa: BLE001
-        pass
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _latest_atr14_approx(ticker: str) -> float | None:
+    """ATR(14) via quant engine indicators (TimeSeriesDB — no yfinance)."""
+    hist = _db_hist(ticker, 60)
+    if hist is None or hist.empty or len(hist) < 20:
+        return None
     try:
-        hist = yf.Ticker(ticker).history(period="3mo")
-        if hist is None or hist.empty:
+        from technical_scorer import SignalGenerator
+
+        enriched = SignalGenerator().calculate_indicators(hist)
+        atr_col = next((c for c in enriched.columns if "ATR" in str(c).upper()), None)
+        if not atr_col:
             return None
-        try:
-            import pandas_ta_classic as ta  # noqa: F401
-        except ImportError:
-            import pandas_ta as ta  # noqa: F401
-        atr = hist.ta.atr(length=14)
-        if atr is None:
-            return None
-        val = float(atr.dropna().iloc[-1])
+        val = float(enriched[atr_col].dropna().iloc[-1])
         return val if val > 0 else None
     except Exception:  # noqa: BLE001
         return None
@@ -951,33 +958,19 @@ def render_rejection_pie(funnel_data: dict) -> go.Figure:
 
 @st.cache_data(ttl=86400, show_spinner=False)
 def get_annual_returns(ticker: str) -> pd.DataFrame:
-    """Year-over-year % returns from ~10y monthly closes (yfinance).
-
-    Args:
-        ticker: Yahoo symbol (e.g. ``MC.PA``).
-
-    Returns:
-        pd.DataFrame: Columns ``Year`` (YYYY str) and ``Return_Pct`` (float).
-        Empty DataFrame on network/delist failure.
-    """
+    """Year-over-year % returns from DuckDB daily closes (~10y)."""
     empty = pd.DataFrame(columns=["Year", "Return_Pct"])
     if not ticker:
         return empty
     try:
-        raw = yf.download(
-            ticker,
-            period="10y",
-            interval="1mo",
-            progress=False,
-            auto_adjust=True,
-            threads=False,
-        )
-        if raw is None or raw.empty:
+        hist = _db_hist(ticker, days=2520)
+        if hist is None or hist.empty or "Close" not in hist.columns:
             return empty
-        close = raw["Close"] if "Close" in raw.columns else raw.iloc[:, 0]
-        if isinstance(close, pd.DataFrame):
-            close = close.iloc[:, 0]
-        close = pd.to_numeric(close, errors="coerce").dropna()
+        frame = hist.copy()
+        if "Date" in frame.columns:
+            frame["Date"] = pd.to_datetime(frame["Date"])
+            frame = frame.set_index("Date")
+        close = pd.to_numeric(frame["Close"], errors="coerce").dropna()
         if close.empty:
             return empty
         yearly = close.resample("YE").last().dropna()
@@ -1058,11 +1051,11 @@ def get_valuation_metrics(ticker: str) -> dict:
         if buy_low is not None and buy_high is None:
             buy_high = buy_low * 1.05
 
-        # Trailing 1M / 1Y returns from daily history (robust empty on failure).
+        # Trailing 1M / 1Y returns from DuckDB daily history.
         ret_1m = None
         ret_1y = None
         try:
-            hist = yf.Ticker(ticker).history(period="1y", auto_adjust=True)
+            hist = _db_hist(ticker, days=252)
             if hist is not None and not hist.empty and "Close" in hist.columns:
                 close = pd.to_numeric(hist["Close"], errors="coerce").dropna()
                 if len(close) >= 2:
@@ -1225,28 +1218,35 @@ def get_market_performance(
     start: str | None = None,
     end: str | None = None,
 ) -> pd.DataFrame:
-    """Compute performance over a preset period or an explicit date range."""
+    """Compute performance over a preset period or an explicit date range (DuckDB)."""
     if not tickers:
         return pd.DataFrame()
     try:
-        # Cap batch size — huge universes make yfinance return sparse junk.
         batch = list(tickers)[:120]
-        if start:
-            raw = yf.download(batch, start=start, end=end, progress=False,
-                              auto_adjust=True, threads=True)
-        else:
-            raw = yf.download(batch, period=period, progress=False,
-                              auto_adjust=True, threads=True)
-        close = _extract_close_frame(raw, batch)
-        if close.empty:
-            return pd.DataFrame()
-
+        days = _period_to_days(period)
         rows = []
-        for t in close.columns:
-            series = _valid_price_series(close[t])
+        for t in batch:
+            hist = _db_hist(t, days=days + 5)
+            if hist is None or hist.empty or "Close" not in hist.columns:
+                continue
+            close = pd.to_numeric(hist["Close"], errors="coerce").dropna()
+            series = _valid_price_series(close)
             if series is None:
                 continue
-            start_price, end_price = float(series.iloc[0]), float(series.iloc[-1])
+            if start:
+                if "Date" in hist.columns:
+                    dates = pd.to_datetime(hist["Date"])
+                    mask = (dates >= pd.Timestamp(start)) & (
+                        dates <= pd.Timestamp(end) if end else True
+                    )
+                    sub = close[mask.values] if len(mask) == len(close) else close
+                else:
+                    sub = close
+                if len(sub) < 2:
+                    continue
+                start_price, end_price = float(sub.iloc[0]), float(sub.iloc[-1])
+            else:
+                start_price, end_price = float(series.iloc[0]), float(series.iloc[-1])
             perf = (end_price / start_price - 1.0) * 100.0
             rows.append({
                 "Ticker": str(t),
@@ -1256,9 +1256,11 @@ def get_market_performance(
             })
         if not rows:
             return pd.DataFrame()
-        return (pd.DataFrame(rows)
-                .sort_values("Performance (%)", ascending=False)
-                .reset_index(drop=True))
+        return (
+            pd.DataFrame(rows)
+            .sort_values("Performance (%)", ascending=False)
+            .reset_index(drop=True)
+        )
     except Exception:  # noqa: BLE001
         return pd.DataFrame()
 
@@ -1267,27 +1269,37 @@ def get_market_performance(
 def get_normalized_prices(
     tickers: tuple[str, ...], period: str | None, start: str | None, end: str | None
 ) -> pd.DataFrame:
-    """Return prices rebased to 100 at the interval start (for line charts)."""
+    """Return prices rebased to 100 at the interval start (DuckDB)."""
     if not tickers:
         return pd.DataFrame()
     try:
         batch = list(tickers)[:40]
-        if start:
-            raw = yf.download(batch, start=start, end=end, progress=False,
-                              auto_adjust=True, threads=True)
-        else:
-            raw = yf.download(batch, period=period, progress=False,
-                              auto_adjust=True, threads=True)
-        close = _extract_close_frame(raw, batch)
-        if close.empty:
-            return pd.DataFrame()
-        out = pd.DataFrame(index=close.index)
-        for t in close.columns:
-            series = _valid_price_series(close[t], min_points=2)
-            if series is None:
+        days = _period_to_days(period)
+        series_map: dict[str, pd.Series] = {}
+        for t in batch:
+            hist = _db_hist(t, days=days + 5)
+            if hist is None or hist.empty or "Close" not in hist.columns:
                 continue
-            base = float(series.iloc[0])
-            out[str(t)] = (series / base) * 100.0
+            if "Date" in hist.columns:
+                idx = pd.to_datetime(hist["Date"])
+            else:
+                idx = pd.to_datetime(hist.index)
+            close = pd.to_numeric(hist["Close"], errors="coerce")
+            s = pd.Series(close.values, index=idx).dropna()
+            if start:
+                s = s[s.index >= pd.Timestamp(start)]
+                if end:
+                    s = s[s.index <= pd.Timestamp(end)]
+            valid = _valid_price_series(s, min_points=2)
+            if valid is not None:
+                series_map[str(t)] = valid
+        if not series_map:
+            return pd.DataFrame()
+        out = pd.DataFrame(series_map)
+        for col in out.columns:
+            base = float(out[col].dropna().iloc[0])
+            if base > 0:
+                out[col] = (out[col] / base) * 100.0
         return out.dropna(how="all")
     except Exception:  # noqa: BLE001
         return pd.DataFrame()
@@ -1990,19 +2002,14 @@ def _native_tape_perf(period: str) -> pd.DataFrame:
     if period != "1d":
         return get_market_performance(tuple(_BLUE_CHIPS_TAPE), period=period)
     try:
-        raw = yf.download(
-            _BLUE_CHIPS_TAPE,
-            period="5d",
-            progress=False,
-            auto_adjust=True,
-            threads=True,
-        )
-        close = _extract_close_frame(raw, _BLUE_CHIPS_TAPE)
-        if close.empty:
-            return pd.DataFrame()
         rows = []
-        for t in close.columns:
-            series = _valid_price_series(close[t])
+        for t in _BLUE_CHIPS_TAPE:
+            hist = _db_hist(t, days=7)
+            if hist is None or hist.empty or "Close" not in hist.columns:
+                continue
+            series = _valid_price_series(
+                pd.to_numeric(hist["Close"], errors="coerce").dropna()
+            )
             if series is None or len(series) < 2:
                 continue
             current = float(series.iloc[-1])
@@ -2225,18 +2232,20 @@ def get_vix() -> float:
 
 @st.cache_data(ttl=900, show_spinner=False)
 def get_core_regime() -> dict:
-    """Return the Core ETF regime (price vs 200-day SMA)."""
+    """Return the Core ETF regime (price vs 200-day SMA) from DuckDB."""
     try:
-        df = yf.download(_CORE_TICKER, period="1y", progress=False,
-                         auto_adjust=False)
-        if df is None or df.empty:
+        hist = _db_hist(_CORE_TICKER, days=252)
+        if hist is None or hist.empty or len(hist) < 200:
             return {}
-        close = df["Close"]
-        if isinstance(close, pd.DataFrame):
-            close = close.iloc[:, 0]
-        close = close.dropna()
-        price = float(close.iloc[-1])
-        sma200 = float(close.tail(200).mean())
+        from technical_scorer import SignalGenerator
+
+        enriched = SignalGenerator().calculate_indicators(hist)
+        last = enriched.iloc[-1]
+        price = float(last["Close"])
+        sma200 = last.get("SMA_200")
+        if sma200 is None or pd.isna(sma200):
+            return {}
+        sma200 = float(sma200)
         return {
             "ticker": _CORE_TICKER,
             "price": price,
@@ -2323,45 +2332,42 @@ def get_market_breadth(universe_df: pd.DataFrame, db_manager) -> dict:
 
 @st.cache_data(ttl=600, show_spinner=False)
 def get_indicators(ticker: str) -> dict:
-    """Compute RSI(14) + SMA 5/50/200 + trend flags for one ticker."""
+    """Compute RSI(14) + SMA 5/50/200 + trend flags via quant engine."""
     try:
-        import pandas_ta_classic as ta  # noqa: F401  (registers .ta accessor)
-    except Exception:  # noqa: BLE001
-        try:
-            import pandas_ta as ta  # noqa: F401
-        except Exception:  # noqa: BLE001
+        hist = _db_hist(ticker, days=252)
+        if hist is None or hist.empty or len(hist) < 30:
             return {}
-    try:
-        df = yf.download(ticker, period="1y", progress=False, auto_adjust=False)
-        if df is None or df.empty:
+        from technical_scorer import SignalGenerator
+
+        gen = SignalGenerator()
+        enriched = gen.calculate_indicators(hist)
+        last = enriched.iloc[-1]
+        close_s = pd.to_numeric(enriched["Close"], errors="coerce").dropna()
+        if close_s.empty:
             return {}
-        close = df["Close"]
-        if isinstance(close, pd.DataFrame):
-            close = close.iloc[:, 0]
-        close = close.dropna()
-        if len(close) < 30:
-            return {}
-        frame = close.to_frame("Close")
-        rsi = frame.ta.rsi(close=frame["Close"], length=14)
-        out = {
-            "close": float(close.iloc[-1]),
-            "rsi": float(rsi.iloc[-1]) if rsi is not None and not rsi.empty else None,
-            "sma5": float(close.tail(5).mean()),
-            "sma50": float(close.tail(50).mean()) if len(close) >= 50 else None,
-            "sma200": float(close.tail(200).mean()) if len(close) >= 200 else None,
-            "chg_1d": float((close.iloc[-1] / close.iloc[-2] - 1) * 100)
-            if len(close) >= 2 else 0.0,
-            "chg_5d": float((close.iloc[-1] / close.iloc[-6] - 1) * 100)
-            if len(close) >= 6 else 0.0,
+        close = float(last["Close"])
+        rsi_val = last.get("RSI_14")
+        sma5 = last.get("SMA_5")
+        sma50 = last.get("SMA_50")
+        sma200 = last.get("SMA_200")
+        return {
+            "close": close,
+            "rsi": float(rsi_val) if rsi_val is not None and not pd.isna(rsi_val) else None,
+            "sma5": float(sma5) if sma5 is not None and not pd.isna(sma5) else None,
+            "sma50": float(sma50) if sma50 is not None and not pd.isna(sma50) else None,
+            "sma200": float(sma200) if sma200 is not None and not pd.isna(sma200) else None,
+            "chg_1d": float((close_s.iloc[-1] / close_s.iloc[-2] - 1) * 100)
+            if len(close_s) >= 2 else 0.0,
+            "chg_5d": float((close_s.iloc[-1] / close_s.iloc[-6] - 1) * 100)
+            if len(close_s) >= 6 else 0.0,
             "vol_ann": float(
                 (
-                    calculate_annualized_volatility(close.pct_change().dropna().tail(60))
+                    calculate_annualized_volatility(close_s.pct_change().dropna().tail(60))
                     if calculate_annualized_volatility is not None
-                    else close.pct_change().dropna().tail(60).std(ddof=0) * (252 ** 0.5)
+                    else close_s.pct_change().dropna().tail(60).std(ddof=0) * (252 ** 0.5)
                 ) * 100.0
             ),
         }
-        return out
     except Exception:  # noqa: BLE001
         return {}
 
@@ -2850,31 +2856,20 @@ def build_recommendations(
 
 @st.cache_data(ttl=600, show_spinner=False)
 def get_last_prices(tickers: tuple[str, ...]) -> dict[str, float]:
-    """Batch last close prices — per-ticker history to avoid column mixups."""
+    """Batch last close prices from DuckDB."""
     out: dict[str, float] = {}
     if not tickers:
         return out
-    # Prefer one-shot batch, then validate each ticker individually on miss.
-    try:
-        raw = yf.download(list(tickers), period="10d", progress=False,
-                          auto_adjust=True, threads=True)
-        close = _extract_close_frame(raw, tickers)
-        for t in close.columns:
-            series = pd.to_numeric(close[t], errors="coerce").dropna()
+    for t in tickers:
+        try:
+            hist = _db_hist(t, days=15)
+            if hist is None or hist.empty or "Close" not in hist.columns:
+                continue
+            series = pd.to_numeric(hist["Close"], errors="coerce").dropna()
             if len(series):
                 px = float(series.iloc[-1])
-                if px > 0.05:  # reject absurd penny mis-parses
-                    out[str(t)] = px
-    except Exception:  # noqa: BLE001
-        pass
-    missing = [t for t in tickers if t not in out]
-    for t in missing:
-        try:
-            h = yf.Ticker(t).history(period="10d", auto_adjust=True)
-            if h is not None and not h.empty and "Close" in h.columns:
-                px = float(h["Close"].dropna().iloc[-1])
                 if px > 0.05:
-                    out[t] = px
+                    out[str(t)] = px
         except Exception:  # noqa: BLE001
             continue
     return out
@@ -5149,7 +5144,7 @@ with tab_mkt:
             for r in dossier.get("risk_events") or []:
                 st.markdown(f"- {r}")
 
-    if st.button("Lancer un Red Teaming IA (Bull vs Bear)", key=f"red_team_{selected}"):
+    if st.button("Lancer un Red Teaming IA (Bull vs Bear vs Devil's Advocate)", key=f"red_team_{selected}"):
         context_blob = (
             f"Ticker: {selected}\n"
             f"Name: {dossier.get('name')}\n"
@@ -5167,10 +5162,12 @@ with tab_mkt:
                 debate = {
                     "bull": "Indisponible",
                     "bear": f"Indisponible ({exc})",
+                    "devil_advocate": "Indisponible",
                     "judge": "Indisponible",
                 }
         st.info(f"🐂 **Bull Agent**\n\n{debate.get('bull') or 'n/a'}")
         st.warning(f"🐻 **Bear Agent**\n\n{debate.get('bear') or 'n/a'}")
+        st.markdown(f"😈 **Devil's Advocate PEA**\n\n{debate.get('devil_advocate') or 'n/a'}")
         st.error(f"⚖️ **Judge Agent**\n\n{debate.get('judge') or 'n/a'}")
 
     ind = get_indicators(selected)
@@ -6350,6 +6347,40 @@ cash/positions. Les ordres restent Discord + scheduler.
                 st.caption(str(path))
 
     # --- ML Data Export -----------------------------------------------------
+    st.markdown("#### 🧠 Machine Learning")
+    try:
+        from ml_trainer import load_metrics
+
+        _ml_metrics = load_metrics()
+    except Exception:  # noqa: BLE001
+        _ml_metrics = {}
+    if _ml_metrics:
+        _ml_c1, _ml_c2, _ml_c3 = st.columns(3)
+        with _ml_c1:
+            st.metric(
+                "Précision historique (signaux > 75)",
+                f"{_ml_metrics.get('accuracy_signals_above_75_pct', 'n/a')}%"
+                if _ml_metrics.get("accuracy_signals_above_75_pct") is not None
+                else "n/a",
+                help="Accuracy on test set where model probability ≥ 0.75.",
+            )
+        with _ml_c2:
+            st.metric(
+                "Brier Score",
+                _ml_metrics.get("brier_score", "n/a"),
+                help="Lower is better (0 = perfect calibration).",
+            )
+        with _ml_c3:
+            st.metric(
+                "Accuracy globale",
+                f"{_ml_metrics.get('accuracy_pct', 'n/a')}%",
+            )
+    else:
+        st.caption(
+            "Modèle XGBoost non entraîné. Lancez "
+            "`python 02_quant_engine/ml_trainer.py` après export du dataset."
+        )
+
     st.markdown("#### 🧠 Machine Learning Data Export")
     st.markdown(
         "<div class='info-text'>Exportez les données brutes pour entraîner un modèle "

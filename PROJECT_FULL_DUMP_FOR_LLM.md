@@ -1,6 +1,6 @@
 # PEA Pollux — Full Project Dump for LLM
 
-> **PEA Pollux** · Generated `2026-07-29 10:04 UTC` · Root `C:\Users\PolluxGronier\Downloads\pea_sniper_terminal`
+> **PEA Pollux** · Generated `2026-07-29 12:03 UTC` · Root `C:\Users\PolluxGronier\Downloads\pea_sniper_terminal`
 
 One-shot context for external LLM agents. Includes source, configs, and docs.
 Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
@@ -48,14 +48,14 @@ Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
 - `main_scheduler.py`
 
 ---
-## File index (77 files)
+## File index (79 files)
 ### `(root)/`
 - `.gitignore` (42 lines)
 - `docker-compose.yml` (71 lines)
 - `Dockerfile` (30 lines)
 - `main_scheduler.py` (783 lines) ⭐
-- `README.md` (733 lines) ⭐
-- `requirements.txt` (37 lines)
+- `README.md` (734 lines) ⭐
+- `requirements.txt` (38 lines)
 - `run_dashboard.ps1` (15 lines)
 - `run_discord.py` (100 lines)
 - `seed_account.py` (129 lines)
@@ -91,6 +91,7 @@ Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
 
 ### `01_memory_core/`
 - `01_memory_core/__init__.py` (0 lines)
+- `01_memory_core/config_validator.py` (96 lines)
 - `01_memory_core/data_models.py` (161 lines) ⭐
 - `01_memory_core/duckdb_manager.py` (207 lines) ⭐
 - `01_memory_core/env_loader.py` (34 lines)
@@ -100,36 +101,37 @@ Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
 ### `02_quant_engine/`
 - `02_quant_engine/__init__.py` (0 lines)
 - `02_quant_engine/ml_feature_store.py` (290 lines)
+- `02_quant_engine/ml_trainer.py` (167 lines)
 - `02_quant_engine/quantitative_math.py` (104 lines) ⭐
-- `02_quant_engine/smart_dca_engine.py` (223 lines)
+- `02_quant_engine/smart_dca_engine.py` (216 lines)
 - `02_quant_engine/stochastic_models.py` (87 lines) ⭐
-- `02_quant_engine/technical_scorer.py` (616 lines) ⭐
-- `02_quant_engine/walk_forward_backtester.py` (220 lines)
+- `02_quant_engine/technical_scorer.py` (632 lines) ⭐
+- `02_quant_engine/walk_forward_backtester.py` (277 lines)
 
 ### `03_risk_portfolio/`
 - `03_risk_portfolio/__init__.py` (0 lines)
-- `03_risk_portfolio/correlation_firewall.py` (291 lines)
-- `03_risk_portfolio/drawdown_breaker.py` (90 lines)
+- `03_risk_portfolio/correlation_firewall.py` (290 lines)
+- `03_risk_portfolio/drawdown_breaker.py` (83 lines)
 - `03_risk_portfolio/equity_metrics.py` (143 lines)
 - `03_risk_portfolio/monthly_rebalancer.py` (232 lines)
-- `03_risk_portfolio/pea_position_sizer.py` (262 lines) ⭐
-- `03_risk_portfolio/stress_tester.py` (130 lines) ⭐
+- `03_risk_portfolio/pea_position_sizer.py` (253 lines) ⭐
+- `03_risk_portfolio/stress_tester.py` (145 lines) ⭐
 
 ### `04_orchestrator_ai/`
 - `04_orchestrator_ai/__init__.py` (0 lines)
 - `04_orchestrator_ai/earnings_blackout.py` (92 lines)
 - `04_orchestrator_ai/macro_veto.py` (125 lines)
 - `04_orchestrator_ai/news_sentiment_llm.py` (144 lines)
-- `04_orchestrator_ai/red_team_agent.py` (78 lines) ⭐
+- `04_orchestrator_ai/red_team_agent.py` (98 lines) ⭐
 - `04_orchestrator_ai/revocation_engine.py` (135 lines)
-- `04_orchestrator_ai/signal_priority_cascade.py` (347 lines) ⭐
+- `04_orchestrator_ai/signal_priority_cascade.py` (344 lines) ⭐
 - `04_orchestrator_ai/weekly_historian.py` (226 lines)
 
 ### `05_interfaces/`
 - `05_interfaces/__init__.py` (0 lines)
 - `05_interfaces/discord_copilot.py` (384 lines)
 - `05_interfaces/llm_explainer.py` (272 lines)
-- `05_interfaces/terminal_dashboard.py` (6404 lines) ⭐
+- `05_interfaces/terminal_dashboard.py` (6435 lines) ⭐
 - `05_interfaces/trade_cards.py` (166 lines)
 
 ### `05_interfaces/components/`
@@ -3246,6 +3248,106 @@ class SymbolMapper:
 
 ```
 
+## FILE: 01_memory_core/config_validator.py (96 lines)
+```python
+"""Strict Pydantic validation for ``risk_params.yaml``.
+
+Every key in the YAML must be declared here. Unknown keys raise on load so
+config/code drift cannot hide silently.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import yaml
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
+
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_DEFAULT_RISK_PATH = _PROJECT_ROOT / "config" / "risk_params.yaml"
+
+
+class RiskParamsConfig(BaseModel):
+    """Institutional risk parameters — single source of truth."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    # Position sizing
+    KELLY_FRACTION: float = Field(0.5, gt=0, le=1)
+    MAX_SINGLE_POSITION_PCT: float = Field(0.15, gt=0, le=1)
+    MAX_SECTOR_WEIGHT_PCT: float = Field(0.25, gt=0, le=1)
+    MAX_ALLOCATION_PER_DAY_PCT: float = Field(0.03, gt=0, le=1)
+
+    # Circuit breakers
+    DAILY_MAX_LOSS_PCT: float = Field(-0.005, lt=0)
+    WEEKLY_MAX_LOSS_PCT: float = Field(-0.02, lt=0)
+    MONTHLY_MAX_LOSS_PCT: float = Field(-0.05, lt=0)
+
+    # Correlation
+    MAX_CORRELATION_TO_PORTFOLIO: float = Field(0.70, gt=0, le=1)
+    MAX_CORRELATION_SAME_SECTOR: float = Field(0.80, gt=0, le=1)
+    CORRELATION_LOOKBACK_DAYS: int = Field(60, ge=10, le=500)
+
+    # Signals
+    CONVICTION_EMIT_FLOOR: float = Field(65.0, ge=0, le=100)
+    SIGNAL_SELL_THRESHOLD: float = Field(35.0, ge=0, le=100)
+    SIGNAL_VALIDITY_HOURS: int = Field(12, ge=1, le=168)
+    MACRO_VETO_DAYS_BEFORE: int = Field(3, ge=0, le=30)
+    EARNINGS_BLACKOUT_DAYS: int = Field(2, ge=0, le=30)
+    RSI_OVERSOLD_THRESHOLD: float = Field(30.0, gt=0, lt=100)
+    MIN_LIQUIDITY_ADV: float = Field(50_000, ge=0)
+    MAX_POSITIONS_TOTAL: int = Field(12, ge=1, le=100)
+
+    # Core / satellite
+    CORE_TICKER: str = Field("CW8.PA", min_length=1)
+    MAX_IDLE_CASH_PCT: float = Field(0.02, ge=0, le=1)
+    CORE_TARGET_PCT: float = Field(0.70, ge=0, le=1)
+    CORE_CRASH_TARGET_PCT: float = Field(0.75, ge=0, le=1)
+    CORE_DCA_MAX_TRANCHE_PCT: float = Field(0.05, gt=0, le=1)
+    SATELLITE_MAX_BUDGET_PCT: float = Field(0.30, ge=0, le=1)
+
+    # Volatility / VIX
+    VOLATILITY_REFERENCE: float = Field(0.20, gt=0)
+    VOLATILITY_MAX_FACTOR: float = Field(1.5, gt=0)
+    VIX_PANIC_THRESHOLD: float = Field(30.0, gt=0)
+
+    # Rebalancing / exits
+    REBALANCE_PROFIT_SHAVE_PCT: float = Field(0.20, gt=0, le=1)
+    REBALANCE_PROFIT_TRIGGER_PCT: float = Field(20.0, gt=0)
+    REBALANCE_ATR_STOP_MULT: float = Field(2.5, gt=0)
+
+
+def _resolve_risk_path(config_path: str | Path | None) -> Path:
+    if config_path is None:
+        return _DEFAULT_RISK_PATH
+    p = Path(config_path)
+    if p.is_file():
+        return p
+    return p / "risk_params.yaml"
+
+
+def load_risk_config(config_path: str | Path | None = None) -> RiskParamsConfig:
+    """Load and validate ``risk_params.yaml``. Crash on malformed config."""
+    path = _resolve_risk_path(config_path)
+    if not path.exists():
+        raise FileNotFoundError(f"risk_params.yaml not found: {path}")
+    with open(path, "r", encoding="utf-8") as fh:
+        raw = yaml.safe_load(fh) or {}
+    try:
+        return RiskParamsConfig.model_validate(raw)
+    except ValidationError as exc:
+        raise ValueError(
+            f"Invalid risk_params.yaml at {path}:\n{exc}"
+        ) from exc
+
+
+# Module-level singleton — validated once at import for fast access.
+try:
+    RISK: RiskParamsConfig = load_risk_config()
+except (FileNotFoundError, ValueError):
+    RISK = None  # type: ignore[assignment]
+```
+
 ## FILE: 01_memory_core/data_models.py (161 lines)
 ```python
 """Strict data contracts for PEA Pollux.
@@ -4827,6 +4929,177 @@ if __name__ == "__main__":
     print(f"Wrote {p}")
 ```
 
+## FILE: 02_quant_engine/ml_trainer.py (167 lines)
+```python
+"""XGBoost trainer for forward-return prediction (Phase 44).
+
+Reads ``database/ml_training_dataset.csv``, trains a classifier for
+``label_fwd_gt_2pct``, and saves the model to ``database/xgboost_model.json``.
+
+Usage::
+
+    python 02_quant_engine/ml_trainer.py
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import sys
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+
+_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_ROOT / "02_quant_engine"))
+
+logger = logging.getLogger(__name__)
+
+_DATASET = _ROOT / "database" / "ml_training_dataset.csv"
+_MODEL_PATH = _ROOT / "database" / "xgboost_model.json"
+_METRICS_PATH = _ROOT / "database" / "ml_model_metrics.json"
+
+FEATURE_COLS = [
+    "rsi14",
+    "zscore_50",
+    "vol_20d_ann",
+    "insider_net_score",
+    "finnhub_roe",
+    "finnhub_pe",
+    "news_sentiment",
+]
+TARGET_COL = "label_fwd_gt_2pct"
+
+
+def _load_dataset(path: Path | None = None) -> pd.DataFrame:
+    p = path or _DATASET
+    if not p.exists():
+        raise FileNotFoundError(f"Training dataset not found: {p}")
+    df = pd.read_csv(p)
+    if df.empty:
+        raise ValueError("Training dataset is empty.")
+    return df
+
+
+def train_model(
+    dataset_path: Path | None = None,
+    model_path: Path | None = None,
+) -> dict:
+    """Train XGBoost classifier and persist model + metrics."""
+    try:
+        import xgboost as xgb
+    except ImportError as exc:
+        raise ImportError(
+            "xgboost is required for ML training. pip install xgboost"
+        ) from exc
+
+    df = _load_dataset(dataset_path)
+    for col in FEATURE_COLS + [TARGET_COL]:
+        if col not in df.columns:
+            raise ValueError(f"Missing column in dataset: {col}")
+
+    work = df.dropna(subset=[TARGET_COL]).copy()
+    for col in FEATURE_COLS:
+        work[col] = pd.to_numeric(work[col], errors="coerce")
+    work = work.dropna(subset=FEATURE_COLS)
+    if len(work) < 30:
+        raise ValueError(f"Insufficient labeled rows ({len(work)} < 30).")
+
+    y = work[TARGET_COL].astype(int).values
+    X = work[FEATURE_COLS].values.astype(float)
+
+    split = int(len(work) * 0.8)
+    X_train, X_test = X[:split], X[split:]
+    y_train, y_test = y[:split], y[split:]
+
+    model = xgb.XGBClassifier(
+        n_estimators=80,
+        max_depth=4,
+        learning_rate=0.08,
+        subsample=0.8,
+        colsample_bytree=0.8,
+        eval_metric="logloss",
+        random_state=42,
+    )
+    model.fit(X_train, y_train)
+
+    out_model = model_path or _MODEL_PATH
+    out_model.parent.mkdir(parents=True, exist_ok=True)
+    model.save_model(str(out_model))
+
+    metrics = evaluate_model(model, X_test, y_test, work.iloc[split:])
+    metrics["n_train"] = int(len(X_train))
+    metrics["n_test"] = int(len(X_test))
+    metrics["feature_cols"] = FEATURE_COLS
+
+    _METRICS_PATH.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+    logger.info("Model saved to %s (accuracy=%.1f%%)", out_model, metrics.get("accuracy_pct", 0))
+    return metrics
+
+
+def evaluate_model(
+    model,
+    X_test: np.ndarray,
+    y_test: np.ndarray,
+    test_df: pd.DataFrame | None = None,
+) -> dict:
+    """Return accuracy, Brier score, and high-conviction accuracy."""
+    preds = model.predict(X_test)
+    probs = model.predict_proba(X_test)[:, 1]
+    accuracy = float((preds == y_test).mean()) if len(y_test) else 0.0
+    brier = float(np.mean((probs - y_test) ** 2)) if len(y_test) else 1.0
+
+    # Proxy "signals > 75": model probability >= 0.75
+    high_mask = probs >= 0.75
+    if high_mask.any():
+        acc_high = float((preds[high_mask] == y_test[high_mask]).mean())
+        n_high = int(high_mask.sum())
+    else:
+        acc_high = None
+        n_high = 0
+
+    return {
+        "accuracy_pct": round(accuracy * 100, 1),
+        "brier_score": round(brier, 4),
+        "accuracy_signals_above_75_pct": round(acc_high * 100, 1) if acc_high is not None else None,
+        "n_signals_above_75": n_high,
+    }
+
+
+def load_metrics() -> dict:
+    """Load persisted metrics JSON (empty dict if missing)."""
+    if not _METRICS_PATH.exists():
+        return {}
+    try:
+        return json.loads(_METRICS_PATH.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def predict_probability(features: dict) -> float | None:
+    """Return ML probability for a single feature dict, or None if no model."""
+    if not _MODEL_PATH.exists():
+        return None
+    try:
+        import xgboost as xgb
+
+        model = xgb.XGBClassifier()
+        model.load_model(str(_MODEL_PATH))
+        row = [float(features.get(c, 0.0) or 0.0) for c in FEATURE_COLS]
+        prob = float(model.predict_proba(np.array([row]))[0, 1])
+        return prob if np.isfinite(prob) else None
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("ML predict failed: %s", exc)
+        return None
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    m = train_model()
+    print(json.dumps(m, indent=2))
+```
+
 ## FILE: 02_quant_engine/quantitative_math.py (104 lines)
 ```python
 """Academic quantitative-math utilities for portfolio analytics.
@@ -4934,7 +5207,7 @@ def calculate_annualized_volatility(returns: pd.Series, periods_per_year: int = 
     return float(r.std(ddof=0) * np.sqrt(float(periods_per_year)))
 ```
 
-## FILE: 02_quant_engine/smart_dca_engine.py (223 lines)
+## FILE: 02_quant_engine/smart_dca_engine.py (216 lines)
 ```python
 """Smart DCA core engine for PEA Pollux (Phase 10).
 
@@ -4966,6 +5239,7 @@ _CORE_DIR = os.path.join(
 sys.path.insert(0, _CORE_DIR)
 
 from data_models import Signal, SignalStatus, SignalType  # noqa: E402
+from config_validator import load_risk_config  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -4985,13 +5259,13 @@ class SmartDcaCore:
             config_path: Path to the ``config`` directory (or a risk_params
                 YAML file). Defaults to ``<project_root>/config``.
         """
-        risk = self._load_risk_params(config_path)
-        self.core_ticker: str = str(risk.get("CORE_TICKER", "CW8.PA"))
-        self.target_pct: float = float(risk.get("CORE_TARGET_PCT", 0.70))
-        self.crash_target_pct: float = float(risk.get("CORE_CRASH_TARGET_PCT", 0.75))
-        self.max_tranche_pct: float = float(risk.get("CORE_DCA_MAX_TRANCHE_PCT", 0.05))
+        risk = load_risk_config(config_path)
+        self.core_ticker: str = str(risk.CORE_TICKER)
+        self.target_pct: float = float(risk.CORE_TARGET_PCT)
+        self.crash_target_pct: float = float(risk.CORE_CRASH_TARGET_PCT)
+        self.max_tranche_pct: float = float(risk.CORE_DCA_MAX_TRANCHE_PCT)
         # Phase 40: idle cash above this fraction of equity is swept into Core.
-        self.max_idle_cash_pct: float = float(risk.get("MAX_IDLE_CASH_PCT", 0.02))
+        self.max_idle_cash_pct: float = float(risk.MAX_IDLE_CASH_PCT)
         logger.debug(
             "SmartDcaCore loaded: %s target=%.2f crash=%.2f tranche<=%.2f idle<=%.2f",
             self.core_ticker,
@@ -5002,17 +5276,9 @@ class SmartDcaCore:
         )
 
     @staticmethod
-    def _load_risk_params(config_path: str | Path | None) -> dict:
-        """Resolve and load the risk_params YAML into a dict."""
-        if config_path is None:
-            path = _DEFAULT_CONFIG_DIR / "risk_params.yaml"
-        else:
-            p = Path(config_path)
-            path = p if p.is_file() else p / "risk_params.yaml"
-        if not path.exists():
-            raise FileNotFoundError(f"Config file not found: {path}")
-        with open(path, "r", encoding="utf-8") as fh:
-            return yaml.safe_load(fh)
+    def _load_risk_params(config_path: str | Path | None):
+        """Resolve and load validated risk config."""
+        return load_risk_config(config_path)
 
     def _neutral_signal(self, reason: str) -> Signal:
         """Return a do-nothing (score 0, qty 0) core signal with a reason."""
@@ -5251,7 +5517,7 @@ def run_correlated_monte_carlo(
     )
 ```
 
-## FILE: 02_quant_engine/technical_scorer.py (616 lines)
+## FILE: 02_quant_engine/technical_scorer.py (632 lines)
 ```python
 """Quantitative signal engine for PEA Pollux.
 
@@ -5297,6 +5563,7 @@ sys.path.insert(0, _CORE_DIR)
 
 from data_models import Signal, SignalStatus, SignalType  # noqa: E402
 from sqlite_portfolio import PortfolioDB  # noqa: E402
+from config_validator import load_risk_config  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -5310,16 +5577,11 @@ _DEFAULT_RSI_OVERSOLD = 30.0
 
 
 def _load_conviction_floor() -> float:
-    """Read CONVICTION_EMIT_FLOOR from risk_params.yaml (default 65)."""
+    """Read CONVICTION_EMIT_FLOOR from validated risk_params.yaml."""
     try:
-        path = _PROJECT_ROOT / "config" / "risk_params.yaml"
-        if path.exists():
-            with open(path, "r", encoding="utf-8") as fh:
-                cfg = yaml.safe_load(fh) or {}
-            return float(cfg.get("CONVICTION_EMIT_FLOOR", 65.0))
+        return float(load_risk_config().CONVICTION_EMIT_FLOOR)
     except Exception:  # noqa: BLE001
-        pass
-    return 65.0
+        return 65.0
 
 
 _CONVICTION_EMIT_FLOOR = _load_conviction_floor()
@@ -5381,14 +5643,8 @@ class SignalGenerator:
                 institutional axes (lazy-created on first need if None).
         """
         path = Path(config_path) if config_path else _DEFAULT_CONFIG_DIR
-        risk_file = path if path.is_file() else path / "risk_params.yaml"
-        risk: dict = {}
-        if risk_file.exists():
-            with open(risk_file, "r", encoding="utf-8") as fh:
-                risk = yaml.safe_load(fh) or {}
-        self.rsi_oversold: float = float(
-            risk.get("RSI_OVERSOLD_THRESHOLD", _DEFAULT_RSI_OVERSOLD)
-        )
+        risk = load_risk_config(path)
+        self.rsi_oversold: float = float(risk.RSI_OVERSOLD_THRESHOLD)
         self._macro = macro_sensor
 
     @staticmethod
@@ -5450,6 +5706,7 @@ class SignalGenerator:
         out["RSI_14"] = out.ta.rsi(close=close, length=14)
         out.ta.macd(close=close, append=True)
         out.ta.bbands(close=close, append=True)
+        out.ta.atr(high=out["High"], low=out["Low"], close=close, length=14, append=True)
         out["Z_SCORE_50"] = calculate_z_score(close)
         return out
 
@@ -5515,6 +5772,7 @@ class SignalGenerator:
                 "insiders": 0.0,
                 "news": 0.0,
                 "polymarket": 0.0,
+                "ml": 50.0,
             },
         }
         if history is None or history.empty or len(history) < _MIN_ROWS:
@@ -5706,15 +5964,38 @@ class SignalGenerator:
             factors.append(f"NEWS-15 Bearish sentiment ({news_score:.0f})")
         news_component = max(0.0, min(100.0, 50.0 + news_mod))
 
-        # Polymarket removed from per-ticker scoring (Phase 42): almost always
-        # returns the deterministic stub. Polymarket is now macro-only.
-        poly_component = 50.0  # neutral placeholder for backward-compat output
+        # ML modifier (Phase 44): XGBoost probability as 5th context factor.
+        ml_component = 50.0
+        ml_prob: float | None = None
+        try:
+            from ml_feature_store import build_ml_feature_row  # noqa: WPS433
+            from ml_trainer import predict_probability  # noqa: WPS433
 
-        # Context model combines fundamentals + sentiment + insiders.
+            feat_row = build_ml_feature_row(
+                ticker,
+                close=enriched["Close"],
+                reason="",
+                pdb=None,
+            )
+            ml_prob = predict_probability(feat_row)
+            if ml_prob is not None:
+                ml_component = float(ml_prob) * 100.0
+                if ml_prob >= 0.65:
+                    factors.append(f"ML+5 prob={ml_prob:.2f}")
+                elif ml_prob <= 0.35:
+                    factors.append(f"ML-5 prob={ml_prob:.2f}")
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("ML modifier skipped for %s: %s", ticker, exc)
+
+        # Polymarket removed from per-ticker scoring (Phase 42): macro-only.
+        poly_component = 50.0
+
+        # Context model: fundamentals + insiders + news + ML ensemble.
         context_score = (
-            0.50 * fundamentals_score
-            + 0.25 * insider_score
-            + 0.25 * news_component
+            0.40 * fundamentals_score
+            + 0.20 * insider_score
+            + 0.20 * news_component
+            + 0.20 * ml_component
         )
         context_score = max(0.0, min(100.0, context_score))
 
@@ -5752,6 +6033,7 @@ class SignalGenerator:
                 "insiders": float(insider_score),
                 "news": float(news_component),
                 "polymarket": float(poly_component),
+                "ml": float(ml_component),
             },
         }
 
@@ -5871,7 +6153,7 @@ if __name__ == "__main__":
         print(f"  reason: {s.reason}")
 ```
 
-## FILE: 02_quant_engine/walk_forward_backtester.py (220 lines)
+## FILE: 02_quant_engine/walk_forward_backtester.py (277 lines)
 ```python
 """Walk-forward backtester scaffold (Phase 20 companion).
 
@@ -5908,6 +6190,7 @@ for _sub in ("00_data_sensors", "01_memory_core", "02_quant_engine"):
 
 from duckdb_manager import TimeSeriesDB  # noqa: E402
 from technical_scorer import SignalGenerator, _CONVICTION_EMIT_FLOOR  # noqa: E402
+from config_validator import load_risk_config  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -5943,6 +6226,28 @@ def _load_universe() -> list[str]:
     return ordered
 
 
+def _hist_asof(hist: pd.DataFrame, day_ts: pd.Timestamp) -> pd.DataFrame:
+    if hist is None or hist.empty:
+        return pd.DataFrame()
+    if "Date" in hist.columns:
+        return hist[pd.to_datetime(hist["Date"]) <= day_ts]
+    return hist[pd.to_datetime(hist.index) <= day_ts]
+
+
+def _latest_atr14(gen: SignalGenerator, hist: pd.DataFrame) -> float | None:
+    if hist is None or len(hist) < 20:
+        return None
+    try:
+        enriched = gen.calculate_indicators(hist)
+        atr_col = next((c for c in enriched.columns if "ATR" in str(c).upper()), None)
+        if not atr_col:
+            return None
+        val = float(enriched[atr_col].iloc[-1])
+        return val if val > 0 else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def run_walk_forward(
     start: str = "2020-01-01",
     end: str | None = None,
@@ -5957,6 +6262,10 @@ def run_walk_forward(
     """
     db = TimeSeriesDB()
     gen = SignalGenerator(macro_sensor=None)  # price axes only (offline-friendly)
+    risk = load_risk_config()
+    atr_mult = float(risk.REBALANCE_ATR_STOP_MULT)
+    profit_trigger = float(risk.REBALANCE_PROFIT_TRIGGER_PCT)
+    profit_shave = float(risk.REBALANCE_PROFIT_SHAVE_PCT)
     tickers = _load_universe()[:max_names]
     end_ts = pd.Timestamp(end or datetime.now(timezone.utc).date())
     start_ts = pd.Timestamp(start)
@@ -6015,7 +6324,7 @@ def run_walk_forward(
                     continue
                 cost = qty * open_px
                 cash -= cost
-                book[ticker] = {"qty": qty, "cost": cost, "px": open_px}
+                book[ticker] = {"qty": qty, "cost": cost, "px": open_px, "entry_px": open_px}
             except Exception:  # noqa: BLE001
                 pass
         pending_entries = []
@@ -6040,6 +6349,36 @@ def run_walk_forward(
                     pending_entries.append((ticker, float(conv.get("total") or 0)))
                 except Exception as exc:  # noqa: BLE001
                     logger.debug("WF skip %s @ %s: %s", ticker, day_ts.date(), exc)
+
+        # Simulate exits: ATR stop-loss and profit shave (Phase 44).
+        for ticker in list(book.keys()):
+            pos = book[ticker]
+            try:
+                hist = db.get_historical_prices(ticker, days=80)
+                sub = _hist_asof(hist, day_ts)
+                if sub.empty:
+                    continue
+                last_px = float(sub["Close"].iloc[-1])
+                entry_px = float(pos.get("entry_px") or pos.get("px") or 0)
+                if entry_px <= 0:
+                    continue
+                pnl_pct = (last_px / entry_px - 1.0) * 100.0
+
+                atr14 = _latest_atr14(gen, sub)
+                if atr14 is not None and last_px < entry_px - atr_mult * atr14:
+                    cash += pos["qty"] * last_px
+                    del book[ticker]
+                    continue
+
+                if pnl_pct >= profit_trigger:
+                    sell_qty = max(1, int(pos["qty"] * profit_shave))
+                    sell_qty = min(sell_qty, pos["qty"])
+                    cash += sell_qty * last_px
+                    pos["qty"] -= sell_qty
+                    if pos["qty"] <= 0:
+                        del book[ticker]
+            except Exception:  # noqa: BLE001
+                pass
 
         mtm = cash
         for ticker, pos in list(book.items()):
@@ -6100,7 +6439,7 @@ if __name__ == "__main__":
 
 ```
 
-## FILE: 03_risk_portfolio/correlation_firewall.py (291 lines)
+## FILE: 03_risk_portfolio/correlation_firewall.py (290 lines)
 ```python
 """Correlation Firewall for PEA Pollux.
 
@@ -6127,6 +6466,7 @@ _CORE_DIR = os.path.join(
 sys.path.insert(0, _CORE_DIR)
 
 from data_models import PortfolioState  # noqa: E402
+from config_validator import load_risk_config  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -6154,16 +6494,14 @@ class CorrelationFirewall:
                 YAML file). Defaults to ``<project_root>/config``.
         """
         config_dir = self._resolve_config_dir(config_path)
-        risk = self._load_yaml(config_dir / "risk_params.yaml")
+        risk = load_risk_config(config_dir)
         universe = self._load_yaml(config_dir / "pea_universe.yaml")
 
-        self.max_correlation: float = float(risk["MAX_CORRELATION_TO_PORTFOLIO"])
-        self.max_sector_weight: float = float(risk["MAX_SECTOR_WEIGHT_PCT"])
-        self.max_single_position: float = float(risk["MAX_SINGLE_POSITION_PCT"])
-        self.vix_panic_threshold: float = float(risk.get("VIX_PANIC_THRESHOLD", 30.0))
-        self.corr_lookback_days: int = int(
-            risk.get("CORRELATION_LOOKBACK_DAYS", _CORR_WINDOW_DEFAULT)
-        )
+        self.max_correlation: float = float(risk.MAX_CORRELATION_TO_PORTFOLIO)
+        self.max_sector_weight: float = float(risk.MAX_SECTOR_WEIGHT_PCT)
+        self.max_single_position: float = float(risk.MAX_SINGLE_POSITION_PCT)
+        self.vix_panic_threshold: float = float(risk.VIX_PANIC_THRESHOLD)
+        self.corr_lookback_days: int = int(risk.CORRELATION_LOOKBACK_DAYS)
         self.ticker_sectors: Dict[str, str] = self._build_sector_map(universe)
 
         logger.debug(
@@ -6395,7 +6733,7 @@ if __name__ == "__main__":
     print(f"AIR.PA correlation check -> {ok}: {msg}")
 ```
 
-## FILE: 03_risk_portfolio/drawdown_breaker.py (90 lines)
+## FILE: 03_risk_portfolio/drawdown_breaker.py (83 lines)
 ```python
 """Drawdown circuit breaker — enforces DAILY/WEEKLY/MONTHLY_MAX_LOSS_PCT.
 
@@ -6411,12 +6749,11 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-import yaml
-
 _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT / "01_memory_core"))
 
 from sqlite_portfolio import PortfolioDB  # noqa: E402
+from config_validator import load_risk_config  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -6427,16 +6764,10 @@ class DrawdownBreaker:
     """Hard veto when rolling PnL breaches configured loss limits."""
 
     def __init__(self, config_dir: Path | str | None = None) -> None:
-        cfg_path = Path(config_dir) if config_dir else _DEFAULT_CONFIG
-        risk_file = cfg_path / "risk_params.yaml"
-        risk: dict = {}
-        if risk_file.exists():
-            with open(risk_file, "r", encoding="utf-8") as fh:
-                risk = yaml.safe_load(fh) or {}
-
-        self.daily_limit = float(risk.get("DAILY_MAX_LOSS_PCT", -0.005))
-        self.weekly_limit = float(risk.get("WEEKLY_MAX_LOSS_PCT", -0.02))
-        self.monthly_limit = float(risk.get("MONTHLY_MAX_LOSS_PCT", -0.05))
+        risk = load_risk_config(config_dir)
+        self.daily_limit = float(risk.DAILY_MAX_LOSS_PCT)
+        self.weekly_limit = float(risk.WEEKLY_MAX_LOSS_PCT)
+        self.monthly_limit = float(risk.MONTHLY_MAX_LOSS_PCT)
 
     def check(self, portfolio_db: PortfolioDB | None = None) -> tuple[bool, str]:
         """Return (is_breached, reason). True means VETO all new buys."""
@@ -6872,7 +7203,7 @@ class PortfolioRebalancer:
         return signals
 ```
 
-## FILE: 03_risk_portfolio/pea_position_sizer.py (262 lines)
+## FILE: 03_risk_portfolio/pea_position_sizer.py (253 lines)
 ```python
 """PEA position sizer for PEA Pollux.
 
@@ -6898,6 +7229,7 @@ _CORE_DIR = os.path.join(
 sys.path.insert(0, _CORE_DIR)
 
 from data_models import PortfolioState, Signal  # noqa: E402
+from config_validator import load_risk_config  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -6920,16 +7252,14 @@ class PeaSizer:
             config_path: Path to the ``config`` directory (or a risk_params
                 YAML file). Defaults to ``<project_root>/config``.
         """
-        risk = self._load_risk_params(config_path)
-        self.kelly_fraction: float = float(risk["KELLY_FRACTION"])
-        self.max_single_position: float = float(risk["MAX_SINGLE_POSITION_PCT"])
+        risk = load_risk_config(config_path)
+        self.kelly_fraction: float = float(risk.KELLY_FRACTION)
+        self.max_single_position: float = float(risk.MAX_SINGLE_POSITION_PCT)
         # Core/Satellite + volatility-parity parameters (Phase 10).
-        self.core_ticker: str = str(risk.get("CORE_TICKER", "CW8.PA"))
-        self.satellite_max_budget: float = float(
-            risk.get("SATELLITE_MAX_BUDGET_PCT", 0.30)
-        )
-        self.vol_reference: float = float(risk.get("VOLATILITY_REFERENCE", 0.20))
-        self.vol_max_factor: float = float(risk.get("VOLATILITY_MAX_FACTOR", 1.5))
+        self.core_ticker: str = str(risk.CORE_TICKER)
+        self.satellite_max_budget: float = float(risk.SATELLITE_MAX_BUDGET_PCT)
+        self.vol_reference: float = float(risk.VOLATILITY_REFERENCE)
+        self.vol_max_factor: float = float(risk.VOLATILITY_MAX_FACTOR)
         logger.debug(
             "Sizer loaded: kelly=%.2f max_single=%.2f sat_budget=%.2f vol_ref=%.2f",
             self.kelly_fraction,
@@ -6939,17 +7269,9 @@ class PeaSizer:
         )
 
     @staticmethod
-    def _load_risk_params(config_path: str | Path | None) -> dict:
-        """Resolve and load the risk_params YAML into a dict."""
-        if config_path is None:
-            path = _DEFAULT_CONFIG_DIR / "risk_params.yaml"
-        else:
-            p = Path(config_path)
-            path = p if p.is_file() else p / "risk_params.yaml"
-        if not path.exists():
-            raise FileNotFoundError(f"Config file not found: {path}")
-        with open(path, "r", encoding="utf-8") as fh:
-            return yaml.safe_load(fh)
+    def _load_risk_params(config_path: str | Path | None):
+        """Resolve and load validated risk config."""
+        return load_risk_config(config_path)
 
     def _satellite_value(self, portfolio: PortfolioState) -> float:
         """Sum the market value of all non-core (satellite) holdings."""
@@ -7138,23 +7460,26 @@ if __name__ == "__main__":
     print(f"ASML.AS @180 EUR, cash 300 -> {qty3} shares (expected 1)")
 ```
 
-## FILE: 03_risk_portfolio/stress_tester.py (130 lines)
+## FILE: 03_risk_portfolio/stress_tester.py (145 lines)
 ```python
 """Historical stress testing utilities (black swan replay)."""
 
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Iterable
 
 import pandas as pd
-
 
 _SHOCK_WINDOWS = [
     ("Subprime 2008", "2008-09-01", "2008-10-31"),
     ("COVID Crash 2020", "2020-02-20", "2020-03-23"),
     ("Inflation Shock 2022", "2022-01-03", "2022-10-12"),
 ]
+
+# CAC 40 index has history back to 2000 — CW8/EWLD did not exist in 2008.
+_PRIMARY_PROXY = "^FCHI"
+_FALLBACK_PROXIES: Iterable[str] = ("^FCHI", "EWLD.PA", "CW8.PA", "PE500.PA")
+_NO_DATA_MSG = "Pas de données historiques"
 
 
 def _max_drawdown_from_returns(returns: pd.Series) -> float:
@@ -7166,6 +7491,22 @@ def _max_drawdown_from_returns(returns: pd.Series) -> float:
     return float(drawdown.min()) if not drawdown.empty else 0.0
 
 
+def _load_close_series(db_manager, ticker: str, days: int) -> pd.Series | None:
+    try:
+        hist = db_manager.get_historical_prices(ticker, days=days)
+        if hist is None or hist.empty:
+            return None
+        frame = hist[["Date", "Close"]].copy()
+        frame["Date"] = pd.to_datetime(frame["Date"], errors="coerce")
+        frame["Close"] = pd.to_numeric(frame["Close"], errors="coerce")
+        frame = frame.dropna(subset=["Date", "Close"]).sort_values("Date")
+        if frame.empty:
+            return None
+        return frame.set_index("Date")["Close"]
+    except Exception:
+        return None
+
+
 def simulate_historical_shocks(
     portfolio_tickers: list,
     weights: dict,
@@ -7173,8 +7514,8 @@ def simulate_historical_shocks(
 ) -> pd.DataFrame:
     """Replay historical windows and estimate weighted portfolio drawdowns.
 
-    If a ticker has no data for a window, a Core ETF proxy is attempted.
-    """
+    Uses ``^FCHI`` (CAC 40) as primary proxy for pre-2010 shocks.
+  """
     if not portfolio_tickers:
         return pd.DataFrame(columns=["Shock", "Start", "End", "Worst PnL %", "Proxy Used"])
 
@@ -7184,28 +7525,23 @@ def simulate_historical_shocks(
         ew = 1.0 / float(len(tickers))
         w = {t: ew for t in tickers}
 
-    # pull broad history once (covers earliest window)
     start_min = min(pd.Timestamp(s) for _, s, _ in _SHOCK_WINDOWS)
     end_max = max(pd.Timestamp(e) for _, _, e in _SHOCK_WINDOWS)
-    days = int((end_max - start_min).days) + 30
+    days = int((end_max - start_min).days) + 60
 
     series_map: dict[str, pd.Series] = {}
     for t in tickers:
-        try:
-            hist = db_manager.get_historical_prices(t, days=days)
-            if hist is None or hist.empty:
-                continue
-            frame = hist[["Date", "Close"]].copy()
-            frame["Date"] = pd.to_datetime(frame["Date"], errors="coerce")
-            frame["Close"] = pd.to_numeric(frame["Close"], errors="coerce")
-            frame = frame.dropna(subset=["Date", "Close"]).sort_values("Date")
-            if frame.empty:
-                continue
-            series_map[t] = frame.set_index("Date")["Close"]
-        except Exception:
-            continue
+        s = _load_close_series(db_manager, t, days)
+        if s is not None:
+            series_map[t] = s
 
-    proxy_pool: Iterable[str] = ("CW8.PA", "EWLD.PA", "PE500.PA")
+    # Pre-load proxy series (CAC 40 first for 2008 coverage).
+    proxy_map: dict[str, pd.Series] = {}
+    for px in _FALLBACK_PROXIES:
+        s = _load_close_series(db_manager, px, days)
+        if s is not None and not s.empty:
+            proxy_map[px] = s
+
     out_rows = []
     for shock_name, start_s, end_s in _SHOCK_WINDOWS:
         start = pd.Timestamp(start_s)
@@ -7216,14 +7552,16 @@ def simulate_historical_shocks(
 
         for t in tickers:
             s = series_map.get(t)
-            if s is None:
-                # Try proxy
-                for px in proxy_pool:
-                    sp = series_map.get(px)
+            if s is None or s[(s.index >= start) & (s.index <= end)].empty:
+                # Prefer CAC 40 for 2008; fall back to other proxies.
+                for px in _FALLBACK_PROXIES:
+                    sp = proxy_map.get(px)
                     if sp is not None:
-                        s = sp
-                        proxy_used = True
-                        break
+                        wdw_test = sp[(sp.index >= start) & (sp.index <= end)]
+                        if wdw_test is not None and len(wdw_test) >= 4:
+                            s = sp
+                            proxy_used = True
+                            break
             if s is None:
                 continue
 
@@ -7242,21 +7580,21 @@ def simulate_historical_shocks(
                     "Shock": shock_name,
                     "Start": start_s,
                     "End": end_s,
-                    "Worst PnL %": None,
-                    "Proxy Used": "n/a",
+                    "Worst PnL %": _NO_DATA_MSG,
+                    "Proxy Used": _PRIMARY_PROXY if shock_name.startswith("Subprime") else "n/a",
                 }
             )
             continue
 
         mat = pd.concat(active_returns, axis=1, join="inner").dropna()
         if mat.empty:
-            worst = None
+            worst = _NO_DATA_MSG
         else:
             ww = pd.Series(active_weights, dtype=float)
             ww = ww / ww.sum() if ww.sum() > 0 else pd.Series([1.0 / len(active_weights)] * len(active_weights))
             pr = mat.to_numpy(dtype=float) @ ww.to_numpy(dtype=float)
             dd = _max_drawdown_from_returns(pd.Series(pr, index=mat.index))
-            worst = dd * 100.0
+            worst = round(dd * 100.0, 2)
 
         out_rows.append(
             {
@@ -7264,7 +7602,7 @@ def simulate_historical_shocks(
                 "Start": start_s,
                 "End": end_s,
                 "Worst PnL %": worst,
-                "Proxy Used": "yes" if proxy_used else "no",
+                "Proxy Used": _PRIMARY_PROXY if proxy_used else "no",
             }
         )
 
@@ -7649,9 +7987,9 @@ if __name__ == "__main__":
     print("Live sentiment (0 if no API key):", result)
 ```
 
-## FILE: 04_orchestrator_ai/red_team_agent.py (78 lines)
+## FILE: 04_orchestrator_ai/red_team_agent.py (98 lines)
 ```python
-"""LLM multi-agent red teaming: bull vs bear vs judge."""
+"""LLM multi-agent red teaming: bull vs bear vs devil's advocate vs judge."""
 
 from __future__ import annotations
 
@@ -7667,13 +8005,14 @@ from llm_explainer import openrouter_chat  # noqa: E402
 
 
 async def run_bull_bear_debate(ticker: str, context_data: str) -> dict:
-    """Run a 3-agent debate with concurrent bull/bear then judge verdict."""
+    """Run a 4-agent debate: Bull, Bear, Devil's Advocate PEA, then Judge."""
     api_key = os.getenv("OPENROUTER_API_KEY")
     model = os.getenv("OPENROUTER_MODEL", "mistralai/mistral-7b-instruct")
     if not api_key:
         return {
             "bull": "OpenRouter indisponible (clé manquante).",
             "bear": "OpenRouter indisponible (clé manquante).",
+            "devil_advocate": "OpenRouter indisponible (clé manquante).",
             "judge": "Impossible d'arbitrer sans LLM.",
         }
 
@@ -7684,6 +8023,14 @@ async def run_bull_bear_debate(ticker: str, context_data: str) -> dict:
     bear_sys = (
         "You are a ruthless BEAR analyst. Attack the stock aggressively, "
         "focus on debt, fragility, momentum breakdowns, and systemic risks."
+    )
+    devil_sys = (
+        "You are the Devil's Advocate PEA — a cynical French retail investor "
+        "specialist. Focus exclusively on: Euronext Paris liquidity (ADV, "
+        "bid-ask spread), risk of delisting or suspension, PEA-eligibility "
+        "removal (titres non éligibles), Bodacc filings, bankruptcy / "
+        "sauvegarde judiciaire risk, and the reality of executing integer "
+        "share orders on illiquid small/mid caps. Be brutal and specific."
     )
     user_prompt = (
         f"Ticker: {ticker}\n\nContext:\n{context_data}\n\n"
@@ -7704,28 +8051,40 @@ async def run_bull_bear_debate(ticker: str, context_data: str) -> dict:
         max_tokens=260,
         temperature=0.4,
     )
-    bull, bear = await asyncio.gather(bull_task, bear_task)
+    devil_task = openrouter_chat(
+        [{"role": "system", "content": devil_sys}, {"role": "user", "content": user_prompt}],
+        api_key=api_key,
+        model=model,
+        max_tokens=280,
+        temperature=0.35,
+    )
+    bull, bear, devil = await asyncio.gather(bull_task, bear_task, devil_task)
     bull = (bull or "Bull argument indisponible.").strip()
     bear = (bear or "Bear argument indisponible.").strip()
+    devil = (devil or "Devil's Advocate indisponible.").strip()
 
     judge_sys = (
-        "You are a cynical Senior Portfolio Manager. Read both sides and issue "
-        "a ruthless final decision in exactly 3 sentences, in French."
+        "You are a cynical Senior Portfolio Manager on a French PEA desk. "
+        "Read Bull, Bear, and Devil's Advocate PEA arguments and issue a "
+        "ruthless final decision in exactly 4 sentences, in French."
     )
     judge_user = (
         f"Ticker: {ticker}\n\nBULL:\n{bull}\n\nBEAR:\n{bear}\n\n"
-        "Return: 1) conviction side, 2) key risk, 3) action bias."
+        f"DEVIL'S ADVOCATE PEA:\n{devil}\n\n"
+        "Return: 1) conviction side, 2) key PEA-specific risk, "
+        "3) liquidity verdict, 4) action bias."
     )
     judge = await openrouter_chat(
         [{"role": "system", "content": judge_sys}, {"role": "user", "content": judge_user}],
         api_key=api_key,
         model=model,
-        max_tokens=220,
+        max_tokens=280,
         temperature=0.2,
     )
     return {
         "bull": bull,
         "bear": bear,
+        "devil_advocate": devil,
         "judge": (judge or "Verdict indisponible.").strip(),
     }
 ```
@@ -7869,7 +8228,7 @@ if __name__ == "__main__":
     print(f"status={s3.status.value} | reason='{s3.reason}'")
 ```
 
-## FILE: 04_orchestrator_ai/signal_priority_cascade.py (347 lines)
+## FILE: 04_orchestrator_ai/signal_priority_cascade.py (344 lines)
 ```python
 """Signal Priority Cascade for PEA Pollux.
 
@@ -7906,6 +8265,7 @@ for _sub in ("01_memory_core", "03_risk_portfolio", "04_orchestrator_ai"):
 sys.path.insert(0, os.path.join(str(_ROOT), "02_quant_engine"))
 
 from data_models import PortfolioState, Signal, SignalStatus  # noqa: E402
+from config_validator import load_risk_config  # noqa: E402
 from correlation_firewall import CorrelationFirewall  # noqa: E402
 from pea_position_sizer import PeaSizer  # noqa: E402
 from macro_veto import MacroVetoEngine  # noqa: E402
@@ -7941,14 +8301,10 @@ class SignalOrchestrator:
         self.portfolio_db = portfolio_db
         self.timeseries_db = timeseries_db
 
-        risk_path = config_path / "risk_params.yaml"
-        risk: dict = {}
-        if risk_path.exists():
-            with open(risk_path, "r", encoding="utf-8") as fh:
-                risk = yaml.safe_load(fh) or {}
-        self.core_ticker: str = str(risk.get("CORE_TICKER", "CW8.PA"))
-        self.max_positions_total: int = int(risk.get("MAX_POSITIONS_TOTAL", 12))
-        self.min_liquidity_adv: float = float(risk.get("MIN_LIQUIDITY_ADV", 50_000))
+        risk = load_risk_config(config_path)
+        self.core_ticker: str = str(risk.CORE_TICKER)
+        self.max_positions_total: int = int(risk.MAX_POSITIONS_TOTAL)
+        self.min_liquidity_adv: float = float(risk.MIN_LIQUIDITY_ADV)
 
         self.macro_veto = MacroVetoEngine(config_path)
         self.earnings_blackout = EarningsBlackoutEngine(config_path)
@@ -9124,7 +9480,7 @@ if __name__ == "__main__":
     asyncio.run(_demo())
 ```
 
-## FILE: 05_interfaces/terminal_dashboard.py (6404 lines)
+## FILE: 05_interfaces/terminal_dashboard.py (6435 lines)
 ```python
 """Web Terminal (Streamlit dashboard) for PEA Pollux.
 
@@ -9343,41 +9699,48 @@ def euronext_session_status() -> tuple[str, str]:
     return f"FERME · {now.strftime('%H:%M')} Paris", "amber"
 
 
-@st.cache_data(ttl=600, show_spinner=False)
-def _latest_atr14_approx(ticker: str) -> float | None:
-    """Best-effort ATR(14) for risk cards (DuckDB, else yfinance)."""
+def _period_to_days(period: str | None) -> int:
+    """Map Yahoo-style period strings to trading-day lookbacks."""
+    return {
+        "1d": 5,
+        "5d": 7,
+        "1mo": 30,
+        "3mo": 90,
+        "6mo": 180,
+        "1y": 252,
+        "2y": 504,
+        "5y": 1260,
+        "10y": 2520,
+    }.get(period or "1mo", 30)
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _db_hist(ticker: str, days: int = 252) -> pd.DataFrame:
+    """OHLCV history from DuckDB (single source of truth for dashboard prices)."""
     try:
         from duckdb_manager import TimeSeriesDB
+
         db = TimeSeriesDB(read_only=True)
-        hist = db.get_historical_prices(ticker, days=60)
-        if hist is not None and not hist.empty and len(hist) >= 20:
-            try:
-                import pandas_ta_classic as ta  # noqa: F401
-            except ImportError:
-                import pandas_ta as ta  # noqa: F401
-            work = hist.copy()
-            atr = work.ta.atr(
-                high=work["High"], low=work["Low"], close=work["Close"], length=14
-            )
-            if atr is not None:
-                if isinstance(atr, pd.DataFrame):
-                    atr = atr.iloc[:, 0]
-                val = float(atr.dropna().iloc[-1])
-                return val if val > 0 else None
+        hist = db.get_historical_prices(ticker, days=days)
+        return hist if hist is not None else pd.DataFrame()
     except Exception:  # noqa: BLE001
-        pass
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _latest_atr14_approx(ticker: str) -> float | None:
+    """ATR(14) via quant engine indicators (TimeSeriesDB — no yfinance)."""
+    hist = _db_hist(ticker, 60)
+    if hist is None or hist.empty or len(hist) < 20:
+        return None
     try:
-        hist = yf.Ticker(ticker).history(period="3mo")
-        if hist is None or hist.empty:
+        from technical_scorer import SignalGenerator
+
+        enriched = SignalGenerator().calculate_indicators(hist)
+        atr_col = next((c for c in enriched.columns if "ATR" in str(c).upper()), None)
+        if not atr_col:
             return None
-        try:
-            import pandas_ta_classic as ta  # noqa: F401
-        except ImportError:
-            import pandas_ta as ta  # noqa: F401
-        atr = hist.ta.atr(length=14)
-        if atr is None:
-            return None
-        val = float(atr.dropna().iloc[-1])
+        val = float(enriched[atr_col].dropna().iloc[-1])
         return val if val > 0 else None
     except Exception:  # noqa: BLE001
         return None
@@ -10079,33 +10442,19 @@ def render_rejection_pie(funnel_data: dict) -> go.Figure:
 
 @st.cache_data(ttl=86400, show_spinner=False)
 def get_annual_returns(ticker: str) -> pd.DataFrame:
-    """Year-over-year % returns from ~10y monthly closes (yfinance).
-
-    Args:
-        ticker: Yahoo symbol (e.g. ``MC.PA``).
-
-    Returns:
-        pd.DataFrame: Columns ``Year`` (YYYY str) and ``Return_Pct`` (float).
-        Empty DataFrame on network/delist failure.
-    """
+    """Year-over-year % returns from DuckDB daily closes (~10y)."""
     empty = pd.DataFrame(columns=["Year", "Return_Pct"])
     if not ticker:
         return empty
     try:
-        raw = yf.download(
-            ticker,
-            period="10y",
-            interval="1mo",
-            progress=False,
-            auto_adjust=True,
-            threads=False,
-        )
-        if raw is None or raw.empty:
+        hist = _db_hist(ticker, days=2520)
+        if hist is None or hist.empty or "Close" not in hist.columns:
             return empty
-        close = raw["Close"] if "Close" in raw.columns else raw.iloc[:, 0]
-        if isinstance(close, pd.DataFrame):
-            close = close.iloc[:, 0]
-        close = pd.to_numeric(close, errors="coerce").dropna()
+        frame = hist.copy()
+        if "Date" in frame.columns:
+            frame["Date"] = pd.to_datetime(frame["Date"])
+            frame = frame.set_index("Date")
+        close = pd.to_numeric(frame["Close"], errors="coerce").dropna()
         if close.empty:
             return empty
         yearly = close.resample("YE").last().dropna()
@@ -10186,11 +10535,11 @@ def get_valuation_metrics(ticker: str) -> dict:
         if buy_low is not None and buy_high is None:
             buy_high = buy_low * 1.05
 
-        # Trailing 1M / 1Y returns from daily history (robust empty on failure).
+        # Trailing 1M / 1Y returns from DuckDB daily history.
         ret_1m = None
         ret_1y = None
         try:
-            hist = yf.Ticker(ticker).history(period="1y", auto_adjust=True)
+            hist = _db_hist(ticker, days=252)
             if hist is not None and not hist.empty and "Close" in hist.columns:
                 close = pd.to_numeric(hist["Close"], errors="coerce").dropna()
                 if len(close) >= 2:
@@ -10353,28 +10702,35 @@ def get_market_performance(
     start: str | None = None,
     end: str | None = None,
 ) -> pd.DataFrame:
-    """Compute performance over a preset period or an explicit date range."""
+    """Compute performance over a preset period or an explicit date range (DuckDB)."""
     if not tickers:
         return pd.DataFrame()
     try:
-        # Cap batch size — huge universes make yfinance return sparse junk.
         batch = list(tickers)[:120]
-        if start:
-            raw = yf.download(batch, start=start, end=end, progress=False,
-                              auto_adjust=True, threads=True)
-        else:
-            raw = yf.download(batch, period=period, progress=False,
-                              auto_adjust=True, threads=True)
-        close = _extract_close_frame(raw, batch)
-        if close.empty:
-            return pd.DataFrame()
-
+        days = _period_to_days(period)
         rows = []
-        for t in close.columns:
-            series = _valid_price_series(close[t])
+        for t in batch:
+            hist = _db_hist(t, days=days + 5)
+            if hist is None or hist.empty or "Close" not in hist.columns:
+                continue
+            close = pd.to_numeric(hist["Close"], errors="coerce").dropna()
+            series = _valid_price_series(close)
             if series is None:
                 continue
-            start_price, end_price = float(series.iloc[0]), float(series.iloc[-1])
+            if start:
+                if "Date" in hist.columns:
+                    dates = pd.to_datetime(hist["Date"])
+                    mask = (dates >= pd.Timestamp(start)) & (
+                        dates <= pd.Timestamp(end) if end else True
+                    )
+                    sub = close[mask.values] if len(mask) == len(close) else close
+                else:
+                    sub = close
+                if len(sub) < 2:
+                    continue
+                start_price, end_price = float(sub.iloc[0]), float(sub.iloc[-1])
+            else:
+                start_price, end_price = float(series.iloc[0]), float(series.iloc[-1])
             perf = (end_price / start_price - 1.0) * 100.0
             rows.append({
                 "Ticker": str(t),
@@ -10384,9 +10740,11 @@ def get_market_performance(
             })
         if not rows:
             return pd.DataFrame()
-        return (pd.DataFrame(rows)
-                .sort_values("Performance (%)", ascending=False)
-                .reset_index(drop=True))
+        return (
+            pd.DataFrame(rows)
+            .sort_values("Performance (%)", ascending=False)
+            .reset_index(drop=True)
+        )
     except Exception:  # noqa: BLE001
         return pd.DataFrame()
 
@@ -10395,27 +10753,37 @@ def get_market_performance(
 def get_normalized_prices(
     tickers: tuple[str, ...], period: str | None, start: str | None, end: str | None
 ) -> pd.DataFrame:
-    """Return prices rebased to 100 at the interval start (for line charts)."""
+    """Return prices rebased to 100 at the interval start (DuckDB)."""
     if not tickers:
         return pd.DataFrame()
     try:
         batch = list(tickers)[:40]
-        if start:
-            raw = yf.download(batch, start=start, end=end, progress=False,
-                              auto_adjust=True, threads=True)
-        else:
-            raw = yf.download(batch, period=period, progress=False,
-                              auto_adjust=True, threads=True)
-        close = _extract_close_frame(raw, batch)
-        if close.empty:
-            return pd.DataFrame()
-        out = pd.DataFrame(index=close.index)
-        for t in close.columns:
-            series = _valid_price_series(close[t], min_points=2)
-            if series is None:
+        days = _period_to_days(period)
+        series_map: dict[str, pd.Series] = {}
+        for t in batch:
+            hist = _db_hist(t, days=days + 5)
+            if hist is None or hist.empty or "Close" not in hist.columns:
                 continue
-            base = float(series.iloc[0])
-            out[str(t)] = (series / base) * 100.0
+            if "Date" in hist.columns:
+                idx = pd.to_datetime(hist["Date"])
+            else:
+                idx = pd.to_datetime(hist.index)
+            close = pd.to_numeric(hist["Close"], errors="coerce")
+            s = pd.Series(close.values, index=idx).dropna()
+            if start:
+                s = s[s.index >= pd.Timestamp(start)]
+                if end:
+                    s = s[s.index <= pd.Timestamp(end)]
+            valid = _valid_price_series(s, min_points=2)
+            if valid is not None:
+                series_map[str(t)] = valid
+        if not series_map:
+            return pd.DataFrame()
+        out = pd.DataFrame(series_map)
+        for col in out.columns:
+            base = float(out[col].dropna().iloc[0])
+            if base > 0:
+                out[col] = (out[col] / base) * 100.0
         return out.dropna(how="all")
     except Exception:  # noqa: BLE001
         return pd.DataFrame()
@@ -11118,19 +11486,14 @@ def _native_tape_perf(period: str) -> pd.DataFrame:
     if period != "1d":
         return get_market_performance(tuple(_BLUE_CHIPS_TAPE), period=period)
     try:
-        raw = yf.download(
-            _BLUE_CHIPS_TAPE,
-            period="5d",
-            progress=False,
-            auto_adjust=True,
-            threads=True,
-        )
-        close = _extract_close_frame(raw, _BLUE_CHIPS_TAPE)
-        if close.empty:
-            return pd.DataFrame()
         rows = []
-        for t in close.columns:
-            series = _valid_price_series(close[t])
+        for t in _BLUE_CHIPS_TAPE:
+            hist = _db_hist(t, days=7)
+            if hist is None or hist.empty or "Close" not in hist.columns:
+                continue
+            series = _valid_price_series(
+                pd.to_numeric(hist["Close"], errors="coerce").dropna()
+            )
             if series is None or len(series) < 2:
                 continue
             current = float(series.iloc[-1])
@@ -11353,18 +11716,20 @@ def get_vix() -> float:
 
 @st.cache_data(ttl=900, show_spinner=False)
 def get_core_regime() -> dict:
-    """Return the Core ETF regime (price vs 200-day SMA)."""
+    """Return the Core ETF regime (price vs 200-day SMA) from DuckDB."""
     try:
-        df = yf.download(_CORE_TICKER, period="1y", progress=False,
-                         auto_adjust=False)
-        if df is None or df.empty:
+        hist = _db_hist(_CORE_TICKER, days=252)
+        if hist is None or hist.empty or len(hist) < 200:
             return {}
-        close = df["Close"]
-        if isinstance(close, pd.DataFrame):
-            close = close.iloc[:, 0]
-        close = close.dropna()
-        price = float(close.iloc[-1])
-        sma200 = float(close.tail(200).mean())
+        from technical_scorer import SignalGenerator
+
+        enriched = SignalGenerator().calculate_indicators(hist)
+        last = enriched.iloc[-1]
+        price = float(last["Close"])
+        sma200 = last.get("SMA_200")
+        if sma200 is None or pd.isna(sma200):
+            return {}
+        sma200 = float(sma200)
         return {
             "ticker": _CORE_TICKER,
             "price": price,
@@ -11451,45 +11816,42 @@ def get_market_breadth(universe_df: pd.DataFrame, db_manager) -> dict:
 
 @st.cache_data(ttl=600, show_spinner=False)
 def get_indicators(ticker: str) -> dict:
-    """Compute RSI(14) + SMA 5/50/200 + trend flags for one ticker."""
+    """Compute RSI(14) + SMA 5/50/200 + trend flags via quant engine."""
     try:
-        import pandas_ta_classic as ta  # noqa: F401  (registers .ta accessor)
-    except Exception:  # noqa: BLE001
-        try:
-            import pandas_ta as ta  # noqa: F401
-        except Exception:  # noqa: BLE001
+        hist = _db_hist(ticker, days=252)
+        if hist is None or hist.empty or len(hist) < 30:
             return {}
-    try:
-        df = yf.download(ticker, period="1y", progress=False, auto_adjust=False)
-        if df is None or df.empty:
+        from technical_scorer import SignalGenerator
+
+        gen = SignalGenerator()
+        enriched = gen.calculate_indicators(hist)
+        last = enriched.iloc[-1]
+        close_s = pd.to_numeric(enriched["Close"], errors="coerce").dropna()
+        if close_s.empty:
             return {}
-        close = df["Close"]
-        if isinstance(close, pd.DataFrame):
-            close = close.iloc[:, 0]
-        close = close.dropna()
-        if len(close) < 30:
-            return {}
-        frame = close.to_frame("Close")
-        rsi = frame.ta.rsi(close=frame["Close"], length=14)
-        out = {
-            "close": float(close.iloc[-1]),
-            "rsi": float(rsi.iloc[-1]) if rsi is not None and not rsi.empty else None,
-            "sma5": float(close.tail(5).mean()),
-            "sma50": float(close.tail(50).mean()) if len(close) >= 50 else None,
-            "sma200": float(close.tail(200).mean()) if len(close) >= 200 else None,
-            "chg_1d": float((close.iloc[-1] / close.iloc[-2] - 1) * 100)
-            if len(close) >= 2 else 0.0,
-            "chg_5d": float((close.iloc[-1] / close.iloc[-6] - 1) * 100)
-            if len(close) >= 6 else 0.0,
+        close = float(last["Close"])
+        rsi_val = last.get("RSI_14")
+        sma5 = last.get("SMA_5")
+        sma50 = last.get("SMA_50")
+        sma200 = last.get("SMA_200")
+        return {
+            "close": close,
+            "rsi": float(rsi_val) if rsi_val is not None and not pd.isna(rsi_val) else None,
+            "sma5": float(sma5) if sma5 is not None and not pd.isna(sma5) else None,
+            "sma50": float(sma50) if sma50 is not None and not pd.isna(sma50) else None,
+            "sma200": float(sma200) if sma200 is not None and not pd.isna(sma200) else None,
+            "chg_1d": float((close_s.iloc[-1] / close_s.iloc[-2] - 1) * 100)
+            if len(close_s) >= 2 else 0.0,
+            "chg_5d": float((close_s.iloc[-1] / close_s.iloc[-6] - 1) * 100)
+            if len(close_s) >= 6 else 0.0,
             "vol_ann": float(
                 (
-                    calculate_annualized_volatility(close.pct_change().dropna().tail(60))
+                    calculate_annualized_volatility(close_s.pct_change().dropna().tail(60))
                     if calculate_annualized_volatility is not None
-                    else close.pct_change().dropna().tail(60).std(ddof=0) * (252 ** 0.5)
+                    else close_s.pct_change().dropna().tail(60).std(ddof=0) * (252 ** 0.5)
                 ) * 100.0
             ),
         }
-        return out
     except Exception:  # noqa: BLE001
         return {}
 
@@ -11978,31 +12340,20 @@ def build_recommendations(
 
 @st.cache_data(ttl=600, show_spinner=False)
 def get_last_prices(tickers: tuple[str, ...]) -> dict[str, float]:
-    """Batch last close prices — per-ticker history to avoid column mixups."""
+    """Batch last close prices from DuckDB."""
     out: dict[str, float] = {}
     if not tickers:
         return out
-    # Prefer one-shot batch, then validate each ticker individually on miss.
-    try:
-        raw = yf.download(list(tickers), period="10d", progress=False,
-                          auto_adjust=True, threads=True)
-        close = _extract_close_frame(raw, tickers)
-        for t in close.columns:
-            series = pd.to_numeric(close[t], errors="coerce").dropna()
+    for t in tickers:
+        try:
+            hist = _db_hist(t, days=15)
+            if hist is None or hist.empty or "Close" not in hist.columns:
+                continue
+            series = pd.to_numeric(hist["Close"], errors="coerce").dropna()
             if len(series):
                 px = float(series.iloc[-1])
-                if px > 0.05:  # reject absurd penny mis-parses
-                    out[str(t)] = px
-    except Exception:  # noqa: BLE001
-        pass
-    missing = [t for t in tickers if t not in out]
-    for t in missing:
-        try:
-            h = yf.Ticker(t).history(period="10d", auto_adjust=True)
-            if h is not None and not h.empty and "Close" in h.columns:
-                px = float(h["Close"].dropna().iloc[-1])
                 if px > 0.05:
-                    out[t] = px
+                    out[str(t)] = px
         except Exception:  # noqa: BLE001
             continue
     return out
@@ -14277,7 +14628,7 @@ with tab_mkt:
             for r in dossier.get("risk_events") or []:
                 st.markdown(f"- {r}")
 
-    if st.button("Lancer un Red Teaming IA (Bull vs Bear)", key=f"red_team_{selected}"):
+    if st.button("Lancer un Red Teaming IA (Bull vs Bear vs Devil's Advocate)", key=f"red_team_{selected}"):
         context_blob = (
             f"Ticker: {selected}\n"
             f"Name: {dossier.get('name')}\n"
@@ -14295,10 +14646,12 @@ with tab_mkt:
                 debate = {
                     "bull": "Indisponible",
                     "bear": f"Indisponible ({exc})",
+                    "devil_advocate": "Indisponible",
                     "judge": "Indisponible",
                 }
         st.info(f"🐂 **Bull Agent**\n\n{debate.get('bull') or 'n/a'}")
         st.warning(f"🐻 **Bear Agent**\n\n{debate.get('bear') or 'n/a'}")
+        st.markdown(f"😈 **Devil's Advocate PEA**\n\n{debate.get('devil_advocate') or 'n/a'}")
         st.error(f"⚖️ **Judge Agent**\n\n{debate.get('judge') or 'n/a'}")
 
     ind = get_indicators(selected)
@@ -15478,6 +15831,40 @@ cash/positions. Les ordres restent Discord + scheduler.
                 st.caption(str(path))
 
     # --- ML Data Export -----------------------------------------------------
+    st.markdown("#### 🧠 Machine Learning")
+    try:
+        from ml_trainer import load_metrics
+
+        _ml_metrics = load_metrics()
+    except Exception:  # noqa: BLE001
+        _ml_metrics = {}
+    if _ml_metrics:
+        _ml_c1, _ml_c2, _ml_c3 = st.columns(3)
+        with _ml_c1:
+            st.metric(
+                "Précision historique (signaux > 75)",
+                f"{_ml_metrics.get('accuracy_signals_above_75_pct', 'n/a')}%"
+                if _ml_metrics.get("accuracy_signals_above_75_pct") is not None
+                else "n/a",
+                help="Accuracy on test set where model probability ≥ 0.75.",
+            )
+        with _ml_c2:
+            st.metric(
+                "Brier Score",
+                _ml_metrics.get("brier_score", "n/a"),
+                help="Lower is better (0 = perfect calibration).",
+            )
+        with _ml_c3:
+            st.metric(
+                "Accuracy globale",
+                f"{_ml_metrics.get('accuracy_pct', 'n/a')}%",
+            )
+    else:
+        st.caption(
+            "Modèle XGBoost non entraîné. Lancez "
+            "`python 02_quant_engine/ml_trainer.py` après export du dataset."
+        )
+
     st.markdown("#### 🧠 Machine Learning Data Export")
     st.markdown(
         "<div class='info-text'>Exportez les données brutes pour entraîner un modèle "
@@ -18655,7 +19042,7 @@ if __name__ == "__main__":
     main()
 ```
 
-## FILE: README.md (733 lines)
+## FILE: README.md (734 lines)
 ```markdown
 # PEA Pollux — Terminal quantitatif personnel
 
@@ -19256,6 +19643,7 @@ sources over furtive HTML scraping.
 | **Cash sweep, Discord daily digest, 10y backfill, forward curve, ML store** | ✅ Phase 40 |
 | **AMF semantic parsing (legal FR regex), fluid log viewer, system telemetry** | ✅ Phase 41 |
 | **Institutional Overhaul: data quality (auto_adjust), parallel I/O, drawdown breaker, OpenFIGI, Alpha Vantage, backtester look-ahead fix, CI ruff** | ✅ Phase 42 |
+| **Pydantic config validation, backtester exits, dashboard DuckDB dedup, XGBoost ML, Devil's Advocate PEA** | ✅ Phase 44 |
 | pytest + GitHub Actions CI | Expand coverage over time |
 
 ### Next (highest leverage)
@@ -19392,7 +19780,7 @@ streamlit run 05_interfaces/terminal_dashboard.py
 - **On-demand heavy compute** — Monte Carlo runs behind a button + cache, not on every page load.
 ```
 
-## FILE: requirements.txt (37 lines)
+## FILE: requirements.txt (38 lines)
 ```text
 # PEA Pollux - Python 3.11+
 # Phase 1 only needs pydantic + pyyaml; the rest is pinned for the roadmap.
@@ -19414,6 +19802,7 @@ feedparser>=6.0
 # --- Quant engine (Phase 4) ---
 pandas>=2.1
 numpy>=2.0
+xgboost>=2.0
 # pandas-ta-classic is the numpy-2.x / numba-free provider of the `.ta`
 # accessor. Upstream `pandas-ta` 0.4.x requires numba (no py3.13/arm64 wheel).
 pandas-ta-classic>=0.6.0
