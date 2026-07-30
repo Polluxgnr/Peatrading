@@ -456,17 +456,17 @@ class SignalGenerator:
             except Exception as exc:  # noqa: BLE001
                 logger.debug("News fetch failed for %s: %s", ticker, exc)
             if headlines:
-            if NewsSentimentScorer is not None:
-                try:
-                    news_score = float(
-                        asyncio.run(NewsSentimentScorer().analyze_news(ticker, headlines))
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    logger.debug("LLM sentiment failed for %s: %s", ticker, exc)
-            if abs(news_score) < 1:
-                heuristic_vals = [_heuristic_news_score(h) for h in headlines]
-                if heuristic_vals:
-                    news_score = float(sum(heuristic_vals) / len(heuristic_vals))
+                if NewsSentimentScorer is not None:
+                    try:
+                        news_score = float(
+                            asyncio.run(NewsSentimentScorer().analyze_news(ticker, headlines))
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        logger.debug("LLM sentiment failed for %s: %s", ticker, exc)
+                if abs(news_score) < 1:
+                    heuristic_vals = [_heuristic_news_score(h) for h in headlines]
+                    if heuristic_vals:
+                        news_score = float(sum(heuristic_vals) / len(heuristic_vals))
         if news_score > 30:
             news_mod = 15.0
             factors.append(f"NEWS+10 Bullish sentiment ({news_score:.0f})")

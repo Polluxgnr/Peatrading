@@ -1,6 +1,6 @@
 # PEA Pollux — Full Project Dump for LLM
 
-> **PEA Pollux** · Generated `2026-07-30 09:58 UTC` · Root `C:\Users\PolluxGronier\Downloads\pea_sniper_terminal`
+> **PEA Pollux** · Generated `2026-07-30 11:22 UTC` · Root `C:\Users\PolluxGronier\Downloads\pea_sniper_terminal`
 
 One-shot context for external LLM agents. Includes source, configs, and docs.
 Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
@@ -54,7 +54,7 @@ Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
 - `docker-compose.yml` (71 lines)
 - `Dockerfile` (30 lines)
 - `main_scheduler.py` (819 lines) ⭐
-- `README.md` (737 lines) ⭐
+- `README.md` (747 lines) ⭐
 - `requirements.txt` (38 lines)
 - `run_dashboard.ps1` (15 lines)
 - `run_discord.py` (100 lines)
@@ -6172,17 +6172,17 @@ class SignalGenerator:
             except Exception as exc:  # noqa: BLE001
                 logger.debug("News fetch failed for %s: %s", ticker, exc)
             if headlines:
-            if NewsSentimentScorer is not None:
-                try:
-                    news_score = float(
-                        asyncio.run(NewsSentimentScorer().analyze_news(ticker, headlines))
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    logger.debug("LLM sentiment failed for %s: %s", ticker, exc)
-            if abs(news_score) < 1:
-                heuristic_vals = [_heuristic_news_score(h) for h in headlines]
-                if heuristic_vals:
-                    news_score = float(sum(heuristic_vals) / len(heuristic_vals))
+                if NewsSentimentScorer is not None:
+                    try:
+                        news_score = float(
+                            asyncio.run(NewsSentimentScorer().analyze_news(ticker, headlines))
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        logger.debug("LLM sentiment failed for %s: %s", ticker, exc)
+                if abs(news_score) < 1:
+                    heuristic_vals = [_heuristic_news_score(h) for h in headlines]
+                    if heuristic_vals:
+                        news_score = float(sum(heuristic_vals) / len(heuristic_vals))
         if news_score > 30:
             news_mod = 15.0
             factors.append(f"NEWS+10 Bullish sentiment ({news_score:.0f})")
@@ -19143,7 +19143,7 @@ if __name__ == "__main__":
     main()
 ```
 
-## FILE: README.md (737 lines)
+## FILE: README.md (747 lines)
 ```markdown
 # PEA Pollux — Terminal quantitatif personnel
 
@@ -19882,6 +19882,16 @@ streamlit run 05_interfaces/terminal_dashboard.py
 - **Graceful degradation** — missing API keys → neutral fallbacks, no crashes.
 - **Vectorized math** — NumPy/Pandas for VaR, Monte Carlo, Z-Scores.
 - **On-demand heavy compute** — Monte Carlo runs behind a button + cache, not on every page load.
+
+---
+## Phase 49 : The Apex Optimization (Current)
+
+*   **⚡ Blazing Fast UI :** Caching systématique (@st.cache_resource, @st.cache_data) et lazy loading pour un Dashboard sub-seconde.
+*   **📊 Interactive Metrics :** Drill-down des métriques via st.popover (Market Breadth dynamique, Mini-charts VIX).
+*   **🤖 Déploiement Stratégique (80% Rule) :** Force le déploiement de capital sur les meilleurs signaux techniques rejetés si l'exposition Cash est > 20% en régime Bull.
+*   **📈 Simulateur ML Autonome :** Backtester visuel intégré dans le Dashboard permettant d'évaluer la stratégie Machine Learning vis-à-vis d'un Buy & Hold (CW8) avec prise en compte du slippage.
+*   **📡 Ingestion Incrémentale :** Optimisation drastique des appels réseaux (DuckDB get_latest_dates) pour ne télécharger que le strict nécessaire depuis yfinance.
+*   **🚨 Copilot Discord V2 :** Refonte des webhooks avec intégration du Notional estimé, formatage premium et ping @everyone.
 ```
 
 ## FILE: requirements.txt (38 lines)
