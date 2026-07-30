@@ -87,27 +87,41 @@ class DiscordCopilot:
                 logger.error("LLM failed to explain %s: %s", signal.ticker, exc)
 
         embed = {
-            "title": f"{title_emoji} {signal.signal_type.value} {signal.ticker}",
-            "description": narrative,
+            "title": f"{title_emoji} NOUVEAU SIGNAL {signal.signal_type.value} : {signal.ticker}",
+            "description": f"{narrative}\n\n*Signal généré par l'algorithme Quantitatif.*",
             "color": color,
             "fields": [
                 {
-                    "name": "Score Technique",
-                    "value": f"{signal.score:.0f}/100",
+                    "name": "📊 Score Technique",
+                    "value": f"**{signal.score:.0f} / 100**",
                     "inline": True,
                 },
                 {
-                    "name": "Quantité Cible",
-                    "value": f"{signal.target_qty} (≈ {notional:,.0f} €)",
+                    "name": "🎯 Quantité Cible",
+                    "value": f"**{signal.target_qty}** actions",
                     "inline": True,
                 },
+                {
+                    "name": "💰 Notional Estimé",
+                    "value": f"**{notional:,.0f} €** (@ {current_price:.2f} €)",
+                    "inline": True,
+                },
+                {
+                    "name": "⚠️ Attention",
+                    "value": "Ceci n'est pas un conseil en investissement.",
+                    "inline": False,
+                }
             ],
             "footer": {
-                "text": "Validation manuelle requise via le Command Center du Dashboard Streamlit."
+                "text": "PEA Sniper Terminal • Validation manuelle requise via le Command Center",
+                "icon_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c3/Python-logo-notext.svg/1200px-Python-logo-notext.svg.png"
             },
         }
 
-        payload = {"embeds": [embed]}
+        payload = {
+            "content": f"<@&EVERYONE> 🚨 Opportunité PEA détectée sur **{signal.ticker}** !", 
+            "embeds": [embed]
+        }
 
         try:
             async with aiohttp.ClientSession() as session:

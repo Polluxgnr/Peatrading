@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import List, Dict
 
 import pandas as pd
+from tqdm import tqdm
 
 _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT))
@@ -22,6 +23,7 @@ sys.path.insert(0, str(_ROOT / "00_data_sensors"))
 
 from duckdb_manager import TimeSeriesDB
 from technical_scorer import SignalGenerator
+from sqlite_portfolio import PortfolioDB
 from ml_feature_store import build_ml_feature_row
 import yaml
 
@@ -34,13 +36,24 @@ END_DATE = datetime.datetime.now() - datetime.timedelta(days=35)
 STEP_DAYS = 5
 MIN_ROWS = 252
 
+# Global Worker State
+PDB = None
+GEN = None
+TSDB = None
+
+def init_worker():
+    global PDB, GEN, TSDB
+    PDB = PortfolioDB()
+    PDB.init_db()
+    GEN = SignalGenerator(portfolio_db=PDB, macro_sensor=None, skip_regime=True, offline_mode=True)
+    TSDB = TimeSeriesDB(read_only=True)
+
 def _process_ticker_dates(ticker: str) -> List[Dict]:
     """Evaluate historical dates for a single ticker."""
-    tsdb = TimeSeriesDB(read_only=True)
-    generator = SignalGenerator() 
+    global GEN, PDB, TSDB
     
     try:
-        df = tsdb.get_historical_prices(ticker, days=4000)
+        df = TSDB.get_historical_prices(ticker, days=4000)
     except Exception:
         return []
         
@@ -72,7 +85,7 @@ def _process_ticker_dates(ticker: str) -> List[Dict]:
         asof_idx = len(valid_hist) - 1
         
         try:
-            conv = generator.evaluate(ticker, valid_hist, macro_sensor=None)
+            conv = GEN.evaluate(ticker, valid_hist, macro_sensor=None)
             total = float(conv.get("total") or 0.0)
             
             if total >= 65.0:
@@ -80,7 +93,7 @@ def _process_ticker_dates(ticker: str) -> List[Dict]:
                     ticker,
                     close=close_series,
                     reason="historical bootstrap",
-                    pdb=None,
+                    pdb=PDB,
                     asof_idx=asof_idx
                 )
                 if feat.get("label_fwd_gt_2pct") is not None and not pd.isna(feat["label_fwd_gt_2pct"]):
@@ -109,21 +122,16 @@ def main() -> None:
     
     all_features = []
     
-    with concurrent.futures.ProcessPoolExecutor() as executor:
+    with concurrent.futures.ProcessPoolExecutor(initializer=init_worker) as executor:
         futures = {executor.submit(_process_ticker_dates, ticker): ticker for ticker in tickers}
-        completed = 0
         
-        for future in concurrent.futures.as_completed(futures):
+        for future in tqdm(concurrent.futures.as_completed(futures), total=len(tickers), desc="Evaluating Tickers"):
             ticker = futures[future]
             try:
                 res = future.result()
                 all_features.extend(res)
             except Exception as exc:
                 logger.error(f"Ticker {ticker} generated an exception: {exc}")
-            
-            completed += 1
-            if completed % 10 == 0:
-                logger.info(f"Progress: {completed}/{len(tickers)} tickers processed. Collected {len(all_features)} signals.")
                 
     if not all_features:
         logger.error("No features generated. Exiting.")

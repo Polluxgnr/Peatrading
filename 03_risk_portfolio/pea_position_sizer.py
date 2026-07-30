@@ -66,6 +66,14 @@ class PeaSizer:
         """Resolve and load validated risk config."""
         return load_risk_config(config_path)
 
+    @staticmethod
+    def investment_rate(portfolio: PortfolioState) -> float:
+        """Calculate the ratio of invested capital to total equity."""
+        if portfolio.total_equity <= 0:
+            return 0.0
+        invested = sum(p.market_value for p in portfolio.positions)
+        return invested / portfolio.total_equity
+
     def _satellite_value(self, portfolio: PortfolioState) -> float:
         """Sum the market value of all non-core (satellite) holdings."""
         return sum(

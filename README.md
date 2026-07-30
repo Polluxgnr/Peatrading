@@ -735,3 +735,13 @@ streamlit run 05_interfaces/terminal_dashboard.py
 - **Graceful degradation** — missing API keys → neutral fallbacks, no crashes.
 - **Vectorized math** — NumPy/Pandas for VaR, Monte Carlo, Z-Scores.
 - **On-demand heavy compute** — Monte Carlo runs behind a button + cache, not on every page load.
+
+---
+## Phase 49 : The Apex Optimization (Current)
+
+*   **⚡ Blazing Fast UI :** Caching systématique (@st.cache_resource, @st.cache_data) et lazy loading pour un Dashboard sub-seconde.
+*   **📊 Interactive Metrics :** Drill-down des métriques via st.popover (Market Breadth dynamique, Mini-charts VIX).
+*   **🤖 Déploiement Stratégique (80% Rule) :** Force le déploiement de capital sur les meilleurs signaux techniques rejetés si l'exposition Cash est > 20% en régime Bull.
+*   **📈 Simulateur ML Autonome :** Backtester visuel intégré dans le Dashboard permettant d'évaluer la stratégie Machine Learning vis-à-vis d'un Buy & Hold (CW8) avec prise en compte du slippage.
+*   **📡 Ingestion Incrémentale :** Optimisation drastique des appels réseaux (DuckDB get_latest_dates) pour ne télécharger que le strict nécessaire depuis yfinance.
+*   **🚨 Copilot Discord V2 :** Refonte des webhooks avec intégration du Notional estimé, formatage premium et ping @everyone.

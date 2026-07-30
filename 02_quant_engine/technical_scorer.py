@@ -114,6 +114,8 @@ class SignalGenerator:
         config_path: str | Path | None = None,
         macro_sensor: Any | None = None,
         portfolio_db: Any | None = None,
+        skip_regime: bool = False,
+        offline_mode: bool = False,
     ) -> None:
         """Load optional thresholds from ``risk_params.yaml``.
 
@@ -126,25 +128,30 @@ class SignalGenerator:
         risk = load_risk_config(path)
         self._macro = macro_sensor
         self.portfolio_db = portfolio_db
+        self.offline_mode = offline_mode
         
-        try:
-            from market_regime import MarketRegimeClassifier
-            classifier = MarketRegimeClassifier()
-            self.regime = classifier.get_regime()
-            self.conviction_floor, self.rsi_oversold = classifier.get_modulated_thresholds(
-                self.regime, 
-                base_conviction=float(risk.CONVICTION_EMIT_FLOOR),
-                base_rsi=float(risk.RSI_OVERSOLD_THRESHOLD)
-            )
-            logger.info(f"SignalGenerator loaded: regime={self.regime}, floor={self.conviction_floor}, rsi={self.rsi_oversold}")
-        except Exception as exc:
-            logger.warning("Could not determine market regime (%s), using base thresholds.", exc)
+        if skip_regime:
             self.regime = "BULL"
-            self.rsi_oversold = float(risk.RSI_OVERSOLD_THRESHOLD)
-            self.conviction_floor = float(risk.CONVICTION_EMIT_FLOOR)
+            self.conviction_floor = 65.0
+            self.rsi_oversold = 30.0
+        else:
+            try:
+                from market_regime import MarketRegimeClassifier
+                classifier = MarketRegimeClassifier()
+                self.regime = classifier.get_regime()
+                self.conviction_floor, self.rsi_oversold = classifier.get_modulated_thresholds(
+                    self.regime, 
+                    base_conviction=float(risk.CONVICTION_EMIT_FLOOR),
+                    base_rsi=float(risk.RSI_OVERSOLD_THRESHOLD)
+                )
+                logger.info(f"SignalGenerator loaded: regime={self.regime}, floor={self.conviction_floor}, rsi={self.rsi_oversold}")
+            except Exception as exc:
+                logger.warning("Could not determine market regime (%s), using base thresholds.", exc)
+                self.regime = "BULL"
+                self.rsi_oversold = float(risk.RSI_OVERSOLD_THRESHOLD)
+                self.conviction_floor = float(risk.CONVICTION_EMIT_FLOOR)
 
-    @staticmethod
-    def _load_fundamentals_from_sources(ticker: str, pdb: Any = None) -> dict:
+    def _load_fundamentals_from_sources(self, ticker: str, pdb: Any = None) -> dict:
         """Fetch fundamentals via SQLite cache -> Finnhub/yfinance sensor."""
         try:
             if pdb is None:
@@ -156,6 +163,9 @@ class SignalGenerator:
                 return cache
         except Exception as exc:  # noqa: BLE001
             logger.debug("Fundamentals cache read failed for %s: %s", ticker, exc)
+
+        if self.offline_mode:
+            return {}
 
         data: dict = {}
         try:
@@ -434,17 +444,18 @@ class SignalGenerator:
         # Holistic news integration: LLM sentiment first, heuristic fallback.
         news_score = 0.0
         headlines: list[str] = []
-        try:
-            if yf is not None:
-                raw_news = yf.Ticker(ticker).news or []
-                for n in raw_news[:6]:
-                    content = n.get("content", n)
-                    title = (content.get("title") or n.get("title") or "").strip()
-                    if title:
-                        headlines.append(title)
-        except Exception as exc:  # noqa: BLE001
-            logger.debug("News fetch failed for %s: %s", ticker, exc)
-        if headlines:
+        if not self.offline_mode:
+            try:
+                if yf is not None:
+                    raw_news = yf.Ticker(ticker).news or []
+                    for n in raw_news[:6]:
+                        content = n.get("content", n)
+                        title = (content.get("title") or n.get("title") or "").strip()
+                        if title:
+                            headlines.append(title)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("News fetch failed for %s: %s", ticker, exc)
+            if headlines:
             if NewsSentimentScorer is not None:
                 try:
                     news_score = float(

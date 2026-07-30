@@ -160,6 +160,30 @@ class TimeSeriesDB:
             logger.exception("Failed to upsert OHLCV data.")
             raise
 
+    def get_latest_dates(self, tickers: list[str]) -> dict:
+        """Return the maximum date available in DuckDB for each requested ticker.
+        
+        Args:
+            tickers: List of tickers to query.
+            
+        Returns:
+            dict: Mapping of ticker to its latest date string (YYYY-MM-DD).
+        """
+        if not tickers:
+            return {}
+        try:
+            with self._connect() as conn:
+                q = ",".join(['?'] * len(tickers))
+                result = conn.execute(
+                    f"SELECT ticker, MAX(date) as max_date FROM ohlcv_data WHERE ticker IN ({q}) GROUP BY ticker",
+                    tickers
+                ).fetchall()
+                # result is a list of tuples (ticker, datetime.date)
+                return {str(row[0]): str(row[1]) for row in result if row[1]}
+        except Exception:
+            logger.exception("Failed to fetch latest dates from DuckDB.")
+            return {}
+
     def get_historical_prices(self, ticker: str, days: int = 252) -> pd.DataFrame:
         """Fetch the most recent ``days`` of OHLCV for a ticker, chronologically.
 

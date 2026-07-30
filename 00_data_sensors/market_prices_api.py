@@ -165,7 +165,30 @@ class MarketDataFetcher:
             bool: ``True`` on success, ``False`` if any exception occurred.
         """
         try:
-            df = self.fetch_daily_ohlcv(tickers, lookback_days=lookback_days)
+            # Phase 49: Strict Incremental Ingestion
+            latest_dates = getattr(db_manager, "get_latest_dates", lambda t: {})(tickers)
+            max_gap_days = 0
+            now = datetime.now()
+            
+            for t in tickers:
+                last_dt_str = latest_dates.get(t)
+                if not last_dt_str:
+                    max_gap_days = max(max_gap_days, lookback_days)
+                    continue
+                try:
+                    last_dt = datetime.strptime(last_dt_str, "%Y-%m-%d")
+                    gap = (now - last_dt).days + 1
+                    max_gap_days = max(max_gap_days, gap)
+                except ValueError:
+                    max_gap_days = max(max_gap_days, lookback_days)
+            
+            final_lookback = min(max_gap_days, lookback_days)
+            if final_lookback <= 0:
+                final_lookback = 3  # Always fetch a few days to ensure no missed updates
+                
+            logger.info("Incremental fetch: requested %d days, optimized to %d days.", lookback_days, final_lookback)
+            
+            df = self.fetch_daily_ohlcv(tickers, lookback_days=final_lookback)
             if df.empty:
                 logger.warning("No data fetched; nothing to ingest.")
                 return False
