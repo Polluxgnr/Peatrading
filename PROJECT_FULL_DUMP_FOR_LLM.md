@@ -1,6 +1,6 @@
 # PEA Pollux — Full Project Dump for LLM
 
-> **PEA Pollux** · Generated `2026-07-31 08:09 UTC` · Root `C:\Users\PolluxGronier\Downloads\pea_sniper_terminal`
+> **PEA Pollux** · Generated `2026-07-31 08:54 UTC` · Root `C:\Users\PolluxGronier\Downloads\pea_sniper_terminal`
 
 One-shot context for external LLM agents. Includes source, configs, and docs.
 Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
@@ -107,7 +107,7 @@ Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
 - `02_quant_engine/quantitative_math.py` (107 lines) ⭐
 - `02_quant_engine/smart_dca_engine.py` (216 lines)
 - `02_quant_engine/stochastic_models.py` (87 lines) ⭐
-- `02_quant_engine/technical_scorer.py` (675 lines) ⭐
+- `02_quant_engine/technical_scorer.py` (676 lines) ⭐
 - `02_quant_engine/walk_forward_backtester.py` (277 lines)
 
 ### `03_risk_portfolio/`
@@ -5712,7 +5712,7 @@ def run_correlated_monte_carlo(
     )
 ```
 
-## FILE: 02_quant_engine/technical_scorer.py (675 lines)
+## FILE: 02_quant_engine/technical_scorer.py (676 lines)
 ```python
 """Quantitative signal engine for PEA Pollux.
 
@@ -5975,6 +5975,7 @@ class SignalGenerator:
         history: pd.DataFrame,
         *,
         macro_sensor: Any | None = None,
+        is_historical: bool = False,
     ) -> dict[str, Any]:
         """Committee-style multi-model score (0..100 total)."""
         empty = {
@@ -6085,7 +6086,7 @@ class SignalGenerator:
 
         sensor = macro_sensor if macro_sensor is not None else self._macro_sensor()
         cluster = 0
-        if sensor is not None:
+        if not is_historical and sensor is not None:
             try:
                 cluster = int(sensor.get_insider_buy_cluster(ticker))
             except Exception as exc:  # noqa: BLE001
@@ -6160,7 +6161,7 @@ class SignalGenerator:
         # Holistic news integration: LLM sentiment first, heuristic fallback.
         news_score = 0.0
         headlines: list[str] = []
-        if not self.offline_mode:
+        if not self.offline_mode and not is_historical:
             try:
                 if yf is not None:
                     raw_news = yf.Ticker(ticker).news or []
@@ -20742,7 +20743,7 @@ def _process_ticker_dates(ticker: str) -> List[Dict]:
         asof_idx = len(valid_hist) - 1
         
         try:
-            conv = GEN.evaluate(ticker, valid_hist, macro_sensor=None)
+            conv = GEN.evaluate(ticker, valid_hist, macro_sensor=None, is_historical=True)
             total = float(conv.get("total") or 0.0)
             
             if total >= 65.0:

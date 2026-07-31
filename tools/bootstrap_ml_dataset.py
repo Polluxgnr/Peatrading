@@ -85,7 +85,7 @@ def _process_ticker_dates(ticker: str) -> List[Dict]:
         asof_idx = len(valid_hist) - 1
         
         try:
-            conv = GEN.evaluate(ticker, valid_hist, macro_sensor=None)
+            conv = GEN.evaluate(ticker, valid_hist, macro_sensor=None, is_historical=True)
             total = float(conv.get("total") or 0.0)
             
             if total >= 65.0:

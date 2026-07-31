@@ -259,6 +259,7 @@ class SignalGenerator:
         history: pd.DataFrame,
         *,
         macro_sensor: Any | None = None,
+        is_historical: bool = False,
     ) -> dict[str, Any]:
         """Committee-style multi-model score (0..100 total)."""
         empty = {
@@ -369,7 +370,7 @@ class SignalGenerator:
 
         sensor = macro_sensor if macro_sensor is not None else self._macro_sensor()
         cluster = 0
-        if sensor is not None:
+        if not is_historical and sensor is not None:
             try:
                 cluster = int(sensor.get_insider_buy_cluster(ticker))
             except Exception as exc:  # noqa: BLE001
@@ -444,7 +445,7 @@ class SignalGenerator:
         # Holistic news integration: LLM sentiment first, heuristic fallback.
         news_score = 0.0
         headlines: list[str] = []
-        if not self.offline_mode:
+        if not self.offline_mode and not is_historical:
             try:
                 if yf is not None:
                     raw_news = yf.Ticker(ticker).news or []
