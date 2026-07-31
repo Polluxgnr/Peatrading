@@ -1,6 +1,6 @@
 # PEA Pollux — Full Project Dump for LLM
 
-> **PEA Pollux** · Generated `2026-07-31 08:54 UTC` · Root `C:\Users\PolluxGronier\Downloads\pea_sniper_terminal`
+> **PEA Pollux** · Generated `2026-07-31 09:20 UTC` · Root `C:\Users\PolluxGronier\Downloads\pea_sniper_terminal`
 
 One-shot context for external LLM agents. Includes source, configs, and docs.
 Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
@@ -54,7 +54,7 @@ Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
 - `docker-compose.yml` (71 lines)
 - `Dockerfile` (30 lines)
 - `main_scheduler.py` (819 lines) ⭐
-- `README.md` (747 lines) ⭐
+- `README.md` (755 lines) ⭐
 - `requirements.txt` (38 lines)
 - `run_dashboard.ps1` (15 lines)
 - `run_discord.py` (100 lines)
@@ -19144,7 +19144,7 @@ if __name__ == "__main__":
     main()
 ```
 
-## FILE: README.md (747 lines)
+## FILE: README.md (755 lines)
 ```markdown
 # PEA Pollux — Terminal quantitatif personnel
 
@@ -19893,6 +19893,14 @@ streamlit run 05_interfaces/terminal_dashboard.py
 *   **📈 Simulateur ML Autonome :** Backtester visuel intégré dans le Dashboard permettant d'évaluer la stratégie Machine Learning vis-à-vis d'un Buy & Hold (CW8) avec prise en compte du slippage.
 *   **📡 Ingestion Incrémentale :** Optimisation drastique des appels réseaux (DuckDB get_latest_dates) pour ne télécharger que le strict nécessaire depuis yfinance.
 *   **🚨 Copilot Discord V2 :** Refonte des webhooks avec intégration du Notional estimé, formatage premium et ping @everyone.
+
+---
+## Phase 51 : Robust ML Pipeline Refactoring (Current)
+
+*   **Sequential Bootstrapping:** Remplacement du multiprocessing instable sous Docker par une boucle séquentielle stricte avec barre de progression (\	qdm\).
+*   **Memory Optimization:** Sauvegarde incrémentale directe dans le CSV (\ml_training_dataset.csv\) pour éviter les crash OOM lors du balayage de 10 ans d'historique sur plus de 600 tickers.
+*   **No Look-Ahead Bias / No Ban IP:** Désactivation intelligente des webhooks de scraping live (Sentiment Boursorama / YFinance) lorsque le bot tourne en simulation historique. L'inférence live conserve 100% de ses capacités.
+*   **Error Resilience:** Poursuite automatique du bootstrap même si des API financières flanchent ou que l'historique d'un ticker est corrompu.
 ```
 
 ## FILE: requirements.txt (38 lines)

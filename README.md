@@ -745,3 +745,11 @@ streamlit run 05_interfaces/terminal_dashboard.py
 *   **📈 Simulateur ML Autonome :** Backtester visuel intégré dans le Dashboard permettant d'évaluer la stratégie Machine Learning vis-à-vis d'un Buy & Hold (CW8) avec prise en compte du slippage.
 *   **📡 Ingestion Incrémentale :** Optimisation drastique des appels réseaux (DuckDB get_latest_dates) pour ne télécharger que le strict nécessaire depuis yfinance.
 *   **🚨 Copilot Discord V2 :** Refonte des webhooks avec intégration du Notional estimé, formatage premium et ping @everyone.
+
+---
+## Phase 51 : Robust ML Pipeline Refactoring (Current)
+
+*   **Sequential Bootstrapping:** Remplacement du multiprocessing instable sous Docker par une boucle séquentielle stricte avec barre de progression (\	qdm\).
+*   **Memory Optimization:** Sauvegarde incrémentale directe dans le CSV (\ml_training_dataset.csv\) pour éviter les crash OOM lors du balayage de 10 ans d'historique sur plus de 600 tickers.
+*   **No Look-Ahead Bias / No Ban IP:** Désactivation intelligente des webhooks de scraping live (Sentiment Boursorama / YFinance) lorsque le bot tourne en simulation historique. L'inférence live conserve 100% de ses capacités.
+*   **Error Resilience:** Poursuite automatique du bootstrap même si des API financières flanchent ou que l'historique d'un ticker est corrompu.
