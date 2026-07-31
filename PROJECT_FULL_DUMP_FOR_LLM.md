@@ -1,6 +1,6 @@
 # PEA Pollux — Full Project Dump for LLM
 
-> **PEA Pollux** · Generated `2026-07-30 11:22 UTC` · Root `C:\Users\PolluxGronier\Downloads\pea_sniper_terminal`
+> **PEA Pollux** · Generated `2026-07-31 08:09 UTC` · Root `C:\Users\PolluxGronier\Downloads\pea_sniper_terminal`
 
 One-shot context for external LLM agents. Includes source, configs, and docs.
 Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
@@ -157,7 +157,7 @@ Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
 - `tools/add_backtest_ui.py` (78 lines)
 - `tools/add_deployment.py` (53 lines)
 - `tools/backup_databases.py` (52 lines)
-- `tools/bootstrap_ml_dataset.py` (155 lines)
+- `tools/bootstrap_ml_dataset.py` (163 lines)
 - `tools/build_llm_dump.py` (232 lines)
 - `tools/build_universe.py` (273 lines)
 - `tools/fix_indent.py` (15 lines)
@@ -20653,7 +20653,7 @@ if __name__ == "__main__":
     main()
 ```
 
-## FILE: tools/bootstrap_ml_dataset.py (155 lines)
+## FILE: tools/bootstrap_ml_dataset.py (163 lines)
 ```python
 """ML Historical Bootstrapper for PEA Pollux.
 
@@ -20777,28 +20777,36 @@ def main() -> None:
     tickers = load_universe_tickers()
     logger.info(f"Loaded {len(tickers)} tickers for ML bootstrap.")
     
-    all_features = []
+    out_path = _ROOT / "database" / "ml_training_dataset.csv"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
     
-    with concurrent.futures.ProcessPoolExecutor(initializer=init_worker) as executor:
-        futures = {executor.submit(_process_ticker_dates, ticker): ticker for ticker in tickers}
+    # Delete existing CSV to start fresh
+    if out_path.exists():
+        out_path.unlink()
+        logger.info(f"Deleted existing dataset at {out_path}.")
         
-        for future in tqdm(concurrent.futures.as_completed(futures), total=len(tickers), desc="Evaluating Tickers"):
-            ticker = futures[future]
-            try:
-                res = future.result()
-                all_features.extend(res)
-            except Exception as exc:
-                logger.error(f"Ticker {ticker} generated an exception: {exc}")
-                
-    if not all_features:
+    init_worker()
+    
+    total_rows = 0
+    for ticker in tqdm(tickers, desc="Evaluating Tickers"):
+        try:
+            res = _process_ticker_dates(ticker)
+            if res:
+                df = pd.DataFrame(res)
+                # Drop NaN properly across features before saving
+                df = df.dropna()
+                if not df.empty:
+                    df.to_csv(out_path, mode='a', header=not out_path.exists(), index=False)
+                    total_rows += len(df)
+        except Exception as exc:
+            logger.warning(f"Ticker {ticker} generated an exception: {exc}")
+            continue
+            
+    if total_rows == 0:
         logger.error("No features generated. Exiting.")
         return
         
-    out_df = pd.DataFrame(all_features)
-    out_path = _ROOT / "database" / "ml_training_dataset.csv"
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_df.to_csv(out_path, index=False)
-    logger.info(f"Saved {len(out_df)} rows to {out_path}.")
+    logger.info(f"Saved {total_rows} rows to {out_path}.")
     
     try:
         from ml_trainer import train_model
