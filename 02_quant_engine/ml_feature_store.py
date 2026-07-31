@@ -133,7 +133,7 @@ def _news_sentiment_proxy(ticker: str, pdb: Any) -> float:
     return float(np.mean(scores)) if scores else 0.0
 
 
-def _fundamentals(ticker: str, pdb: Any) -> tuple[float, float]:
+def _fundamentals(ticker: str, pdb: Any, offline_mode: bool = False) -> tuple[float, float]:
     """Return (roe, pe) from SQLite cache or Finnhub/yfinance sensor."""
     pe = np.nan
     roe = np.nan
@@ -146,6 +146,10 @@ def _fundamentals(ticker: str, pdb: Any) -> tuple[float, float]:
                 return roe, pe
     except Exception:  # noqa: BLE001
         pass
+        
+    if offline_mode:
+        return np.nan, np.nan
+        
     try:
         sys.path.insert(0, str(_ROOT / "00_data_sensors"))
         from fundamentals_api import FundamentalsSensor
@@ -165,6 +169,7 @@ def build_ml_feature_row(
     reason: str = "",
     pdb: Any = None,
     asof_idx: int | None = None,
+    offline_mode: bool = False,
 ) -> dict:
     """Engineer one feature row for ``ticker``."""
     series = close.astype(float).dropna() if close is not None else pd.Series(dtype=float)
@@ -176,7 +181,7 @@ def build_ml_feature_row(
     vol = _vol20(hist)
     insider = _insider_net_from_reason(reason)
     news_sent = _news_sentiment_proxy(ticker, pdb)
-    roe, pe = _fundamentals(ticker, pdb)
+    roe, pe = _fundamentals(ticker, pdb, offline_mode=offline_mode)
     fwd = _forward_return(series, idx, _FORWARD_DAYS) if idx >= 0 else np.nan
     label = int(fwd > _TARGET_RETURN) if np.isfinite(fwd) else np.nan
 

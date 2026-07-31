@@ -1,6 +1,6 @@
 # PEA Pollux — Full Project Dump for LLM
 
-> **PEA Pollux** · Generated `2026-07-31 09:20 UTC` · Root `C:\Users\PolluxGronier\Downloads\pea_sniper_terminal`
+> **PEA Pollux** · Generated `2026-07-31 09:46 UTC` · Root `C:\Users\PolluxGronier\Downloads\pea_sniper_terminal`
 
 One-shot context for external LLM agents. Includes source, configs, and docs.
 Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
@@ -102,12 +102,12 @@ Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
 - `02_quant_engine/__init__.py` (0 lines)
 - `02_quant_engine/market_regime.py` (79 lines)
 - `02_quant_engine/ml_backtester.py` (22 lines)
-- `02_quant_engine/ml_feature_store.py` (290 lines)
+- `02_quant_engine/ml_feature_store.py` (295 lines)
 - `02_quant_engine/ml_trainer.py` (167 lines)
 - `02_quant_engine/quantitative_math.py` (107 lines) ⭐
 - `02_quant_engine/smart_dca_engine.py` (216 lines)
 - `02_quant_engine/stochastic_models.py` (87 lines) ⭐
-- `02_quant_engine/technical_scorer.py` (676 lines) ⭐
+- `02_quant_engine/technical_scorer.py` (677 lines) ⭐
 - `02_quant_engine/walk_forward_backtester.py` (277 lines)
 
 ### `03_risk_portfolio/`
@@ -4827,7 +4827,7 @@ def run_autonomous_backtest(csv_path: str, initial_capital: float = 10000.0) -> 
     return df
 ```
 
-## FILE: 02_quant_engine/ml_feature_store.py (290 lines)
+## FILE: 02_quant_engine/ml_feature_store.py (295 lines)
 ```python
 """Machine Learning feature store for PEA Pollux (Phase 40).
 
@@ -4964,7 +4964,7 @@ def _news_sentiment_proxy(ticker: str, pdb: Any) -> float:
     return float(np.mean(scores)) if scores else 0.0
 
 
-def _fundamentals(ticker: str, pdb: Any) -> tuple[float, float]:
+def _fundamentals(ticker: str, pdb: Any, offline_mode: bool = False) -> tuple[float, float]:
     """Return (roe, pe) from SQLite cache or Finnhub/yfinance sensor."""
     pe = np.nan
     roe = np.nan
@@ -4977,6 +4977,10 @@ def _fundamentals(ticker: str, pdb: Any) -> tuple[float, float]:
                 return roe, pe
     except Exception:  # noqa: BLE001
         pass
+        
+    if offline_mode:
+        return np.nan, np.nan
+        
     try:
         sys.path.insert(0, str(_ROOT / "00_data_sensors"))
         from fundamentals_api import FundamentalsSensor
@@ -4996,6 +5000,7 @@ def build_ml_feature_row(
     reason: str = "",
     pdb: Any = None,
     asof_idx: int | None = None,
+    offline_mode: bool = False,
 ) -> dict:
     """Engineer one feature row for ``ticker``."""
     series = close.astype(float).dropna() if close is not None else pd.Series(dtype=float)
@@ -5007,7 +5012,7 @@ def build_ml_feature_row(
     vol = _vol20(hist)
     insider = _insider_net_from_reason(reason)
     news_sent = _news_sentiment_proxy(ticker, pdb)
-    roe, pe = _fundamentals(ticker, pdb)
+    roe, pe = _fundamentals(ticker, pdb, offline_mode=offline_mode)
     fwd = _forward_return(series, idx, _FORWARD_DAYS) if idx >= 0 else np.nan
     label = int(fwd > _TARGET_RETURN) if np.isfinite(fwd) else np.nan
 
@@ -5712,7 +5717,7 @@ def run_correlated_monte_carlo(
     )
 ```
 
-## FILE: 02_quant_engine/technical_scorer.py (676 lines)
+## FILE: 02_quant_engine/technical_scorer.py (677 lines)
 ```python
 """Quantitative signal engine for PEA Pollux.
 
@@ -6204,6 +6209,7 @@ class SignalGenerator:
                 close=enriched["Close"],
                 reason="",
                 pdb=None,
+                offline_mode=is_historical,
             )
             ml_prob = predict_probability(feat_row)
             if ml_prob is not None:

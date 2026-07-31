@@ -488,6 +488,7 @@ class SignalGenerator:
                 close=enriched["Close"],
                 reason="",
                 pdb=None,
+                offline_mode=is_historical,
             )
             ml_prob = predict_probability(feat_row)
             if ml_prob is not None:
