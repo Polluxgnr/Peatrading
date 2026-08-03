@@ -311,28 +311,27 @@ async def run_pipeline_async() -> None:
                         pdb=pdb,
                         asof_idx=-1
                     )
-                    # Prepare X vector
-                    x_arr = []
-                    for c in FEATURE_COLS:
-                        x_arr.append(feat.get(c, np.nan))
-                    x_mat = xgb.DMatrix(np.array([x_arr]), feature_names=FEATURE_COLS)
+                    from ml_trainer import predict_probability_with_shap
                     
-                    # Inference
-                    proba = float(bst.predict(x_mat)[0])
+                    proba, shap_vals = predict_probability_with_shap(feat)
                     
-                    # SHAP
-                    shap_vals = explainer.shap_values(x_mat)
-                    # shap_vals is a matrix of (1, num_features)
-                    contributions = list(zip(FEATURE_COLS, shap_vals[0]))
-                    contributions.sort(key=lambda x: abs(x[1]), reverse=True)
-                    top_3 = contributions[:3]
-                    shap_str = ", ".join([f"{k}: {v:+.2f}" for k, v in top_3])
-                    
-                    if proba >= 0.50:
-                        sig.reason += f" | AI Meta-Label: {proba*100:.1f}% ({shap_str})"
-                        filtered_signals.append(sig)
+                    if proba is not None and shap_vals is not None:
+                        # Set shap vals directly on the signal for later consumption by the UI
+                        sig.shap_breakdown = shap_vals
+                        sig.ml_probability = proba
+                        
+                        contributions = list(shap_vals.items())
+                        contributions.sort(key=lambda x: abs(x[1]), reverse=True)
+                        top_3 = contributions[:3]
+                        shap_str = ", ".join([f"{k}: {v:+.2f}" for k, v in top_3])
+                        
+                        if proba >= 0.50:
+                            sig.reason += f" | AI Meta-Label: {proba*100:.1f}% ({shap_str})"
+                            filtered_signals.append(sig)
+                        else:
+                            logger.info(f"Signal {sig.ticker} rejected by ML Meta-Labeling (proba {proba*100:.1f}% < 50%)")
                     else:
-                        logger.info(f"Signal {sig.ticker} rejected by ML Meta-Labeling (proba {proba*100:.1f}% < 50%)")
+                        filtered_signals.append(sig)
                 except Exception as exc:
                     logger.debug(f"Failed to run ML filter for {sig.ticker}: {exc}")
                     filtered_signals.append(sig)  # Fallback: keep signal if ML fails

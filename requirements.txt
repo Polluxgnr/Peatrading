@@ -6,6 +6,8 @@ pyyaml>=6.0
 
 # --- Memory core (Phase 2) ---
 duckdb>=0.10
+pyarrow>=14.0
+structlog>=24.1.0
 # sqlite3 is part of the Python standard library.
 
 # --- Data sensors (Phase 3) ---
@@ -33,7 +35,7 @@ plotly>=5.20
 matplotlib>=3.8   # required by pandas Styler.background_gradient in the dashboard
 # streamlit needs pyarrow, which has NO prebuilt wheel for Python 3.13 / arm64.
 # Use a Python 3.11/3.12 (x64) environment to install and run the dashboard.
-streamlit>=1.33
+streamlit>=1.37
 
 # --- Scheduler (Phase 9) ---
 schedule>=1.2

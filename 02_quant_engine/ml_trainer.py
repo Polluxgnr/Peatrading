@@ -186,6 +186,36 @@ def predict_probability(features: dict) -> float | None:
         return None
 
 
+def predict_probability_with_shap(feat_row: dict) -> tuple[float | None, dict[str, float] | None]:
+    """Inference for a single feature row, returning probability and SHAP breakdown."""
+    try:
+        if not _MODEL_PATH.exists():
+            return None, None
+            
+        import xgboost as xgb
+        import shap
+        
+        bst = xgb.Booster()
+        bst.load_model(_MODEL_PATH)
+        
+        # Prepare X
+        x_arr = []
+        for c in FEATURE_COLS:
+            x_arr.append(feat_row.get(c, np.nan))
+        x_mat = xgb.DMatrix(np.array([x_arr]), feature_names=FEATURE_COLS)
+        
+        proba = float(bst.predict(x_mat)[0])
+        
+        explainer = shap.TreeExplainer(bst)
+        shap_vals = explainer.shap_values(x_mat)
+        
+        shap_dict = {feat: float(val) for feat, val in zip(FEATURE_COLS, shap_vals[0])}
+        return proba, shap_dict
+    except Exception as exc:
+        logger.debug(f"predict_probability_with_shap failed: {exc}")
+        return None, None
+
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     m = train_model()

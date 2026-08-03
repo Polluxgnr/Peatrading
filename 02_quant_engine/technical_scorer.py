@@ -533,8 +533,8 @@ class SignalGenerator:
         context_score = max(0.0, min(100.0, context_score))
 
         try:
-            from contextual_bandit import ThompsonSamplingBandit
-            bandit = ThompsonSamplingBandit()
+            from contextual_bandit import UCBBandit
+            bandit = UCBBandit()
             weights = bandit.get_weights()
             w_trend = weights["trend"]
             w_mr = weights["mean_reversion"]

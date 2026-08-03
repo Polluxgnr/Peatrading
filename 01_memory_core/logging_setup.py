@@ -19,9 +19,11 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Optional
+import structlog
 
 _ROOT = Path(__file__).resolve().parent.parent
 _LOG_DIR = _ROOT / "logs"
@@ -57,6 +59,19 @@ def setup_app_logging(
     if _CONFIGURED:
         return
 
+    # Structlog JSON configuration
+    structlog.configure(
+        processors=[
+            structlog.stdlib.add_log_level,
+            structlog.stdlib.add_logger_name,
+            structlog.processors.TimeStamper(fmt="iso"),
+            structlog.processors.JSONRenderer()
+        ],
+        logger_factory=structlog.stdlib.LoggerFactory(),
+        wrapper_class=structlog.stdlib.BoundLogger,
+        cache_logger_on_first_use=True,
+    )
+
     root = logging.getLogger()
     root.setLevel(logging.DEBUG)  # handlers filter; keep DEBUG available to files
 
@@ -78,6 +93,7 @@ def setup_app_logging(
 
     # Shared "all" trail — every component fans into this too.
     all_path = log_dir() / "pea_pollux_all.log"
+    json_path = log_dir() / "app_json.log"
     if not any(
         isinstance(h, RotatingFileHandler) and getattr(h, "baseFilename", "") == str(all_path)
         for h in root.handlers
@@ -89,9 +105,28 @@ def setup_app_logging(
         fh.setFormatter(logging.Formatter(_FILE_FMT, datefmt=_DATE_FMT))
         root.addHandler(fh)
 
+        # JSON handler using structlog formatter for backend querying
+        json_fh = RotatingFileHandler(
+            json_path, maxBytes=5_000_000, backupCount=3, encoding="utf-8"
+        )
+        json_fh.setLevel(logging.DEBUG)
+        class StructlogJsonFormatter(logging.Formatter):
+            def __init__(self):
+                super().__init__()
+            def format(self, record):
+                return structlog.stdlib.ProcessorFormatter.wrap_for_formatter(
+                    self, record.getLoggerName(), record.levelno, record.getMessage(),
+                )
+        
+        processor_formatter = structlog.stdlib.ProcessorFormatter(
+            processor=structlog.processors.JSONRenderer(),
+        )
+        json_fh.setFormatter(processor_formatter)
+        root.addHandler(json_fh)
+
     _CONFIGURED = True
     logging.getLogger("logging_setup").info(
-        "Logging ready — console=%s, files under %s", console, log_dir()
+        "Logging ready — console=%s, files under %s (including app_json.log)", console, log_dir()
     )
 
 

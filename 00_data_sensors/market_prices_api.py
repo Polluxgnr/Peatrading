@@ -193,6 +193,24 @@ class MarketDataFetcher:
                 logger.warning("No data fetched; nothing to ingest.")
                 return False
 
+            # --- Sanity Outlier Filter (Phase 53+) ---
+            # Drop rows with > +50% or < -40% daily return to prevent yfinance bugs
+            # from corrupting the ML models.
+            df = df.sort_values(["Ticker", "Date"])
+            # Calculate pct_change per ticker
+            df["_pct_chg"] = df.groupby("Ticker")["Close"].pct_change()
+            abnormal_mask = (df["_pct_chg"] > 0.50) | (df["_pct_chg"] < -0.40)
+            
+            if abnormal_mask.any():
+                abnormal_tickers = df[abnormal_mask]["Ticker"].unique()
+                logger.warning("Sanity Outlier Filter triggered for: %s. Dropping abnormal rows.", abnormal_tickers.tolist())
+                # Forward fill the previous row's close for these abnormal rows by dropping them
+                # Since duckdb upsert handles missing dates gracefully (or they just won't be inserted)
+                # It's safer to just drop the abnormal rows so they don't get into DB.
+                df = df[~abnormal_mask]
+                
+            df = df.drop(columns=["_pct_chg"])
+            
             rows = db_manager.upsert_ohlcv(df)
             n_tickers = df["Ticker"].nunique()
             logger.info(

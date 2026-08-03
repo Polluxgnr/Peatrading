@@ -2053,7 +2053,7 @@ def _native_tape_perf(period: str) -> pd.DataFrame:
         return pd.DataFrame()
 
 
-@st.fragment(run_every=120)
+@st.fragment(run_every="30s")
 def render_native_ticker_tape(period: str = "1d") -> None:
     """Render a CSS marquee ticker tape (no TradingView dependency)."""
     perf = _native_tape_perf(period)
@@ -3800,83 +3800,88 @@ st.write("---")
 # =============================================================================
 # Mission Control — état du monde en ~3 secondes
 # =============================================================================
-_pending_mc = load_signals(("PENDING",))
-_n_pending = 0 if _pending_mc is None or _pending_mc.empty else len(_pending_mc)
-_eq_curve_mc = load_equity_curve()
-_day_delta = None
-_day_delta_pct = None
-if _eq_curve_mc is not None and not _eq_curve_mc.empty and len(_eq_curve_mc) >= 2:
+@st.fragment(run_every="30s")
+def _render_mission_control():
+    _pending_mc = load_signals(("PENDING",))
+    _n_pending = 0 if _pending_mc is None or _pending_mc.empty else len(_pending_mc)
+    _eq_curve_mc = load_equity_curve()
+    _day_delta = None
+    _day_delta_pct = None
+    if _eq_curve_mc is not None and not _eq_curve_mc.empty and len(_eq_curve_mc) >= 2:
+        try:
+            _eqs = _eq_curve_mc.sort_values("date")["equity"].astype(float)
+            _day_delta = float(_eqs.iloc[-1] - _eqs.iloc[-2])
+            if float(_eqs.iloc[-2]) > 0:
+                _day_delta_pct = _day_delta / float(_eqs.iloc[-2]) * 100.0
+        except Exception:  # noqa: BLE001
+            pass
+    _mkt_label, _mkt_health = euronext_session_status()
+    _pipe = read_pipeline_status() if read_pipeline_status else None
+    _pipe_health = (_pipe or {}).get("health", "amber")
+    _pipe_txt = "jamais"
+    if _pipe:
+        _pipe_txt = (
+            f"{_pipe.get('status', '?')} · "
+            f"{_pipe.get('finished_at_local') or _pipe.get('written_at', '')[:19]}"
+        )
+    _health_color = {
+        "green": _NEON, "amber": _AMBER, "red": _RED
+    }.get(_pipe_health, _AMBER)
+    _mkt_color = _NEON if _mkt_health == "green" else _AMBER
+    
+    # Add Market Regime
     try:
-        _eqs = _eq_curve_mc.sort_values("date")["equity"].astype(float)
-        _day_delta = float(_eqs.iloc[-1] - _eqs.iloc[-2])
-        if float(_eqs.iloc[-2]) > 0:
-            _day_delta_pct = _day_delta / float(_eqs.iloc[-2]) * 100.0
-    except Exception:  # noqa: BLE001
-        pass
-_mkt_label, _mkt_health = euronext_session_status()
-_pipe = read_pipeline_status() if read_pipeline_status else None
-_pipe_health = (_pipe or {}).get("health", "amber")
-_pipe_txt = "jamais"
-if _pipe:
-    _pipe_txt = (
-        f"{_pipe.get('status', '?')} · "
-        f"{_pipe.get('finished_at_local') or _pipe.get('written_at', '')[:19]}"
-    )
-_health_color = {
-    "green": _NEON, "amber": _AMBER, "red": _RED
-}.get(_pipe_health, _AMBER)
-_mkt_color = _NEON if _mkt_health == "green" else _AMBER
-
-# Add Market Regime
-try:
-    from market_regime import MarketRegimeClassifier
-    _mr_classifier = MarketRegimeClassifier()
-    _regime = _mr_classifier.get_regime()
-    _conv_floor, _rsi_thresh = _mr_classifier.get_modulated_thresholds(
-        _regime,
-        base_conviction=float(_RISK.get("CONVICTION_EMIT_FLOOR", 65.0)),
-        base_rsi=float(_RISK.get("RSI_OVERSOLD_THRESHOLD", 30.0))
-    )
-except Exception:
-    _regime = "BULL"
-    _conv_floor = 65.0
-    _rsi_thresh = 30.0
-
-_regime_color = _NEON if _regime == "BULL" else (_RED if _regime == "BEAR" else _AMBER)
-
-st.markdown(
-    f"""
-<div class="mission">
-  <div class="mission-title">Mission Control · PEA personnel</div>
-  <div style="display:flex;flex-wrap:wrap;gap:18px;color:{_WHITE};font-size:13px;">
-    <div>Marché <b style="color:{_mkt_color};">{_mkt_label}</b></div>
-    <div>Régime <b style="color:{_regime_color};">{_regime}</b> 
-        <span style="color:{_MUTED}; font-size: 11px;">(Score ≥{_conv_floor:.0f} | RSI ≤{_rsi_thresh:.0f})</span>
+        from market_regime import MarketRegimeClassifier
+        _mr_classifier = MarketRegimeClassifier()
+        _regime = _mr_classifier.get_regime()
+        _conv_floor, _rsi_thresh = _mr_classifier.get_modulated_thresholds(
+            _regime,
+            base_conviction=float(_RISK.get("CONVICTION_EMIT_FLOOR", 65.0)),
+            base_rsi=float(_RISK.get("RSI_OVERSOLD_THRESHOLD", 30.0))
+        )
+    except Exception:
+        _regime = "BULL"
+        _conv_floor = 65.0
+        _rsi_thresh = 30.0
+    
+    _regime_color = _NEON if _regime == "BULL" else (_RED if _regime == "BEAR" else _AMBER)
+    
+    st.markdown(
+        f"""
+    <div class="mission">
+      <div class="mission-title">Mission Control · PEA personnel</div>
+      <div style="display:flex;flex-wrap:wrap;gap:18px;color:{_WHITE};font-size:13px;">
+        <div>Marché <b style="color:{_mkt_color};">{_mkt_label}</b></div>
+        <div>Régime <b style="color:{_regime_color};">{_regime}</b> 
+            <span style="color:{_MUTED}; font-size: 11px;">(Score ≥{_conv_floor:.0f} | RSI ≤{_rsi_thresh:.0f})</span>
+        </div>
+        <div>Dernière passe
+          <b style="color:{_health_color};">{_pipe_txt}</b></div>
+        <div>Equity
+          <b>{portfolio.total_equity:,.0f} €</b>
+          <span style="color:{_NEON if (_day_delta or 0) >= 0 else _RED};">
+            {f"{_day_delta:+,.0f} € ({_day_delta_pct:+.2f}%)" if _day_delta is not None else "·"}
+          </span>
+        </div>
+        <div>VIX <b style="color:{_RED if vix_panic else _WHITE};">{vix:.1f}</b></div>
+        <div>Pending Discord
+          <b style="color:{_AMBER if _n_pending else _MUTED};">{_n_pending}</b></div>
+      </div>
     </div>
-    <div>Dernière passe
-      <b style="color:{_health_color};">{_pipe_txt}</b></div>
-    <div>Equity
-      <b>{portfolio.total_equity:,.0f} €</b>
-      <span style="color:{_NEON if (_day_delta or 0) >= 0 else _RED};">
-        {f"{_day_delta:+,.0f} € ({_day_delta_pct:+.2f}%)" if _day_delta is not None else "·"}
-      </span>
-    </div>
-    <div>VIX <b style="color:{_RED if vix_panic else _WHITE};">{vix:.1f}</b></div>
-    <div>Pending Discord
-      <b style="color:{_AMBER if _n_pending else _MUTED};">{_n_pending}</b></div>
-  </div>
-</div>
-""",
-    unsafe_allow_html=True,
-)
-
-if st.button("⚡ Lancer Analyse", key="mc_run_now"):
-    import subprocess
-    subprocess.Popen(
-        [sys.executable, str(_ROOT / "main_scheduler.py"), "--now"],
-        cwd=str(_ROOT),
+    """,
+        unsafe_allow_html=True,
     )
-    st.toast("Analyse complète lancée en arrière-plan.", icon="⚡")
+    
+    if st.button("⚡ Lancer Analyse", key="mc_run_now"):
+        import subprocess
+        subprocess.Popen(
+            [sys.executable, str(_ROOT / "main_scheduler.py"), "--now"],
+            cwd=str(_ROOT),
+        )
+        st.toast("Analyse complète lancée en arrière-plan.", icon="⚡")
+
+_render_mission_control()
+
 
 # =============================================================================
 # Tabs
@@ -5376,6 +5381,75 @@ with tab_mkt:
     except Exception:  # noqa: BLE001
         model_breakdown = {}
         model_context = {}
+
+    # Phase 53+: SHAP XAI Inference for single ticker
+    try:
+        from ml_trainer import predict_probability_with_shap
+        from ml_feature_store import build_ml_feature_row
+        
+        if hist_dl is not None and not hist_dl.empty:
+            # We don't have CW8 and EXOG ready here instantly without DB calls, but we can try to fetch them or pass None
+            cw8_df = db_ro.get_historical_prices("CW8.PA", days=260)
+            cw8_close = cw8_df["Close"].astype(float) if cw8_df is not None and not cw8_df.empty else None
+            
+            exog_dfs = {}
+            for sym in ["^GSPC", "^IXIC", "EURUSD=X", "OAT.PA"]:
+                try:
+                    df_ex = db_ro.get_historical_prices(sym, days=260)
+                    if df_ex is not None and not df_ex.empty:
+                        exog_dfs[sym] = df_ex["Close"].astype(float)
+                except Exception:
+                    pass
+            
+            feat_dict = build_ml_feature_row(
+                selected, 
+                close=hist_dl["Close"].astype(float), 
+                cw8_close=cw8_close, 
+                exog_closes=exog_dfs, 
+                reason="ui_inference", 
+                pdb=note_db, 
+                asof_idx=-1
+            )
+            proba, shap_vals = predict_probability_with_shap(feat_dict)
+            
+            if proba is not None and shap_vals is not None:
+                st.markdown("### 🤖 Meta-Labeling & Explainable AI (SHAP)")
+                
+                status_color = _NEON if proba >= 0.50 else _RED
+                status_text = "VALIDÉ" if proba >= 0.50 else "REJETÉ"
+                
+                st.markdown(f"<div style='font-size:20px'>Probabilité Alpha: <strong style='color:{status_color}'>{proba*100:.1f}%</strong> ({status_text})</div>", unsafe_allow_html=True)
+                
+                # Waterfall or bar chart of top positive and negative
+                import plotly.graph_objects as go
+                
+                # Sort all non-zero
+                sorted_shaps = sorted([(k, v) for k, v in shap_vals.items() if abs(v) > 0.001], key=lambda x: x[1])
+                
+                if sorted_shaps:
+                    y_labels = [x[0] for x in sorted_shaps]
+                    x_vals = [x[1] for x in sorted_shaps]
+                    colors = [_NEON if x > 0 else _RED for x in x_vals]
+                    
+                    fig = go.Figure(go.Bar(
+                        x=x_vals, y=y_labels, orientation='h',
+                        marker_color=colors
+                    ))
+                    fig.update_layout(
+                        title="Décomposition de la décision (SHAP Values)",
+                        xaxis_title="Impact sur la probabilité d'Alpha",
+                        yaxis_title="Feature",
+                        template="plotly_dark",
+                        plot_bgcolor="rgba(0,0,0,0)",
+                        paper_bgcolor="rgba(0,0,0,0)",
+                        margin=dict(l=20, r=20, t=40, b=20),
+                        height=400
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.caption("Aucune feature n'a eu d'impact significatif.")
+    except Exception as exc:
+        st.caption(f"Inférence ML indisponible: {exc}")
 
     if True:
         st.markdown("### Voir toutes les données brutes (Data Lake)")

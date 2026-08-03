@@ -214,6 +214,7 @@ def build_ml_feature_row(
         label = int(fwd > _TARGET_RETURN) if np.isfinite(fwd) else np.nan
 
     return {
+        "asof_date": str(series.index[idx].date()) if hasattr(series.index[idx], 'date') else str(series.index[idx]),
         "ticker": ticker,
         "rsi14": rsi,
         "zscore_50": z50,

@@ -61,7 +61,7 @@ def init_worker():
         except Exception:
             EXOG_DF[sym] = None
 
-def _process_ticker_dates(ticker: str) -> List[Dict]:
+def _process_ticker_dates(ticker: str, last_dt: datetime.datetime | None = None) -> List[Dict]:
     """Evaluate historical dates for a single ticker."""
     global GEN, PDB, TSDB
     
@@ -79,6 +79,9 @@ def _process_ticker_dates(ticker: str) -> List[Dict]:
     results = []
     
     current_date = pd.to_datetime(START_DATE).tz_localize(None)
+    if last_dt is not None:
+        current_date = max(current_date, last_dt + datetime.timedelta(days=1))
+        
     end_date = pd.to_datetime(END_DATE).tz_localize(None)
     
     dates_to_check = []
@@ -137,37 +140,55 @@ def main() -> None:
     tickers = load_universe_tickers()
     logger.info(f"Loaded {len(tickers)} tickers for ML bootstrap.")
     
-    out_path = _ROOT / "database" / "ml_training_dataset.csv"
+    out_path = _ROOT / "database" / "ml_training_dataset.parquet"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     
-    # Delete existing CSV to start fresh
-    if out_path.exists():
-        out_path.unlink()
-        logger.info(f"Deleted existing dataset at {out_path}.")
-        
     init_worker()
     
+    existing_df = None
+    if out_path.exists():
+        try:
+            existing_df = pd.read_parquet(out_path)
+            logger.info(f"Loaded existing dataset with {len(existing_df)} rows.")
+        except Exception as e:
+            logger.warning(f"Could not read existing parquet file: {e}")
+            existing_df = None
+    
     total_rows = 0
+    new_rows_list = []
+    
     for ticker in tqdm(tickers, desc="Evaluating Tickers"):
         try:
-            res = _process_ticker_dates(ticker)
+            last_dt = None
+            if existing_df is not None and not existing_df.empty:
+                t_df = existing_df[existing_df["ticker"] == ticker]
+                if not t_df.empty and "asof_date" in t_df.columns:
+                    last_dt = pd.to_datetime(t_df["asof_date"]).max()
+                    
+            res = _process_ticker_dates(ticker, last_dt=last_dt)
             if res:
                 df = pd.DataFrame(res)
                 # Drop NaN properly across features before saving
                 df = df.dropna()
                 if not df.empty:
-                    df.to_csv(out_path, mode='a', header=not out_path.exists(), index=False)
+                    new_rows_list.append(df)
                     total_rows += len(df)
         except Exception as exc:
             logger.warning(f"Ticker {ticker} generated an exception: {exc}")
             continue
             
-    if total_rows == 0:
-        logger.error("No features generated. Exiting.")
-        return
+    if new_rows_list:
+        new_df = pd.concat(new_rows_list, ignore_index=True)
+        if existing_df is not None and not existing_df.empty:
+            final_df = pd.concat([existing_df, new_df], ignore_index=True)
+        else:
+            final_df = new_df
+            
+        final_df.to_parquet(out_path, index=False)
+        logger.info(f"Appended {total_rows} new rows. Total dataset rows: {len(final_df)}.")
+    else:
+        logger.info("No new features generated. Dataset is up to date.")
         
-    logger.info(f"Saved {total_rows} rows to {out_path}.")
-    
     try:
         from ml_trainer import train_model
         logger.info("Training XGBoost model...")
