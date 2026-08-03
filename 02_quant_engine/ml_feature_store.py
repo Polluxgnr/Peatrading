@@ -161,6 +161,13 @@ def build_ml_feature_row(
     insider = _insider_net_from_reason(reason)
     news_sent = _news_sentiment_proxy(ticker, pdb)
     roe, pe = _fundamentals(ticker, pdb, offline_mode=offline_mode)
+    # Jalon 1 Macro Alpha Sensors
+    from macro_alpha_api import MacroAlphaSensor
+    macro = MacroAlphaSensor()
+    short_interest = macro.get_short_interest(ticker)
+    ecb_euribor = macro.get_ecb_euribor()
+    gex_proxy = macro.get_gamma_exposure(ticker)
+
     fwd = _forward_return(series, idx, _FORWARD_DAYS) if idx >= 0 else np.nan
     label = int(fwd > _TARGET_RETURN) if np.isfinite(fwd) else np.nan
 
@@ -173,6 +180,9 @@ def build_ml_feature_row(
         "finnhub_roe": roe,
         "finnhub_pe": pe,
         "news_sentiment": news_sent,
+        "amf_short_interest": short_interest,
+        "ecb_euribor_3m": ecb_euribor,
+        "gex_proxy": gex_proxy,
         "fwd_ret_30d": fwd,
         "label_fwd_gt_2pct": label,
     }

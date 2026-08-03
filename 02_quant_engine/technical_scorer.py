@@ -260,6 +260,7 @@ class SignalGenerator:
         *,
         macro_sensor: Any | None = None,
         is_historical: bool = False,
+        cs_rank: float = 50.0,
     ) -> dict[str, Any]:
         """Committee-style multi-model score (0..100 total)."""
         empty = {
@@ -298,6 +299,12 @@ class SignalGenerator:
         rsi_14 = last["RSI_14"]
         z50 = last.get("Z_SCORE_50")
         factors: list[str] = []
+        
+        # Cross-sectional momentum modifier
+        if cs_rank > 80.0:
+            factors.append(f"MOM+5 Leader (Top {100 - cs_rank:.0f}%)")
+        elif cs_rank < 20.0:
+            factors.append(f"MOM-5 Laggard (Bot {cs_rank:.0f}%)")
         news_mod = 0.0
         poly_mod = 0.0
         fundamentals_score = 0.0
@@ -306,22 +313,35 @@ class SignalGenerator:
         # --- Trend model: MACD histogram + close>SMA50 ----------------------
         trend_score = 0.0
         macd_hist_col = next((c for c in enriched.columns if c.startswith("MACDh_")), "")
+        sma_5 = last.get("SMA_5")
         sma_50 = last.get("SMA_50")
-        if macd_hist_col:
-            mh = pd.to_numeric(enriched[macd_hist_col], errors="coerce").dropna()
-            if len(mh) >= 2:
-                last_h = float(mh.iloc[-1])
-                prev_h = float(mh.iloc[-2])
-                if last_h > 0:
-                    trend_score += 35.0
-                if last_h > prev_h:
-                    trend_score += 25.0
-                if sma_50 is not None and not pd.isna(sma_50) and close > float(sma_50):
-                    trend_score += 40.0
+        sma_200 = last.get("SMA_200")
+        
+        # --- Trend Model ---
+        trend_score = 50.0
+        if sma_5 is not None and sma_50 is not None:
+            if sma_5 > sma_50:
+                trend_score += 15
+            else:
+                trend_score -= 15
+        if sma_50 is not None and sma_200 is not None:
+            if sma_50 > sma_200:
+                trend_score += 20
+            else:
+                trend_score -= 10
+        if sma_50 is not None and close > sma_50:
+            trend_score += 15
+            
+        if cs_rank > 80.0:
+            trend_score += 10
+        elif cs_rank < 20.0:
+            trend_score -= 10
+            
         trend_score = max(0.0, min(100.0, trend_score))
-        if trend_score > 0:
-            factors.append(f"TREND {trend_score:.0f}/100")
-
+        if trend_score >= 80:
+            factors.append("TREND 80/100 (Strong)")
+        elif trend_score <= 30:
+            factors.append("TREND 30/100 (Bearish)")
         # --- Mean-reversion model: RSI + lower Bollinger proximity ----------
         mr_score = 0.0
         bbl_col = next((c for c in enriched.columns if c.startswith("BBL_")), "")
@@ -568,6 +588,16 @@ class SignalGenerator:
         """
         signals: list[Signal] = []
         macro = self._macro_sensor()
+        
+        # Precompute cross-sectional momentum ranks for relative rotation
+        try:
+            from cross_sectional import CrossSectionalScorer
+            cs_scorer = CrossSectionalScorer(timeseries_db)
+            cs_ranks = cs_scorer.rank_universe(tickers, days=126)
+        except Exception as exc:
+            logger.debug("Cross-sectional scoring failed: %s", exc)
+            cs_ranks = {}
+            
         from market_regime import MarketRegimeClassifier
         mr_classifier = MarketRegimeClassifier()
 
@@ -576,7 +606,8 @@ class SignalGenerator:
             if df is None or df.empty or len(df) < _MIN_ROWS:
                 return None
             
-            conv = self.evaluate(ticker, df, macro_sensor=macro)
+            cs_rank = float(cs_ranks.get(ticker, 50.0))
+            conv = self.evaluate(ticker, df, macro_sensor=macro, cs_rank=cs_rank)
             total = float(conv.get("total") or 0.0)
             actual_floor = conviction_floor if conviction_floor is not None else self.conviction_floor
             

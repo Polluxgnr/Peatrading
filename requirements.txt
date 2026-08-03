@@ -22,6 +22,8 @@ scikit-learn>=1.3
 # pandas-ta-classic is the numpy-2.x / numba-free provider of the `.ta`
 # accessor. Upstream `pandas-ta` 0.4.x requires numba (no py3.13/arm64 wheel).
 pandas-ta-classic>=0.6.0
+hmmlearn>=0.3
+stable-baselines3>=2.2.1
 
 # --- Interfaces (Phases 7-8) ---
 discord.py>=2.3

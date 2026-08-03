@@ -53,6 +53,18 @@ class PeaSizer:
         self.satellite_max_budget: float = float(risk.SATELLITE_MAX_BUDGET_PCT)
         self.vol_reference: float = float(risk.VOLATILITY_REFERENCE)
         self.vol_max_factor: float = float(risk.VOLATILITY_MAX_FACTOR)
+        
+        try:
+            from stable_baselines3 import PPO
+            model_path = _PROJECT_ROOT / "database" / "rl_sizer_model.zip"
+            if model_path.exists():
+                self.rl_model = PPO.load(str(model_path))
+                logger.info("Loaded PPO RL model for dynamic sizing.")
+            else:
+                self.rl_model = None
+        except Exception:
+            self.rl_model = None
+            
         logger.debug(
             "Sizer loaded: kelly=%.2f max_single=%.2f sat_budget=%.2f vol_ref=%.2f",
             self.kelly_fraction,
@@ -135,14 +147,30 @@ class PeaSizer:
             return 0, meta
 
         max_alloc = portfolio.total_equity * self.max_single_position
-        target_cash = max_alloc * (signal.score / 100.0) * self.kelly_fraction
-        vol_factor = self._volatility_factor(historical_volatility)
-        target_cash *= vol_factor
-        meta.update({
-            "vol_factor": vol_factor,
-            "max_alloc": max_alloc,
-            "target_cash_pre_cap": target_cash,
-        })
+        
+        # RL Sizing Path
+        if getattr(self, "rl_model", None) is not None and historical_volatility is not None:
+            import numpy as np
+            obs = np.array([signal.score / 100.0, historical_volatility], dtype=np.float32)
+            action, _ = self.rl_model.predict(obs, deterministic=True)
+            # Action space [-1, 1] mapped to [0, 1]
+            dynamic_kelly = float(np.clip((action[0] + 1.0) / 2.0, 0.0, 1.0))
+            meta["kelly_fraction"] = dynamic_kelly
+            target_cash = max_alloc * dynamic_kelly
+            vol_factor = 1.0  # RL agent learns vol natively
+            meta["vol_factor"] = vol_factor
+            meta["target_cash_pre_cap"] = target_cash
+            meta["max_alloc"] = max_alloc
+        else:
+            # Traditional Deterministic Path
+            target_cash = max_alloc * (signal.score / 100.0) * self.kelly_fraction
+            vol_factor = self._volatility_factor(historical_volatility)
+            target_cash *= vol_factor
+            meta.update({
+                "vol_factor": vol_factor,
+                "max_alloc": max_alloc,
+                "target_cash_pre_cap": target_cash,
+            })
 
         satellite_room = max(
             0.0,

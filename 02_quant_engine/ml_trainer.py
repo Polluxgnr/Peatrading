@@ -35,6 +35,9 @@ FEATURE_COLS = [
     "finnhub_roe",
     "finnhub_pe",
     "news_sentiment",
+    "amf_short_interest",
+    "ecb_euribor_3m",
+    "gex_proxy",
 ]
 TARGET_COL = "label_fwd_gt_2pct"
 
@@ -105,7 +108,17 @@ def train_model(
     metrics = evaluate_model(model, X_test, y_test, work.iloc[split:])
     metrics["n_train"] = int(len(X_train))
     metrics["n_test"] = int(len(X_test))
+    
+    # Auto Feature Selection: Track importance
+    importances = model.feature_importances_
+    feat_imp = {col: float(imp) for col, imp in zip(FEATURE_COLS, importances)}
+    metrics["feature_importances"] = feat_imp
     metrics["feature_cols"] = FEATURE_COLS
+
+    # Optional: Log warning if a feature's importance is near zero
+    for f_name, f_weight in feat_imp.items():
+        if f_weight < 0.01:
+            logger.warning("Feature %s has very low importance (%.3f). Consider excluding it.", f_name, f_weight)
 
     _METRICS_PATH.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
     logger.info("Model saved to %s (accuracy=%.1f%%)", out_model, metrics.get("accuracy_pct", 0))
