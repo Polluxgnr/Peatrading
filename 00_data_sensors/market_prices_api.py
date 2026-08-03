@@ -8,6 +8,8 @@ This is a pure ingestion layer: no indicator math, risk, or trading logic.
 """
 
 import logging
+import os
+import requests
 from datetime import datetime, timedelta
 from typing import Any, List
 
@@ -55,6 +57,20 @@ class MarketDataFetcher:
             start_date,
         )
 
+        massive_df = self._fetch_from_massive(tickers, lookback_days)
+        if massive_df is not None and not massive_df.empty:
+            return self._clean(massive_df)
+
+        try:
+            from logging_setup import update_pipeline_status
+            update_pipeline_status({
+                "data_degraded_mode": True,
+                "degraded_reason": "MASSIVE API failed or unavailable. Falling back to yfinance."
+            })
+            logger.error("DEGRADED MODE: MASSIVE API unavailable. Falling back to yfinance.")
+        except Exception:
+            pass
+
         try:
             raw = yf.download(
                 tickers,
@@ -77,6 +93,46 @@ class MarketDataFetcher:
             return flat
 
         return self._clean(flat)
+        
+    def _fetch_from_massive(self, tickers: List[str], lookback_days: int) -> pd.DataFrame | None:
+        """Attempt to fetch data from the institutional MASSIVE API."""
+        api_key = os.getenv("MASSIVE_API_KEY")
+        if not api_key:
+            return None
+            
+        try:
+            # Assuming a standard mock URL for MASSIVE API
+            url = "https://api.massive.example.com/v1/historical"
+            headers = {"Authorization": f"Bearer {api_key}"}
+            payload = {
+                "tickers": tickers,
+                "lookback_days": lookback_days
+            }
+            
+            resp = requests.post(url, json=payload, headers=headers, timeout=10.0)
+            resp.raise_for_status()
+            
+            data = resp.json()
+            # Expecting data format: [{"Ticker": "AAPL", "Date": "2024-01-01", "Open": 150.0, ...}, ...]
+            if not data:
+                return None
+                
+            df = pd.DataFrame(data)
+            
+            missing = [c for c in _FLAT_COLUMNS if c not in df.columns]
+            if missing:
+                logger.error("MASSIVE API response missing columns: %s", missing)
+                return None
+                
+            df["Date"] = pd.to_datetime(df["Date"]).dt.tz_localize(None).dt.normalize()
+            return df[_FLAT_COLUMNS]
+            
+        except requests.RequestException as e:
+            logger.warning("MASSIVE API network error: %s", e)
+            return None
+        except Exception as e:
+            logger.error("Failed to parse MASSIVE API response: %s", e)
+            return None
 
     def _flatten(self, raw: pd.DataFrame, tickers: List[str]) -> pd.DataFrame:
         """Restructure a yfinance response into the flat schema.

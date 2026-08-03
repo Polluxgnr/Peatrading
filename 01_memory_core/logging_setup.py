@@ -217,6 +217,33 @@ def write_pipeline_status(payload: dict) -> Path:
     path.write_text(json.dumps(body, indent=2, default=str), encoding="utf-8")
     return path
 
+def update_pipeline_status(updates: dict) -> Path:
+    """Merge updates into the existing pipeline status JSON.
+
+    Args:
+        updates: A dictionary of keys to update.
+
+    Returns:
+        Path: Written file.
+    """
+    import json
+    from datetime import datetime, timezone
+
+    out_dir = _ROOT / "database"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / "pipeline_status.json"
+    
+    body = {}
+    if path.exists():
+        try:
+            body = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+            
+    body.update(updates)
+    body["written_at"] = datetime.now(timezone.utc).isoformat()
+    path.write_text(json.dumps(body, indent=2, default=str), encoding="utf-8")
+    return path
 
 def read_pipeline_status() -> Optional[dict]:
     """Load the last pipeline heartbeat, or ``None`` if missing/corrupt."""

@@ -3829,6 +3829,12 @@ def _render_mission_control():
     }.get(_pipe_health, _AMBER)
     _mkt_color = _NEON if _mkt_health == "green" else _AMBER
     
+    # Degraded Mode Alert
+    _is_degraded = (_pipe or {}).get("data_degraded_mode", False)
+    _degraded_reason = (_pipe or {}).get("degraded_reason", "Institutional API down. Using yfinance/fallback data.")
+    if _is_degraded:
+        st.error(f"⚠️ **DEGRADED MODE**: {_degraded_reason}")
+    
     # Add Market Regime
     try:
         from market_regime import MarketRegimeClassifier

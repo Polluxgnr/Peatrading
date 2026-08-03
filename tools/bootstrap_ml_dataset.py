@@ -184,7 +184,10 @@ def main() -> None:
         else:
             final_df = new_df
             
-        final_df.to_parquet(out_path, index=False)
+        import os
+        tmp_path = out_path.with_suffix(".tmp.parquet")
+        final_df.to_parquet(tmp_path, index=False)
+        os.replace(tmp_path, out_path)
         logger.info(f"Appended {total_rows} new rows. Total dataset rows: {len(final_df)}.")
     else:
         logger.info("No new features generated. Dataset is up to date.")

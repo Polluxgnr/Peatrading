@@ -466,16 +466,70 @@ class SignalGenerator:
         news_score = 0.0
         headlines: list[str] = []
         if not self.offline_mode and not is_historical:
-            try:
-                if yf is not None:
-                    raw_news = yf.Ticker(ticker).news or []
-                    for n in raw_news[:6]:
-                        content = n.get("content", n)
-                        title = (content.get("title") or n.get("title") or "").strip()
-                        if title:
-                            headlines.append(title)
-            except Exception as exc:  # noqa: BLE001
-                logger.debug("News fetch failed for %s: %s", ticker, exc)
+            import requests
+            
+            # 1. Try Institutional Finlight API First
+            finlight_key = os.getenv("FINLIGHT_API_KEY")
+            raw_news_data = []
+            fetched_via_finlight = False
+            
+            if finlight_key:
+                try:
+                    resp = requests.get(
+                        f"https://api.finlight.me/v1/news?ticker={ticker}",
+                        headers={"Authorization": f"Bearer {finlight_key}"},
+                        timeout=5.0
+                    )
+                    resp.raise_for_status()
+                    finlight_news = resp.json()
+                    
+                    if isinstance(finlight_news, list):
+                        for n in finlight_news[:6]:
+                            title = (n.get("title") or n.get("headline") or "").strip()
+                            if title:
+                                headlines.append(title)
+                                raw_news_data.append({
+                                    "url": str(n.get("id", n.get("url", ""))),
+                                    "title": title,
+                                    "ticker": ticker,
+                                    "date_published": n.get("date", n.get("published_at", "")),
+                                    "provider": "Finlight"
+                                })
+                        fetched_via_finlight = True
+                except Exception as e:
+                    logger.error(f"Finlight API failed for {ticker}: {e}")
+            
+            # 2. Fallback to yfinance if Finlight failed or not configured
+            if not fetched_via_finlight:
+                if finlight_key:
+                    try:
+                        from logging_setup import update_pipeline_status
+                        update_pipeline_status({
+                            "data_degraded_mode": True,
+                            "degraded_reason": "Finlight API failed. Falling back to yfinance for news."
+                        })
+                        logger.error("DEGRADED MODE: Finlight API unavailable. Falling back to yfinance.")
+                    except Exception:
+                        pass
+                
+                try:
+                    if yf is not None:
+                        raw_news = yf.Ticker(ticker).news or []
+                        for n in raw_news[:6]:
+                            content = n.get("content", n)
+                            title = (content.get("title") or n.get("title") or "").strip()
+                            if title:
+                                headlines.append(title)
+                                raw_news_data.append({
+                                    "url": str(content.get("providerPublishTime", "")), 
+                                    "title": title,
+                                    "ticker": ticker,
+                                    "date_published": "",
+                                    "provider": "Yahoo Finance"
+                                })
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug("News fetch failed for %s: %s", ticker, exc)
+                    
             if headlines:
                 if NewsSentimentScorer is not None:
                     try:
@@ -488,6 +542,17 @@ class SignalGenerator:
                     heuristic_vals = [_heuristic_news_score(h) for h in headlines]
                     if heuristic_vals:
                         news_score = float(sum(heuristic_vals) / len(heuristic_vals))
+                
+                # Update news score in the raw data for SQLite
+                for n_dict in raw_news_data:
+                    n_dict["sentiment_score"] = news_score
+                
+                try:
+                    from sqlite_portfolio import PortfolioDB
+                    db = PortfolioDB()
+                    db.save_news(raw_news_data)
+                except Exception as exc:
+                    logger.debug("Failed to save news to SQLite: %s", exc)
         if news_score > 30:
             news_mod = 15.0
             factors.append(f"NEWS+10 Bullish sentiment ({news_score:.0f})")
