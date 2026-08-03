@@ -146,10 +146,14 @@ def main() -> None:
     init_worker()
     
     existing_df = None
+    max_dates = {}
     if out_path.exists():
         try:
             existing_df = pd.read_parquet(out_path)
+            logger.info("Found existing Parquet, doing incremental update...")
             logger.info(f"Loaded existing dataset with {len(existing_df)} rows.")
+            if "asof_date" in existing_df.columns and "ticker" in existing_df.columns:
+                max_dates = pd.to_datetime(existing_df["asof_date"]).groupby(existing_df["ticker"]).max().to_dict()
         except Exception as e:
             logger.warning(f"Could not read existing parquet file: {e}")
             existing_df = None
@@ -159,11 +163,12 @@ def main() -> None:
     
     for ticker in tqdm(tickers, desc="Evaluating Tickers"):
         try:
-            last_dt = None
-            if existing_df is not None and not existing_df.empty:
-                t_df = existing_df[existing_df["ticker"] == ticker]
-                if not t_df.empty and "asof_date" in t_df.columns:
-                    last_dt = pd.to_datetime(t_df["asof_date"]).max()
+            last_dt = max_dates.get(ticker)
+            if last_dt is not None:
+                current_date = max(pd.to_datetime(START_DATE).tz_localize(None), last_dt + datetime.timedelta(days=1))
+                end_date = pd.to_datetime(END_DATE).tz_localize(None)
+                if current_date > end_date:
+                    continue
                     
             res = _process_ticker_dates(ticker, last_dt=last_dt)
             if res:
