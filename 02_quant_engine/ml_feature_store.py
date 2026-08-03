@@ -44,44 +44,6 @@ def _safe_float(x: Any, default: float = np.nan) -> float:
         return default
 
 
-def _rsi14(close: pd.Series) -> float:
-    if close is None or len(close) < 15:
-        return np.nan
-    delta = close.astype(float).diff()
-    gain = delta.clip(lower=0.0).rolling(14, min_periods=14).mean()
-    loss = (-delta.clip(upper=0.0)).rolling(14, min_periods=14).mean()
-    rs = gain / loss.replace(0.0, np.nan)
-    rsi = 100.0 - (100.0 / (1.0 + rs))
-    val = float(rsi.iloc[-1]) if len(rsi) else np.nan
-    return val if np.isfinite(val) else np.nan
-
-
-def _zscore50(close: pd.Series) -> float:
-    try:
-        from quantitative_math import calculate_z_score
-
-        z = calculate_z_score(close.astype(float))
-        val = float(z.iloc[-1]) if len(z) else np.nan
-        return val if np.isfinite(val) else np.nan
-    except Exception:  # noqa: BLE001
-        if close is None or len(close) < 50:
-            return np.nan
-        window = close.astype(float).tail(50)
-        std = float(window.std(ddof=0))
-        if std <= 0:
-            return np.nan
-        return float((window.iloc[-1] - window.mean()) / std)
-
-
-def _vol20(close: pd.Series) -> float:
-    if close is None or len(close) < 21:
-        return np.nan
-    rets = close.astype(float).pct_change().dropna().tail(20)
-    if rets.empty:
-        return np.nan
-    return float(rets.std(ddof=0) * np.sqrt(252.0))
-
-
 def _forward_return(close: pd.Series, asof_idx: int, days: int = _FORWARD_DAYS) -> float:
     """Return close[asof+days]/close[asof] - 1 when available."""
     if close is None or asof_idx < 0 or asof_idx + days >= len(close):
@@ -176,9 +138,26 @@ def build_ml_feature_row(
     idx = asof_idx if asof_idx is not None else (len(series) - 1 if len(series) else -1)
     hist = series.iloc[: idx + 1] if idx >= 0 else series
 
-    rsi = _rsi14(hist)
-    z50 = _zscore50(hist)
-    vol = _vol20(hist)
+    # DRY Feature Engineering via SignalGenerator
+    df_hist = pd.DataFrame({"Close": hist, "High": hist, "Low": hist})
+    try:
+        sys.path.insert(0, str(_ROOT / "02_quant_engine"))
+        from technical_scorer import SignalGenerator
+        # calculate_indicators expects DataFrame with Close, High, Low
+        enriched = SignalGenerator(skip_regime=True, offline_mode=True).calculate_indicators(df_hist)
+        last_row = enriched.iloc[-1]
+        rsi = float(last_row.get("RSI_14", np.nan))
+        z50 = float(last_row.get("Z_SCORE_50", np.nan))
+    except Exception:
+        rsi = np.nan
+        z50 = np.nan
+
+    # Volatility (20-day annualized)
+    vol = np.nan
+    if len(hist) >= 21:
+        rets = hist.pct_change().dropna().tail(20)
+        if not rets.empty:
+            vol = float(rets.std(ddof=0) * np.sqrt(252.0))
     insider = _insider_net_from_reason(reason)
     news_sent = _news_sentiment_proxy(ticker, pdb)
     roe, pe = _fundamentals(ticker, pdb, offline_mode=offline_mode)

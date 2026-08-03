@@ -102,6 +102,17 @@ class RevocationEngine:
             )
             return signal
 
+        # Continuous Conviction Decay
+        if age_hours > 0 and self.validity_hours > 0:
+            decay_factor = age_hours / self.validity_hours
+            penalty = min(0.30, 0.30 * decay_factor)
+            original_score = signal.score
+            signal.score = max(0.0, original_score * (1.0 - penalty))
+            if penalty > 0:
+                decay_str = f"Time decay -{penalty*100:.1f}%"
+                if decay_str not in signal.reason:
+                    signal.reason = f"{signal.reason} | {decay_str}".strip(" |")
+
         logger.debug("Signal %s still valid (age %.1fh).", signal.id[:8], age_hours)
         return signal
 
