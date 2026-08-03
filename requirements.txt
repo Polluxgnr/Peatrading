@@ -1,5 +1,4 @@
 # PEA Pollux - Python 3.11+
-# Phase 1 only needs pydantic + pyyaml; the rest is pinned for the roadmap.
 
 # --- Core / data contracts (Phase 1) ---
 pydantic>=2.6,<3.0

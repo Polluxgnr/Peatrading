@@ -67,6 +67,10 @@ def train_model(
             raise ValueError(f"Missing column in dataset: {col}")
 
     work = df.dropna(subset=[TARGET_COL]).copy()
+    if "created_at" in work.columns:
+        work = work.sort_values("created_at")
+    elif "Date" in work.columns:
+        work = work.sort_values("Date")
     for col in FEATURE_COLS:
         work[col] = pd.to_numeric(work[col], errors="coerce")
     work = work.dropna(subset=FEATURE_COLS)
@@ -77,8 +81,11 @@ def train_model(
     X = work[FEATURE_COLS].values.astype(float)
 
     split = int(len(work) * 0.8)
-    X_train, X_test = X[:split], X[split:]
-    y_train, y_test = y[:split], y[split:]
+    embargo = 30
+    train_end = max(1, split - embargo)
+    
+    X_train, X_test = X[:train_end], X[split:]
+    y_train, y_test = y[:train_end], y[split:]
 
     model = xgb.XGBClassifier(
         n_estimators=80,
