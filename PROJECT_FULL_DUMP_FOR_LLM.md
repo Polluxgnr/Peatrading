@@ -1,6 +1,6 @@
 # PEA Pollux — Full Project Dump for LLM
 
-> **PEA Pollux** · Generated `2026-07-31 09:46 UTC` · Root `C:\Users\PolluxGronier\Downloads\pea_sniper_terminal`
+> **PEA Pollux** · Generated `2026-08-03 07:33 UTC` · Root `C:\Users\PolluxGronier\Downloads\pea_sniper_terminal`
 
 One-shot context for external LLM agents. Includes source, configs, and docs.
 Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
@@ -55,7 +55,7 @@ Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
 - `Dockerfile` (30 lines)
 - `main_scheduler.py` (819 lines) ⭐
 - `README.md` (755 lines) ⭐
-- `requirements.txt` (38 lines)
+- `requirements.txt` (39 lines)
 - `run_dashboard.ps1` (15 lines)
 - `run_discord.py` (100 lines)
 - `seed_account.py` (129 lines)
@@ -5170,7 +5170,7 @@ TARGET_COL = "label_fwd_gt_2pct"
 
 
 def _load_dataset(path: Path | None = None) -> pd.DataFrame:
-    p = path or _DATASET
+    p = Path(path) if path else _DATASET
     if not p.exists():
         raise FileNotFoundError(f"Training dataset not found: {p}")
     df = pd.read_csv(p)
@@ -19909,7 +19909,7 @@ streamlit run 05_interfaces/terminal_dashboard.py
 *   **Error Resilience:** Poursuite automatique du bootstrap même si des API financières flanchent ou que l'historique d'un ticker est corrompu.
 ```
 
-## FILE: requirements.txt (38 lines)
+## FILE: requirements.txt (39 lines)
 ```text
 # PEA Pollux - Python 3.11+
 # Phase 1 only needs pydantic + pyyaml; the rest is pinned for the roadmap.
@@ -19932,6 +19932,7 @@ feedparser>=6.0
 pandas>=2.1
 numpy>=2.0
 xgboost>=2.0
+scikit-learn>=1.3
 # pandas-ta-classic is the numpy-2.x / numba-free provider of the `.ta`
 # accessor. Upstream `pandas-ta` 0.4.x requires numba (no py3.13/arm64 wheel).
 pandas-ta-classic>=0.6.0
