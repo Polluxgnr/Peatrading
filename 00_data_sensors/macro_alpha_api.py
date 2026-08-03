@@ -488,32 +488,8 @@ class MacroAlphaSensor:
     @lru_cache(maxsize=128)
     def get_short_interest(self, ticker: str) -> float:
         """Get net short percentage for a ticker via AMF BDIF."""
-        if AmfShortScraper is None:
-            return 0.0
-        
-        try:
-            isin = None
-            if BoursoramaScraper is not None:
-                try:
-                    import concurrent.futures
-                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                        future = executor.submit(BoursoramaScraper().get_instrument_profile, ticker)
-                        profile = future.result(timeout=5.0)
-                    if profile:
-                        isin = profile.get("isin")
-                except concurrent.futures.TimeoutError:
-                    logger.warning("Boursorama profile fetch timed out for %s after 5s", ticker)
-                except Exception as e:
-                    logger.warning("Boursorama profile fetch failed for %s: %s", ticker, e)
-            if not isin:
-                return 0.0
-            
-            val = AmfShortScraper().get_short_interest(isin)
-            logger.debug("%s Short Interest (AMF) = %.2f%%", ticker, val)
-            return val
-        except Exception as exc:
-            logger.debug("Short interest fetch failed for %s: %s", ticker, exc)
-            return 0.0
+        # BYPASS: Completely disabled to prevent AWS hanging inside BeautifulSoup
+        return 0.0
             
     def get_ecb_euribor(self) -> float:
         """Get Euribor 3M (proxy for ECB rates)."""
