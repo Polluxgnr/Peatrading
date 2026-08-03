@@ -40,7 +40,7 @@ TARGET_COL = "label_fwd_gt_2pct"
 
 
 def _load_dataset(path: Path | None = None) -> pd.DataFrame:
-    p = path or _DATASET
+    p = Path(path) if path else _DATASET
     if not p.exists():
         raise FileNotFoundError(f"Training dataset not found: {p}")
     df = pd.read_csv(p)
