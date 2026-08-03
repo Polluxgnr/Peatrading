@@ -495,11 +495,16 @@ class MacroAlphaSensor:
             isin = None
             if BoursoramaScraper is not None:
                 try:
-                    profile = BoursoramaScraper().get_instrument_profile(ticker)
+                    import concurrent.futures
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                        future = executor.submit(BoursoramaScraper().get_instrument_profile, ticker)
+                        profile = future.result(timeout=5.0)
                     if profile:
                         isin = profile.get("isin")
-                except Exception:
-                    pass
+                except concurrent.futures.TimeoutError:
+                    logger.warning("Boursorama profile fetch timed out for %s after 5s", ticker)
+                except Exception as e:
+                    logger.warning("Boursorama profile fetch failed for %s: %s", ticker, e)
             if not isin:
                 return 0.0
             
