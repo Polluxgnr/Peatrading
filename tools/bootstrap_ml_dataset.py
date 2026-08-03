@@ -40,13 +40,26 @@ MIN_ROWS = 252
 PDB = None
 GEN = None
 TSDB = None
+CW8_DF = None
+EXOG_DF = {}
 
 def init_worker():
-    global PDB, GEN, TSDB
+    global PDB, GEN, TSDB, CW8_DF, EXOG_DF
     PDB = PortfolioDB()
     PDB.init_db()
     GEN = SignalGenerator(portfolio_db=PDB, macro_sensor=None, skip_regime=True, offline_mode=True)
     TSDB = TimeSeriesDB(read_only=True)
+    try:
+        CW8_DF = TSDB.get_historical_prices("CW8.PA", days=4000)
+    except Exception:
+        logger.warning("Could not load CW8.PA. Meta-labeling might fallback to absolute return.")
+        CW8_DF = None
+        
+    for sym in ["^GSPC", "^IXIC", "EURUSD=X", "OAT.PA"]:
+        try:
+            EXOG_DF[sym] = TSDB.get_historical_prices(sym, days=4000)
+        except Exception:
+            EXOG_DF[sym] = None
 
 def _process_ticker_dates(ticker: str) -> List[Dict]:
     """Evaluate historical dates for a single ticker."""
@@ -89,9 +102,13 @@ def _process_ticker_dates(ticker: str) -> List[Dict]:
             total = float(conv.get("total") or 0.0)
             
             if total >= 65.0:
+                cw8_close = CW8_DF["Close"].astype(float) if CW8_DF is not None and not CW8_DF.empty else None
+                exog_closes = {sym: df["Close"].astype(float) for sym, df in EXOG_DF.items() if df is not None and not df.empty}
                 feat = build_ml_feature_row(
                     ticker,
                     close=close_series,
+                    cw8_close=cw8_close,
+                    exog_closes=exog_closes,
                     reason="historical bootstrap",
                     pdb=PDB,
                     asof_idx=asof_idx

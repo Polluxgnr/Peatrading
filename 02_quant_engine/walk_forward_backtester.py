@@ -150,7 +150,7 @@ def run_walk_forward(
             if ticker in book:
                 continue
             try:
-                hist = db.get_historical_prices(ticker, days=5)
+                hist = db.get_historical_prices(ticker, days=30)
                 if hist is None or hist.empty:
                     continue
                 if "Date" in hist.columns:
@@ -159,15 +159,32 @@ def run_walk_forward(
                     sub = hist[pd.to_datetime(hist.index) <= day_ts]
                 if sub.empty:
                     continue
+                
                 open_px = float(sub["Open"].iloc[-1]) if "Open" in sub.columns else float(sub["Close"].iloc[-1])
-                if open_px <= 0 or cash < notional_per_trade:
+                
+                # --- Square-Root Slippage Model ---
+                adv = 1e6
+                vol = 0.02
+                if "Volume" in sub.columns and "Close" in sub.columns:
+                    adv = float((sub["Close"] * sub["Volume"]).mean())
+                    vol = float(sub["Close"].pct_change().std())
+                if np.isnan(vol) or vol == 0:
+                    vol = 0.02
+                if np.isnan(adv) or adv == 0:
+                    adv = 1e6
+                    
+                slippage_pct = 0.1 * vol * np.sqrt(notional_per_trade / max(1.0, adv))
+                open_px_slipped = open_px * (1.0 + slippage_pct)
+                
+                if open_px_slipped <= 0 or cash < notional_per_trade:
                     continue
-                qty = int(notional_per_trade // open_px)
+                qty = int(notional_per_trade // open_px_slipped)
                 if qty < 1:
                     continue
-                cost = qty * open_px
+                cost = qty * open_px_slipped
                 cash -= cost
-                book[ticker] = {"qty": qty, "cost": cost, "px": open_px, "entry_px": open_px}
+                book[ticker] = {"qty": qty, "cost": cost, "px": open_px_slipped, "entry_px": open_px_slipped, "highest_px": open_px_slipped}
+
             except Exception:  # noqa: BLE001
                 pass
         pending_entries = []
@@ -206,9 +223,11 @@ def run_walk_forward(
                 if entry_px <= 0:
                     continue
                 pnl_pct = (last_px / entry_px - 1.0) * 100.0
-
+                # Chandelier Exit (Trailing Stop from Highest High)
+                pos["highest_px"] = max(pos.get("highest_px", entry_px), last_px)
                 atr14 = _latest_atr14(gen, sub)
-                if atr14 is not None and last_px < entry_px - atr_mult * atr14:
+                
+                if atr14 is not None and last_px < pos["highest_px"] - atr_mult * atr14:
                     cash += pos["qty"] * last_px
                     del book[ticker]
                     continue

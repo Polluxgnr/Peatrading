@@ -532,21 +532,32 @@ class SignalGenerator:
         )
         context_score = max(0.0, min(100.0, context_score))
 
+        try:
+            from contextual_bandit import ThompsonSamplingBandit
+            bandit = ThompsonSamplingBandit()
+            weights = bandit.get_weights()
+            w_trend = weights["trend"]
+            w_mr = weights["mean_reversion"]
+            w_brk = weights["breakout"]
+            w_ctx = weights["context"]
+        except Exception:
+            w_trend, w_mr, w_brk, w_ctx = 0.30, 0.25, 0.20, 0.25
+
         # Final ensemble as weighted average of model committee.
         total = (
-            0.30 * trend_score
-            + 0.25 * mr_score
-            + 0.20 * breakout_score
-            + 0.25 * context_score
+            w_trend * trend_score
+            + w_mr * mr_score
+            + w_brk * breakout_score
+            + w_ctx * context_score
         )
         total = float(max(0.0, min(100.0, total)))
 
         return {
             # Backward-compatible keys consumed by dashboard/orchestrator.
-            "mean_reversion": int(round(mr_score * 0.35)),
-            "volume_breakout": int(round(breakout_score * 0.25)),
+            "mean_reversion": int(round(mr_score * w_mr)),
+            "volume_breakout": int(round(breakout_score * w_brk)),
             "insider": int(round(insider_score * 0.20)),
-            "institutional": int(round(fundamentals_score * 0.20)),
+            "institutional": int(round(fundamentals_score * 0.40)),
             "news_modifier": int(round(news_mod)),
             "polymarket_modifier": int(round(poly_mod)),
             "total": total,

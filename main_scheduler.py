@@ -267,6 +267,81 @@ async def run_pipeline_async() -> None:
     raw_signals = generator.generate_raw_signals(tsdb, tickers)
     logger.info("Quant engine produced %d raw signal(s).", len(raw_signals))
 
+    # --- Meta-Labeling (XGBoost) & SHAP Explainability Phase ---
+    try:
+        from ml_trainer import _MODEL_PATH, FEATURE_COLS
+        from ml_feature_store import build_ml_feature_row
+        import xgboost as xgb
+        
+        if _MODEL_PATH.exists() and raw_signals:
+            import shap
+            logger.info("Meta-Labeling ML model found. Filtering raw signals...")
+            bst = xgb.Booster()
+            bst.load_model(_MODEL_PATH)
+            explainer = shap.TreeExplainer(bst)
+            
+            # Fetch exogenous data once
+            exog_dfs = {}
+            for sym in ["^GSPC", "^IXIC", "EURUSD=X", "OAT.PA"]:
+                try:
+                    df_ex = tsdb.get_historical_prices(sym, days=252)
+                    if df_ex is not None and not df_ex.empty:
+                        exog_dfs[sym] = df_ex["Close"].astype(float)
+                except Exception:
+                    pass
+            
+            try:
+                cw8_df = tsdb.get_historical_prices("CW8.PA", days=252)
+                cw8_close = cw8_df["Close"].astype(float) if cw8_df is not None and not cw8_df.empty else None
+            except Exception:
+                cw8_close = None
+
+            filtered_signals = []
+            for sig in raw_signals:
+                try:
+                    df = tsdb.get_historical_prices(sig.ticker, days=252)
+                    if df is None or df.empty:
+                        continue
+                    feat = build_ml_feature_row(
+                        sig.ticker,
+                        close=df["Close"].astype(float),
+                        cw8_close=cw8_close,
+                        exog_closes=exog_dfs,
+                        reason="live inference",
+                        pdb=pdb,
+                        asof_idx=-1
+                    )
+                    # Prepare X vector
+                    x_arr = []
+                    for c in FEATURE_COLS:
+                        x_arr.append(feat.get(c, np.nan))
+                    x_mat = xgb.DMatrix(np.array([x_arr]), feature_names=FEATURE_COLS)
+                    
+                    # Inference
+                    proba = float(bst.predict(x_mat)[0])
+                    
+                    # SHAP
+                    shap_vals = explainer.shap_values(x_mat)
+                    # shap_vals is a matrix of (1, num_features)
+                    contributions = list(zip(FEATURE_COLS, shap_vals[0]))
+                    contributions.sort(key=lambda x: abs(x[1]), reverse=True)
+                    top_3 = contributions[:3]
+                    shap_str = ", ".join([f"{k}: {v:+.2f}" for k, v in top_3])
+                    
+                    if proba >= 0.50:
+                        sig.reason += f" | AI Meta-Label: {proba*100:.1f}% ({shap_str})"
+                        filtered_signals.append(sig)
+                    else:
+                        logger.info(f"Signal {sig.ticker} rejected by ML Meta-Labeling (proba {proba*100:.1f}% < 50%)")
+                except Exception as exc:
+                    logger.debug(f"Failed to run ML filter for {sig.ticker}: {exc}")
+                    filtered_signals.append(sig)  # Fallback: keep signal if ML fails
+            
+            raw_signals = filtered_signals
+            logger.info(f"After ML Meta-Labeling, {len(raw_signals)} signal(s) passed.")
+    except Exception as exc:
+        logger.debug(f"ML Meta-Labeling phase skipped: {exc}")
+
     # --- Orchestration Phase (satellite) ---
     portfolio: PortfolioState = pdb.get_portfolio_state()
     current_prices = _latest_prices(tsdb, fetch_tickers)

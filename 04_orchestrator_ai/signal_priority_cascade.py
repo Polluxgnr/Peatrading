@@ -160,6 +160,18 @@ class SignalOrchestrator:
 
         # Market-wide panic brake: evaluated once for the whole batch.
         vix_ok = self.firewall.check_vix_panic(vix_level) if vix_level is not None else True
+        
+        # --- Pre-compute HRP allocations ---
+        try:
+            from hrp_sizer import HRPSizer
+            hrp = HRPSizer(self.timeseries_db)
+            hrp_tickers = [s.ticker for s in raw_signals] + [p.ticker for p in portfolio.positions if p.ticker != self.core_ticker]
+            hrp_tickers = list(set(hrp_tickers))
+            # The maximum budget HRP will distribute is the entire portfolio equity
+            hrp_allocations = hrp.compute_max_allocations(hrp_tickers, portfolio.total_equity)
+        except Exception as exc:
+            logger.debug("HRP allocation failed: %s", exc)
+            hrp_allocations = {}
 
         for signal in raw_signals:
             ticker = signal.ticker
@@ -244,10 +256,11 @@ class SignalOrchestrator:
                 processed.append(self._reject(signal, f"REJECTED: {corr_reason}"))
                 continue
 
-            # --- Check 3: PEA position sizing (volatility-adjusted) ---
+            # --- Check 3: PEA position sizing (volatility-adjusted + HRP) ---
             hist_vol = self._historical_volatility(ticker)
+            max_hrp = hrp_allocations.get(ticker, None)
             target_qty, sizing = self.sizer.size_with_explanation(
-                signal, portfolio, price, historical_volatility=hist_vol
+                signal, portfolio, price, historical_volatility=hist_vol, hrp_max_alloc=max_hrp
             )
             if target_qty <= 0:
                 processed.append(

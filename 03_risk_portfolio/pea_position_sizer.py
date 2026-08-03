@@ -119,6 +119,7 @@ class PeaSizer:
         portfolio: PortfolioState,
         current_price: float,
         historical_volatility: float | None = None,
+        hrp_max_alloc: float | None = None,
     ) -> tuple[int, dict]:
         """Return ``(qty, meta)`` so UIs can show the sizing reasoning.
 
@@ -146,7 +147,12 @@ class PeaSizer:
             )
             return 0, meta
 
-        max_alloc = portfolio.total_equity * self.max_single_position
+        if hrp_max_alloc is not None:
+            max_alloc = min(portfolio.total_equity * self.max_single_position, hrp_max_alloc)
+            meta["hrp_max_alloc"] = hrp_max_alloc
+        else:
+            max_alloc = portfolio.total_equity * self.max_single_position
+            meta["hrp_max_alloc"] = None
         
         # RL Sizing Path
         if getattr(self, "rl_model", None) is not None and historical_volatility is not None:
@@ -241,13 +247,14 @@ class PeaSizer:
         portfolio: PortfolioState,
         current_price: float,
         historical_volatility: float | None = None,
+        hrp_max_alloc: float | None = None,
     ) -> int:
         """Compute the integer share quantity for a satellite signal.
 
         See ``size_with_explanation`` for the full breakdown (dashboard cards).
         """
         qty, _meta = self.size_with_explanation(
-            signal, portfolio, current_price, historical_volatility
+            signal, portfolio, current_price, historical_volatility, hrp_max_alloc
         )
         return qty
 

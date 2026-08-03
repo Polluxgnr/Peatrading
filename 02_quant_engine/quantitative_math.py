@@ -95,6 +95,43 @@ def calculate_portfolio_variance(weights: np.ndarray, cov_matrix: pd.DataFrame) 
     return float(max(0.0, var))
 
 
+def get_weights_ffd(d: float, thres: float = 1e-5) -> np.ndarray:
+    """Calculate the weights for Fast Fractional Differencing (FFD)."""
+    w, k = [1.], 1
+    while True:
+        w_ = -w[-1] / k * (d - k + 1)
+        if abs(w_) < thres:
+            break
+        w.append(w_)
+        k += 1
+    return np.array(w[::-1]).reshape(-1, 1)
+
+
+def frac_diff_ffd(series: pd.Series, d: float = 0.4, thres: float = 1e-5) -> pd.Series:
+    """Apply Fractional Differentiation to a time series to achieve stationarity while retaining memory.
+    
+    Args:
+        series: Pandas Series of prices or data.
+        d: Fractional differentiation parameter (0 < d < 1).
+        thres: Threshold to drop insignificant weights.
+        
+    Returns:
+        Pandas Series of fractionally differentiated data.
+    """
+    w = get_weights_ffd(d, thres)
+    width = len(w) - 1
+    df = pd.Series(np.nan, index=series.index, dtype=float)
+    if len(series) <= width:
+        return df
+    
+    # Vectorized sliding window dot product
+    for i in range(width, len(series)):
+        val = np.dot(w.T, series.iloc[i - width:i + 1].values)
+        df.iloc[i] = val[0]
+        
+    return df
+
+
 def calculate_annualized_volatility(returns: pd.Series, periods_per_year: int = 252) -> float:
     """Annualized volatility from return series (helper for refactoring)."""
     r = _clean_returns(returns)

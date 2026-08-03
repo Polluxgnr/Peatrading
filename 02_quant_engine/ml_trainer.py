@@ -38,6 +38,11 @@ FEATURE_COLS = [
     "amf_short_interest",
     "ecb_euribor_3m",
     "gex_proxy",
+    "frac_diff_04",
+    "sp500_ret1d",
+    "ndx_ret1d",
+    "eurusd_ret1d",
+    "oat_ret1d",
 ]
 TARGET_COL = "label_fwd_gt_2pct"
 

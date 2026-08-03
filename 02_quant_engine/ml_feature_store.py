@@ -128,6 +128,8 @@ def build_ml_feature_row(
     ticker: str,
     *,
     close: pd.Series | None = None,
+    cw8_close: pd.Series | None = None,
+    exog_closes: dict[str, pd.Series] | None = None,
     reason: str = "",
     pdb: Any = None,
     asof_idx: int | None = None,
@@ -166,10 +168,50 @@ def build_ml_feature_row(
     macro = MacroAlphaSensor()
     short_interest = macro.get_short_interest(ticker)
     ecb_euribor = macro.get_ecb_euribor()
-    gex_proxy = macro.get_gamma_exposure(ticker)
-
+    from quantitative_math import frac_diff_ffd
+    
+    # Fractional Differentiation feature (d=0.4)
+    # Computed dynamically if we have enough history.
+    frac_val = np.nan
+    if len(series) >= 20:
+        frac_series = frac_diff_ffd(series, d=0.4)
+        if not frac_series.empty and idx >= 0:
+            frac_val = float(frac_series.iloc[idx])
+            
+    # Cross-Asset Spillover features
+    spillover = {}
+    if exog_closes:
+        for sym, exog_s in exog_closes.items():
+            if not exog_s.empty and idx >= 0:
+                # Return over last 1 day
+                # Since exog_s may not be perfectly aligned by index position, we should match by date
+                # but since we only have `idx` for the `close` series, this is tricky. 
+                # Let's assume idx maps to the same trailing window.
+                try:
+                    # simplistic approach: take the last available pct_change up to the date of `series.index[idx]`
+                    target_date = series.index[idx]
+                    exog_sub = exog_s[exog_s.index <= target_date]
+                    if len(exog_sub) >= 2:
+                        spillover[f"{sym}_ret1d"] = float(exog_sub.iloc[-1] / exog_sub.iloc[-2] - 1.0)
+                    else:
+                        spillover[f"{sym}_ret1d"] = np.nan
+                except Exception:
+                    spillover[f"{sym}_ret1d"] = np.nan
+                    
     fwd = _forward_return(series, idx, _FORWARD_DAYS) if idx >= 0 else np.nan
-    label = int(fwd > _TARGET_RETURN) if np.isfinite(fwd) else np.nan
+    
+    # Meta-Labeling (Alpha prediction)
+    if cw8_close is not None and not cw8_close.empty and idx >= 0:
+        # Align CW8 to the same index
+        # We assume cw8_close has the same datetime index as `close` series.
+        cw8_fwd = _forward_return(cw8_close, idx, _FORWARD_DAYS)
+        if np.isfinite(fwd) and np.isfinite(cw8_fwd):
+            # Label = 1 if return > CW8 return + 0.5%
+            label = int(fwd > cw8_fwd + 0.005)
+        else:
+            label = np.nan
+    else:
+        label = int(fwd > _TARGET_RETURN) if np.isfinite(fwd) else np.nan
 
     return {
         "ticker": ticker,
@@ -183,6 +225,11 @@ def build_ml_feature_row(
         "amf_short_interest": short_interest,
         "ecb_euribor_3m": ecb_euribor,
         "gex_proxy": gex_proxy,
+        "frac_diff_04": frac_val,
+        "sp500_ret1d": spillover.get("^GSPC_ret1d", np.nan),
+        "ndx_ret1d": spillover.get("^IXIC_ret1d", np.nan),
+        "eurusd_ret1d": spillover.get("EURUSD=X_ret1d", np.nan),
+        "oat_ret1d": spillover.get("OAT.PA_ret1d", np.nan),
         "fwd_ret_30d": fwd,
         "label_fwd_gt_2pct": label,
     }
