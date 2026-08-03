@@ -483,7 +483,9 @@ class MacroAlphaSensor:
         seed = sum(ord(c) for c in query) % 31
         return round(0.35 + (seed / 30.0) * 0.30, 4)
 
-    # -------------------------------------------------- Jalon 1 (Phase 52) --
+    from functools import lru_cache
+
+    @lru_cache(maxsize=128)
     def get_short_interest(self, ticker: str) -> float:
         """Get net short percentage for a ticker via AMF BDIF."""
         if AmfShortScraper is None:
@@ -502,7 +504,7 @@ class MacroAlphaSensor:
                 return 0.0
             
             val = AmfShortScraper().get_short_interest(isin)
-            logger.info("%s Short Interest (AMF) = %.2f%%", ticker, val)
+            logger.debug("%s Short Interest (AMF) = %.2f%%", ticker, val)
             return val
         except Exception as exc:
             logger.debug("Short interest fetch failed for %s: %s", ticker, exc)
