@@ -152,6 +152,7 @@ class PortfolioDB:
                         pb_ratio        REAL,
                         roe             REAL,
                         debt_to_equity  REAL,
+                        piotroski_score REAL,
                         updated_at      TEXT NOT NULL
                     );
                     """
@@ -585,13 +586,14 @@ class PortfolioDB:
                 conn.execute(
                     """
                     INSERT INTO fundamentals_cache (
-                        ticker, pe_ratio, pb_ratio, roe, debt_to_equity, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?)
+                        ticker, pe_ratio, pb_ratio, roe, debt_to_equity, piotroski_score, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(ticker) DO UPDATE SET
                         pe_ratio = excluded.pe_ratio,
                         pb_ratio = excluded.pb_ratio,
                         roe = excluded.roe,
                         debt_to_equity = excluded.debt_to_equity,
+                        piotroski_score = excluded.piotroski_score,
                         updated_at = excluded.updated_at;
                     """,
                     (
@@ -600,6 +602,7 @@ class PortfolioDB:
                         payload.get("pb_ratio"),
                         payload.get("roe"),
                         payload.get("debt_to_equity"),
+                        payload.get("piotroski_score"),
                         now,
                     ),
                 )
@@ -617,7 +620,7 @@ class PortfolioDB:
             with self._connect() as conn:
                 row = conn.execute(
                     """
-                    SELECT ticker, pe_ratio, pb_ratio, roe, debt_to_equity, updated_at
+                    SELECT ticker, pe_ratio, pb_ratio, roe, debt_to_equity, piotroski_score, updated_at
                     FROM fundamentals_cache
                     WHERE ticker = ?;
                     """,
@@ -641,6 +644,7 @@ class PortfolioDB:
                 "pb_ratio": row["pb_ratio"],
                 "roe": row["roe"],
                 "debt_to_equity": row["debt_to_equity"],
+                "piotroski_score": row["piotroski_score"],
                 "updated_at": updated_raw,
                 "source": "sqlite_cache",
             }

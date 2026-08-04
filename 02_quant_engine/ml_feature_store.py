@@ -31,7 +31,8 @@ sys.path.insert(0, str(_ROOT / "02_quant_engine"))
 logger = logging.getLogger(__name__)
 
 _DEFAULT_OUT = _ROOT / "database" / "ml_training_dataset.csv"
-_FORWARD_DAYS = 30
+_FORWARD_DAYS_TACTICAL = 30
+_FORWARD_DAYS_STRUCTURAL = 126
 _TARGET_RETURN = 0.02
 
 
@@ -44,7 +45,7 @@ def _safe_float(x: Any, default: float = np.nan) -> float:
         return default
 
 
-def _forward_return(close: pd.Series, asof_idx: int, days: int = _FORWARD_DAYS) -> float:
+def _forward_return(close: pd.Series, asof_idx: int, days: int) -> float:
     """Return close[asof+days]/close[asof] - 1 when available."""
     if close is None or asof_idx < 0 or asof_idx + days >= len(close):
         return np.nan
@@ -198,20 +199,28 @@ def build_ml_feature_row(
                 except Exception:
                     spillover[f"{sym}_ret1d"] = np.nan
                     
-    fwd = _forward_return(series, idx, _FORWARD_DAYS) if idx >= 0 else np.nan
+    fwd_tactical = _forward_return(series, idx, _FORWARD_DAYS_TACTICAL) if idx >= 0 else np.nan
+    fwd_structural = _forward_return(series, idx, _FORWARD_DAYS_STRUCTURAL) if idx >= 0 else np.nan
     
     # Meta-Labeling (Alpha prediction)
+    label_tactical = np.nan
+    label_structural = np.nan
+    
     if cw8_close is not None and not cw8_close.empty and idx >= 0:
         # Align CW8 to the same index
-        # We assume cw8_close has the same datetime index as `close` series.
-        cw8_fwd = _forward_return(cw8_close, idx, _FORWARD_DAYS)
-        if np.isfinite(fwd) and np.isfinite(cw8_fwd):
-            # Label = 1 if return > CW8 return + 0.5%
-            label = int(fwd > cw8_fwd + 0.005)
-        else:
-            label = np.nan
+        cw8_fwd_tactical = _forward_return(cw8_close, idx, _FORWARD_DAYS_TACTICAL)
+        cw8_fwd_structural = _forward_return(cw8_close, idx, _FORWARD_DAYS_STRUCTURAL)
+        
+        if np.isfinite(fwd_tactical) and np.isfinite(cw8_fwd_tactical):
+            label_tactical = int(fwd_tactical > cw8_fwd_tactical + 0.005)
+            
+        if np.isfinite(fwd_structural) and np.isfinite(cw8_fwd_structural):
+            label_structural = int(fwd_structural > cw8_fwd_structural + 0.01) # higher threshold for 6m
     else:
-        label = int(fwd > _TARGET_RETURN) if np.isfinite(fwd) else np.nan
+        if np.isfinite(fwd_tactical):
+            label_tactical = int(fwd_tactical > _TARGET_RETURN)
+        if np.isfinite(fwd_structural):
+            label_structural = int(fwd_structural > _TARGET_RETURN * 4.0)
 
     return {
         "asof_date": str(series.index[idx].date()) if hasattr(series.index[idx], 'date') else str(series.index[idx]),
@@ -231,8 +240,8 @@ def build_ml_feature_row(
         "ndx_ret1d": spillover.get("^IXIC_ret1d", np.nan),
         "eurusd_ret1d": spillover.get("EURUSD=X_ret1d", np.nan),
         "oat_ret1d": spillover.get("OAT.PA_ret1d", np.nan),
-        "fwd_ret_30d": fwd,
-        "label_fwd_gt_2pct": label,
+        "target_tactical_30d": label_tactical,
+        "target_structural_126d": label_structural,
     }
 
 

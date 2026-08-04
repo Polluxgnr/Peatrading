@@ -172,16 +172,62 @@ class FundamentalsSensor:
             logger.debug("Alpha Vantage failed for %s: %s", ticker, exc)
             return blank
 
+    def _from_fmp(self, ticker: str) -> dict:
+        blank = {"piotroski_score": None, "source": "none"}
+        fmp_key = (os.getenv("FMP_API_KEY") or "").strip()
+        if not fmp_key:
+            return blank
+        # FMP expects US-style symbols; strip .PA/.AS suffix as best-effort.
+        symbol = ticker.split(".")[0]
+        try:
+            resp = self._session.get(
+                "https://financialmodelingprep.com/api/v4/score",
+                params={"symbol": symbol, "apikey": fmp_key},
+                timeout=12,
+            )
+            if resp.status_code != 200:
+                return blank
+            data = resp.json()
+            if isinstance(data, list) and len(data) > 0:
+                score = _to_float(data[0].get("piotroskiScore"))
+                if score is not None:
+                    return {"piotroski_score": score, "source": "fmp"}
+            return blank
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("FMP piotroski score failed for %s: %s", ticker, exc)
+            return blank
+
     def get_basic_financials(self, ticker: str) -> dict:
         """Return normalized factors: PE, PB, ROE, debt/equity.
 
         Cascade: Finnhub -> Alpha Vantage -> yfinance.
         """
+        # 1. Cascade for baseline metrics
+        baseline = None
         fh = self._from_finnhub(ticker)
         if any(fh.get(k) is not None for k in ("pe_ratio", "pb_ratio", "roe", "debt_to_equity")):
-            return fh
-        av = self._from_alphavantage(ticker)
-        if any(av.get(k) is not None for k in ("pe_ratio", "pb_ratio", "roe", "debt_to_equity")):
-            return av
-        return self._from_yfinance(ticker)
+            baseline = fh
+        
+        if baseline is None:
+            av = self._from_alphavantage(ticker)
+            if any(av.get(k) is not None for k in ("pe_ratio", "pb_ratio", "roe", "debt_to_equity")):
+                baseline = av
+                
+        if baseline is None:
+            baseline = self._from_yfinance(ticker)
+            
+        # 2. Fetch Piotroski score from FMP independently
+        fmp_data = self._from_fmp(ticker)
+        
+        # 3. Merge results
+        baseline["piotroski_score"] = fmp_data.get("piotroski_score")
+        
+        # Update source string if FMP provided the score
+        if fmp_data.get("piotroski_score") is not None:
+            if baseline["source"] == "none":
+                baseline["source"] = "fmp"
+            else:
+                baseline["source"] = f"{baseline['source']}+fmp"
+                
+        return baseline
 

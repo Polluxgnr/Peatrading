@@ -25,6 +25,8 @@ ALLOWED_SENDERS: FrozenSet[str] = frozenset({
     "contact@cafedelabourse.com",
     "charlessterlings@substack.com",
     "plancash@substack.com",
+    "europeansmallcapideas@substack.com",
+    "frenchhiddenchampions@substack.com",
 })
 
 _EMAIL_RE = re.compile(r"[\w.+-]+@[\w.-]+\.\w+", re.IGNORECASE)

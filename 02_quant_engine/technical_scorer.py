@@ -617,6 +617,12 @@ class SignalGenerator:
         )
         total = float(max(0.0, min(100.0, total)))
 
+        # Phase 55: Boost Achats d'Insidés & PEA-PME
+        pb = fundamentals.get("pb_ratio")
+        if cluster >= 3 and (rsi_14 is not None and not pd.isna(rsi_14) and float(rsi_14) < 40) and (pb is not None and pb < 1.5):
+            total = float(max(0.0, min(100.0, total * 1.35)))
+            factors.append("BOOST x1.35 (Insider+RSI+PB)")
+
         return {
             # Backward-compatible keys consumed by dashboard/orchestrator.
             "mean_reversion": int(round(mr_score * w_mr)),

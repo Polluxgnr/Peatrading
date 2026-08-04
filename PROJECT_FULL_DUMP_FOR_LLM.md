@@ -1,6 +1,6 @@
 # PEA Pollux — Full Project Dump for LLM
 
-> **PEA Pollux** · Generated `2026-08-04 08:37 UTC` · Root `C:\Users\PolluxGronier\Downloads\pea_sniper_terminal`
+> **PEA Pollux** · Generated `2026-08-04 09:07 UTC` · Root `C:\Users\PolluxGronier\Downloads\pea_sniper_terminal`
 
 One-shot context for external LLM agents. Includes source, configs, and docs.
 Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
@@ -54,7 +54,7 @@ Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
 - `docker-compose.yml` (71 lines)
 - `Dockerfile` (30 lines)
 - `main_scheduler.py` (893 lines) ⭐
-- `README.md` (764 lines) ⭐
+- `README.md` (1539 lines) ⭐
 - `requirements.txt` (47 lines)
 - `run_dashboard.ps1` (15 lines)
 - `run_discord.py` (100 lines)
@@ -68,7 +68,7 @@ Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
 
 ### `00_data_sensors/`
 - `00_data_sensors/__init__.py` (0 lines)
-- `00_data_sensors/fundamentals_api.py` (187 lines)
+- `00_data_sensors/fundamentals_api.py` (233 lines)
 - `00_data_sensors/macro_alpha_api.py` (544 lines)
 - `00_data_sensors/market_prices_api.py` (304 lines)
 - `00_data_sensors/newsletter_api.py` (211 lines)
@@ -80,7 +80,7 @@ Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
 - `00_data_sensors/newsletter_ingest/ingest/env_loader.py` (36 lines)
 - `00_data_sensors/newsletter_ingest/ingest/html_parser.py` (116 lines)
 - `00_data_sensors/newsletter_ingest/ingest/imap_client.py` (167 lines)
-- `00_data_sensors/newsletter_ingest/ingest/whitelist.py` (44 lines)
+- `00_data_sensors/newsletter_ingest/ingest/whitelist.py` (46 lines)
 - `00_data_sensors/newsletter_ingest/ingest/writer.py` (33 lines)
 
 ### `00_data_sensors/scrapers/`
@@ -97,7 +97,7 @@ Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
 - `01_memory_core/duckdb_manager.py` (231 lines) ⭐
 - `01_memory_core/env_loader.py` (34 lines)
 - `01_memory_core/logging_setup.py` (266 lines)
-- `01_memory_core/sqlite_portfolio.py` (693 lines) ⭐
+- `01_memory_core/sqlite_portfolio.py` (697 lines) ⭐
 
 ### `02_quant_engine/`
 - `02_quant_engine/__init__.py` (0 lines)
@@ -105,12 +105,12 @@ Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
 - `02_quant_engine/cross_sectional.py` (49 lines)
 - `02_quant_engine/market_regime.py` (120 lines)
 - `02_quant_engine/ml_backtester.py` (22 lines)
-- `02_quant_engine/ml_feature_store.py` (332 lines)
-- `02_quant_engine/ml_trainer.py` (222 lines)
+- `02_quant_engine/ml_feature_store.py` (341 lines)
+- `02_quant_engine/ml_trainer.py` (246 lines)
 - `02_quant_engine/quantitative_math.py` (144 lines) ⭐
 - `02_quant_engine/smart_dca_engine.py` (216 lines)
 - `02_quant_engine/stochastic_models.py` (87 lines) ⭐
-- `02_quant_engine/technical_scorer.py` (784 lines) ⭐
+- `02_quant_engine/technical_scorer.py` (790 lines) ⭐
 - `02_quant_engine/walk_forward_backtester.py` (296 lines)
 
 ### `03_risk_portfolio/`
@@ -130,14 +130,14 @@ Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
 - `04_orchestrator_ai/news_sentiment_llm.py` (156 lines)
 - `04_orchestrator_ai/red_team_agent.py` (98 lines) ⭐
 - `04_orchestrator_ai/revocation_engine.py` (146 lines)
-- `04_orchestrator_ai/signal_priority_cascade.py` (357 lines) ⭐
+- `04_orchestrator_ai/signal_priority_cascade.py` (369 lines) ⭐
 - `04_orchestrator_ai/weekly_historian.py` (226 lines)
 
 ### `05_interfaces/`
 - `05_interfaces/__init__.py` (0 lines)
 - `05_interfaces/discord_copilot.py` (134 lines)
 - `05_interfaces/llm_explainer.py` (272 lines)
-- `05_interfaces/terminal_dashboard.py` (6595 lines) ⭐
+- `05_interfaces/terminal_dashboard.py` (6709 lines) ⭐
 - `05_interfaces/trade_cards.py` (166 lines)
 
 ### `05_interfaces/components/`
@@ -291,7 +291,7 @@ port = 8501
 
 ```
 
-## FILE: 00_data_sensors/fundamentals_api.py (187 lines)
+## FILE: 00_data_sensors/fundamentals_api.py (233 lines)
 ```python
 """Fundamental data sensor with Finnhub primary + yfinance fallback.
 
@@ -467,18 +467,64 @@ class FundamentalsSensor:
             logger.debug("Alpha Vantage failed for %s: %s", ticker, exc)
             return blank
 
+    def _from_fmp(self, ticker: str) -> dict:
+        blank = {"piotroski_score": None, "source": "none"}
+        fmp_key = (os.getenv("FMP_API_KEY") or "").strip()
+        if not fmp_key:
+            return blank
+        # FMP expects US-style symbols; strip .PA/.AS suffix as best-effort.
+        symbol = ticker.split(".")[0]
+        try:
+            resp = self._session.get(
+                "https://financialmodelingprep.com/api/v4/score",
+                params={"symbol": symbol, "apikey": fmp_key},
+                timeout=12,
+            )
+            if resp.status_code != 200:
+                return blank
+            data = resp.json()
+            if isinstance(data, list) and len(data) > 0:
+                score = _to_float(data[0].get("piotroskiScore"))
+                if score is not None:
+                    return {"piotroski_score": score, "source": "fmp"}
+            return blank
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("FMP piotroski score failed for %s: %s", ticker, exc)
+            return blank
+
     def get_basic_financials(self, ticker: str) -> dict:
         """Return normalized factors: PE, PB, ROE, debt/equity.
 
         Cascade: Finnhub -> Alpha Vantage -> yfinance.
         """
+        # 1. Cascade for baseline metrics
+        baseline = None
         fh = self._from_finnhub(ticker)
         if any(fh.get(k) is not None for k in ("pe_ratio", "pb_ratio", "roe", "debt_to_equity")):
-            return fh
-        av = self._from_alphavantage(ticker)
-        if any(av.get(k) is not None for k in ("pe_ratio", "pb_ratio", "roe", "debt_to_equity")):
-            return av
-        return self._from_yfinance(ticker)
+            baseline = fh
+        
+        if baseline is None:
+            av = self._from_alphavantage(ticker)
+            if any(av.get(k) is not None for k in ("pe_ratio", "pb_ratio", "roe", "debt_to_equity")):
+                baseline = av
+                
+        if baseline is None:
+            baseline = self._from_yfinance(ticker)
+            
+        # 2. Fetch Piotroski score from FMP independently
+        fmp_data = self._from_fmp(ticker)
+        
+        # 3. Merge results
+        baseline["piotroski_score"] = fmp_data.get("piotroski_score")
+        
+        # Update source string if FMP provided the score
+        if fmp_data.get("piotroski_score") is not None:
+            if baseline["source"] == "none":
+                baseline["source"] = "fmp"
+            else:
+                baseline["source"] = f"{baseline['source']}+fmp"
+                
+        return baseline
 ```
 
 ## FILE: 00_data_sensors/macro_alpha_api.py (544 lines)
@@ -1943,7 +1989,7 @@ class YahooImapClient:
         return html, text
 ```
 
-## FILE: 00_data_sensors/newsletter_ingest/ingest/whitelist.py (44 lines)
+## FILE: 00_data_sensors/newsletter_ingest/ingest/whitelist.py (46 lines)
 ```python
 """Strict sender whitelist for newsletter IMAP ingest.
 
@@ -1972,6 +2018,8 @@ ALLOWED_SENDERS: FrozenSet[str] = frozenset({
     "contact@cafedelabourse.com",
     "charlessterlings@substack.com",
     "plancash@substack.com",
+    "europeansmallcapideas@substack.com",
+    "frenchhiddenchampions@substack.com",
 })
 
 _EMAIL_RE = re.compile(r"[\w.+-]+@[\w.-]+\.\w+", re.IGNORECASE)
@@ -4306,7 +4354,7 @@ def read_pipeline_status() -> Optional[dict]:
         return None
 ```
 
-## FILE: 01_memory_core/sqlite_portfolio.py (693 lines)
+## FILE: 01_memory_core/sqlite_portfolio.py (697 lines)
 ```python
 """SQLite state manager for PEA Pollux.
 
@@ -4462,6 +4510,7 @@ class PortfolioDB:
                         pb_ratio        REAL,
                         roe             REAL,
                         debt_to_equity  REAL,
+                        piotroski_score REAL,
                         updated_at      TEXT NOT NULL
                     );
                     """
@@ -4895,13 +4944,14 @@ class PortfolioDB:
                 conn.execute(
                     """
                     INSERT INTO fundamentals_cache (
-                        ticker, pe_ratio, pb_ratio, roe, debt_to_equity, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?)
+                        ticker, pe_ratio, pb_ratio, roe, debt_to_equity, piotroski_score, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(ticker) DO UPDATE SET
                         pe_ratio = excluded.pe_ratio,
                         pb_ratio = excluded.pb_ratio,
                         roe = excluded.roe,
                         debt_to_equity = excluded.debt_to_equity,
+                        piotroski_score = excluded.piotroski_score,
                         updated_at = excluded.updated_at;
                     """,
                     (
@@ -4910,6 +4960,7 @@ class PortfolioDB:
                         payload.get("pb_ratio"),
                         payload.get("roe"),
                         payload.get("debt_to_equity"),
+                        payload.get("piotroski_score"),
                         now,
                     ),
                 )
@@ -4927,7 +4978,7 @@ class PortfolioDB:
             with self._connect() as conn:
                 row = conn.execute(
                     """
-                    SELECT ticker, pe_ratio, pb_ratio, roe, debt_to_equity, updated_at
+                    SELECT ticker, pe_ratio, pb_ratio, roe, debt_to_equity, piotroski_score, updated_at
                     FROM fundamentals_cache
                     WHERE ticker = ?;
                     """,
@@ -4951,6 +5002,7 @@ class PortfolioDB:
                 "pb_ratio": row["pb_ratio"],
                 "roe": row["roe"],
                 "debt_to_equity": row["debt_to_equity"],
+                "piotroski_score": row["piotroski_score"],
                 "updated_at": updated_raw,
                 "source": "sqlite_cache",
             }
@@ -5288,7 +5340,7 @@ def run_autonomous_backtest(csv_path: str, initial_capital: float = 10000.0) -> 
     return df
 ```
 
-## FILE: 02_quant_engine/ml_feature_store.py (332 lines)
+## FILE: 02_quant_engine/ml_feature_store.py (341 lines)
 ```python
 """Machine Learning feature store for PEA Pollux (Phase 40).
 
@@ -5323,7 +5375,8 @@ sys.path.insert(0, str(_ROOT / "02_quant_engine"))
 logger = logging.getLogger(__name__)
 
 _DEFAULT_OUT = _ROOT / "database" / "ml_training_dataset.csv"
-_FORWARD_DAYS = 30
+_FORWARD_DAYS_TACTICAL = 30
+_FORWARD_DAYS_STRUCTURAL = 126
 _TARGET_RETURN = 0.02
 
 
@@ -5336,7 +5389,7 @@ def _safe_float(x: Any, default: float = np.nan) -> float:
         return default
 
 
-def _forward_return(close: pd.Series, asof_idx: int, days: int = _FORWARD_DAYS) -> float:
+def _forward_return(close: pd.Series, asof_idx: int, days: int) -> float:
     """Return close[asof+days]/close[asof] - 1 when available."""
     if close is None or asof_idx < 0 or asof_idx + days >= len(close):
         return np.nan
@@ -5490,20 +5543,28 @@ def build_ml_feature_row(
                 except Exception:
                     spillover[f"{sym}_ret1d"] = np.nan
                     
-    fwd = _forward_return(series, idx, _FORWARD_DAYS) if idx >= 0 else np.nan
+    fwd_tactical = _forward_return(series, idx, _FORWARD_DAYS_TACTICAL) if idx >= 0 else np.nan
+    fwd_structural = _forward_return(series, idx, _FORWARD_DAYS_STRUCTURAL) if idx >= 0 else np.nan
     
     # Meta-Labeling (Alpha prediction)
+    label_tactical = np.nan
+    label_structural = np.nan
+    
     if cw8_close is not None and not cw8_close.empty and idx >= 0:
         # Align CW8 to the same index
-        # We assume cw8_close has the same datetime index as `close` series.
-        cw8_fwd = _forward_return(cw8_close, idx, _FORWARD_DAYS)
-        if np.isfinite(fwd) and np.isfinite(cw8_fwd):
-            # Label = 1 if return > CW8 return + 0.5%
-            label = int(fwd > cw8_fwd + 0.005)
-        else:
-            label = np.nan
+        cw8_fwd_tactical = _forward_return(cw8_close, idx, _FORWARD_DAYS_TACTICAL)
+        cw8_fwd_structural = _forward_return(cw8_close, idx, _FORWARD_DAYS_STRUCTURAL)
+        
+        if np.isfinite(fwd_tactical) and np.isfinite(cw8_fwd_tactical):
+            label_tactical = int(fwd_tactical > cw8_fwd_tactical + 0.005)
+            
+        if np.isfinite(fwd_structural) and np.isfinite(cw8_fwd_structural):
+            label_structural = int(fwd_structural > cw8_fwd_structural + 0.01) # higher threshold for 6m
     else:
-        label = int(fwd > _TARGET_RETURN) if np.isfinite(fwd) else np.nan
+        if np.isfinite(fwd_tactical):
+            label_tactical = int(fwd_tactical > _TARGET_RETURN)
+        if np.isfinite(fwd_structural):
+            label_structural = int(fwd_structural > _TARGET_RETURN * 4.0)
 
     return {
         "asof_date": str(series.index[idx].date()) if hasattr(series.index[idx], 'date') else str(series.index[idx]),
@@ -5523,8 +5584,8 @@ def build_ml_feature_row(
         "ndx_ret1d": spillover.get("^IXIC_ret1d", np.nan),
         "eurusd_ret1d": spillover.get("EURUSD=X_ret1d", np.nan),
         "oat_ret1d": spillover.get("OAT.PA_ret1d", np.nan),
-        "fwd_ret_30d": fwd,
-        "label_fwd_gt_2pct": label,
+        "target_tactical_30d": label_tactical,
+        "target_structural_126d": label_structural,
     }
 
 
@@ -5624,7 +5685,7 @@ if __name__ == "__main__":
     print(f"Wrote {p}")
 ```
 
-## FILE: 02_quant_engine/ml_trainer.py (222 lines)
+## FILE: 02_quant_engine/ml_trainer.py (246 lines)
 ```python
 """XGBoost trainer for forward-return prediction (Phase 44).
 
@@ -5652,7 +5713,8 @@ sys.path.insert(0, str(_ROOT / "02_quant_engine"))
 logger = logging.getLogger(__name__)
 
 _DATASET = _ROOT / "database" / "ml_training_dataset.csv"
-_MODEL_PATH = _ROOT / "database" / "xgboost_model.json"
+_MODEL_PATH_TACTICAL = _ROOT / "database" / "xgboost_model_tactical.json"
+_MODEL_PATH_STRUCTURAL = _ROOT / "database" / "xgboost_model_structural.json"
 _METRICS_PATH = _ROOT / "database" / "ml_model_metrics.json"
 
 FEATURE_COLS = [
@@ -5672,7 +5734,8 @@ FEATURE_COLS = [
     "eurusd_ret1d",
     "oat_ret1d",
 ]
-TARGET_COL = "label_fwd_gt_2pct"
+TARGET_TACTICAL = "target_tactical_30d"
+TARGET_STRUCTURAL = "target_structural_126d"
 
 
 def _load_dataset(path: Path | None = None) -> pd.DataFrame:
@@ -5689,7 +5752,7 @@ def train_model(
     dataset_path: Path | None = None,
     model_path: Path | None = None,
 ) -> dict:
-    """Train XGBoost classifier and persist model + metrics."""
+    """Train XGBoost classifiers and persist models + metrics."""
     try:
         import xgboost as xgb
     except ImportError as exc:
@@ -5698,64 +5761,75 @@ def train_model(
         ) from exc
 
     df = _load_dataset(dataset_path)
-    for col in FEATURE_COLS + [TARGET_COL]:
-        if col not in df.columns:
-            raise ValueError(f"Missing column in dataset: {col}")
-
-    work = df.dropna(subset=[TARGET_COL]).copy()
-    if "created_at" in work.columns:
-        work = work.sort_values("created_at")
-    elif "Date" in work.columns:
-        work = work.sort_values("Date")
-    for col in FEATURE_COLS:
-        work[col] = pd.to_numeric(work[col], errors="coerce")
-    work = work.dropna(subset=FEATURE_COLS)
-    if len(work) < 30:
-        raise ValueError(f"Insufficient labeled rows ({len(work)} < 30).")
-
-    y = work[TARGET_COL].astype(int).values
-    X = work[FEATURE_COLS].values.astype(float)
-
-    split = int(len(work) * 0.8)
-    embargo = 30
-    train_end = max(1, split - embargo)
     
-    X_train, X_test = X[:train_end], X[split:]
-    y_train, y_test = y[:train_end], y[split:]
-
-    model = xgb.XGBClassifier(
-        n_estimators=80,
-        max_depth=4,
-        learning_rate=0.08,
-        subsample=0.8,
-        colsample_bytree=0.8,
-        eval_metric="logloss",
-        random_state=42,
-    )
-    model.fit(X_train, y_train)
-
-    out_model = model_path or _MODEL_PATH
-    out_model.parent.mkdir(parents=True, exist_ok=True)
-    model.save_model(str(out_model))
-
-    metrics = evaluate_model(model, X_test, y_test, work.iloc[split:])
-    metrics["n_train"] = int(len(X_train))
-    metrics["n_test"] = int(len(X_test))
+    targets = [
+        (TARGET_TACTICAL, model_path or _MODEL_PATH_TACTICAL, "tactical"),
+        (TARGET_STRUCTURAL, _MODEL_PATH_STRUCTURAL, "structural")
+    ]
     
-    # Auto Feature Selection: Track importance
-    importances = model.feature_importances_
-    feat_imp = {col: float(imp) for col, imp in zip(FEATURE_COLS, importances)}
-    metrics["feature_importances"] = feat_imp
-    metrics["feature_cols"] = FEATURE_COLS
+    all_metrics = {}
 
-    # Optional: Log warning if a feature's importance is near zero
-    for f_name, f_weight in feat_imp.items():
-        if f_weight < 0.01:
-            logger.warning("Feature %s has very low importance (%.3f). Consider excluding it.", f_name, f_weight)
+    for target_col, out_path, key in targets:
+        if target_col not in df.columns:
+            logger.warning("Missing column in dataset: %s", target_col)
+            continue
 
-    _METRICS_PATH.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
-    logger.info("Model saved to %s (accuracy=%.1f%%)", out_model, metrics.get("accuracy_pct", 0))
-    return metrics
+        work = df.dropna(subset=[target_col]).copy()
+        if "created_at" in work.columns:
+            work = work.sort_values("created_at")
+        elif "Date" in work.columns:
+            work = work.sort_values("Date")
+        for col in FEATURE_COLS:
+            work[col] = pd.to_numeric(work[col], errors="coerce")
+        work = work.dropna(subset=FEATURE_COLS)
+        if len(work) < 30:
+            logger.warning("Insufficient labeled rows for %s (%d < 30).", target_col, len(work))
+            continue
+
+        y = work[target_col].astype(int).values
+        X = work[FEATURE_COLS].values.astype(float)
+
+        split = int(len(work) * 0.8)
+        embargo = 30
+        train_end = max(1, split - embargo)
+        
+        X_train, X_test = X[:train_end], X[split:]
+        y_train, y_test = y[:train_end], y[split:]
+
+        model = xgb.XGBClassifier(
+            n_estimators=80,
+            max_depth=4,
+            learning_rate=0.08,
+            subsample=0.8,
+            colsample_bytree=0.8,
+            eval_metric="logloss",
+            random_state=42,
+        )
+        model.fit(X_train, y_train)
+
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        model.save_model(str(out_path))
+
+        metrics = evaluate_model(model, X_test, y_test, work.iloc[split:])
+        metrics["n_train"] = int(len(X_train))
+        metrics["n_test"] = int(len(X_test))
+        
+        # Auto Feature Selection: Track importance
+        importances = model.feature_importances_
+        feat_imp = {col: float(imp) for col, imp in zip(FEATURE_COLS, importances)}
+        metrics["feature_importances"] = feat_imp
+        metrics["feature_cols"] = FEATURE_COLS
+
+        # Optional: Log warning if a feature's importance is near zero
+        for f_name, f_weight in feat_imp.items():
+            if f_weight < 0.01:
+                logger.warning("[%s] Feature %s has very low importance (%.3f).", key, f_name, f_weight)
+
+        logger.info("[%s] Model saved to %s (accuracy=%.1f%%)", key, out_path, metrics.get("accuracy_pct", 0))
+        all_metrics[key] = metrics
+
+    _METRICS_PATH.write_text(json.dumps(all_metrics, indent=2), encoding="utf-8")
+    return all_metrics
 
 
 def evaluate_model(
@@ -5797,15 +5871,21 @@ def load_metrics() -> dict:
         return {}
 
 
-def predict_probability(features: dict) -> float | None:
+def predict_probability(features: dict, horizon: str = "tactical") -> float | None:
     """Return ML probability for a single feature dict, or None if no model."""
-    if not _MODEL_PATH.exists():
-        return None
+    path = _MODEL_PATH_STRUCTURAL if horizon == "structural" else _MODEL_PATH_TACTICAL
+    # Fallback to old path if tactical doesn't exist yet but old model does
+    if not path.exists():
+        old_path = _ROOT / "database" / "xgboost_model.json"
+        if horizon == "tactical" and old_path.exists():
+            path = old_path
+        else:
+            return None
     try:
         import xgboost as xgb
 
         model = xgb.XGBClassifier()
-        model.load_model(str(_MODEL_PATH))
+        model.load_model(str(path))
         row = [float(features.get(c, 0.0) or 0.0) for c in FEATURE_COLS]
         prob = float(model.predict_proba(np.array([row]))[0, 1])
         return prob if np.isfinite(prob) else None
@@ -5814,17 +5894,22 @@ def predict_probability(features: dict) -> float | None:
         return None
 
 
-def predict_probability_with_shap(feat_row: dict) -> tuple[float | None, dict[str, float] | None]:
+def predict_probability_with_shap(feat_row: dict, horizon: str = "tactical") -> tuple[float | None, dict[str, float] | None]:
     """Inference for a single feature row, returning probability and SHAP breakdown."""
     try:
-        if not _MODEL_PATH.exists():
-            return None, None
+        path = _MODEL_PATH_STRUCTURAL if horizon == "structural" else _MODEL_PATH_TACTICAL
+        if not path.exists():
+            old_path = _ROOT / "database" / "xgboost_model.json"
+            if horizon == "tactical" and old_path.exists():
+                path = old_path
+            else:
+                return None, None
             
         import xgboost as xgb
         import shap
         
         bst = xgb.Booster()
-        bst.load_model(_MODEL_PATH)
+        bst.load_model(str(path))
         
         # Prepare X
         x_arr = []
@@ -6307,7 +6392,7 @@ def run_correlated_monte_carlo(
     )
 ```
 
-## FILE: 02_quant_engine/technical_scorer.py (784 lines)
+## FILE: 02_quant_engine/technical_scorer.py (790 lines)
 ```python
 """Quantitative signal engine for PEA Pollux.
 
@@ -6927,6 +7012,12 @@ class SignalGenerator:
             + w_ctx * context_score
         )
         total = float(max(0.0, min(100.0, total)))
+
+        # Phase 55: Boost Achats d'Insidés & PEA-PME
+        pb = fundamentals.get("pb_ratio")
+        if cluster >= 3 and (rsi_14 is not None and not pd.isna(rsi_14) and float(rsi_14) < 40) and (pb is not None and pb < 1.5):
+            total = float(max(0.0, min(100.0, total * 1.35)))
+            factors.append("BOOST x1.35 (Insider+RSI+PB)")
 
         return {
             # Backward-compatible keys consumed by dashboard/orchestrator.
@@ -9397,7 +9488,7 @@ if __name__ == "__main__":
     print(f"status={s3.status.value} | reason='{s3.reason}'")
 ```
 
-## FILE: 04_orchestrator_ai/signal_priority_cascade.py (357 lines)
+## FILE: 04_orchestrator_ai/signal_priority_cascade.py (369 lines)
 ```python
 """Signal Priority Cascade for PEA Pollux.
 
@@ -9594,16 +9685,28 @@ class SignalOrchestrator:
                 )
                 continue
 
-            # --- Check 0c: Quality / EPS < 0 (Orchestrator-level veto) ---
+            # --- Check 0b: EPS < 0 quality veto (Phase 16) ---
             try:
                 from technical_scorer import SignalGenerator  # noqa: WPS433
-
                 if not SignalGenerator().is_profitable(ticker):
                     processed.append(
                         self._reject(signal, "REJECTED: EPS < 0 (quality veto)")
                     )
                     continue
             except Exception:  # noqa: BLE001 - never block the cascade on EPS outage
+                pass
+
+            # --- Check 0c: Value Trap Veto (Piotroski F-Score < 4) ---
+            try:
+                from technical_scorer import SignalGenerator  # noqa: WPS433
+                fundamentals = SignalGenerator()._load_fundamentals_from_sources(ticker)
+                f_score = fundamentals.get("piotroski_score")
+                if f_score is not None and f_score < 4:
+                    processed.append(
+                        self._reject(signal, f"REJECTED: Value Trap Veto (F-Score {f_score:.0f} < 4)")
+                    )
+                    continue
+            except Exception:  # noqa: BLE001
                 pass
 
             # --- Check 1: Macro veto (cheapest - runs first) ---
@@ -10412,7 +10515,7 @@ if __name__ == "__main__":
     asyncio.run(_demo())
 ```
 
-## FILE: 05_interfaces/terminal_dashboard.py (6595 lines)
+## FILE: 05_interfaces/terminal_dashboard.py (6709 lines)
 ```python
 """Web Terminal (Streamlit dashboard) for PEA Pollux.
 
@@ -15571,17 +15674,94 @@ with tab_ticker:
     )
     sub_overview, sub_fin, sub_news = st.tabs(['📈 Overview & Charts', '🧠 Financials & AI Scoring', '📰 News & Catalysts'])
     with sub_news:
-        if True:
-            st.markdown("#### 📖 Catalyseurs & risques (dossier)")
-            cat1, cat2 = st.columns(2)
-            with cat1:
-                st.markdown("**News / catalyseurs qui aideraient**")
-                for c in dossier.get("catalysts") or []:
-                    st.markdown(f"- {c}")
-            with cat2:
-                st.markdown("**Evenements a surveiller (ne pas vouloir)**")
-                for r in dossier.get("risk_events") or []:
-                    st.markdown(f"- {r}")
+        st.markdown("#### 📖 Catalyseurs & risques (dossier)")
+        cat1, cat2 = st.columns(2)
+        with cat1:
+            st.markdown("**News / catalyseurs qui aideraient**")
+            for c in dossier.get("catalysts") or []:
+                st.markdown(f"- {c}")
+        with cat2:
+            st.markdown("**Evenements a surveiller (ne pas vouloir)**")
+            for r in dossier.get("risk_events") or []:
+                st.markdown(f"- {r}")
+
+        st.markdown("---")
+        st.markdown("#### 🗞️ Actualites Historiques")
+        
+        # Phase 55: Multi-Source Filter
+        providers_opt = ["Boursorama", "Yahoo Finance", "Newsletters Substack", "Google News", "Finlight"]
+        sel_providers = st.multiselect(
+            "Filtrer par Source", 
+            providers_opt,
+            default=providers_opt
+        )
+        time_filter = st.radio("Historique", ["7j", "30j", "1 an", "Tout"], horizontal=True)
+        
+        limit_days = {"7j": 7, "30j": 30, "1 an": 365, "Tout": 9999}[time_filter]
+        
+        try:
+            news_rows = get_portfolio_db().get_news_history(selected, limit=200)
+            
+            # Filter and deduplicate
+            filtered = []
+            seen_hashes = set()
+            now = datetime.now()
+            
+            for r in news_rows:
+                # 1. Source filter
+                prov = str(r.get("provider", "")).strip()
+                if sel_providers and prov not in sel_providers and "Tout" not in sel_providers:
+                    # Best-effort matching (e.g. if provider is 'boursorama' in db but 'Boursorama' in UI)
+                    if not any(p.casefold() in prov.casefold() for p in sel_providers):
+                        continue
+                        
+                # 2. Time filter
+                dp = r.get("date_published")
+                if dp:
+                    try:
+                        dt = datetime.fromisoformat(dp.replace("Z", "+00:00")).replace(tzinfo=None)
+                        if (now - dt).days > limit_days:
+                            continue
+                    except Exception:
+                        pass
+                
+                # 3. Deduplication
+                url = str(r.get("url", ""))
+                title = str(r.get("title", ""))
+                thash = hash(url + title)
+                if thash in seen_hashes:
+                    continue
+                seen_hashes.add(thash)
+                
+                filtered.append(r)
+                
+            if not filtered:
+                st.info("Aucune actualite trouvee pour ces filtres.")
+            else:
+                for r in filtered:
+                    title = r.get("title", "Sans titre")
+                    url = r.get("url", "#")
+                    dp = r.get("date_published", "")[:10]
+                    prov = r.get("provider", "Inconnu")
+                    
+                    # Sentiment Badge
+                    score = r.get("sentiment_score")
+                    badge = "⚪"
+                    if score is not None:
+                        try:
+                            score_val = float(score)
+                            if score_val >= 30: badge = "Bullish 🟢"
+                            elif score_val <= -30: badge = "Bearish 🔴"
+                            else: badge = "Neutral ⚪"
+                        except (ValueError, TypeError):
+                            pass
+                            
+                    st.markdown(f"**[{title} ↗]({url})**")
+                    st.markdown(f"<span style='color:grey; font-size:0.9em;'>{dp} · {prov} · Sentiment IA: {badge}</span>", unsafe_allow_html=True)
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    
+        except Exception as exc:
+            st.error(f"Erreur chargement news: {exc}")
 
         if st.button("Lancer un Red Teaming IA (Bull vs Bear vs Devil's Advocate)", key=f"red_team_{selected}"):
             context_blob = (
@@ -16583,6 +16763,43 @@ quotidiennes** (heure de Paris), uniquement les **jours de bourse** :
 
 """)
 
+    st.markdown("#### 🧬 Data Lineage & Provenance")
+    try:
+        if read_pipeline_status:
+            status_data = read_pipeline_status()
+            if status_data:
+                lineage_rows = []
+                for sensor, info in status_data.items():
+                    if isinstance(info, dict):
+                        lineage_rows.append({
+                            "Capteur": sensor,
+                            "Source": info.get("source", "N/A"),
+                            "Derniere Synchro": info.get("last_run", "Jamais"),
+                            "Statut": info.get("status", "N/A")
+                        })
+                if lineage_rows:
+                    st.dataframe(pd.DataFrame(lineage_rows), use_container_width=True, hide_index=True)
+                else:
+                    st.info("Aucune donnee de lineage trouvee dans pipeline_status.json.")
+            else:
+                st.info("Fichier pipeline_status.json vide ou introuvable.")
+    except Exception as exc:
+        st.error(f"Erreur lecture Lineage: {exc}")
+        
+    col_sync1, col_sync2, col_sync3 = st.columns(3)
+    if col_sync1.button("🔄 Sync Fondamentaux (FMP/AlphaVantage)"):
+        with st.spinner("Synchronisation en arriere-plan..."):
+            os.system('start /b python -c "import sys; sys.path.insert(0, \'00_data_sensors\'); from fundamentals_api import FundamentalsSensor; FundamentalsSensor().get_basic_financials(\'AI.PA\')"')
+            st.success("Commande lancee.")
+    if col_sync2.button("🔄 Sync News (IMAP/RSS)"):
+        with st.spinner("Synchronisation en arriere-plan..."):
+            os.system('start /b python 00_data_sensors/newsletter_api.py')
+            st.success("Commande lancee.")
+    if col_sync3.button("🔄 Sync ML Models"):
+        with st.spinner("Entrainement en arriere-plan..."):
+            os.system('start /b python 02_quant_engine/ml_trainer.py')
+            st.success("Commande lancee.")
+    
     st.markdown("#### 📡 Santé des sources de données")
     _health_df = build_data_sources_health_df()
     _health_colors = []
@@ -20250,772 +20467,1547 @@ if __name__ == "__main__":
     main()
 ```
 
-## FILE: README.md (764 lines)
+## FILE: README.md (1539 lines)
 ```markdown
-# PEA Pollux — Terminal quantitatif personnel
+# PEA Pollux â€” Terminal quantitatif personnel
 
-> **Un bureau d'analyse quantitatif pour votre PEA — transparent, manuel, sans exécution automatique.**
 
-**PEA Pollux** est un terminal de recherche et de suivi de portefeuille conçu pour un
-**PEA personnel** (Plan d'Épargne en Actions). Il ingère les données de marché,
+
+> **Un bureau d'analyse quantitatif pour votre PEA â€” transparent, manuel, sans exÃ©cution automatique.**
+
+
+
+**PEA Pollux** est un terminal de recherche et de suivi de portefeuille conÃ§u pour un
+
+**PEA personnel** (Plan d'Ã‰pargne en Actions). Il ingÃ¨re les donnÃ©es de marchÃ©,
+
 calcule des signaux multi-facteurs, applique une cascade de risque stricte, puis
-présente des propositions **à valider manuellement** dans le dashboard Streamlit
+
+prÃ©sente des propositions **Ã  valider manuellement** dans le dashboard Streamlit
+
 ou via Discord.
 
-**Le système n'envoie jamais d'ordres à un courtier.** Les modèles quantitatifs
-décident *ce qui mérite d'être étudié* ; l'IA *explique* (rationale, sentiment,
+
+
+**Le systÃ¨me n'envoie jamais d'ordres Ã  un courtier.** Les modÃ¨les quantitatifs
+
+dÃ©cident *ce qui mÃ©rite d'Ãªtre Ã©tudiÃ©* ; l'IA *explique* (rationale, sentiment,
+
 briefing hebdo, red teaming Bull/Bear). **Ce n'est pas un conseil en investissement.**
+
+
 
 Repo: [github.com/Polluxgnr/Peatrading](https://github.com/Polluxgnr/Peatrading)
 
+
+
 ---
+
+
 
 ## Pourquoi PEA Pollux ?
 
-| Besoin | Réponse |
+
+
+| Besoin | RÃ©ponse |
+
 |--------|---------|
-| Comprendre *pourquoi* un signal apparaît | Score multi-modèle + Data Lake transparent |
-| Gérer le risque avant d'acheter | Cascade VIX, corrélation, liquidité, earnings blackout |
-| Suivre la performance | Courbe d'equity, VaR/CVaR, Monte Carlo corrélé |
-| Challenger une idée | Red teaming IA (Bull vs Bear + Judge) |
-| Déployer proprement | Docker, healthchecks, logs rotatifs, CI pytest |
+
+| Comprendre *pourquoi* un signal apparaÃ®t | Score multi-modÃ¨le + Data Lake transparent |
+
+| GÃ©rer le risque avant d'acheter | Cascade VIX, corrÃ©lation, liquiditÃ©, earnings blackout |
+
+| Suivre la performance | Courbe d'equity, VaR/CVaR, Monte Carlo corrÃ©lÃ© |
+
+| Challenger une idÃ©e | Red teaming IA (Bull vs Bear + Judge) |
+
+| DÃ©ployer proprement | Docker, healthchecks, logs rotatifs, CI pytest |
+
+
 
 ---
+
+
 
 ## Table of contents
 
+
+
 1. [Philosophy](#-philosophy)
+
 2. [Feature map](#-feature-map)
+
 3. [Strategy in depth](#-strategy-in-depth)
+
 4. [Architecture](#-architecture)
+
 5. [Logging & observability](#-logging--observability)
+
 6. [Module reference](#-module-reference)
+
 7. [APIs that work](#-apis-that-work)
+
 8. [Installation](#-installation)
+
 9. [Configuration](#-configuration)
+
 10. [Usage](#-usage)
+
 11. [Dashboard](#-dashboard)
+
 12. [LLM full dump](#-llm-full-dump)
+
 13. [Deployment](#-deployment)
+
 14. [Scheduling](#-scheduling)
+
 15. [Roadmap](#-roadmap--future-improvements)
+
 16. [Troubleshooting](#-troubleshooting)
+
 17. [Disclaimer](#-disclaimer)
+
 18. [English guide](#english-guide)
 
+
+
 ---
+
+
 
 ## Philosophy
 
-1. **No fractional shares.** PEA sizing always uses `math.floor` — one share or nothing.
+
+
+1. **No fractional shares.** PEA sizing always uses `math.floor` â€” one share or nothing.
+
 2. **Math first, AI second.** LLMs never generate or approve trades. They only:
-   explain an already-decided signal, compress news into an integer (−100…+100),
+
+   explain an already-decided signal, compress news into an integer (âˆ’100â€¦+100),
+
    and write the Friday CIO digest.
+
 3. **Official sources first.** Insider cascade is strict:
-   **AMF BDIF → FMP → yfinance**. OHLCV stays on `yfinance` → DuckDB. HTML
+
+   **AMF BDIF â†’ FMP â†’ yfinance**. OHLCV stays on `yfinance` â†’ DuckDB. HTML
+
    scrapers are best-effort with circuit-breakers (AMF BDIF is often WAF-blocked).
+
 4. **Split state.** DuckDB = heavy OHLCV; SQLite = portfolio, positions, immutable
+
    audit log, **daily equity curve** (`portfolio_history`), and **news archive**
-   (`news_history` — cross-session headlines with real timestamps).
+
+   (`news_history` â€” cross-session headlines with real timestamps).
+
 5. **Zero crash tolerance.** A failed pass logs `CRITICAL` and writes a red
+
    pipeline heartbeat; the daemon keeps running for the next slot.
+
 6. **Manual execution.** You always have the last word (Discord **or** Streamlit
-   Approuver / Rejeter → SQLite).
+
+   Approuver / Rejeter â†’ SQLite).
+
 7. **Personal portfolio demo, not a SaaS fleet.** Observability is detailed and
+
    copy-friendly, but deliberately human-scale (rotating local logs, Mission Control).
 
+
+
 ---
+
+
 
 ## Feature map
 
+
+
 | Layer | What it does (why it exists) |
+
 |------|------------------------------|
-| **Data** | OHLCV → DuckDB; VIX/VSTOXX; Put/Call; insiders **AMF→FMP→Yahoo**; Polymarket Gamma; Bourso + **Google News / Yahoo** news (archived in **`news_history`**); **newsletter IMAP** (whitelist) |
-| **Quant** | **Ensemble conviction (0–100)**: MR ≤35 + Vol ≤25 + Insider ≤20 + Inst ≤20 + **News/Polymarket modifiers** — emit if ≥65 |
+
+| **Data** | OHLCV â†’ DuckDB; VIX/VSTOXX; Put/Call; insiders **AMFâ†’FMPâ†’Yahoo**; Polymarket Gamma; Bourso + **Google News / Yahoo** news (archived in **`news_history`**); **newsletter IMAP** (whitelist) |
+
+| **Quant** | **Ensemble conviction (0â€“100)**: MR â‰¤35 + Vol â‰¤25 + Insider â‰¤20 + Inst â‰¤20 + **News/Polymarket modifiers** â€” emit if â‰¥65 |
+
 | **Core/Satellite** | Smart DCA on `CW8.PA` (more aggressive under SMA200); satellites capped ~30% equity |
-| **Risk cascade** | VIX panic, **EPS &lt; 0**, macro veto, **earnings blackout**, max satellite lines, **ADV € floor**, sector, correlation, vol-parity sizing |
-| **Exits** | **Daily** ATR stop (`price < entry − 2.5×ATR14`); **monthly** +20% profit-shave |
+
+| **Risk cascade** | VIX panic, **EPS &lt; 0**, macro veto, **earnings blackout**, max satellite lines, **ADV â‚¬ floor**, sector, correlation, vol-parity sizing |
+
+| **Exits** | **Daily** ATR stop (`price < entry âˆ’ 2.5Ã—ATR14`); **monthly** +20% profit-shave |
+
 | **Memory** | SQLite equity curve + **`news_history`** + shared `equity_metrics` + `morning_briefing.json` Zeitgeist |
+
 | **AI (explain only)** | Trade rationale, news sentiment, weekly digest, geo brief, **morning newsletter Zeitgeist**, deep news synthesis (24h cache) |
+
 | **UI** | Mission Control + **native HTML ticker tape** + Discord + Streamlit (**Command Center**, funnel, radar, what-if, **order ticket**, **decision checklist**, **live telemetry**) |
+
 | **Ops** | Paris daemon (incl. **08:25 briefing**), session auto-sync on dashboard open, walk-forward scaffold, seed CLI, CI pytest |
 
+
+
 ---
+
+
 
 ## Strategy in depth
 
+
+
 ### 1. Core / Satellite allocation
+
+
 
 Capital is split so the PEA stays diversified even when stock-picking is quiet:
 
-- **Core (~70–75%)** — Amundi MSCI World PEA ETF (`CW8.PA`) via **Smart DCA**.
+
+
+- **Core (~70â€“75%)** â€” Amundi MSCI World PEA ETF (`CW8.PA`) via **Smart DCA**.
+
   When CW8 trades **below** its 200-day SMA (fear), the engine raises the target
+
   weight and buys a larger tranche; **above** the SMA it drips smaller amounts.
-- **Satellite (≤30%)** — individual EU names under `SATELLITE_MAX_BUDGET_PCT`.
+
+- **Satellite (â‰¤30%)** â€” individual EU names under `SATELLITE_MAX_BUDGET_PCT`.
+
   Also capped by `MAX_POSITIONS_TOTAL` so the 30% budget is not fragmented into
+
   too many tiny lines.
 
-### 2. Empreinte Multi-Stratégies (how signals are scored)
+
+
+### 2. Empreinte Multi-StratÃ©gies (how signals are scored)
+
+
 
 Every ticker receives a **score from 0 to 100** called the **Empreinte**
+
 (fingerprint). It combines four weighted axes into a single conviction number.
-A BUY signal is only emitted when **conviction ≥ 65**. Hard vetoes (VIX,
-EPS < 0) are enforced later in the risk cascade — scoring runs first.
+
+A BUY signal is only emitted when **conviction â‰¥ 65**. Hard vetoes (VIX,
+
+EPS < 0) are enforced later in the risk cascade â€” scoring runs first.
+
+
 
 | Abbreviation | Axis | Weight | What it measures |
+
 |:------------:|------|:------:|------------------|
-| **MR** | Mean Reversion | 35 % | Statistical under-valuation: RSI-14 oversold + price above long-term SMA-200. A Z-Score < −2 on a 50-day window adds a bonus. |
+
+| **MR** | Mean Reversion | 35 % | Statistical under-valuation: RSI-14 oversold + price above long-term SMA-200. A Z-Score < âˆ’2 on a 50-day window adds a bonus. |
+
 | **Mom** | Momentum | 25 % | Trend strength: Close > SMA-5 > SMA-50 > SMA-200, MACD histogram positive and growing, close near upper Bollinger Band. |
+
 | **Q/V** | Quality / Value | 20 % | Fundamentals from Finnhub or yfinance: low P/E (< 15 = high score), low P/B (< 2 = bonus), high ROE (> 15 %), low Debt/Equity. |
-| **Ins** | Insider Confidence | 20 % | Directors buying their own stock: AMF/FMP/EODHD buy-cluster ≥ 2 = max, single buy = half. |
+
+| **Ins** | Insider Confidence | 20 % | Directors buying their own stock: AMF/FMP/EODHD buy-cluster â‰¥ 2 = max, single buy = half. |
+
+
 
 **Modifiers** applied on top of the base score:
 
+
+
 | Modifier | Range | Source |
+
 |----------|-------|--------|
-| News sentiment | +10 / −15 | LLM integer score (−100…+100) or heuristic keyword fallback |
-| Polymarket macro | +10 / −10 | YES probability ≥ 0.62 → bullish, ≤ 0.38 → bearish (context only) |
 
-The final score is clamped to 0–100 and displayed in the dashboard as a
-**polar radar chart** (Exploration tab). Colour coding: **amber 65–75** /
-**neon 76–100**.
+| News sentiment | +10 / âˆ’15 | LLM integer score (âˆ’100â€¦+100) or heuristic keyword fallback |
 
-### 3. Risk cascade (order matters — cheap checks first)
+| Polymarket macro | +10 / âˆ’10 | YES probability â‰¥ 0.62 â†’ bullish, â‰¤ 0.38 â†’ bearish (context only) |
+
+
+
+The final score is clamped to 0â€“100 and displayed in the dashboard as a
+
+**polar radar chart** (Exploration tab). Colour coding: **amber 65â€“75** /
+
+**neon 76â€“100**.
+
+
+
+### 3. Risk cascade (order matters â€” cheap checks first)
+
+
 
 Implemented in `signal_priority_cascade.py`:
 
+
+
 0. Live price exists  
-1. **VIX panic** — if V2TX/VIX &gt; `VIX_PANIC_THRESHOLD`, freeze **new satellite buys** (Core DCA still runs)  
-1b. **EPS &lt; 0** — quality veto (Orchestrator)  
-2. **Macro veto** — blackout window before ECB/CPI/NFP (`macro_calendar.yaml`)  
-2b. **Earnings / dividend blackout** — per ticker (`earnings_calendar.yaml` + `EARNINGS_BLACKOUT_DAYS`)  
-2c. **Max satellite positions** — `MAX_POSITIONS_TOTAL`  
-2d. **Min liquidity** — average daily € volume ≥ `MIN_LIQUIDITY_ADV`  
+
+1. **VIX panic** â€” if V2TX/VIX &gt; `VIX_PANIC_THRESHOLD`, freeze **new satellite buys** (Core DCA still runs)  
+
+1b. **EPS &lt; 0** â€” quality veto (Orchestrator)  
+
+2. **Macro veto** â€” blackout window before ECB/CPI/NFP (`macro_calendar.yaml`)  
+
+2b. **Earnings / dividend blackout** â€” per ticker (`earnings_calendar.yaml` + `EARNINGS_BLACKOUT_DAYS`)  
+
+2c. **Max satellite positions** â€” `MAX_POSITIONS_TOTAL`  
+
+2d. **Min liquidity** â€” average daily â‚¬ volume â‰¥ `MIN_LIQUIDITY_ADV`  
+
 3. Sector weight cap  
+
 4. Pearson correlation vs holdings (`CORRELATION_LOOKBACK_DAYS`)  
-5. **Sizing** — Half-Kelly × score × inverse-vol parity → whole shares, clamped by cash + satellite room  
+
+5. **Sizing** â€” Half-Kelly Ã— score Ã— inverse-vol parity â†’ whole shares, clamped by cash + satellite room  
+
+
 
 Approved reasons now embed the sizing breakdown (Kelly, vol, weight % equity)
+
 so Discord and the dashboard stay auditable.
+
+
 
 ### 4. Exits (split on purpose)
 
+
+
 | Job | Cadence | Rule |
+
 |-----|---------|------|
-| **ATR stop** | Weekdays 08:35 (`--atr-stops`) | Losing satellite & `price < avg_entry − REBALANCE_ATR_STOP_MULT × ATR14` → SELL 100% |
-| **Profit-shave** | 1st of month (`--rebalance`) | Unrealized &gt; +20% → SELL 20% of shares |
+
+| **ATR stop** | Weekdays 08:35 (`--atr-stops`) | Losing satellite & `price < avg_entry âˆ’ REBALANCE_ATR_STOP_MULT Ã— ATR14` â†’ SELL 100% |
+
+| **Profit-shave** | 1st of month (`--rebalance`) | Unrealized &gt; +20% â†’ SELL 20% of shares |
+
+
 
 Core ETF is never shaved or stopped by these jobs (accumulation vehicle).
 
-**ATR absolute vs %:** the stop uses **absolute** ATR (correct per name — ATR
+
+
+**ATR absolute vs %:** the stop uses **absolute** ATR (correct per name â€” ATR
+
 already scales with price). `ATR% = ATR/price` is logged for cross-name
+
 comparisons; use % for vol-style dashboards, absolute for the stop distance.
+
+
 
 ### 5. AI as post-hoc analyst only
 
-- Trade explainer (2–3 sentences)  
-- News → forced integer −100…+100  
-- Friday Historian → Discord webhook  
+
+
+- Trade explainer (2â€“3 sentences)  
+
+- News â†’ forced integer âˆ’100â€¦+100  
+
+- Friday Historian â†’ Discord webhook  
+
+
 
 ---
+
+
 
 ## Architecture
 
-``​`
-                       ┌──────────────────────────────────────┐
-                       │            main_scheduler.py          │
-                       │  Paris: 09:00 / 13:30 / 17:10         │
-                       │  + ATR 08:35 · shave 1st · Fri 18:00  │
-                       └───────────────┬──────────────────────┘
-   00_data_sensors        01/02              03_risk_portfolio        04_orchestrator_ai
- ┌───────────────┐   ┌──────────────┐   ┌───────────────────────┐   ┌────────────────────┐
- │ market_prices │──▶│ DuckDB OHLCV │──▶│ correlation_firewall  │──▶│ cascade + earnings  │
- │ macro_alpha   │   │ technical_   │   │ pea_position_sizer    │   │ revocation / LLM    │
- │ AMF→FMP→YF    │   │ scorer+DCA   │   │ ATR rebalancer        │   │ weekly historian    │
- └───────────────┘   │ equity_metrics│   └───────────────────────┘   └─────────┬──────────┘
-                     └──────────────┘                                         ▼
-   SQLite: portfolio · audit · equity curve              Discord + Streamlit (Mission Control)
-   logs/ + database/pipeline_status.json
+
+
 ``​`
 
-**One analysis pass:** fetch → VIX → raw signals → mark-to-market (+ equity
-snapshot) → cascade → Smart-DCA → audit log → Discord alerts → pipeline heartbeat.
+                       â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”�
+
+                       â”‚            main_scheduler.py          â”‚
+
+                       â”‚  Paris: 09:00 / 13:30 / 17:10         â”‚
+
+                       â”‚  + ATR 08:35 Â· shave 1st Â· Fri 18:00  â”‚
+
+                       â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
+
+   00_data_sensors        01/02              03_risk_portfolio        04_orchestrator_ai
+
+ â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”�   â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”�   â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”�   â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”�
+
+ â”‚ market_prices â”‚â”€â”€â–¶â”‚ DuckDB OHLCV â”‚â”€â”€â–¶â”‚ correlation_firewall  â”‚â”€â”€â–¶â”‚ cascade + earnings  â”‚
+
+ â”‚ macro_alpha   â”‚   â”‚ technical_   â”‚   â”‚ pea_position_sizer    â”‚   â”‚ revocation / LLM    â”‚
+
+ â”‚ AMFâ†’FMPâ†’YF    â”‚   â”‚ scorer+DCA   â”‚   â”‚ ATR rebalancer        â”‚   â”‚ weekly historian    â”‚
+
+ â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜   â”‚ equity_metricsâ”‚   â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜   â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
+
+                     â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜                                         â–¼
+
+   SQLite: portfolio Â· audit Â· equity curve              Discord + Streamlit (Mission Control)
+
+   logs/ + database/pipeline_status.json
+
+``​`
+
+
+
+**One analysis pass:** fetch â†’ VIX â†’ raw signals â†’ mark-to-market (+ equity
+
+snapshot) â†’ cascade â†’ Smart-DCA â†’ audit log â†’ Discord alerts â†’ pipeline heartbeat.
+
+
 
 ### Phase 38 add-on architecture (Monte Carlo + Stress + Red Team)
 
-``​`
-Portfolio Weights + DuckDB Returns
-              │
-              ▼
-  02_quant_engine/stochastic_models.py
-  - Cholesky(cov)
-  - Correlated GBM paths
-  - Fan chart percentiles (P05..P95)
-              │
-              ▼
-  Streamlit Portefeuille Tab
-  - On-demand Monte Carlo fan chart
-  - Tail risk (VaR/CVaR)
-  - Black swan stress table
-``​`
+
 
 ``​`
-Exploration Tab (selected ticker)
-              │
-              ▼
-04_orchestrator_ai/red_team_agent.py
-  Bull Agent  ─┐
-               ├─ asyncio.gather ─► Judge Agent ─► 3-sentence verdict
-  Bear Agent  ─┘
-              │
-              ▼
-UI Boxes: st.info (Bull), st.warning (Bear), st.error (Judge)
+
+Portfolio Weights + DuckDB Returns
+
+              â”‚
+
+              â–¼
+
+  02_quant_engine/stochastic_models.py
+
+  - Cholesky(cov)
+
+  - Correlated GBM paths
+
+  - Fan chart percentiles (P05..P95)
+
+              â”‚
+
+              â–¼
+
+  Streamlit Portefeuille Tab
+
+  - On-demand Monte Carlo fan chart
+
+  - Tail risk (VaR/CVaR)
+
+  - Black swan stress table
+
 ``​`
+
+
+
+``​`
+
+Exploration Tab (selected ticker)
+
+              â”‚
+
+              â–¼
+
+04_orchestrator_ai/red_team_agent.py
+
+  Bull Agent  â”€â”�
+
+               â”œâ”€ asyncio.gather â”€â–º Judge Agent â”€â–º 3-sentence verdict
+
+  Bear Agent  â”€â”˜
+
+              â”‚
+
+              â–¼
+
+UI Boxes: st.info (Bull), st.warning (Bear), st.error (Judge)
+
+``​`
+
+
 
 ---
+
+
 
 ## Logging & observability
 
+
+
 Designed for a **personal** PEA terminal: enough detail to copy into notes or
+
 debug a silent day, without enterprise noise.
 
+
+
 | Piece | Role |
+
 |-------|------|
+
 | `01_memory_core/logging_setup.py` | Console (compact INFO) + rotating **DEBUG** files |
-| `logs/<component>.log` | Per-component trails (`scheduler`, `dashboard`, `cascade`, …) |
+
+| `logs/<component>.log` | Per-component trails (`scheduler`, `dashboard`, `cascade`, â€¦) |
+
 | `logs/pea_pollux_all.log` | Fan-in of everything |
+
 | `database/pipeline_status.json` | Last pass health for Mission Control (green / amber / red) |
-| Dashboard → **Architecture & Logs** | Pick a file, tail N lines, select/copy |
+
+| Dashboard â†’ **Architecture & Logs** | Pick a file, tail N lines, select/copy |
+
+
 
 Format in files: `timestamp | LEVEL | logger | file:line function | message`.
 
+
+
 Entry points call `setup_app_logging()` once (scheduler already does). `logs/`
+
 is git-ignored.
 
+
+
 ---
+
+
 
 ## Module reference
 
+
+
 | Path | Responsibility |
+
 |------|----------------|
-| `00_data_sensors/market_prices_api.py` | Batch OHLCV download → DuckDB |
-| `00_data_sensors/macro_alpha_api.py` | VIX, Put/Call, insiders (**AMF→FMP→YF**), Polymarket |
-| `00_data_sensors/scrapers/amf_scraper.py` | AMF Opendatasoft v2.1 + BDIF `/back` (`RechercheTexte`) → legacy BDIF + 12h circuit |
+
+| `00_data_sensors/market_prices_api.py` | Batch OHLCV download â†’ DuckDB |
+
+| `00_data_sensors/macro_alpha_api.py` | VIX, Put/Call, insiders (**AMFâ†’FMPâ†’YF**), Polymarket |
+
+| `00_data_sensors/scrapers/amf_scraper.py` | AMF Opendatasoft v2.1 + BDIF `/back` (`RechercheTexte`) â†’ legacy BDIF + 12h circuit |
+
 | `01_memory_core/env_loader.py` | Native `api_keys.env` parser (no python-dotenv) |
+
 | `01_memory_core/data_models.py` | Pydantic contracts (`Signal`, `Position`, `PortfolioState`) |
+
 | `01_memory_core/sqlite_portfolio.py` | Account, positions, audit, **`portfolio_history`**, **`news_history`** |
+
 | `01_memory_core/duckdb_manager.py` | OHLCV store (ATR / correlation / indicators) |
+
 | `01_memory_core/logging_setup.py` | Rotating logs + pipeline heartbeat |
+
 | `02_quant_engine/technical_scorer.py` | MRE signals; `RSI_OVERSOLD_THRESHOLD` from YAML |
+
 | `02_quant_engine/smart_dca_engine.py` | Regime-aware Core DCA |
-| `03_risk_portfolio/pea_position_sizer.py` | Half-Kelly × vol parity; **`size_with_explanation`** for UI |
+
+| `03_risk_portfolio/pea_position_sizer.py` | Half-Kelly Ã— vol parity; **`size_with_explanation`** for UI |
+
 | `03_risk_portfolio/correlation_firewall.py` | Sector / Pearson / VIX panic |
+
 | `03_risk_portfolio/monthly_rebalancer.py` | Modes `atr` (daily) vs `shave` (monthly) |
+
 | `03_risk_portfolio/equity_metrics.py` | Shared DD / CAGR / Sharpe / Sortino |
+
 | `04_orchestrator_ai/signal_priority_cascade.py` | Conductor (all vetoes + sizing) |
+
 | `04_orchestrator_ai/earnings_blackout.py` | Per-ticker corporate blackout |
+
 | `04_orchestrator_ai/macro_veto.py` | Macro calendar blackout |
+
 | `04_orchestrator_ai/revocation_engine.py` | Expire / revoke stale PENDING |
+
 | `04_orchestrator_ai/weekly_historian.py` | Friday CIO digest + rejection taxonomy |
+
 | `05_interfaces/terminal_dashboard.py` | Mission Control + tabs |
-| `05_interfaces/trade_cards.py` | HTML cards: Tier, Kelly, ATR risk €, sector impact |
+
+| `05_interfaces/trade_cards.py` | HTML cards: Tier, Kelly, ATR risk â‚¬, sector impact |
+
 | `05_interfaces/discord_copilot.py` | Alerts + approve/revoke buttons |
+
 | `main_scheduler.py` | Daemon + CLI (`--now`, `--weekly`, `--atr-stops`, `--rebalance`) |
+
 | `seed_account.py` | Seed / reset PEA cash & positions |
+
 | `tools/build_llm_dump.py` | Regenerate `PROJECT_FULL_DUMP_FOR_LLM.md` |
+
 | `tools/sync_universe_from_bourso.py` | Refresh PEA universe YAML |
+
 | `00_data_sensors/newsletter_api.py` | IMAP headlines + LLM morning Zeitgeist |
+
 | `00_data_sensors/newsletter_ingest/` | Modules IMAP (whitelist, dedupe, parse) |
+
 | `00_data_sensors/fundamentals_api.py` | Finnhub + yfinance (Value/Quality) |
+
 | `02_quant_engine/quantitative_math.py` | VaR, CVaR, Z-Score, variance (NumPy pur) |
-| `02_quant_engine/stochastic_models.py` | Monte Carlo corrélé (Cholesky + GBM) |
+
+| `02_quant_engine/stochastic_models.py` | Monte Carlo corrÃ©lÃ© (Cholesky + GBM) |
+
 | `03_risk_portfolio/stress_tester.py` | Stress tests historiques (2008/2020/2022) |
-| `04_orchestrator_ai/red_team_agent.py` | Débat Bull/Bear/Judge (OpenRouter) |
+
+| `04_orchestrator_ai/red_team_agent.py` | DÃ©bat Bull/Bear/Judge (OpenRouter) |
+
 | `02_quant_engine/walk_forward_backtester.py` | Walk-forward equity scaffold on DuckDB |
+
 | `tests/` | pytest foundations (sizing, equity metrics, cards, dedupe) |
+
 | `.github/workflows/ci.yml` | CI on push/PR |
 
+
+
 ---
+
+
 
 ## APIs that work
 
+
+
 | Source | Status | Notes |
+
 |--------|--------|-------|
-| **yfinance OHLCV** | Works | Primary market data → DuckDB |
-| **`^V2TX` / `^VIX`** | Partial | VSTOXX often missing on Yahoo → falls back to US VIX as panic proxy |
+
+| **yfinance OHLCV** | Works | Primary market data â†’ DuckDB |
+
+| **`^V2TX` / `^VIX`** | Partial | VSTOXX often missing on Yahoo â†’ falls back to US VIX as panic proxy |
+
 | **AMF ODS / BDIF back** | Primary | Public, no paid key; ODS explore v2.1 + `/back/api/v1` with `RechercheTexte` |
-| **AMF BDIF legacy** | Fragile | `/api/v1` often WAF/500 → 12h circuit → FMP → Yahoo |
+
+| **AMF BDIF legacy** | Fragile | `/api/v1` often WAF/500 â†’ 12h circuit â†’ FMP â†’ Yahoo |
+
 | **FMP insider API** | Optional | Needs `FMP_API_KEY` |
+
 | **yfinance insiders** | Tertiary | Sparse on many `.PA` mid-caps |
-| **Options Put/Call** | Partial | Sparse for EU → neutral `1.0` |
+
+| **Options Put/Call** | Partial | Sparse for EU â†’ neutral `1.0` |
+
 | **Polymarket Gamma** | Live | Macro context + conviction modifier (never a trade trigger) |
+
 | **OpenRouter** | Optional | Explanations / sentiment / weekly report / deep news |
+
 | **Boursorama scraper** | Fragile | PEA profile, consensus, news (dates normalized to ISO) |
-| **Native ticker tape** | Works | HTML/CSS marquee — blue chips + Clearbit logos (no TradingView tape) |
+
+| **Native ticker tape** | Works | HTML/CSS marquee â€” blue chips + Clearbit logos (no TradingView tape) |
+
 | **Yahoo Mail IMAP** | Optional | Morning Briefing Zeitgeist (`YAHOO_MAIL_USER`) |
+
+
 
 Graceful degradation: missing sources return **neutral** values; the daemon does not crash.
 
+
+
 ---
+
+
 
 ## Installation
 
-> Streamlit depends on `pyarrow` → use **Python 3.11 or 3.12 x64** (`venv_x64`).
+
+
+> Streamlit depends on `pyarrow` â†’ use **Python 3.11 or 3.12 x64** (`venv_x64`).
+
+
 
 ``​`bash
+
 git clone https://github.com/Polluxgnr/Peatrading.git pea_pollux
+
 cd pea_pollux
 
+
+
 python3.11 -m venv venv_x64
+
 # Windows:  venv_x64\Scripts\Activate.ps1
+
 # Unix:     source venv_x64/bin/activate
 
+
+
 pip install --upgrade pip
+
 pip install -r requirements.txt
 
+
+
 cp config/api_keys.env.example config/api_keys.env
+
 # fill Discord / OpenRouter / FMP as needed
 
+
+
 python seed_account.py --cash 10000
+
 python main_scheduler.py --now    # first fetch + equity snapshot
+
 .\run_dashboard.ps1
+
 ``​`
 
+
+
 ---
+
+
 
 ## Configuration
 
+
+
 ### `config/api_keys.env` (git-ignored)
 
+
+
 | Variable | Required | Purpose |
+
 |----------|----------|---------|
+
 | `DISCORD_TOKEN` / `DISCORD_CHANNEL_ID` | bot | Copilot with buttons |
+
 | `DISCORD_WEBHOOK_URL` | daemon | Weekly + monthly / ATR notifications |
+
 | `OPENROUTER_API_KEY` / `OPENROUTER_MODEL` | optional | LLM explain / sentiment |
+
 | `FMP_API_KEY` | optional | Secondary insider source after AMF |
-| `AMF_API_KEY` | placeholder | Public ODS/BDIF — use `free_public_ods_api` |
+
+| `AMF_API_KEY` | placeholder | Public ODS/BDIF â€” use `free_public_ods_api` |
+
 | `YAHOO_MAIL_USER` / `YAHOO_MAIL_APP_PASSWORD` | briefing | Morning Briefing IMAP |
+
 | `EODHD_API_KEY` | optional | Reserved for paid EU market data |
-| `ALPHAVANTAGE_API_KEY` | optional | Fundamentals fallback (Finnhub → Alpha Vantage → yfinance) |
+
+| `ALPHAVANTAGE_API_KEY` | optional | Fundamentals fallback (Finnhub â†’ Alpha Vantage â†’ yfinance) |
+
 | `OPENFIGI_API_KEY` | optional | Bloomberg OpenFIGI symbol/ISIN mapper (cached in SQLite) |
 
-Keys are loaded by a **native** parser (`01_memory_core/env_loader.py`) —
+
+
+Keys are loaded by a **native** parser (`01_memory_core/env_loader.py`) â€”
+
 **no `python-dotenv` required**. `main_scheduler.py` and the Streamlit dashboard
+
 force-load `config/api_keys.env` at boot.
+
+
 
 ### `config/risk_params.yaml` (the rulebook)
 
+
+
 | Group | Keys (intent) |
+
 |-------|----------------|
+
 | **Sizing** | `KELLY_FRACTION`, `MAX_SINGLE_POSITION_PCT`, `MAX_SECTOR_WEIGHT_PCT`, `MAX_ALLOCATION_PER_DAY_PCT` |
+
 | **Circuit breakers** | `DAILY/WEEKLY/MONTHLY_MAX_LOSS_PCT` |
+
 | **Correlation** | `MAX_CORRELATION_*`, **`CORRELATION_LOOKBACK_DAYS`** |
+
 | **Signals** | `SIGNAL_*`, `MACRO_VETO_DAYS_BEFORE`, **`RSI_OVERSOLD_THRESHOLD`** |
+
 | **Cascade guards** | **`EARNINGS_BLACKOUT_DAYS`**, **`MIN_LIQUIDITY_ADV`**, **`MAX_POSITIONS_TOTAL`** |
+
 | **Core/Satellite** | `CORE_TICKER`, `CORE_*_PCT`, `SATELLITE_MAX_BUDGET_PCT` |
+
 | **VIX** | `VIX_PANIC_THRESHOLD`, vol parity refs |
+
 | **Rebalance** | `REBALANCE_PROFIT_*`, **`REBALANCE_ATR_STOP_MULT`** (default 2.5) |
+
+
 
 ### Calendars
 
-- `config/macro_calendar.yaml` — ECB / CPI / NFP style events (manual; later API sync)  
-- `config/earnings_calendar.yaml` — per-ticker earnings/div dates (starts empty)  
-- `config/pea_universe.yaml` — ~600 PEA-eligible names by sector  
+
+
+- `config/macro_calendar.yaml` â€” ECB / CPI / NFP style events (manual; later API sync)  
+
+- `config/earnings_calendar.yaml` â€” per-ticker earnings/div dates (starts empty)  
+
+- `config/pea_universe.yaml` â€” ~600 PEA-eligible names by sector  
+
+
 
 ---
+
+
 
 ## Usage
 
+
+
 ``​`bash
+
 python seed_account.py --cash 10000
+
 python seed_account.py --position MC.PA:3:620:Luxury
+
 python seed_account.py --show
 
+
+
 python main_scheduler.py --now          # full analysis pass
+
 python main_scheduler.py --weekly       # CIO digest now
+
 python main_scheduler.py --briefing     # newsletter Zeitgeist now
+
 python main_scheduler.py --atr-stops    # daily ATR evaluation now
+
 python main_scheduler.py --rebalance    # monthly profit-shave now
+
 python main_scheduler.py                # daemon (Paris schedule)
 
+
+
 python 02_quant_engine/walk_forward_backtester.py --start 2020-01-01
+
 python run_discord.py
+
 .\run_dashboard.ps1
 
+
+
 python -m pytest -q
+
 python tools/build_llm_dump.py          # refresh LLM one-shot dump
+
 ``​`
 
+
+
 ---
+
+
 
 ## Dashboard
 
-Launch: `.\run_dashboard.ps1` → http://localhost:8501
+
+
+Launch: `.\run_dashboard.ps1` â†’ http://localhost:8501
+
+
 
 On first open each session, the dashboard **auto-syncs** market data
+
 (`load_universe`, `get_last_prices`, `get_vix`) behind a global spinner.
+
+
 
 ### Native ticker tape (top of page)
 
+
+
 Replaces the old TradingView widget (which showed red errors on `.PA` small caps).
+
 A **CSS marquee** scrolls blue-chip performances with **Clearbit logos** and a
-period selector: **1j / 5j / 1m**. Data from `get_market_performance` — no
+
+period selector: **1j / 5j / 1m**. Data from `get_market_performance` â€” no
+
 external widget dependency.
+
+
 
 ### Mission Control (above tabs)
 
+
+
 Designed so you read **market state in ~3 seconds** before diving into tabs:
 
+
+
 - Euronext Paris open/closed + local time  
+
 - Last pipeline pass status (from `pipeline_status.json`)  
+
 - Equity + day variation (from `portfolio_history`)  
+
 - VIX gauge, count of PENDING Discord signals  
+
 - Quick actions: clickable ranking/universe rows (jumps Exploration dossier), ledger hint, manual pass reminder  
 
+
+
 **Palette:** off-white `#E0E0E0` for body text; neon `#00FF00` reserved for
+
 **positive PnL / APPROVED**; amber for alerts/vetoes; red for losses. Closer to
+
 real Bloomberg conventions and easier on long sessions than green-everywhere.
+
+
 
 ### Tabs
 
+
+
 | Tab | Content |
+
 |-----|---------|
-| **General & Signaux** | Morning Briefing (chargement patient), suggestion + ranking/pépites **cliquables**, geo brief, funnel |
-| **Portefeuille** | Equity curve, sunburst, **stops ATR 2.5x**, wallet editor → SQLite |
-| **Exploration** | **Recherche univers 600+** (selectbox haut de page), dossier ticker, **ticket d'ordre PEA**, **checklist décision**, news archivées SQLite, synthèse IA 24h |
+
+| **General & Signaux** | Morning Briefing (chargement patient), suggestion + ranking/pÃ©pites **cliquables**, geo brief, funnel |
+
+| **Portefeuille** | Equity curve, sunburst, **stops ATR 2.5x**, wallet editor â†’ SQLite |
+
+| **Exploration** | **Recherche univers 600+** (selectbox haut de page), dossier ticker, **ticket d'ordre PEA**, **checklist dÃ©cision**, news archivÃ©es SQLite, synthÃ¨se IA 24h |
+
 | **Univers** | Liste PEA + tags techniques **cliquables** (full filtered view) |
-| **Architecture & Logs** | **Télémétrie live** (health check env + DB), **`risk_params.yaml` actifs**, expanders logique quant, logs (5000 lignes) |
+
+| **Architecture & Logs** | **TÃ©lÃ©mÃ©trie live** (health check env + DB), **`risk_params.yaml` actifs**, expanders logique quant, logs (5000 lignes) |
+
+
 
 ### News memory (`news_history`)
 
+
+
 Headlines are **upserted into SQLite** on each fetch (`PortfolioDB.save_news`).
+
 The UI reads `get_news_history(ticker)` first; live APIs run only if fewer than
+
 3 cached articles. Boursorama relative dates (`il y a 2h`, empty, `Recent`) are
+
 normalized to `YYYY-MM-DD HH:MM` at scrape time.
+
+
 
 ### Rich trade cards (what you see before approving)
 
+
+
 For each PENDING BUY the card shows:
 
-1. **Conviction score** (colour: amber 65–75 / neon 76–100) + Tier label  
-2. **Sizing rationale** — Kelly fraction, measured vol + vol factor, ticket €, weight % of equity  
-3. **R-style risk** — max € / % equity loss if the **2.5×ATR** stop is hit  
-4. **Sector impact** — e.g. Luxury 18% → 23% (cap 25%), not just pass/fail  
-5. **Streamlit Approuver / Rejeter** — updates SQLite instantly (complements Discord)  
+
+
+1. **Conviction score** (colour: amber 65â€“75 / neon 76â€“100) + Tier label  
+
+2. **Sizing rationale** â€” Kelly fraction, measured vol + vol factor, ticket â‚¬, weight % of equity  
+
+3. **R-style risk** â€” max â‚¬ / % equity loss if the **2.5Ã—ATR** stop is hit  
+
+4. **Sector impact** â€” e.g. Luxury 18% â†’ 23% (cap 25%), not just pass/fail  
+
+5. **Streamlit Approuver / Rejeter** â€” updates SQLite instantly (complements Discord)  
+
+
 
 ---
+
+
 
 ## LLM full dump
 
+
+
 For one-shot context in another LLM / agent:
 
+
+
 ``​`bash
+
 python tools/build_llm_dump.py
+
 # optional: skip architecture preamble
+
 python tools/build_llm_dump.py --no-summary
+
 ``​`
+
+
 
 Writes **`PROJECT_FULL_DUMP_FOR_LLM.md`** with:
 
-- **Architecture snapshot** — layer map, Phase 26–28 highlights, hard rules
-- **Priority file list** — README, risk YAML, scorer, dashboard, scheduler
-- **Grouped file index** — by directory, with line counts and ⭐ on key files
-- **Full source bodies** — fenced code blocks for every included file
+
+
+- **Architecture snapshot** â€” layer map, Phase 26â€“28 highlights, hard rules
+
+- **Priority file list** â€” README, risk YAML, scorer, dashboard, scheduler
+
+- **Grouped file index** â€” by directory, with line counts and â­� on key files
+
+- **Full source bodies** â€” fenced code blocks for every included file
+
+
 
 Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
+
 Regenerate after meaningful code or README changes so external agents stay in sync.
 
+
+
 ---
+
+
 
 ## Deployment
 
+
+
 ### Docker (recommended)
+
+
 
 `docker-compose.yml` is production-oriented for a single personal instance:
 
+
+
 - **persistent volumes**:
+
   - `./database:/app/database` (SQLite + DuckDB + heartbeat JSON)
+
   - `./logs:/app/logs` (component logs + `pea_pollux_all.log`)
+
   - `./config:/app/config` (risk params, calendars, universe, env template)
+
 - **timezone pinned**:
+
   - `TZ=Europe/Paris` in both `daemon` and `dashboard`
+
   - scheduler itself also uses explicit `schedule.every().day.at(..., "Europe/Paris")`
+
     in `main_scheduler.py`
 
+
+
 ``​`bash
+
 cp config/api_keys.env.example config/api_keys.env
+
 # Fill secrets locally (never commit config/api_keys.env)
 
+
+
 docker compose config            # final compose validation
+
 docker compose up -d --build
+
 docker compose ps
+
 docker compose logs -f daemon
+
 docker compose logs -f dashboard
+
 ``​`
+
+
 
 First-time bootstrap (inside daemon container):
 
+
+
 ``​`bash
+
 docker compose exec daemon python seed_account.py --cash 10000
+
 docker compose exec daemon python main_scheduler.py --now
+
 ``​`
+
+
 
 Dashboard is exposed on `:8501`.
 
+
+
 ### Pre-deploy final checks
+
+
 
 Run these before each push/deploy:
 
+
+
 ``​`bash
+
 python -m pytest -q
+
 python tools/build_llm_dump.py
+
 git status --short
+
 ``​`
+
+
 
 Expected outcomes:
 
+
+
 - pytest green (current baseline: `10 passed`)
+
 - `PROJECT_FULL_DUMP_FOR_LLM.md` regenerated and in sync with README/code
+
 - no secret files staged (`config/api_keys.env` must stay untracked/ignored)
+
+
 
 ### Test coverage snapshot
 
+
+
 Current automated tests are focused and fast:
 
+
+
 - `tests/test_phase16_foundations.py`
+
   - equity metrics (`max_drawdown`, `sharpe`, summary metrics)
+
   - rebalancer mode split (`shave` vs `atr`) without network dependencies
+
   - earnings blackout logic from YAML windows
+
 - `tests/test_ui_and_sandbox.py`
+
   - sizing explanation metadata contract (`size_with_explanation`)
+
   - trade-card helper rendering logic (tier/risk/sector-impact text)
+
   - newsletter dedupe for near-duplicate titles
+
 - `tests/test_newsletter_whitelist.py`
+
   - sender extraction + whitelist allow/deny behavior
+
 - `tests/test_funnel_analytics.py`
+
   - rejection taxonomy mapping for funnel analytics consistency
 
+
+
 Alternatives: systemd (`Restart=always` on `main_scheduler.py`) or cron for
+
 `--now` / `--weekly` / `--atr-stops` / `--rebalance`.
 
+
+
 ---
+
+
 
 ## Scheduling
 
+
+
 | Job | When (Europe/Paris) | Action |
+
 |-----|---------------------|--------|
-| **Morning briefing** | **08:25** | Newsletter IMAP → LLM Zeitgeist → `morning_briefing.json` |
-| ATR stops | 08:35 weekdays | Dynamic ATR SELLs → webhook |
-| Profit-shave | Probe 08:30 (acts on the **1st**) | +20% trim → webhook |
-| Analysis | 09:00, 13:30, 17:10 weekdays | Full pipeline → Discord + heartbeat |
-| Weekly report | Friday 18:00 | Historian → webhook |
+
+| **Morning briefing** | **08:25** | Newsletter IMAP â†’ LLM Zeitgeist â†’ `morning_briefing.json` |
+
+| ATR stops | 08:35 weekdays | Dynamic ATR SELLs â†’ webhook |
+
+| Profit-shave | Probe 08:30 (acts on the **1st**) | +20% trim â†’ webhook |
+
+| Analysis | 09:00, 13:30, 17:10 weekdays | Full pipeline â†’ Discord + heartbeat |
+
+| Weekly report | Friday 18:00 | Historian â†’ webhook |
+
+
 
 Weekends: analysis / ATR skipped automatically.
 
+
+
 ---
+
+
 
 ## Roadmap / future improvements
 
+
+
 Prioritized for a **validated personal PEA process**, not feature theatre.
+
 Broker import must **diff** vs SQLite (never blind overwrite). Prefer official/API
+
 sources over furtive HTML scraping.
 
-### Done (Phase 15–20)
+
+
+### Done (Phase 15â€“20)
+
+
 
 | Item | Notes |
+
 |------|-------|
-| AMF→FMP→Yahoo insider cascade | Official FR source first |
+
+| AMFâ†’FMPâ†’Yahoo insider cascade | Official FR source first |
+
 | Equity curve + shared metrics | Live dashboard; ready for backtest reuse |
+
 | Daily ATR vs monthly shave | Split jobs / CLI flags |
-| Earnings blackout engine | Calendar empty — fill via API later |
+
+| Earnings blackout engine | Calendar empty â€” fill via API later |
+
 | ADV / max positions / RSI / corr lookback | Wired in `risk_params.yaml` + cascade |
+
 | Mission Control + trade cards + logs | Operator UX |
-| **Decision funnel waterfall + rejection pie** | ✅ Phase 17 — 7J/30J audit-log analytics in General |
-| **Valuation + 10y annual returns** | ✅ Phase 18 — Exploration (buy zone, P/E, P/B, **1M/1Y**, annual bars) |
-| **Newsletter whitelist + Zeitgeist** | ✅ Phase 19 — `NewsletterSensor` + 08:25 job + dashboard |
-| **Ensemble conviction scoring** | ✅ Phase 20 — 4 axes, emit ≥65; radar + Command Center approve |
-| **What-if 1000€ + walk-forward scaffold** | ✅ Exploration simulator + `walk_forward_backtester.py` |
-| **Terminal polish (TV / zone / ranking / Polymarket)** | ✅ Phase 21 — EPA: ticker map, flat buy-zone fix, fingerprint ranking, SSL-tolerant Gamma |
-| **Smart UX + deep news + logos + pépites** | ✅ Phase 22 |
-| **UX overhaul (tape / GO / news diversity)** | ✅ Phase 23 — no GO, logos off, multi-source news, deep IA narrative |
-| **Polymarket harden + news clean + tape + logs** | ✅ Phase 24 — JSONDecode guard, no heuristic pills, blue-chip tape, briefing button, log tail 5k |
-| **Auto-sync + score holistique + UI exécution** | ✅ Phase 26 — warmup au démarrage, News/Polymarket dans le score, stops ATR visibles, tickets/checklist, tables cliquables |
-| **Bandeau natif + news SQLite + exploration universelle** | ✅ Phase 27 — marquee HTML/CSS, `news_history`, dates exactes, selectbox 600+ tickers |
-| **Télémétrie live Architecture & Logs** | ✅ Phase 28 — health check sources, risk_params actifs, expanders logique quant |
-| **UX rename + clickable tape + news history** | ✅ Phase 29 — Pollux branding, query-param tape, Synthèse IA, full news DB |
-| **Native env + AMF ODS + TV EURONEXT + uncapped lists** | ✅ Phase 32 |
-| **Multi-factor + Finnhub + Data Lake analyste** | ✅ Phase 35–36 |
-| **VaR/CVaR + Z-Score académique** | ✅ Phase 37 |
-| **Monte Carlo + stress tests + red teaming IA** | ✅ Phase 38 |
-| **UX (tape fix, briefing async, near-miss radar, ML export)** | ✅ Phase 39 |
-| **Cash sweep, Discord daily digest, 10y backfill, forward curve, ML store** | ✅ Phase 40 |
-| **AMF semantic parsing (legal FR regex), fluid log viewer, system telemetry** | ✅ Phase 41 |
-| **Institutional Overhaul: data quality (auto_adjust), parallel I/O, drawdown breaker, OpenFIGI, Alpha Vantage, backtester look-ahead fix, CI ruff** | ✅ Phase 42 |
-| **Pydantic config validation, backtester exits, dashboard DuckDB dedup, XGBoost ML, Devil's Advocate PEA** | ✅ Phase 44 |
-| **Dynamic Market Regime, EWMA Risk Math, Pipeline Idempotency** | ✅ Phase 45 |
-| **ML Historical Bootstrapper, Gemini 2.5 Optimization** | ✅ Phase 46 |
-| **Ultimate Performance (SQLite I/O fix), Pure Webhooks for Discord** | ✅ Phase 47 |
+
+| **Decision funnel waterfall + rejection pie** | âœ… Phase 17 â€” 7J/30J audit-log analytics in General |
+
+| **Valuation + 10y annual returns** | âœ… Phase 18 â€” Exploration (buy zone, P/E, P/B, **1M/1Y**, annual bars) |
+
+| **Newsletter whitelist + Zeitgeist** | âœ… Phase 19 â€” `NewsletterSensor` + 08:25 job + dashboard |
+
+| **Ensemble conviction scoring** | âœ… Phase 20 â€” 4 axes, emit â‰¥65; radar + Command Center approve |
+
+| **What-if 1000â‚¬ + walk-forward scaffold** | âœ… Exploration simulator + `walk_forward_backtester.py` |
+
+| **Terminal polish (TV / zone / ranking / Polymarket)** | âœ… Phase 21 â€” EPA: ticker map, flat buy-zone fix, fingerprint ranking, SSL-tolerant Gamma |
+
+| **Smart UX + deep news + logos + pÃ©pites** | âœ… Phase 22 |
+
+| **UX overhaul (tape / GO / news diversity)** | âœ… Phase 23 â€” no GO, logos off, multi-source news, deep IA narrative |
+
+| **Polymarket harden + news clean + tape + logs** | âœ… Phase 24 â€” JSONDecode guard, no heuristic pills, blue-chip tape, briefing button, log tail 5k |
+
+| **Auto-sync + score holistique + UI exÃ©cution** | âœ… Phase 26 â€” warmup au dÃ©marrage, News/Polymarket dans le score, stops ATR visibles, tickets/checklist, tables cliquables |
+
+| **Bandeau natif + news SQLite + exploration universelle** | âœ… Phase 27 â€” marquee HTML/CSS, `news_history`, dates exactes, selectbox 600+ tickers |
+
+| **TÃ©lÃ©mÃ©trie live Architecture & Logs** | âœ… Phase 28 â€” health check sources, risk_params actifs, expanders logique quant |
+
+| **UX rename + clickable tape + news history** | âœ… Phase 29 â€” Pollux branding, query-param tape, SynthÃ¨se IA, full news DB |
+
+| **Native env + AMF ODS + TV EURONEXT + uncapped lists** | âœ… Phase 32 |
+
+| **Multi-factor + Finnhub + Data Lake analyste** | âœ… Phase 35â€“36 |
+
+| **VaR/CVaR + Z-Score acadÃ©mique** | âœ… Phase 37 |
+
+| **Monte Carlo + stress tests + red teaming IA** | âœ… Phase 38 |
+
+| **UX (tape fix, briefing async, near-miss radar, ML export)** | âœ… Phase 39 |
+
+| **Cash sweep, Discord daily digest, 10y backfill, forward curve, ML store** | âœ… Phase 40 |
+
+| **AMF semantic parsing (legal FR regex), fluid log viewer, system telemetry** | âœ… Phase 41 |
+
+| **Institutional Overhaul: data quality (auto_adjust), parallel I/O, drawdown breaker, OpenFIGI, Alpha Vantage, backtester look-ahead fix, CI ruff** | âœ… Phase 42 |
+
+| **Pydantic config validation, backtester exits, dashboard DuckDB dedup, XGBoost ML, Devil's Advocate PEA** | âœ… Phase 44 |
+
+| **Dynamic Market Regime, EWMA Risk Math, Pipeline Idempotency** | âœ… Phase 45 |
+
+| **ML Historical Bootstrapper, Gemini 2.5 Optimization** | âœ… Phase 46 |
+
+| **Ultimate Performance (SQLite I/O fix), Pure Webhooks for Discord** | âœ… Phase 47 |
+
 | pytest + GitHub Actions CI | Expand coverage over time |
+
+
 
 ### Next (highest leverage)
 
+
+
 | Item | Why |
+
 |------|-----|
+
 | Richer walk-forward (full Orchestrator + costs) | Validate RSI / conviction weights on PEA universe |
+
 | Fundsmith/Amundi holdings scraper | Replace institutional proxy set |
+
 | Broker CSV diff import | Keep SQLite honest vs reality |
+
 | Fill **earnings_calendar** (Euronext / API) | Blackout already coded |
+
 | Relative strength / 52w / analyst drift | Post-backtester calibration knobs |
+
+
 
 ### Phase 40: Predictive Machine Learning (XGBoost / NLP)
 
+
+
 Goal: train a classifier on the `news_history` and `audit_log` SQLite tables to
+
 predict the probability that a given signal will result in a profitable trade.
 
+
+
 - **Features:** headline sentiment embeddings (NLP), RSI/MACD/Bollinger at signal
+
   time, VIX level, sector, day-of-week, insider cluster flag.
-- **Labels:** from `audit_log` — did the signal reach +5% within 20 trading days
+
+- **Labels:** from `audit_log` â€” did the signal reach +5% within 20 trading days
+
   after APPROVED/EXECUTED?
+
 - **Model:** XGBoost gradient-boosted trees (tabular) + optional sentence-transformer
+
   embeddings for headline text.
+
 - **Integration:** predicted probability displayed alongside the existing conviction
+
   score in the dashboard (e.g., "ML confidence: 72%").
+
 - **Data export:** available today in the Architecture tab (CSV download of both tables).
+
+
 
 ### Later
 
-Paid VSTOXX · AMF resilience · multi-core ETF rotation · trailing ATR after shave ·
-EUR/USD note in CIO digest · rolling Sharpe chart.
+
+
+Paid VSTOXX Â· AMF resilience Â· multi-core ETF rotation Â· trailing ATR after shave Â·
+
+EUR/USD note in CIO digest Â· rolling Sharpe chart.
+
+
 
 **Non-goals:** auto-broker execution, leverage, LLM-as-trader, US pennies.
 
+
+
 ---
+
+
 
 ## Troubleshooting
 
+
+
 | Symptom | Fix |
+
 |---------|-----|
-| Dashboard « En attente… » | `python seed_account.py --cash 10000` then `--now` |
+
+| Dashboard Â« En attenteâ€¦ Â» | `python seed_account.py --cash 10000` then `--now` |
+
 | Empty equity curve | Needs at least one `update_portfolio` (pass or wallet save) |
-| Mission Control pass = « jamais » | Run `python main_scheduler.py --now` once |
-| Empty `logs/` | Same — scheduler/dashboard create files on first run |
+
+| Mission Control pass = Â« jamais Â» | Run `python main_scheduler.py --now` once |
+
+| Empty `logs/` | Same â€” scheduler/dashboard create files on first run |
+
 | `pyarrow` / Streamlit fail | Python **3.11/3.12 x64** |
+
 | VIX stuck / `^V2TX` 404 | Falls back to `^VIX` |
+
 | AMF HTTP 500 | Expected; FMP then Yahoo; circuit ~12h |
+
 | No FMP insiders | Set `FMP_API_KEY` |
+
 | ATR stop never fires | Need DuckDB history + losing position; try `--atr-stops` |
+
 | Cards show ATR risk n/a | Fetch history with `--now` first |
+
 | LLM / weekly silent | `OPENROUTER_API_KEY` / `DISCORD_WEBHOOK_URL` |
+
 | Cash too small for CW8 | MICRO mode: 1 liquid share + cash runway (by design) |
+
 | Newsletter IMAP auth fail | Use Yahoo **app password**, folder name exact, SSL 993 |
-| News dates show `Recent` | Re-open ticker in Exploration — scraper now stamps ISO; archive in `news_history` |
-| Red TradingView tape errors | Fixed in Phase 27 — native HTML marquee replaces TV widget |
-| Briefing flashes error on boot | Phase 27 — patient `st.info` + manual generate button |
+
+| News dates show `Recent` | Re-open ticker in Exploration â€” scraper now stamps ISO; archive in `news_history` |
+
+| Red TradingView tape errors | Fixed in Phase 27 â€” native HTML marquee replaces TV widget |
+
+| Briefing flashes error on boot | Phase 27 â€” patient `st.info` + manual generate button |
+
 | CI / pytest | `python -m pytest -q` |
 
+
+
 ---
+
+
 
 ## Disclaimer
 
+
+
 Decision-support and educational tool only. **No automated execution. No financial
+
 advice.** You are solely responsible for every trade. Past or backtested results
+
 do not guarantee future performance.
 
-© 2026 Pollux Gronier — PEA Pollux.
+
+
+Â© 2026 Pollux Gronier â€” PEA Pollux.
+
+
 
 ---
+
+
 
 ## English guide
 
+
+
 **PEA Pollux** is a personal quantitative research terminal for a French **PEA**
+
 ( tax-advantaged equity savings plan ). It helps you *research*, *size*, and *risk-manage*
-ideas — but **never places broker orders**.
+
+ideas â€” but **never places broker orders**.
+
+
 
 ### What it does
 
-1. **Ingests data** — OHLCV (yfinance → DuckDB), insiders (AMF → FMP → Yahoo),
-   news, newsletters, macro proxies (VIX, Polymarket).
-2. **Scores opportunities** — multi-model ensemble (Trend, Mean-Reversion, Breakout,
-   Context) with fundamentals (Finnhub) and sentiment modifiers.
-3. **Filters through risk** — VIX panic, sector caps, correlation firewall, earnings
-   blackout, liquidity floor, vol-parity sizing (whole shares only).
-4. **Surfaces decisions** — Streamlit dashboard + optional Discord copilot for
-   manual approve/reject.
-5. **Explains & challenges** — LLM rationales, weekly digest, Bull/Bear red teaming.
 
-### Phase 38–41 highlights
+
+1. **Ingests data** â€” OHLCV (yfinance â†’ DuckDB), insiders (AMF â†’ FMP â†’ Yahoo),
+
+   news, newsletters, macro proxies (VIX, Polymarket).
+
+2. **Scores opportunities** â€” multi-model ensemble (Trend, Mean-Reversion, Breakout,
+
+   Context) with fundamentals (Finnhub) and sentiment modifiers.
+
+3. **Filters through risk** â€” VIX panic, sector caps, correlation firewall, earnings
+
+   blackout, liquidity floor, vol-parity sizing (whole shares only).
+
+4. **Surfaces decisions** â€” Streamlit dashboard + optional Discord copilot for
+
+   manual approve/reject.
+
+5. **Explains & challenges** â€” LLM rationales, weekly digest, Bull/Bear red teaming.
+
+
+
+### Phase 38â€“41 highlights
+
+
 
 | Feature | Module | Phase |
+
 |---------|--------|:-----:|
+
 | Monte Carlo fan chart | `stochastic_models.py` | 38 |
+
 | Black swan replay | `stress_tester.py` | 38 |
+
 | Tail risk VaR & CVaR | `quantitative_math.py` | 37 |
+
 | AI red team (Bull/Bear/Judge) | `red_team_agent.py` | 38 |
+
 | Ticker tape 1d fix + near-miss radar | `terminal_dashboard.py` | 39 |
+
 | ML feature store + CSV export | `ml_feature_store.py` | 40 |
+
 | Cash sweep (zero idle cash) | `smart_dca_engine.py` | 40 |
+
 | Discord daily concise report | `discord_copilot.py` | 40 |
+
 | 10-year OHLCV backfill (`--backfill-10y`) | `main_scheduler.py` | 40 |
+
 | Forward equity curve vs CW8 benchmark | `terminal_dashboard.py` | 40 |
+
 | AMF semantic parsing (FR legal regex) | `amf_scraper.py` | 41 |
+
 | Filtered + color-coded log viewer | `terminal_dashboard.py` | 41 |
+
 | System telemetry (DB sizes, CPU, mem) | `terminal_dashboard.py` | 41 |
+
+
 
 ### Architecture (high level)
 
+
+
 ``​`
-Data sensors → DuckDB/SQLite → Quant engine → Risk cascade → UI (Streamlit/Discord)
-                                      ↓
+
+Data sensors â†’ DuckDB/SQLite â†’ Quant engine â†’ Risk cascade â†’ UI (Streamlit/Discord)
+
+                                      â†“
+
                          Stochastic models + stress tests + LLM explainers
+
 ``​`
+
+
 
 ### Quick start
 
+
+
 ``​`bash
+
 git clone https://github.com/Polluxgnr/Peatrading.git pea_pollux
+
 cd pea_pollux
+
 python3.11 -m venv venv_x64 && source venv_x64/bin/activate  # or Windows Activate.ps1
+
 pip install -r requirements.txt
+
 cp config/api_keys.env.example config/api_keys.env
+
 python seed_account.py --cash 10000
+
 python main_scheduler.py --now
+
 streamlit run 05_interfaces/terminal_dashboard.py
+
 ``​`
+
+
 
 ### Design principles
 
-- **Math-first, AI-second** — models decide eligibility; LLMs only explain or debate.
-- **Manual execution** — you always confirm trades.
-- **Graceful degradation** — missing API keys → neutral fallbacks, no crashes.
-- **Vectorized math** — NumPy/Pandas for VaR, Monte Carlo, Z-Scores.
-- **On-demand heavy compute** — Monte Carlo runs behind a button + cache, not on every page load.
+
+
+- **Math-first, AI-second** â€” models decide eligibility; LLMs only explain or debate.
+
+- **Manual execution** â€” you always confirm trades.
+
+- **Graceful degradation** â€” missing API keys â†’ neutral fallbacks, no crashes.
+
+- **Vectorized math** â€” NumPy/Pandas for VaR, Monte Carlo, Z-Scores.
+
+- **On-demand heavy compute** â€” Monte Carlo runs behind a button + cache, not on every page load.
+
+
 
 ---
+
 ## Phase 49 : The Apex Optimization (Current)
 
-*   **⚡ Blazing Fast UI :** Caching systématique (@st.cache_resource, @st.cache_data) et lazy loading pour un Dashboard sub-seconde.
-*   **📊 Interactive Metrics :** Drill-down des métriques via st.popover (Market Breadth dynamique, Mini-charts VIX).
-*   **🤖 Déploiement Stratégique (80% Rule) :** Force le déploiement de capital sur les meilleurs signaux techniques rejetés si l'exposition Cash est > 20% en régime Bull.
-*   **📈 Simulateur ML Autonome :** Backtester visuel intégré dans le Dashboard permettant d'évaluer la stratégie Machine Learning vis-à-vis d'un Buy & Hold (CW8) avec prise en compte du slippage.
-*   **📡 Ingestion Incrémentale :** Optimisation drastique des appels réseaux (DuckDB get_latest_dates) pour ne télécharger que le strict nécessaire depuis yfinance.
-*   **🚨 Copilot Discord V2 :** Refonte des webhooks avec intégration du Notional estimé, formatage premium et ping @everyone.
+
+
+*   **âš¡ Blazing Fast UI :** Caching systÃ©matique (@st.cache_resource, @st.cache_data) et lazy loading pour un Dashboard sub-seconde.
+
+*   **ðŸ“Š Interactive Metrics :** Drill-down des mÃ©triques via st.popover (Market Breadth dynamique, Mini-charts VIX).
+
+*   **ðŸ¤– DÃ©ploiement StratÃ©gique (80% Rule) :** Force le dÃ©ploiement de capital sur les meilleurs signaux techniques rejetÃ©s si l'exposition Cash est > 20% en rÃ©gime Bull.
+
+*   **ðŸ“ˆ Simulateur ML Autonome :** Backtester visuel intÃ©grÃ© dans le Dashboard permettant d'Ã©valuer la stratÃ©gie Machine Learning vis-Ã -vis d'un Buy & Hold (CW8) avec prise en compte du slippage.
+
+*   **ðŸ“¡ Ingestion IncrÃ©mentale :** Optimisation drastique des appels rÃ©seaux (DuckDB get_latest_dates) pour ne tÃ©lÃ©charger que le strict nÃ©cessaire depuis yfinance.
+
+*   **ðŸš¨ Copilot Discord V2 :** Refonte des webhooks avec intÃ©gration du Notional estimÃ©, formatage premium et ping @everyone.
+
+
 
 ---
+
 ## Phase 51 : Robust ML Pipeline Refactoring (Current)
 
-*   **Sequential Bootstrapping:** Remplacement du multiprocessing instable sous Docker par une boucle séquentielle stricte avec barre de progression (\	qdm\).
-*   **Memory Optimization:** Sauvegarde incrémentale directe dans le CSV (\ml_training_dataset.csv\) pour éviter les crash OOM lors du balayage de 10 ans d'historique sur plus de 600 tickers.
-*   **No Look-Ahead Bias / No Ban IP:** Désactivation intelligente des webhooks de scraping live (Sentiment Boursorama / YFinance) lorsque le bot tourne en simulation historique. L'inférence live conserve 100% de ses capacités.
-*   **Error Resilience:** Poursuite automatique du bootstrap même si des API financières flanchent ou que l'historique d'un ticker est corrompu.
+
+
+*   **Sequential Bootstrapping:** Remplacement du multiprocessing instable sous Docker par une boucle sÃ©quentielle stricte avec barre de progression (\	qdm\).
+
+*   **Memory Optimization:** Sauvegarde incrÃ©mentale directe dans le CSV (\ml_training_dataset.csv\) pour Ã©viter les crash OOM lors du balayage de 10 ans d'historique sur plus de 600 tickers.
+
+*   **No Look-Ahead Bias / No Ban IP:** DÃ©sactivation intelligente des webhooks de scraping live (Sentiment Boursorama / YFinance) lorsque le bot tourne en simulation historique. L'infÃ©rence live conserve 100% de ses capacitÃ©s.
+
+*   **Error Resilience:** Poursuite automatique du bootstrap mÃªme si des API financiÃ¨res flanchent ou que l'historique d'un ticker est corrompu.
+
+
 
 ---
+
 ## Phase 54.5 : Loud Fallback, UI Fluidity & Production Prep (Current)
 
-*   **10-Year Data Lake Uncapping:** L'historique stocké dans DuckDB par `market_prices_api.py` monte jusqu'à 10 ans, offrant un set de données massif pour les modèles ML tout en limitant les appels d'API.
-*   **Loud Fallback Mechanism:** En cas de panne d'une API tierce (Boursorama, OpenRouter, etc.), le système maintient une fluidité totale en tombant sur des valeurs neutres (`0.0`), tout en déclarant un état `data_degraded_mode=True` dans `pipeline_status.json` pour avertir l'utilisateur.
-*   **Fluidité & Ticker Sync:** Résolution d'un bug majeur de désynchronisation de l'UI grâce à l'utilisation d'événements `on_change` asynchrones dans Streamlit, couplé à une limitation des graphiques Plotly aux 500 dernières bougies pour maintenir 60 FPS.
-*   **UI Reorganization & Sub-Tabs:** Restructuration totale du Dashboard pour éliminer le bruit visuel avec 4 onglets principaux (`Market & Macro`, `Ticker Deep-Dive`, `Portfolio & Execution`, `System Logs`) et 3 sous-onglets encapsulés pour les fiches actions.
-*   **Strict News Filtering:** Implémentation d'un filtre regex anti-spam universel (`discount|free|referral|newsletter|sponsor...`) qui intercepte et purifie les flux RSS avant leur traitement IA (Morning Briefing).
+
+
+*   **10-Year Data Lake Uncapping:** L'historique stockÃ© dans DuckDB par `market_prices_api.py` monte jusqu'Ã  10 ans, offrant un set de donnÃ©es massif pour les modÃ¨les ML tout en limitant les appels d'API.
+
+*   **Loud Fallback Mechanism:** En cas de panne d'une API tierce (Boursorama, OpenRouter, etc.), le systÃ¨me maintient une fluiditÃ© totale en tombant sur des valeurs neutres (`0.0`), tout en dÃ©clarant un Ã©tat `data_degraded_mode=True` dans `pipeline_status.json` pour avertir l'utilisateur.
+
+*   **FluiditÃ© & Ticker Sync:** RÃ©solution d'un bug majeur de dÃ©synchronisation de l'UI grÃ¢ce Ã  l'utilisation d'Ã©vÃ©nements `on_change` asynchrones dans Streamlit, couplÃ© Ã  une limitation des graphiques Plotly aux 500 derniÃ¨res bougies pour maintenir 60 FPS.
+
+*   **UI Reorganization & Sub-Tabs:** Restructuration totale du Dashboard pour Ã©liminer le bruit visuel avec 4 onglets principaux (`Market & Macro`, `Ticker Deep-Dive`, `Portfolio & Execution`, `System Logs`) et 3 sous-onglets encapsulÃ©s pour les fiches actions.
+
+*   **Strict News Filtering:** ImplÃ©mentation d'un filtre regex anti-spam universel (`discount|free|referral|newsletter|sponsor...`) qui intercepte et purifie les flux RSS avant leur traitement IA (Morning Briefing).
+
+
+ - - - 
+ # #   P h a s e   5 5   :   M u l t i - S o u r c e   N e w s   E n g i n e ,   D a t a   L i n e a g e   &   Q u a n t   M L   E v o l u t i o n   ( C u r r e n t ) 
+ 
+ *       * * M u l t i - S o u r c e   N e w s   E n g i n e : * *   F i l t r e   m u l t i - s o u r c e s   ( S u b s t a c k ,   G o o g l e   N e w s ,   B o u r s o r a m a )   a v e c   h i s t o r i q u e   d e s   n e w s   a r c h i v é e s   d a n s   D u c k D B / S Q L i t e   e t   b a d g e s   I A   ( B u l l i s h / B e a r i s h ) . 
+ *       * * D a t a   L i n e a g e   T a b : * *   S e c t i o n   a r c h i t e c t u r e   d u   t a b l e a u   d e   b o r d   a f f i c h a n t   l a   p r o v e n a n c e   d e s   d o n n é e s ,   l ' h e u r e   d e   s y n c h r o n i s a t i o n ,   e t   l e   s t a t u t   v i a   p i p e l i n e _ s t a t u s . j s o n . 
+ *       * * X G B o o s t   M u l t i - H o r i z o n : * *   S u p p o r t   i n t é g r é   d e   c i b l e s   M L   d u a l - h o r i z o n   ( 3 0   j o u r s   t a c t i q u e ,   1 2 6   j o u r s   s t r u c t u r e l )   a v e c   i n f é r e n c e   S H A P   X A I . 
+ *       * * P i o t r o s k i   S c o r e   &   V a l u e   T r a p   V e t o : * *   I n t é g r a t i o n   d u   s c o r e   P i o t r o s k i   ( v i a   F M P )   d a n s   l e   c a c h e   S Q L i t e   a v e c   u n   v e t o   s t r i c t   ( < 4 )   a u   n i v e a u   d u   c a s c a d e . 
+ *       * * P e r f o r m a n c e s   &   S é c u r i t é : * *   O p t i m i s a t i o n   d e   P l o t l y ,   f i x   d u   T h r e a d   l o c k   d e s   c o n n e x i o n s   D B   a v e c   @ s t . c a c h e _ r e s o u r c e ,   e t   v a l i d a t i o n   é t e n d u e   d e   l a   w h i t e l i s t   n e w s l e t t e r . 
+ 
+ 
 ```
 
 ## FILE: requirements.txt (47 lines)

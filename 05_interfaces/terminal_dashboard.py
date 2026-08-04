@@ -5155,17 +5155,94 @@ with tab_ticker:
     )
     sub_overview, sub_fin, sub_news = st.tabs(['📈 Overview & Charts', '🧠 Financials & AI Scoring', '📰 News & Catalysts'])
     with sub_news:
-        if True:
-            st.markdown("#### 📖 Catalyseurs & risques (dossier)")
-            cat1, cat2 = st.columns(2)
-            with cat1:
-                st.markdown("**News / catalyseurs qui aideraient**")
-                for c in dossier.get("catalysts") or []:
-                    st.markdown(f"- {c}")
-            with cat2:
-                st.markdown("**Evenements a surveiller (ne pas vouloir)**")
-                for r in dossier.get("risk_events") or []:
-                    st.markdown(f"- {r}")
+        st.markdown("#### 📖 Catalyseurs & risques (dossier)")
+        cat1, cat2 = st.columns(2)
+        with cat1:
+            st.markdown("**News / catalyseurs qui aideraient**")
+            for c in dossier.get("catalysts") or []:
+                st.markdown(f"- {c}")
+        with cat2:
+            st.markdown("**Evenements a surveiller (ne pas vouloir)**")
+            for r in dossier.get("risk_events") or []:
+                st.markdown(f"- {r}")
+
+        st.markdown("---")
+        st.markdown("#### 🗞️ Actualites Historiques")
+        
+        # Phase 55: Multi-Source Filter
+        providers_opt = ["Boursorama", "Yahoo Finance", "Newsletters Substack", "Google News", "Finlight"]
+        sel_providers = st.multiselect(
+            "Filtrer par Source", 
+            providers_opt,
+            default=providers_opt
+        )
+        time_filter = st.radio("Historique", ["7j", "30j", "1 an", "Tout"], horizontal=True)
+        
+        limit_days = {"7j": 7, "30j": 30, "1 an": 365, "Tout": 9999}[time_filter]
+        
+        try:
+            news_rows = get_portfolio_db().get_news_history(selected, limit=200)
+            
+            # Filter and deduplicate
+            filtered = []
+            seen_hashes = set()
+            now = datetime.now()
+            
+            for r in news_rows:
+                # 1. Source filter
+                prov = str(r.get("provider", "")).strip()
+                if sel_providers and prov not in sel_providers and "Tout" not in sel_providers:
+                    # Best-effort matching (e.g. if provider is 'boursorama' in db but 'Boursorama' in UI)
+                    if not any(p.casefold() in prov.casefold() for p in sel_providers):
+                        continue
+                        
+                # 2. Time filter
+                dp = r.get("date_published")
+                if dp:
+                    try:
+                        dt = datetime.fromisoformat(dp.replace("Z", "+00:00")).replace(tzinfo=None)
+                        if (now - dt).days > limit_days:
+                            continue
+                    except Exception:
+                        pass
+                
+                # 3. Deduplication
+                url = str(r.get("url", ""))
+                title = str(r.get("title", ""))
+                thash = hash(url + title)
+                if thash in seen_hashes:
+                    continue
+                seen_hashes.add(thash)
+                
+                filtered.append(r)
+                
+            if not filtered:
+                st.info("Aucune actualite trouvee pour ces filtres.")
+            else:
+                for r in filtered:
+                    title = r.get("title", "Sans titre")
+                    url = r.get("url", "#")
+                    dp = r.get("date_published", "")[:10]
+                    prov = r.get("provider", "Inconnu")
+                    
+                    # Sentiment Badge
+                    score = r.get("sentiment_score")
+                    badge = "⚪"
+                    if score is not None:
+                        try:
+                            score_val = float(score)
+                            if score_val >= 30: badge = "Bullish 🟢"
+                            elif score_val <= -30: badge = "Bearish 🔴"
+                            else: badge = "Neutral ⚪"
+                        except (ValueError, TypeError):
+                            pass
+                            
+                    st.markdown(f"**[{title} ↗]({url})**")
+                    st.markdown(f"<span style='color:grey; font-size:0.9em;'>{dp} · {prov} · Sentiment IA: {badge}</span>", unsafe_allow_html=True)
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    
+        except Exception as exc:
+            st.error(f"Erreur chargement news: {exc}")
 
         if st.button("Lancer un Red Teaming IA (Bull vs Bear vs Devil's Advocate)", key=f"red_team_{selected}"):
             context_blob = (
@@ -6167,6 +6244,43 @@ quotidiennes** (heure de Paris), uniquement les **jours de bourse** :
 
 """)
 
+    st.markdown("#### 🧬 Data Lineage & Provenance")
+    try:
+        if read_pipeline_status:
+            status_data = read_pipeline_status()
+            if status_data:
+                lineage_rows = []
+                for sensor, info in status_data.items():
+                    if isinstance(info, dict):
+                        lineage_rows.append({
+                            "Capteur": sensor,
+                            "Source": info.get("source", "N/A"),
+                            "Derniere Synchro": info.get("last_run", "Jamais"),
+                            "Statut": info.get("status", "N/A")
+                        })
+                if lineage_rows:
+                    st.dataframe(pd.DataFrame(lineage_rows), use_container_width=True, hide_index=True)
+                else:
+                    st.info("Aucune donnee de lineage trouvee dans pipeline_status.json.")
+            else:
+                st.info("Fichier pipeline_status.json vide ou introuvable.")
+    except Exception as exc:
+        st.error(f"Erreur lecture Lineage: {exc}")
+        
+    col_sync1, col_sync2, col_sync3 = st.columns(3)
+    if col_sync1.button("🔄 Sync Fondamentaux (FMP/AlphaVantage)"):
+        with st.spinner("Synchronisation en arriere-plan..."):
+            os.system('start /b python -c "import sys; sys.path.insert(0, \'00_data_sensors\'); from fundamentals_api import FundamentalsSensor; FundamentalsSensor().get_basic_financials(\'AI.PA\')"')
+            st.success("Commande lancee.")
+    if col_sync2.button("🔄 Sync News (IMAP/RSS)"):
+        with st.spinner("Synchronisation en arriere-plan..."):
+            os.system('start /b python 00_data_sensors/newsletter_api.py')
+            st.success("Commande lancee.")
+    if col_sync3.button("🔄 Sync ML Models"):
+        with st.spinner("Entrainement en arriere-plan..."):
+            os.system('start /b python 02_quant_engine/ml_trainer.py')
+            st.success("Commande lancee.")
+    
     st.markdown("#### 📡 Santé des sources de données")
     _health_df = build_data_sources_health_df()
     _health_colors = []

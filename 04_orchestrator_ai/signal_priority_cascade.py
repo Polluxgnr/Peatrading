@@ -193,16 +193,28 @@ class SignalOrchestrator:
                 )
                 continue
 
-            # --- Check 0c: Quality / EPS < 0 (Orchestrator-level veto) ---
+            # --- Check 0b: EPS < 0 quality veto (Phase 16) ---
             try:
                 from technical_scorer import SignalGenerator  # noqa: WPS433
-
                 if not SignalGenerator().is_profitable(ticker):
                     processed.append(
                         self._reject(signal, "REJECTED: EPS < 0 (quality veto)")
                     )
                     continue
             except Exception:  # noqa: BLE001 - never block the cascade on EPS outage
+                pass
+
+            # --- Check 0c: Value Trap Veto (Piotroski F-Score < 4) ---
+            try:
+                from technical_scorer import SignalGenerator  # noqa: WPS433
+                fundamentals = SignalGenerator()._load_fundamentals_from_sources(ticker)
+                f_score = fundamentals.get("piotroski_score")
+                if f_score is not None and f_score < 4:
+                    processed.append(
+                        self._reject(signal, f"REJECTED: Value Trap Veto (F-Score {f_score:.0f} < 4)")
+                    )
+                    continue
+            except Exception:  # noqa: BLE001
                 pass
 
             # --- Check 1: Macro veto (cheapest - runs first) ---

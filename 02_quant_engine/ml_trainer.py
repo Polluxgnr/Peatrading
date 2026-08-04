@@ -24,7 +24,8 @@ sys.path.insert(0, str(_ROOT / "02_quant_engine"))
 logger = logging.getLogger(__name__)
 
 _DATASET = _ROOT / "database" / "ml_training_dataset.csv"
-_MODEL_PATH = _ROOT / "database" / "xgboost_model.json"
+_MODEL_PATH_TACTICAL = _ROOT / "database" / "xgboost_model_tactical.json"
+_MODEL_PATH_STRUCTURAL = _ROOT / "database" / "xgboost_model_structural.json"
 _METRICS_PATH = _ROOT / "database" / "ml_model_metrics.json"
 
 FEATURE_COLS = [
@@ -44,7 +45,8 @@ FEATURE_COLS = [
     "eurusd_ret1d",
     "oat_ret1d",
 ]
-TARGET_COL = "label_fwd_gt_2pct"
+TARGET_TACTICAL = "target_tactical_30d"
+TARGET_STRUCTURAL = "target_structural_126d"
 
 
 def _load_dataset(path: Path | None = None) -> pd.DataFrame:
@@ -61,7 +63,7 @@ def train_model(
     dataset_path: Path | None = None,
     model_path: Path | None = None,
 ) -> dict:
-    """Train XGBoost classifier and persist model + metrics."""
+    """Train XGBoost classifiers and persist models + metrics."""
     try:
         import xgboost as xgb
     except ImportError as exc:
@@ -70,64 +72,75 @@ def train_model(
         ) from exc
 
     df = _load_dataset(dataset_path)
-    for col in FEATURE_COLS + [TARGET_COL]:
-        if col not in df.columns:
-            raise ValueError(f"Missing column in dataset: {col}")
-
-    work = df.dropna(subset=[TARGET_COL]).copy()
-    if "created_at" in work.columns:
-        work = work.sort_values("created_at")
-    elif "Date" in work.columns:
-        work = work.sort_values("Date")
-    for col in FEATURE_COLS:
-        work[col] = pd.to_numeric(work[col], errors="coerce")
-    work = work.dropna(subset=FEATURE_COLS)
-    if len(work) < 30:
-        raise ValueError(f"Insufficient labeled rows ({len(work)} < 30).")
-
-    y = work[TARGET_COL].astype(int).values
-    X = work[FEATURE_COLS].values.astype(float)
-
-    split = int(len(work) * 0.8)
-    embargo = 30
-    train_end = max(1, split - embargo)
     
-    X_train, X_test = X[:train_end], X[split:]
-    y_train, y_test = y[:train_end], y[split:]
-
-    model = xgb.XGBClassifier(
-        n_estimators=80,
-        max_depth=4,
-        learning_rate=0.08,
-        subsample=0.8,
-        colsample_bytree=0.8,
-        eval_metric="logloss",
-        random_state=42,
-    )
-    model.fit(X_train, y_train)
-
-    out_model = model_path or _MODEL_PATH
-    out_model.parent.mkdir(parents=True, exist_ok=True)
-    model.save_model(str(out_model))
-
-    metrics = evaluate_model(model, X_test, y_test, work.iloc[split:])
-    metrics["n_train"] = int(len(X_train))
-    metrics["n_test"] = int(len(X_test))
+    targets = [
+        (TARGET_TACTICAL, model_path or _MODEL_PATH_TACTICAL, "tactical"),
+        (TARGET_STRUCTURAL, _MODEL_PATH_STRUCTURAL, "structural")
+    ]
     
-    # Auto Feature Selection: Track importance
-    importances = model.feature_importances_
-    feat_imp = {col: float(imp) for col, imp in zip(FEATURE_COLS, importances)}
-    metrics["feature_importances"] = feat_imp
-    metrics["feature_cols"] = FEATURE_COLS
+    all_metrics = {}
 
-    # Optional: Log warning if a feature's importance is near zero
-    for f_name, f_weight in feat_imp.items():
-        if f_weight < 0.01:
-            logger.warning("Feature %s has very low importance (%.3f). Consider excluding it.", f_name, f_weight)
+    for target_col, out_path, key in targets:
+        if target_col not in df.columns:
+            logger.warning("Missing column in dataset: %s", target_col)
+            continue
 
-    _METRICS_PATH.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
-    logger.info("Model saved to %s (accuracy=%.1f%%)", out_model, metrics.get("accuracy_pct", 0))
-    return metrics
+        work = df.dropna(subset=[target_col]).copy()
+        if "created_at" in work.columns:
+            work = work.sort_values("created_at")
+        elif "Date" in work.columns:
+            work = work.sort_values("Date")
+        for col in FEATURE_COLS:
+            work[col] = pd.to_numeric(work[col], errors="coerce")
+        work = work.dropna(subset=FEATURE_COLS)
+        if len(work) < 30:
+            logger.warning("Insufficient labeled rows for %s (%d < 30).", target_col, len(work))
+            continue
+
+        y = work[target_col].astype(int).values
+        X = work[FEATURE_COLS].values.astype(float)
+
+        split = int(len(work) * 0.8)
+        embargo = 30
+        train_end = max(1, split - embargo)
+        
+        X_train, X_test = X[:train_end], X[split:]
+        y_train, y_test = y[:train_end], y[split:]
+
+        model = xgb.XGBClassifier(
+            n_estimators=80,
+            max_depth=4,
+            learning_rate=0.08,
+            subsample=0.8,
+            colsample_bytree=0.8,
+            eval_metric="logloss",
+            random_state=42,
+        )
+        model.fit(X_train, y_train)
+
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        model.save_model(str(out_path))
+
+        metrics = evaluate_model(model, X_test, y_test, work.iloc[split:])
+        metrics["n_train"] = int(len(X_train))
+        metrics["n_test"] = int(len(X_test))
+        
+        # Auto Feature Selection: Track importance
+        importances = model.feature_importances_
+        feat_imp = {col: float(imp) for col, imp in zip(FEATURE_COLS, importances)}
+        metrics["feature_importances"] = feat_imp
+        metrics["feature_cols"] = FEATURE_COLS
+
+        # Optional: Log warning if a feature's importance is near zero
+        for f_name, f_weight in feat_imp.items():
+            if f_weight < 0.01:
+                logger.warning("[%s] Feature %s has very low importance (%.3f).", key, f_name, f_weight)
+
+        logger.info("[%s] Model saved to %s (accuracy=%.1f%%)", key, out_path, metrics.get("accuracy_pct", 0))
+        all_metrics[key] = metrics
+
+    _METRICS_PATH.write_text(json.dumps(all_metrics, indent=2), encoding="utf-8")
+    return all_metrics
 
 
 def evaluate_model(
@@ -169,15 +182,21 @@ def load_metrics() -> dict:
         return {}
 
 
-def predict_probability(features: dict) -> float | None:
+def predict_probability(features: dict, horizon: str = "tactical") -> float | None:
     """Return ML probability for a single feature dict, or None if no model."""
-    if not _MODEL_PATH.exists():
-        return None
+    path = _MODEL_PATH_STRUCTURAL if horizon == "structural" else _MODEL_PATH_TACTICAL
+    # Fallback to old path if tactical doesn't exist yet but old model does
+    if not path.exists():
+        old_path = _ROOT / "database" / "xgboost_model.json"
+        if horizon == "tactical" and old_path.exists():
+            path = old_path
+        else:
+            return None
     try:
         import xgboost as xgb
 
         model = xgb.XGBClassifier()
-        model.load_model(str(_MODEL_PATH))
+        model.load_model(str(path))
         row = [float(features.get(c, 0.0) or 0.0) for c in FEATURE_COLS]
         prob = float(model.predict_proba(np.array([row]))[0, 1])
         return prob if np.isfinite(prob) else None
@@ -186,17 +205,22 @@ def predict_probability(features: dict) -> float | None:
         return None
 
 
-def predict_probability_with_shap(feat_row: dict) -> tuple[float | None, dict[str, float] | None]:
+def predict_probability_with_shap(feat_row: dict, horizon: str = "tactical") -> tuple[float | None, dict[str, float] | None]:
     """Inference for a single feature row, returning probability and SHAP breakdown."""
     try:
-        if not _MODEL_PATH.exists():
-            return None, None
+        path = _MODEL_PATH_STRUCTURAL if horizon == "structural" else _MODEL_PATH_TACTICAL
+        if not path.exists():
+            old_path = _ROOT / "database" / "xgboost_model.json"
+            if horizon == "tactical" and old_path.exists():
+                path = old_path
+            else:
+                return None, None
             
         import xgboost as xgb
         import shap
         
         bst = xgb.Booster()
-        bst.load_model(_MODEL_PATH)
+        bst.load_model(str(path))
         
         # Prepare X
         x_arr = []
