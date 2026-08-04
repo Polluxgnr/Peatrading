@@ -4830,19 +4830,26 @@ with tab_ticker:
             w = str(perf.iloc[-1]["Ticker"])
             if w in options:
                 default_idx = options.index(w)
+        # Ensure session state has selected_ticker so we don't need 'index='
+        if "selected_ticker" not in st.session_state:
+            st.session_state["selected_ticker"] = options[default_idx] if options else ""
+
         # Mission-control <TICKER> GO overrides the default once.
         focus = st.session_state.get("focus_ticker")
         if focus:
-            if focus in options:
-                default_idx = options.index(focus)
-            elif focus not in options:
+            if focus not in options:
                 options = sorted(set(options) | {focus})
+            st.session_state["selected_ticker"] = focus
+            st.session_state.pop("focus_ticker", None)
+            
+        if st.session_state.get("selected_ticker") not in options and options:
+            st.session_state["selected_ticker"] = options[default_idx]
+
         def _on_explore_change():
-            st.session_state["focus_ticker"] = st.session_state["selected_ticker"]
             st.session_state["mkt_universal_search"] = st.session_state["selected_ticker"]
     
         selected = st.selectbox(
-            "Actif a analyser", options, index=default_idx,
+            "Actif a analyser", options,
             format_func=format_name, key="selected_ticker",
             on_change=_on_explore_change
         )
