@@ -517,20 +517,23 @@ class MacroAlphaSensor:
     def get_ecb_euribor(self) -> float:
         """Get Euribor 3M (proxy for ECB rates)."""
         try:
-            # Placeholder for ECB SDMX API or Yahoo Finance IR3TIB01.M.EM
-            # Return a realistic static rate if API is unavailable
+            import yfinance as yf
+            import numpy as np
+            hist = yf.Ticker("IR3TIB01.EZQ.M.EM").history(period="1mo")
+            if not hist.empty and "Close" in hist.columns:
+                rate = float(hist["Close"].iloc[-1])
+                if np.isfinite(rate):
+                    return rate
             return 3.50 
         except Exception:
             return 3.50
             
     def get_gamma_exposure(self, ticker: str) -> float:
         """Get Gamma Exposure (GEX) proxy for Market Maker positioning."""
-        try:
-            # GEX requires full option chain parsing (OI * Gamma * Price).
-            # We return a normalized proxy (-1.0 to 1.0)
-            return 0.0
-        except Exception:
-            return 0.0
+        # GEX requires full option chain parsing (OI * Gamma * Price).
+        # We return a normalized proxy (-1.0 to 1.0)
+        # Disabled due to option chain unavailability for EU small caps.
+        return 0.0
 
 
 if __name__ == "__main__":

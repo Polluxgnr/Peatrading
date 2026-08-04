@@ -26,21 +26,7 @@ class AmfShortScraper:
             return 0.0
             
         try:
-            # Note: This is a placeholder for the actual AMF API / BDIF lookup.
-            # In a real-world scenario, you would parse the AMF excel or JSON API.
-            # Since the actual BDIF requires token/complex headers, we mock a response
-            # based on ISIN hash to simulate realistic static test data.
-            
-            # Simple deterministic stub for testing
-            seed = sum(ord(c) for c in isin) % 50
-            if seed > 40:
-                # Heavily shorted (e.g. 1.5% to 5.0%)
-                return 1.5 + (seed - 40) * 0.3
-            elif seed > 30:
-                # Mildly shorted
-                return 0.5 + (seed - 30) * 0.1
             return 0.0
-            
         except Exception as exc:
             logger.debug("AMF short scrape failed for ISIN %s: %s", isin, exc)
             return 0.0

@@ -202,23 +202,38 @@ def build_ml_feature_row(
     fwd_tactical = _forward_return(series, idx, _FORWARD_DAYS_TACTICAL) if idx >= 0 else np.nan
     fwd_structural = _forward_return(series, idx, _FORWARD_DAYS_STRUCTURAL) if idx >= 0 else np.nan
     
-    # Meta-Labeling (Alpha prediction)
+    # Meta-Labeling (Triple Barrier Method for Tactical)
     label_tactical = np.nan
     label_structural = np.nan
     
-    if cw8_close is not None and not cw8_close.empty and idx >= 0:
-        # Align CW8 to the same index
-        cw8_fwd_tactical = _forward_return(cw8_close, idx, _FORWARD_DAYS_TACTICAL)
-        cw8_fwd_structural = _forward_return(cw8_close, idx, _FORWARD_DAYS_STRUCTURAL)
-        
-        if np.isfinite(fwd_tactical) and np.isfinite(cw8_fwd_tactical):
-            label_tactical = int(fwd_tactical > cw8_fwd_tactical + 0.005)
-            
-        if np.isfinite(fwd_structural) and np.isfinite(cw8_fwd_structural):
-            label_structural = int(fwd_structural > cw8_fwd_structural + 0.01) # higher threshold for 6m
-    else:
-        if np.isfinite(fwd_tactical):
-            label_tactical = int(fwd_tactical > _TARGET_RETURN)
+    if idx >= 0:
+        # Tactical Triple Barrier Method (30 days, +8% profit, -4% stop)
+        horizon_len = min(_FORWARD_DAYS_TACTICAL, len(series) - 1 - idx)
+        if horizon_len > 0:
+            horizon = series.iloc[idx+1 : idx+1+horizon_len]
+            base_price = float(series.iloc[idx])
+            if base_price > 0:
+                path_ret = horizon / base_price - 1.0
+                
+                # Check barriers
+                hit_upper = path_ret >= 0.08
+                hit_lower = path_ret <= -0.04
+                
+                upper_idx = hit_upper.idxmax() if hit_upper.any() else None
+                lower_idx = hit_lower.idxmax() if hit_lower.any() else None
+                
+                if upper_idx is not None and lower_idx is not None:
+                    # Which barrier was hit first?
+                    if path_ret.index.get_loc(upper_idx) < path_ret.index.get_loc(lower_idx):
+                        label_tactical = 1
+                    else:
+                        label_tactical = 0
+                elif upper_idx is not None:
+                    label_tactical = 1
+                else:
+                    label_tactical = 0
+                    
+        # Structural labeling (fallback to fixed horizon > +8% for 126d)
         if np.isfinite(fwd_structural):
             label_structural = int(fwd_structural > _TARGET_RETURN * 4.0)
 
@@ -234,7 +249,6 @@ def build_ml_feature_row(
         "news_sentiment": news_sent,
         "amf_short_interest": short_interest,
         "ecb_euribor_3m": ecb_euribor,
-        "gex_proxy": gex_proxy,
         "frac_diff_04": frac_val,
         "sp500_ret1d": spillover.get("^GSPC_ret1d", np.nan),
         "ndx_ret1d": spillover.get("^IXIC_ret1d", np.nan),

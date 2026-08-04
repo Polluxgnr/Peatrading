@@ -714,7 +714,11 @@ def run_portfolio_monte_carlo(
     w = np.asarray(weights, dtype=float)
     if len(w) != len(cols):
         return pd.DataFrame()
-    cov = ret.cov()
+    try:
+        from sklearn.covariance import LedoitWolf
+        cov = pd.DataFrame(LedoitWolf().fit(ret).covariance_, index=ret.columns, columns=ret.columns)
+    except ImportError:
+        cov = ret.cov()
     mu = ret.mean()
     return run_correlated_monte_carlo(
         weights=w,

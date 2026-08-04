@@ -26,12 +26,26 @@ class UCBBandit:
             except Exception:
                 logger.warning("Failed to load bandit state, using default.")
         
-        # Default tracking parameters
+        # Default tracking parameters per regime
         return {
-            "trend": {"rewards": 30.0, "counts": 100},
-            "mean_reversion": {"rewards": 25.0, "counts": 100},
-            "breakout": {"rewards": 20.0, "counts": 100},
-            "context": {"rewards": 25.0, "counts": 100},
+            "BULL": {
+                "trend": {"rewards": 30.0, "counts": 100},
+                "mean_reversion": {"rewards": 25.0, "counts": 100},
+                "breakout": {"rewards": 20.0, "counts": 100},
+                "context": {"rewards": 25.0, "counts": 100},
+            },
+            "BEAR": {
+                "trend": {"rewards": 10.0, "counts": 100},
+                "mean_reversion": {"rewards": 30.0, "counts": 100},
+                "breakout": {"rewards": 10.0, "counts": 100},
+                "context": {"rewards": 30.0, "counts": 100},
+            },
+            "VOLATILE": {
+                "trend": {"rewards": 15.0, "counts": 100},
+                "mean_reversion": {"rewards": 35.0, "counts": 100},
+                "breakout": {"rewards": 25.0, "counts": 100},
+                "context": {"rewards": 25.0, "counts": 100},
+            }
         }
 
     def save_state(self):
@@ -42,19 +56,24 @@ class UCBBandit:
         except Exception as e:
             logger.error(f"Failed to save bandit state: {e}")
 
-    def get_weights(self) -> dict[str, float]:
+    def get_weights(self, regime: str = "BULL") -> dict[str, float]:
         """Calculate UCB weights and normalize to sum to 1.0"""
-        total_counts = sum(arm_data["counts"] for arm_data in self.state.values())
+        regime_state = self.state.get(regime, self.state.get("BULL", {}))
+        if not regime_state:
+            return {arm: 1.0 / len(self.arms) for arm in self.arms}
+
+        total_counts = sum(arm_data["counts"] for arm_data in regime_state.values())
         if total_counts == 0:
             return {arm: 1.0 / len(self.arms) for arm in self.arms}
             
         ucb_values = {}
         for arm in self.arms:
-            counts = self.state[arm]["counts"]
+            arm_data = regime_state.get(arm, {"rewards": 0.0, "counts": 0})
+            counts = arm_data["counts"]
             if counts == 0:
                 ucb_values[arm] = 1000.0 # High value to ensure exploration
             else:
-                mean_reward = self.state[arm]["rewards"] / counts
+                mean_reward = arm_data["rewards"] / counts
                 exploration = self.c * np.sqrt(np.log(total_counts) / counts)
                 ucb_values[arm] = max(0, mean_reward + exploration)
                 
@@ -63,11 +82,14 @@ class UCBBandit:
             return {arm: val / total_ucb for arm, val in ucb_values.items()}
         return {arm: 1.0 / len(self.arms) for arm in self.arms}
 
-    def update_reward(self, arm: str, reward: float):
+    def update_reward(self, regime: str, arm: str, reward: float):
         """Update counts and rewards for the chosen arm."""
-        if arm not in self.state:
-            return
+        if regime not in self.state:
+            self.state[regime] = {a: {"rewards": 0.0, "counts": 0} for a in self.arms}
             
-        self.state[arm]["counts"] += 1
-        self.state[arm]["rewards"] += reward
+        if arm not in self.state[regime]:
+            self.state[regime][arm] = {"rewards": 0.0, "counts": 0}
+            
+        self.state[regime][arm]["counts"] += 1
+        self.state[regime][arm]["rewards"] += reward
         self.save_state()

@@ -14,6 +14,11 @@ try:
 except ImportError:
     sch = None
 
+try:
+    from sklearn.covariance import LedoitWolf
+except ImportError:
+    LedoitWolf = None
+
 logger = logging.getLogger(__name__)
 
 class HRPSizer:
@@ -78,7 +83,11 @@ class HRPSizer:
         if returns_df.empty or len(returns_df.columns) < 2:
             return {c: 1.0/len(returns_df.columns) for c in returns_df.columns}
             
-        cov = returns_df.cov()
+        if LedoitWolf is not None:
+            cov_matrix = LedoitWolf().fit(returns_df).covariance_
+            cov = pd.DataFrame(cov_matrix, index=returns_df.columns, columns=returns_df.columns)
+        else:
+            cov = returns_df.cov()
         corr = returns_df.corr()
         
         # Distance matrix

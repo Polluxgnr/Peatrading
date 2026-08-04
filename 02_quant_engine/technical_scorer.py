@@ -599,8 +599,10 @@ class SignalGenerator:
 
         try:
             from contextual_bandit import UCBBandit
+            from macro_alpha_api import MacroAlphaSensor
             bandit = UCBBandit()
-            weights = bandit.get_weights()
+            regime = MacroAlphaSensor().get_market_regime()
+            weights = bandit.get_weights(regime)
             w_trend = weights["trend"]
             w_mr = weights["mean_reversion"]
             w_brk = weights["breakout"]
