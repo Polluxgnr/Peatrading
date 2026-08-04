@@ -36,6 +36,18 @@ import streamlit.components.v1 as components
 import yaml
 import yfinance as yf
 
+# =============================================================================
+# Page config & Auto-Refresh
+# =============================================================================
+st.set_page_config(
+    page_title="PEA Pollux | Terminal",
+    layout="wide",
+    page_icon="🛡️",
+    initial_sidebar_state="collapsed",
+)
+
+st_autorefresh(interval=60000, key="live_terminal_tick")
+
 # --- Cross-package imports (dirs start with digits) --------------------------
 _ROOT = Path(__file__).resolve().parent.parent
 # Native .env loader (no python-dotenv) — force keys into os.environ.
@@ -418,16 +430,6 @@ def render_pending_trade_cards(pending_df: pd.DataFrame, portfolio_obj) -> None:
                         st.warning("Mise à jour SQLite échouée.")
 
 
-# =============================================================================
-# Page config & Bloomberg CSS
-# =============================================================================
-st.set_page_config(
-    page_title="PEA Pollux | Terminal",
-    layout="wide",
-    page_icon="\U0001F6E1\uFE0F",
-    initial_sidebar_state="collapsed",
-)
-
 if "ticker" in st.query_params:
     _qp_ticker = st.query_params["ticker"]
     if isinstance(_qp_ticker, list):
@@ -441,6 +443,11 @@ if "ticker" in st.query_params:
 st.markdown(
     f"""
 <style>
+    /* Pure Terminal Immersion */
+    #MainMenu {{visibility: hidden;}}
+    footer {{visibility: hidden;}}
+    .block-container {{padding-top: 1rem; padding-bottom: 0rem;}}
+
     .stApp {{ background-color: {_BG}; }}
     section[data-testid="stSidebar"] {{ background-color: {_PANEL};
         border-right: 1px solid #222; }}
@@ -3547,10 +3554,12 @@ def _render_mission_control():
     
     _regime_color = _NEON if _regime == "BULL" else (_RED if _regime == "BEAR" else _AMBER)
     
+    now_str = datetime.now().strftime("%H:%M")
     st.markdown(
         f"""
+    <style>@keyframes blink {{50% {{opacity: 0.2;}}}} .live-badge {{color: #0f0; animation: blink 2s linear infinite; font-size: 11px; margin-left: 10px; border: 1px solid #0f0; padding: 1px 4px; border-radius: 4px;}}</style>
     <div class="mission">
-      <div class="mission-title">Mission Control · PEA personnel</div>
+      <div class="mission-title">Mission Control · PEA personnel <span class="live-badge">LIVE 🟢</span> <span style="font-size:11px; color:#aaa; margin-left:5px;">{now_str}</span></div>
       <div style="display:flex;flex-wrap:wrap;gap:18px;color:{_WHITE};font-size:13px;">
         <div>Marché <b style="color:{_mkt_color};">{_mkt_label}</b></div>
         <div>Régime <b style="color:{_regime_color};">{_regime}</b> 
@@ -4865,60 +4874,38 @@ with tab_ticker:
         st.markdown("---")
         st.markdown("#### 🗞️ Actualites Historiques & Flux Unifié")
         
-        # Merge Morning Briefing headlines with DB news
-        unified_news = []
-        now = datetime.now()
-        seen_hashes = set()
-        
-        for h in headlines:
-            thash = hash(h)
-            if thash not in seen_hashes:
-                unified_news.append({"Date": "Aujourd'hui", "Source": "Morning Briefing", "Titre": h, "Sentiment IA": "⚪", "_dt": now})
-                seen_hashes.add(thash)
-                
         try:
-            db_news = get_portfolio_db().get_news_history(selected, limit=200) or []
-            for r in db_news:
-                prov = str(r.get("provider", "")).strip()
-                dp = r.get("date_published")
-                dt = now
-                if dp:
-                    try: dt = datetime.fromisoformat(dp.replace("Z", "+00:00")).replace(tzinfo=None)
-                    except: pass
+            db_news = get_portfolio_db().get_news_history(selected, limit=100) or []
+            if db_news:
+                html_feed = "<div style='display:flex; flex-direction:column; gap:8px;'>"
+                for r in db_news:
+                    prov = str(r.get("provider", "")).strip() or "N/A"
+                    dp = r.get("date_published") or "N/A"
+                    if len(dp) > 16: dp = dp[:16]
+                    url = str(r.get("url", ""))
+                    title = str(r.get("title", ""))
+                    score = r.get("sentiment_score")
                     
-                url = str(r.get("url", ""))
-                title = str(r.get("title", ""))
-                thash = hash(url + title)
-                if thash in seen_hashes: continue
-                seen_hashes.add(thash)
-                
-                score = r.get("sentiment_score")
-                badge = "⚪"
-                if score is not None:
-                    try:
-                        sv = float(score)
-                        if sv >= 30: badge = "Bullish 🟢"
-                        elif sv <= -30: badge = "Bearish 🔴"
-                    except: pass
-                
-                unified_news.append({
-                    "Date": dp[:16] if dp else "N/A",
-                    "Source": prov,
-                    "Titre": f"[{title}]({url})" if url else title,
-                    "Sentiment IA": badge,
-                    "_dt": dt
-                })
+                    badge = "⚪"
+                    if score is not None:
+                        try:
+                            sv = float(score)
+                            if sv >= 30: badge = "🟢"
+                            elif sv <= -30: badge = "🔴"
+                        except: pass
+                    
+                    title_link = f"<a href='{url}' target='_blank' style='color:{_CYAN}; text-decoration:none;'>{title}</a>" if url else title
+                    html_feed += f"<div style='background:rgba(255,255,255,0.03); padding:8px 12px; border-radius:6px; border-left:3px solid {_PANEL};'>"
+                    html_feed += f"<span style='color:{_MUTED}; font-size:12px; margin-right:10px;'>{dp}</span>"
+                    html_feed += f"<b style='color:#ccc; margin-right:8px;'>[{prov}]</b>"
+                    html_feed += f"{title_link} <span style='margin-left:8px;'>{badge}</span>"
+                    html_feed += "</div>"
+                html_feed += "</div>"
+                st.markdown(html_feed, unsafe_allow_html=True)
+            else:
+                st.info("Aucune actualité en base.")
         except Exception as e:
-            pass
-            
-        if unified_news:
-            unified_news.sort(key=lambda x: x["_dt"], reverse=True)
-            for item in unified_news:
-                del item["_dt"]
-            df_unified = pd.DataFrame(unified_news)
-            st.markdown(df_unified.to_markdown(index=False), unsafe_allow_html=True)
-        else:
-            st.info("Aucune actualité en base.")
+            st.error(f"Erreur de lecture: {e}")
 
         if st.button("Lancer un Red Teaming IA (Bull vs Bear vs Devil's Advocate)", key=f"red_team_{selected}"):
             context_blob = (
