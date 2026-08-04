@@ -773,6 +773,50 @@ def run_morning_briefing() -> None:
             pass
 
 
+def run_nightly_profile_batch() -> None:
+    """04:00 Paris: Sequential massive pre-computation of all ticker profiles."""
+    import random
+    started = time.perf_counter()
+    logger.info("=== Night Run (Profile Batch) starting ===")
+    
+    try:
+        if not _UNIVERSE_PATH.exists():
+            logger.error("Universe file not found for Night Run.")
+            return
+            
+        with open(_UNIVERSE_PATH, "r", encoding="utf-8") as f:
+            univ = yaml.safe_load(f) or {}
+            
+        tickers = list(univ.keys())
+        total = len(tickers)
+        logger.info(f"Night Run will process {total} tickers.")
+        
+        # We need the profile builder
+        pb_dir = _ROOT / "01_memory_core"
+        if str(pb_dir) not in sys.path:
+            sys.path.insert(0, str(pb_dir))
+        from profile_builder import build_and_save_ticker_profile
+        
+        for i, tk in enumerate(tickers, 1):
+            write_pipeline_status({"night_run_status": f"Running {i}/{total} ({tk})..."})
+            try:
+                build_and_save_ticker_profile(tk, include_llm=False)
+            except Exception as e:
+                logger.error(f"Night Run failed for {tk}: {e}")
+                
+            time.sleep(random.uniform(1.5, 3.5))
+            
+        write_pipeline_status({"night_run_status": "Completed"})
+        logger.info(
+            "=== Night Run done in %.1fs (%d tickers) ===",
+            time.perf_counter() - started,
+            total,
+        )
+    except Exception as exc:
+        logger.critical("Night Run FAILED: %s", exc, exc_info=True)
+        write_pipeline_status({"night_run_status": f"Failed: {exc}"})
+
+
 def _schedule_passes() -> None:
     """Register all periodic jobs in Europe/Paris time."""
     for pass_time in _PASS_TIMES:
@@ -785,9 +829,11 @@ def _schedule_passes() -> None:
     schedule.every().day.at(_MONTHLY_CHECK_TIME, _TIMEZONE).do(run_monthly_rebalance)
     # Daily ATR stops (weekdays guarded inside).
     schedule.every().day.at(_ATR_STOP_CHECK_TIME, _TIMEZONE).do(run_daily_atr_stops)
+    # Night Run: Mass profile pre-calculation
+    schedule.every().day.at("04:00", _TIMEZONE).do(run_nightly_profile_batch)
     logger.info(
         "Scheduled: passes at %s; weekly report Fri %s; morning briefing %s; "
-        "monthly probe %s; ATR stops %s (%s).",
+        "monthly probe %s; ATR stops %s; Night Run 04:00 (%s).",
         ", ".join(_PASS_TIMES),
         _WEEKLY_REPORT_TIME,
         _MORNING_BRIEFING_TIME,
@@ -837,11 +883,21 @@ def main() -> None:
         action="store_true",
         help="Send the Phase 40 daily concise Discord report now, then exit.",
     )
+    parser.add_argument(
+        "--night-run",
+        action="store_true",
+        help="Run the massive profile pre-computation (Night Run) now, then exit.",
+    )
     args = parser.parse_args()
 
     if args.backfill_10y:
         logger.info("--backfill-10y: starting long-horizon OHLCV ingest.")
         run_backfill_10y()
+        return
+
+    if args.night_run:
+        logger.info("--night-run: starting massive profile pre-computation.")
+        run_nightly_profile_batch()
         return
 
     if args.daily_report:
