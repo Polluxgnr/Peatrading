@@ -27,7 +27,7 @@ class MarketDataFetcher:
     """Downloads and normalizes daily OHLCV data from Yahoo Finance."""
 
     def fetch_daily_ohlcv(
-        self, tickers: List[str], lookback_days: int = 252
+        self, tickers: List[str], lookback_days: int = 3650
     ) -> pd.DataFrame:
         """Download and flatten daily OHLCV for a batch of tickers.
 
@@ -208,7 +208,7 @@ class MarketDataFetcher:
         return result[_FLAT_COLUMNS]
 
     def update_database(
-        self, db_manager: Any, tickers: List[str], lookback_days: int = 252
+        self, db_manager: Any, tickers: List[str], lookback_days: int = 3650
     ) -> bool:
         """Fetch OHLCV and upsert it into a ``TimeSeriesDB`` instance.
 
@@ -273,8 +273,18 @@ class MarketDataFetcher:
                 "Successfully ingested %d rows for %d ticker(s).", rows, n_tickers
             )
             return True
-        except Exception:  # noqa: BLE001 - ingestion must never crash the daemon.
+        except Exception as exc:  # noqa: BLE001 - ingestion must never crash the daemon.
             logger.exception("Database update failed for tickers: %s", tickers)
+            try:
+                import sys
+                from pathlib import Path
+                _ROOT = Path(__file__).resolve().parent.parent
+                if str(_ROOT / "01_memory_core") not in sys.path:
+                    sys.path.insert(0, str(_ROOT / "01_memory_core"))
+                from logging_setup import update_pipeline_status
+                update_pipeline_status({"data_degraded_mode": True, "degraded_reason": f"market_prices_api.py: {exc}"})
+            except Exception:
+                pass
             return False
 
 

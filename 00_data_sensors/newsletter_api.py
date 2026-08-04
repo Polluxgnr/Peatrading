@@ -110,12 +110,16 @@ class NewsletterSensor:
                 pass
 
         deduped = dedupe_articles(articles)
-        titles = [
-            str(a.get("title") or "").strip()
-            for a in deduped
-            if str(a.get("title") or "").strip()
-        ]
-        logger.info("NewsletterSensor: %d headline(s) after dedupe.", len(titles))
+        import re
+        spam_pattern = re.compile(r"(?i)(discount|free|referral|rewards|newsletter|email|sponsor|pitch deck|vc|substack)")
+        
+        titles = []
+        for a in deduped:
+            t = str(a.get("title") or "").strip()
+            if t and not spam_pattern.search(t):
+                titles.append(t)
+                
+        logger.info("NewsletterSensor: %d headline(s) after dedupe and spam filter.", len(titles))
         return titles[: max(1, limit)]
 
     async def get_daily_zeitgeist(self, headlines: list[str]) -> str:

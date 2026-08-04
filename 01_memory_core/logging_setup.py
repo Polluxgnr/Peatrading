@@ -195,11 +195,17 @@ def tail_log(path: Path | str, n_lines: int = 200) -> str:
     return "\n".join(lines[-max(1, n_lines) :])
 
 
-def write_pipeline_status(payload: dict) -> Path:
+def write_pipeline_status(
+    payload: dict,
+    data_degraded_mode: bool = False,
+    degraded_reason: str = ""
+) -> Path:
     """Persist a tiny JSON heartbeat the dashboard can read (mission control).
 
     Args:
         payload: Must be JSON-serializable (status, timestamps, counts…).
+        data_degraded_mode: True if system is running on fallback data.
+        degraded_reason: Reason for the degraded mode.
 
     Returns:
         Path: Written file under ``database/pipeline_status.json``.
@@ -212,6 +218,8 @@ def write_pipeline_status(payload: dict) -> Path:
     path = out_dir / "pipeline_status.json"
     body = {
         **payload,
+        "data_degraded_mode": data_degraded_mode,
+        "degraded_reason": degraded_reason,
         "written_at": datetime.now(timezone.utc).isoformat(),
     }
     path.write_text(json.dumps(body, indent=2, default=str), encoding="utf-8")

@@ -102,20 +102,34 @@ class NewsSentimentScorer:
             "Return ONLY one integer between -100 and 100."
         )
 
-        raw = await openrouter_chat(
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            api_key=self.api_key,
-            model=self.model,
-            max_tokens=8,
-            temperature=0.0,
-        )
-        score = self._parse_score(raw)
-        logger.info("News sentiment for %s: %.0f (from %d headlines).",
-                    ticker, score, len(headlines))
-        return score
+        try:
+            raw = await openrouter_chat(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                api_key=self.api_key,
+                model=self.model,
+                max_tokens=8,
+                temperature=0.0,
+            )
+            score = self._parse_score(raw)
+            logger.info("News sentiment for %s: %.0f (from %d headlines).",
+                        ticker, score, len(headlines))
+            return score
+        except Exception as exc:
+            logger.exception("Failed to compute news sentiment for %s.", ticker)
+            try:
+                import sys
+                from pathlib import Path
+                _ROOT = Path(__file__).resolve().parent.parent
+                if str(_ROOT / "01_memory_core") not in sys.path:
+                    sys.path.insert(0, str(_ROOT / "01_memory_core"))
+                from logging_setup import update_pipeline_status
+                update_pipeline_status({"data_degraded_mode": True, "degraded_reason": f"news_sentiment_llm.py: {exc}"})
+            except Exception:
+                pass
+            return _NEUTRAL_SCORE
 
 
 if __name__ == "__main__":

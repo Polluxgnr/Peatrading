@@ -86,7 +86,7 @@ _WEEKLY_REPORT_TIME = "18:00"     # Friday CIO digest.
 _MONTHLY_CHECK_TIME = "08:30"     # Daily probe; profit-shave acts only on the 1st.
 _MORNING_BRIEFING_TIME = "08:25"  # Newsletter Zeitgeist before market open.
 _ATR_STOP_CHECK_TIME = "08:35"    # Daily ATR stop evaluation (weekdays via loop).
-_LOOKBACK_DAYS = 400  # ~270 trading days -> enough for SMA-200.
+_LOOKBACK_DAYS = 3650  # ~10 years -> enough for all ML and long-term SMAs.
 
 
 def _core_ticker() -> str:

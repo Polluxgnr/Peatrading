@@ -753,3 +753,12 @@ streamlit run 05_interfaces/terminal_dashboard.py
 *   **Memory Optimization:** Sauvegarde incrémentale directe dans le CSV (\ml_training_dataset.csv\) pour éviter les crash OOM lors du balayage de 10 ans d'historique sur plus de 600 tickers.
 *   **No Look-Ahead Bias / No Ban IP:** Désactivation intelligente des webhooks de scraping live (Sentiment Boursorama / YFinance) lorsque le bot tourne en simulation historique. L'inférence live conserve 100% de ses capacités.
 *   **Error Resilience:** Poursuite automatique du bootstrap même si des API financières flanchent ou que l'historique d'un ticker est corrompu.
+
+---
+## Phase 54.5 : Loud Fallback, UI Fluidity & Production Prep (Current)
+
+*   **10-Year Data Lake Uncapping:** L'historique stocké dans DuckDB par `market_prices_api.py` monte jusqu'à 10 ans, offrant un set de données massif pour les modèles ML tout en limitant les appels d'API.
+*   **Loud Fallback Mechanism:** En cas de panne d'une API tierce (Boursorama, OpenRouter, etc.), le système maintient une fluidité totale en tombant sur des valeurs neutres (`0.0`), tout en déclarant un état `data_degraded_mode=True` dans `pipeline_status.json` pour avertir l'utilisateur.
+*   **Fluidité & Ticker Sync:** Résolution d'un bug majeur de désynchronisation de l'UI grâce à l'utilisation d'événements `on_change` asynchrones dans Streamlit, couplé à une limitation des graphiques Plotly aux 500 dernières bougies pour maintenir 60 FPS.
+*   **UI Reorganization & Sub-Tabs:** Restructuration totale du Dashboard pour éliminer le bruit visuel avec 4 onglets principaux (`Market & Macro`, `Ticker Deep-Dive`, `Portfolio & Execution`, `System Logs`) et 3 sous-onglets encapsulés pour les fiches actions.
+*   **Strict News Filtering:** Implémentation d'un filtre regex anti-spam universel (`discount|free|referral|newsletter|sponsor...`) qui intercepte et purifie les flux RSS avant leur traitement IA (Morning Briefing).
