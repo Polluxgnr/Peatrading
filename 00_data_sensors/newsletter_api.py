@@ -111,11 +111,13 @@ class NewsletterSensor:
 
         deduped = dedupe_articles(articles)
         import re
-        spam_pattern = re.compile(r"(?i)(discount|free|referral|rewards|newsletter|email|sponsor|pitch deck|vc|substack)")
+        spam_pattern = re.compile(r"(?i)(discount|free|referral|rewards|newsletter|email|sponsor|pitch deck|vc|substack|attio|seo agency|gtm|seed|founder|startup|saas|cap table|suivre mes récompenses|mettre à jour votre email)")
         
         titles = []
         for a in deduped:
             t = str(a.get("title") or "").strip()
+            if t.startswith("http://") or t.startswith("https://"):
+                continue
             if t and not spam_pattern.search(t):
                 titles.append(t)
                 

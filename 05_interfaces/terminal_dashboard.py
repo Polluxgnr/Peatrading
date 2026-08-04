@@ -433,7 +433,7 @@ if "ticker" in st.query_params:
         _qp_ticker = _qp_ticker[0] if _qp_ticker else ""
     _qp_ticker = str(_qp_ticker).strip()
     if _qp_ticker:
-        st.session_state["explore_ticker"] = _qp_ticker
+        st.session_state["selected_ticker"] = _qp_ticker
         st.session_state["focus_ticker"] = _qp_ticker
     st.query_params.clear()
 
@@ -1735,8 +1735,10 @@ def _fetch_news_from_apis(symbol: str, limit: int = 6) -> list[dict]:
         key = (title or "").strip().casefold()
         if not key or key in seen_titles:
             return
+        if key.startswith("http://") or key.startswith("https://"):
+            return
             
-        spam_pattern = re.compile(r"(?i)(discount|free|referral|rewards|newsletter|email|sponsor|pitch deck|vc|substack)")
+        spam_pattern = re.compile(r"(?i)(discount|free|referral|rewards|newsletter|email|sponsor|pitch deck|vc|substack|attio|seo agency|gtm|seed|founder|startup|saas|cap table|suivre mes récompenses|mettre à jour votre email)")
         if spam_pattern.search(key):
             return
             
@@ -3835,11 +3837,9 @@ def _render_mission_control():
     }.get(_pipe_health, _AMBER)
     _mkt_color = _NEON if _mkt_health == "green" else _AMBER
     
-    # Degraded Mode Alert
+    # Degraded Mode Alert (moved to Data Lineage)
     _is_degraded = (_pipe or {}).get("data_degraded_mode", False)
     _degraded_reason = (_pipe or {}).get("degraded_reason", "Institutional API down. Using yfinance/fallback data.")
-    if _is_degraded:
-        st.error(f"⚠️ **DEGRADED MODE**: {_degraded_reason}")
     
     # Add Market Regime
     try:
@@ -4082,7 +4082,7 @@ with tab_macro:
             if 0 <= _i < len(adisp_click):
                 _ticker_pick = str(adisp_click.iloc[_i]["Ticker"])
                 st.session_state["focus_ticker"] = _ticker_pick
-                st.session_state["explore_ticker"] = _ticker_pick
+                st.session_state["selected_ticker"] = _ticker_pick
                 st.caption(f"🔍 Analyse rapide prête pour {format_name(_ticker_pick)} (onglet Exploration).")
         # Phase 22: high-vol momentum pepites
         st.markdown("#### 🚀 Pépites (Forte Volatilité & Croissance)")
@@ -4117,7 +4117,7 @@ with tab_macro:
                 if 0 <= _i < len(pdisp_click):
                     _ticker_pick = str(pdisp_click.iloc[_i]["Ticker"])
                     st.session_state["focus_ticker"] = _ticker_pick
-                    st.session_state["explore_ticker"] = _ticker_pick
+                    st.session_state["selected_ticker"] = _ticker_pick
                     st.caption(f"🔍 Analyse rapide prête pour {format_name(_ticker_pick)} (onglet Exploration).")
         else:
             st.caption("Aucune pépite sur le panier liquide (vol/SMA50).")
@@ -4972,7 +4972,7 @@ with tab_ticker:
     )
 
     def _on_uni_search():
-        st.session_state["explore_ticker"] = st.session_state["mkt_universal_search"]
+        st.session_state["selected_ticker"] = st.session_state["mkt_universal_search"]
         st.session_state["focus_ticker"] = st.session_state["mkt_universal_search"]
 
     _uni_all = sorted(universe_df["Ticker"].tolist())
@@ -5123,12 +5123,12 @@ with tab_ticker:
         elif focus not in options:
             options = sorted(set(options) | {focus})
     def _on_explore_change():
-        st.session_state["focus_ticker"] = st.session_state["explore_ticker"]
-        st.session_state["mkt_universal_search"] = st.session_state["explore_ticker"]
+        st.session_state["focus_ticker"] = st.session_state["selected_ticker"]
+        st.session_state["mkt_universal_search"] = st.session_state["selected_ticker"]
 
     selected = st.selectbox(
         "Actif a analyser", options, index=default_idx,
-        format_func=format_name, key="explore_ticker",
+        format_func=format_name, key="selected_ticker",
         on_change=_on_explore_change
     )
     tv = _tv_symbol(selected)
@@ -5169,7 +5169,7 @@ with tab_ticker:
         st.markdown("---")
         st.markdown("#### 🗞️ Actualites Historiques")
         
-        # Phase 55: Multi-Source Filter
+        # Phase 55: Multi-Source Filter & History Merging
         providers_opt = ["Boursorama", "Yahoo Finance", "Newsletters Substack", "Google News", "Finlight"]
         sel_providers = st.multiselect(
             "Filtrer par Source", 
@@ -5177,55 +5177,45 @@ with tab_ticker:
             default=providers_opt
         )
         time_filter = st.radio("Historique", ["7j", "30j", "1 an", "Tout"], horizontal=True)
-        
         limit_days = {"7j": 7, "30j": 30, "1 an": 365, "Tout": 9999}[time_filter]
         
         try:
             news_rows = get_portfolio_db().get_news_history(selected, limit=200)
             
-            # Filter and deduplicate
-            filtered = []
-            seen_hashes = set()
-            now = datetime.now()
-            
-            for r in news_rows:
-                # 1. Source filter
-                prov = str(r.get("provider", "")).strip()
-                if sel_providers and prov not in sel_providers and "Tout" not in sel_providers:
-                    # Best-effort matching (e.g. if provider is 'boursorama' in db but 'Boursorama' in UI)
-                    if not any(p.casefold() in prov.casefold() for p in sel_providers):
-                        continue
-                        
-                # 2. Time filter
-                dp = r.get("date_published")
-                if dp:
-                    try:
-                        dt = datetime.fromisoformat(dp.replace("Z", "+00:00")).replace(tzinfo=None)
-                        if (now - dt).days > limit_days:
-                            continue
-                    except Exception:
-                        pass
-                
-                # 3. Deduplication
-                url = str(r.get("url", ""))
-                title = str(r.get("title", ""))
-                thash = hash(url + title)
-                if thash in seen_hashes:
-                    continue
-                seen_hashes.add(thash)
-                
-                filtered.append(r)
-                
-            if not filtered:
-                st.info("Aucune actualite trouvee pour ces filtres.")
+            if not news_rows:
+                st.info("Aucune actualité récente en base.")
+                if st.button("🔄 Actualiser les flux", key=f"refresh_news_{selected}"):
+                    with st.spinner("Recherche des flux en direct..."):
+                        _fetch_news_from_apis(selected, limit=12)
+                    st.rerun()
             else:
-                for r in filtered:
-                    title = r.get("title", "Sans titre")
-                    url = r.get("url", "#")
-                    dp = r.get("date_published", "")[:10]
-                    prov = r.get("provider", "Inconnu")
+                # Filter and deduplicate
+                filtered = []
+                seen_hashes = set()
+                now = datetime.now()
+                
+                for r in news_rows:
+                    prov = str(r.get("provider", "")).strip()
+                    if sel_providers and "Tout" not in sel_providers:
+                        if not any(p.casefold() in prov.casefold() for p in sel_providers):
+                            continue
+                            
+                    dp = r.get("date_published")
+                    if dp:
+                        try:
+                            dt = datetime.fromisoformat(dp.replace("Z", "+00:00")).replace(tzinfo=None)
+                            if (now - dt).days > limit_days:
+                                continue
+                        except Exception:
+                            pass
                     
-                    # Sentiment Badge
+                    url = str(r.get("url", ""))
+                    title = str(r.get("title", ""))
+                    thash = hash(url + title)
+                    if thash in seen_hashes:
+                        continue
+                    seen_hashes.add(thash)
+                    
                     score = r.get("sentiment_score")
                     badge = "⚪"
                     if score is not None:
@@ -5233,16 +5223,36 @@ with tab_ticker:
                             score_val = float(score)
                             if score_val >= 30: badge = "Bullish 🟢"
                             elif score_val <= -30: badge = "Bearish 🔴"
-                            else: badge = "Neutral ⚪"
                         except (ValueError, TypeError):
                             pass
-                            
-                    st.markdown(f"**[{title} ↗]({url})**")
-                    st.markdown(f"<span style='color:grey; font-size:0.9em;'>{dp} · {prov} · Sentiment IA: {badge}</span>", unsafe_allow_html=True)
-                    st.markdown("<br>", unsafe_allow_html=True)
+
+                    filtered.append({
+                        "Date": dp[:16] if dp else "N/A",
+                        "Source": prov,
+                        "Titre": f"[{title}]({url})" if url else title,
+                        "Sentiment IA": badge,
+                    })
                     
+                if not filtered:
+                    st.info("Aucune actualité trouvée pour ces filtres.")
+                else:
+                    df_news = pd.DataFrame(filtered)
+                    df_news = df_news.sort_values(by="Date", ascending=False)
+                    st.markdown(df_news.to_markdown(index=False), unsafe_allow_html=True)
+                    # Use markdown table since st.dataframe doesn't render markdown links natively without config hacks
         except Exception as exc:
             st.error(f"Erreur chargement news: {exc}")
+            
+        st.markdown("---")
+        st.markdown("#### 🧠 Synthèse IA (Analyse Deep)")
+        if st.button("Générer Synthèse IA", key=f"synth_ia_{selected}"):
+            with st.spinner("IA en cours d'analyse..."):
+                try:
+                    headlines_tuple = tuple(r.get("title", "") for r in news_rows[:15])
+                    deep = get_deep_news_synthesis(selected, headlines_tuple)
+                    st.info(f"**Synthèse (cache 24h)**\n\n{deep}")
+                except Exception as exc:
+                    st.error(f"Synthèse indisponible: {exc}")
 
         if st.button("Lancer un Red Teaming IA (Bull vs Bear vs Devil's Advocate)", key=f"red_team_{selected}"):
             context_blob = (
@@ -5654,7 +5664,7 @@ with tab_ticker:
           </script>
         </div>
         """
-        components.html(chart_html, height=640)
+        components.html(chart_html, height=640, key=f"tv_{selected}")
         st.caption(f"TradingView symbol injecté : `{_tv_resolved}`")
 
         # TA widget + SMAs under chart
@@ -5670,7 +5680,7 @@ with tab_ticker:
               </script>
             </div>
             """
-            components.html(ta_html, height=400)
+            components.html(ta_html, height=400, key=f"ta_{selected}")
         with tw2:
             sma_bits = []
             if ind:
@@ -5892,76 +5902,6 @@ with tab_ticker:
                 "Le score total (0–100) est la moyenne pondérée : MR 35% + Mom 25% + Q/V 20% + Ins 20%. "
                 "Un signal BUY n'est émis que si le score dépasse **65**."
             )
-
-        # News — deep LLM synthesis (24h cache) + dark table of sources
-        st.markdown(f"#### 📰 Actualites — {short_name(selected)}")
-        news = get_recent_news(selected, limit=12)
-        if news:
-            headlines_tuple = tuple(
-                str(n.get("title") or "").strip()
-                for n in news
-                if str(n.get("title") or "").strip()
-            )
-            deep = ""
-            try:
-                with st.spinner("IA en cours d'analyse..."):
-                    deep = get_deep_news_synthesis(selected, headlines_tuple) or ""
-            except Exception as exc:  # noqa: BLE001
-                deep = ""
-                st.caption(f"Synthèse IA indisponible ({exc}). Affichage des articles bruts.")
-            deep_l = str(deep).strip().casefold()
-            if (
-                deep
-                and deep_l
-                and not deep_l.startswith("indisponible")
-                and "erreur" not in deep_l[:40]
-                and "unavailable" not in deep_l[:40]
-            ):
-                st.info(f"🧠 **Synthèse IA (cache 24h)**\n\n{deep}")
-            else:
-                st.caption(
-                    "Synthèse IA indisponible ou vide — articles bruts avec timestamps ci-dessous."
-                )
-            ndisp = pd.DataFrame([{
-                "Source": str(n.get("provider") or "")[:56],
-                "Date": str(n.get("date") or "")[:16],
-                "Titre": str(n.get("title") or "")[:140],
-            } for n in news])
-            st.plotly_chart(
-                dark_table(
-                    ndisp,
-                    height=min(380, 56 + 28 * len(ndisp)),
-                    col_widths=[1.8, 0.9, 3.5],
-                ),
-                width="stretch",
-                key=f"explore_news_table_{selected}",
-            )
-            st.markdown("#### 📚 Historique complet des actualités (Base de données)")
-            db_news: list[dict] = []
-            if _SQLITE_PATH.exists():
-                try:
-                    db = get_portfolio_db()
-                    db.init_db()
-                    db_news = db.get_news_history(selected, limit=100)
-                except Exception:  # noqa: BLE001
-                    db_news = []
-            if db_news:
-                hist_df = pd.DataFrame(
-                    [
-                        {
-                            "Date": str(n.get("date") or "")[:16],
-                            "Source": str(n.get("provider") or "")[:70],
-                            "Titre": str(n.get("title") or "")[:180],
-                            "Lien": str(n.get("link") or ""),
-                        }
-                        for n in db_news
-                    ]
-                )
-                st.dataframe(hist_df, use_container_width=True, hide_index=True)
-            else:
-                st.caption("Historique SQLite vide pour cet actif.")
-        else:
-            st.caption("Aucune actualite majeure recente pour cet actif.")
 
         # --- AMF / Insider deep module ------------------------------------------
         st.markdown("---")
@@ -6208,7 +6148,7 @@ with tab_macro:
             if 0 <= _i < len(disp):
                 _ticker_pick = str(disp.iloc[_i]["Ticker"])
                 st.session_state["focus_ticker"] = _ticker_pick
-                st.session_state["explore_ticker"] = _ticker_pick
+                st.session_state["selected_ticker"] = _ticker_pick
                 st.caption(f"🔍 Analyse rapide prête pour {format_name(_ticker_pick)} (onglet Exploration).")
         st.caption(f"{len(disp)} titre(s) affiché(s) · tags DuckDB lorsque dispo.")
 
@@ -6245,6 +6185,8 @@ quotidiennes** (heure de Paris), uniquement les **jours de bourse** :
 """)
 
     st.markdown("#### 🧬 Data Lineage & Provenance")
+    if _pipe and _pipe.get("data_degraded_mode"):
+        st.warning(f"⚠️ Mode Dégradé Actif: {_pipe.get('degraded_reason', 'Sources alternatives.')}")
     try:
         if read_pipeline_status:
             status_data = read_pipeline_status()

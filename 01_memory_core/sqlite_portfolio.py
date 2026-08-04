@@ -166,6 +166,13 @@ class PortfolioDB:
                     );
                     """
                 )
+                
+                # Migration: Add piotroski_score if missing
+                try:
+                    conn.execute("ALTER TABLE ticker_fundamentals ADD COLUMN piotroski_score REAL;")
+                except sqlite3.OperationalError:
+                    pass  # Column likely already exists
+
             logger.info("SQLite schema initialized at %s", self.db_path)
         except sqlite3.Error:
             logger.exception("Failed to initialize SQLite schema.")

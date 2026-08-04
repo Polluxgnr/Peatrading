@@ -8,22 +8,11 @@ from __future__ import annotations
 import re
 from typing import FrozenSet
 
-# Exact email addresses allowed (case-insensitive match on extracted address).
 ALLOWED_SENDERS: FrozenSet[str] = frozenset({
-    # Phase 18 core digests
-    "dan@tldrnewsletter.com",
-    "luc@the-nbs.fr",
-    "thevccorner@substack.com",
-    "theaicorner1@substack.com",
-    "hello@brief.me",
-    "daily@timetosignoff.fr",
-    "hello@brief.eco",
-    "newsletter@thedeepview.co",
-    "laura@lbkconsulting.fr",
-    "hello@brief.science",
     # FR / PEA-oriented additions
+    "hello@brief.me",
+    "hello@brief.eco",
     "contact@cafedelabourse.com",
-    "charlessterlings@substack.com",
     "plancash@substack.com",
     "europeansmallcapideas@substack.com",
     "frenchhiddenchampions@substack.com",
