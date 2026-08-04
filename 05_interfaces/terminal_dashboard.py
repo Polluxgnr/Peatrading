@@ -4885,7 +4885,7 @@ with tab_ticker:
         with sub_news:
             st.markdown("#### 🗞️ Morning Briefing (Macro Zeitgeist)")
             import re
-            spam_regex = re.compile(r'(?i)(discount|free|referral|rewards|newsletter|email|sponsor|pitch deck|vc|substack|attio|seo agency|gtm|seed|founder|startup|saas|cap table|récompense|mettre [aà] jour|update your|unsubscribe|cliquez ici|abonnez-vous|subscribe|webinar|masterclass)')
+            spam_regex = re.compile(r'(?i)(discount|free|referral|rewards|newsletter|email|sponsor|pitch deck|vc|substack|attio|seo agency|gtm|seed|founder|startup|saas|cap table|récompense|mettre [aà] jour|update your|unsubscribe|cliquez ici|abonnez-vous|subscribe|webinar|masterclass|refer\.cafedelabourse)')
             
             briefing = load_morning_briefing()
             zg = ""
@@ -4897,7 +4897,8 @@ with tab_ticker:
                 zg_lines = zg.split('\n')
                 clean_zg_lines = []
                 for line in zg_lines:
-                    if 'titre(s) source' in line and 'Généré' in line:
+                    ln_low = line.lower()
+                    if ln_low.startswith('généré') or ln_low.startswith('genere') or 'généré' in ln_low or 'titre(s) source' in ln_low:
                         continue
                     clean_zg_lines.append(line)
                 zg = '\n'.join(clean_zg_lines)
