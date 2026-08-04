@@ -222,6 +222,34 @@ class MacroAlphaSensor:
         # --- 3) yfinance (tertiary) -----------------------------------------
         return self._insider_from_yfinance(ticker)
 
+    def get_threshold_crossings(self, ticker: str) -> int:
+        """Return net direction of threshold crossings (Franchissements de Seuil).
+        
+        +1 for accumulation (crossing upwards), -1 for distribution, 0 for none.
+        """
+        if AmfInsiderScraper is not None:
+            try:
+                issuer = None
+                if BoursoramaScraper is not None:
+                    try:
+                        profile = BoursoramaScraper().get_instrument_profile(ticker)
+                        if profile:
+                            issuer = profile.get("name")
+                    except Exception:
+                        pass
+                rows = AmfInsiderScraper().get_threshold_crossings(ticker, issuer=issuer)
+                if rows:
+                    # Score recent crossings
+                    acc = sum(1 for r in rows if r["Direction"] == "accumulation")
+                    dist = sum(1 for r in rows if r["Direction"] == "distribution")
+                    net = acc - dist
+                    direction = 1 if net > 0 else (-1 if net < 0 else 0)
+                    logger.info("%s threshold crossings: acc=%d dist=%d -> %+d", ticker, acc, dist, direction)
+                    return direction
+            except Exception as exc:
+                logger.debug("Threshold crossings failed for %s: %s", ticker, exc)
+        return 0
+
     @staticmethod
     def _score_amf_declarations(df: pd.DataFrame) -> int:
         """Map AMF Achat/Vente rows to +1 / -1 / 0."""

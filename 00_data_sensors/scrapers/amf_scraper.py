@@ -634,3 +634,71 @@ class AmfInsiderScraper:
                 "Source": "AMF BDIF",
             })
         return rows
+
+    def get_threshold_crossings(
+        self, ticker: str, *, issuer: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Query BDIF for 'Franchissement de seuil' (FS) for a ticker.
+        
+        A quiet accumulation crossing the 5% threshold is a structural anomaly signal.
+        """
+        q = (issuer or _issuer_name(ticker) or "").strip()
+        if not q or not amf_available():
+            return []
+            
+        try:
+            rate_limit(0.2, 0.5)
+            resp = self._session.get(
+                _BDIF_BASE + "/back/api/v1/informations",
+                params={
+                    "from": 0,
+                    "size": 20,
+                    "typesInformation": "FS",
+                    "RechercheTexte": q,
+                },
+                headers={
+                    **stealth_headers(),
+                    "Accept": "application/json",
+                },
+                timeout=12,
+            )
+            if resp.status_code != 200:
+                return []
+            payload = resp.json()
+            items = payload.get("result") or payload.get("hits") or []
+            if isinstance(items, dict):
+                items = items.get("hits") or []
+            rows: list[dict[str, Any]] = []
+            
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                src = item.get("_source") if "_source" in item else item
+                if not isinstance(src, dict):
+                    continue
+                    
+                title = str(src.get("titre") or src.get("resume") or "").lower()
+                blob = title + " " + str(src.get("description") or "").lower()
+                
+                # We specifically look for "hausse" (accumulation) crossing thresholds like 5%
+                direction = "accumulation" if "hausse" in blob or "franchissement en hausse" in blob else ("distribution" if "baisse" in blob else "unknown")
+                
+                date_raw = (
+                    src.get("datePublication")
+                    or src.get("dateInformation")
+                    or src.get("dateMiseEnLigne")
+                    or ""
+                )[:10]
+                
+                rows.append({
+                    "Date": str(date_raw),
+                    "Ticker": ticker,
+                    "Title": src.get("titre") or f"Franchissement Seuil — {q}",
+                    "Direction": direction,
+                    "Blob": blob[:500],
+                })
+            return rows
+        except Exception as exc:
+            logger.debug("BDIF FS (threshold crossing) API failed for %r: %s", q, exc)
+            return []
+

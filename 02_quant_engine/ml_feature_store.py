@@ -96,22 +96,24 @@ def _news_sentiment_proxy(ticker: str, pdb: Any) -> float:
     return float(np.mean(scores)) if scores else 0.0
 
 
-def _fundamentals(ticker: str, pdb: Any, offline_mode: bool = False) -> tuple[float, float]:
-    """Return (roe, pe) from SQLite cache or Finnhub/yfinance sensor."""
+def _fundamentals(ticker: str, pdb: Any, offline_mode: bool = False) -> tuple[float, float, float]:
+    """Return (roe, pe, ev_to_ebitda) from SQLite cache or Finnhub/yfinance sensor."""
     pe = np.nan
     roe = np.nan
+    ev_ebitda = np.nan
     try:
         cached = pdb.get_cached_fundamentals(ticker, max_age_days=30) if pdb else None
         if cached:
             pe = _safe_float(cached.get("pe_ratio"))
             roe = _safe_float(cached.get("roe"))
-            if np.isfinite(pe) or np.isfinite(roe):
-                return roe, pe
+            ev_ebitda = _safe_float(cached.get("ev_to_ebitda"))
+            if np.isfinite(pe) or np.isfinite(roe) or np.isfinite(ev_ebitda):
+                return roe, pe, ev_ebitda
     except Exception:  # noqa: BLE001
         pass
         
     if offline_mode:
-        return np.nan, np.nan
+        return np.nan, np.nan, np.nan
         
     try:
         sys.path.insert(0, str(_ROOT / "00_data_sensors"))
@@ -120,9 +122,10 @@ def _fundamentals(ticker: str, pdb: Any, offline_mode: bool = False) -> tuple[fl
         data = FundamentalsSensor().get_basic_financials(ticker)
         pe = _safe_float(data.get("pe_ratio"))
         roe = _safe_float(data.get("roe"))
+        ev_ebitda = _safe_float(data.get("ev_to_ebitda"))
     except Exception:  # noqa: BLE001
         pass
-    return roe, pe
+    return roe, pe, ev_ebitda
 
 
 def build_ml_feature_row(
@@ -163,12 +166,26 @@ def build_ml_feature_row(
             vol = float(rets.std(ddof=0) * np.sqrt(252.0))
     insider = _insider_net_from_reason(reason)
     news_sent = _news_sentiment_proxy(ticker, pdb)
-    roe, pe = _fundamentals(ticker, pdb, offline_mode=offline_mode)
+    roe, pe, ev_ebitda = _fundamentals(ticker, pdb, offline_mode=offline_mode)
+    
+    # Apex Alpha: FMP Earnings Call Q&A
+    qa_score = 0.0
+    if not offline_mode:
+        try:
+            sys.path.insert(0, str(_ROOT / "04_orchestrator_ai"))
+            from news_sentiment_llm import NewsSentimentScorer
+            import asyncio
+            # Create a new event loop for this block if needed, or use asyncio.run
+            qa_score = float(asyncio.run(NewsSentimentScorer().analyze_earnings_call_qa(ticker)))
+        except Exception:
+            pass
+            
     # Jalon 1 Macro Alpha Sensors
     from macro_alpha_api import MacroAlphaSensor
     macro = MacroAlphaSensor()
     short_interest = macro.get_short_interest(ticker)
     ecb_euribor = macro.get_ecb_euribor()
+    threshold_cross = macro.get_threshold_crossings(ticker) if not offline_mode else 0
     from quantitative_math import frac_diff_ffd
     
     # Fractional Differentiation feature (d=0.4)
@@ -246,8 +263,11 @@ def build_ml_feature_row(
         "insider_net_score": insider,
         "finnhub_roe": roe,
         "finnhub_pe": pe,
+        "ev_to_ebitda": ev_ebitda,
         "news_sentiment": news_sent,
+        "earnings_qa_sentiment": qa_score,
         "amf_short_interest": short_interest,
+        "amf_threshold_crossing": threshold_cross,
         "ecb_euribor_3m": ecb_euribor,
         "frac_diff_04": frac_val,
         "sp500_ret1d": spillover.get("^GSPC_ret1d", np.nan),

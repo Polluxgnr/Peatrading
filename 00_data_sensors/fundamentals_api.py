@@ -52,6 +52,7 @@ class FundamentalsSensor:
             "pb_ratio": None,
             "roe": None,
             "debt_to_equity": None,
+            "ev_to_ebitda": None,
             "source": "none",
         }
         if not self.api_key:
@@ -81,6 +82,8 @@ class FundamentalsSensor:
             pb = _to_float(metric.get("pbAnnual"))
             roe = _to_float(metric.get("roeTTM"))
             debt = _to_float(metric.get("totalDebt/totalEquityAnnual"))
+            ev_ebitda = _to_float(metric.get("evToEbitda"))
+            
             # Some endpoints expose debt/equity as percent points.
             if debt is not None and debt > 50:
                 debt = debt / 100.0
@@ -90,6 +93,7 @@ class FundamentalsSensor:
                 "pb_ratio": pb,
                 "roe": roe,
                 "debt_to_equity": debt,
+                "ev_to_ebitda": ev_ebitda,
                 "source": "finnhub",
             }
             if any(v is not None for k, v in out.items() if k != "source"):
@@ -106,6 +110,7 @@ class FundamentalsSensor:
             "pb_ratio": None,
             "roe": None,
             "debt_to_equity": None,
+            "ev_to_ebitda": None,
             "source": "none",
         }
         if yf is None:
@@ -118,6 +123,8 @@ class FundamentalsSensor:
             pb = _to_float(info.get("priceToBook"))
             roe = _to_float(info.get("returnOnEquity"))
             debt = _to_float(info.get("debtToEquity"))
+            ev_ebitda = _to_float(info.get("enterpriseToEbitda"))
+            
             # yfinance debtToEquity often comes as percent points.
             if debt is not None and debt > 50:
                 debt = debt / 100.0
@@ -126,6 +133,7 @@ class FundamentalsSensor:
                 "pb_ratio": pb,
                 "roe": roe,
                 "debt_to_equity": debt,
+                "ev_to_ebitda": ev_ebitda,
                 "source": "yfinance",
             }
             if any(v is not None for k, v in out.items() if k != "source"):
@@ -138,7 +146,7 @@ class FundamentalsSensor:
     def _from_alphavantage(self, ticker: str) -> dict:
         blank = {
             "pe_ratio": None, "pb_ratio": None, "roe": None,
-            "debt_to_equity": None, "source": "none",
+            "debt_to_equity": None, "ev_to_ebitda": None, "source": "none",
         }
         av_key = (os.getenv("ALPHAVANTAGE_API_KEY") or "").strip()
         if not av_key:
@@ -159,11 +167,13 @@ class FundamentalsSensor:
             pb = _to_float(data.get("PriceToBookRatio"))
             roe = _to_float(data.get("ReturnOnEquityTTM"))
             debt = _to_float(data.get("DebtToEquity"))
+            ev_ebitda = _to_float(data.get("EVToEBITDA"))
+            
             if debt is not None and debt > 50:
                 debt = debt / 100.0
             out = {
                 "pe_ratio": pe, "pb_ratio": pb, "roe": roe,
-                "debt_to_equity": debt, "source": "alphavantage",
+                "debt_to_equity": debt, "ev_to_ebitda": ev_ebitda, "source": "alphavantage",
             }
             if any(v is not None for k, v in out.items() if k != "source"):
                 return out
@@ -205,12 +215,12 @@ class FundamentalsSensor:
         # 1. Cascade for baseline metrics
         baseline = None
         fh = self._from_finnhub(ticker)
-        if any(fh.get(k) is not None for k in ("pe_ratio", "pb_ratio", "roe", "debt_to_equity")):
+        if any(fh.get(k) is not None for k in ("pe_ratio", "pb_ratio", "roe", "debt_to_equity", "ev_to_ebitda")):
             baseline = fh
         
         if baseline is None:
             av = self._from_alphavantage(ticker)
-            if any(av.get(k) is not None for k in ("pe_ratio", "pb_ratio", "roe", "debt_to_equity")):
+            if any(av.get(k) is not None for k in ("pe_ratio", "pb_ratio", "roe", "debt_to_equity", "ev_to_ebitda")):
                 baseline = av
                 
         if baseline is None:

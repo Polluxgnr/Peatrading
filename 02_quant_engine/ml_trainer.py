@@ -35,8 +35,11 @@ FEATURE_COLS = [
     "insider_net_score",
     "finnhub_roe",
     "finnhub_pe",
+    "ev_to_ebitda",
     "news_sentiment",
+    "earnings_qa_sentiment",
     "amf_short_interest",
+    "amf_threshold_crossing",
     "ecb_euribor_3m",
     "gex_proxy",
     "frac_diff_04",
@@ -139,6 +142,42 @@ def train_model(
         logger.info("[%s] Model saved to %s (accuracy=%.1f%%)", key, out_path, metrics.get("accuracy_pct", 0))
         all_metrics[key] = metrics
 
+        # ---------------------------------------------------------------------
+        # Meta-Labeling & Unsupervised ML Pipeline
+        # ---------------------------------------------------------------------
+        if key == "tactical":
+            # 1. Isolation Forest for Structural Anomalies (Black Swans)
+            try:
+                import joblib
+                from sklearn.ensemble import IsolationForest
+                
+                iso_model = IsolationForest(contamination=0.015, random_state=42)
+                iso_model.fit(X_train)
+                
+                iso_path = _ROOT / "database" / "isolation_forest.joblib"
+                joblib.dump(iso_model, iso_path)
+                logger.info("[unsupervised] Isolation Forest trained with 1.5%% contamination.")
+            except ImportError:
+                logger.warning("scikit-learn required for Isolation Forest. pip install scikit-learn")
+                
+            # 2. XGBoost Meta-Labeling
+            preds_train = model.predict(X_train)
+            meta_y_train = (preds_train == y_train).astype(int)
+            
+            meta_model = xgb.XGBClassifier(
+                n_estimators=50, max_depth=3, learning_rate=0.05,
+                subsample=0.8, colsample_bytree=0.8, eval_metric="logloss", random_state=42
+            )
+            meta_model.fit(X_train, meta_y_train)
+            meta_path = _ROOT / "database" / "xgboost_meta_tactical.json"
+            meta_model.save_model(str(meta_path))
+            
+            preds_test = model.predict(X_test)
+            meta_y_test = (preds_test == y_test).astype(int)
+            meta_metrics = evaluate_model(meta_model, X_test, meta_y_test)
+            all_metrics["meta_tactical"] = meta_metrics
+            logger.info("[meta_tactical] Meta-Labeling model saved to %s", meta_path)
+
     _METRICS_PATH.write_text(json.dumps(all_metrics, indent=2), encoding="utf-8")
     return all_metrics
 
@@ -238,6 +277,43 @@ def predict_probability_with_shap(feat_row: dict, horizon: str = "tactical") -> 
     except Exception as exc:
         logger.debug(f"predict_probability_with_shap failed: {exc}")
         return None, None
+
+
+def predict_anomaly(features: dict) -> bool | None:
+    """Return True if Isolation Forest flags this feature row as a structural anomaly."""
+    path = _ROOT / "database" / "isolation_forest.joblib"
+    if not path.exists():
+        return None
+    try:
+        import joblib
+        
+        model = joblib.load(path)
+        row = [float(features.get(c, 0.0) or 0.0) for c in FEATURE_COLS]
+        
+        # predict returns -1 for outliers, 1 for inliers
+        pred = model.predict(np.array([row]))[0]
+        return bool(pred == -1)
+    except Exception as exc:
+        logger.debug("Isolation Forest predict failed: %s", exc)
+        return None
+
+
+def predict_meta_probability(features: dict) -> float | None:
+    """Return the meta-confidence probability (XGBoost predicting if primary model is right)."""
+    path = _ROOT / "database" / "xgboost_meta_tactical.json"
+    if not path.exists():
+        return None
+    try:
+        import xgboost as xgb
+
+        model = xgb.XGBClassifier()
+        model.load_model(str(path))
+        row = [float(features.get(c, 0.0) or 0.0) for c in FEATURE_COLS]
+        prob = float(model.predict_proba(np.array([row]))[0, 1])
+        return prob if np.isfinite(prob) else None
+    except Exception as exc:
+        logger.debug("Meta ML predict failed: %s", exc)
+        return None
 
 
 if __name__ == "__main__":

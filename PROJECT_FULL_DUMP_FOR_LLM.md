@@ -1,6 +1,6 @@
 # PEA Pollux — Full Project Dump for LLM
 
-> **PEA Pollux** · Generated `2026-08-04 14:52 UTC` · Root `C:\Users\PolluxGronier\Downloads\pea_sniper_terminal`
+> **PEA Pollux** · Generated `2026-08-04 14:59 UTC` · Root `C:\Users\PolluxGronier\Downloads\pea_sniper_terminal`
 
 One-shot context for external LLM agents. Includes source, configs, and docs.
 Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
@@ -71,8 +71,8 @@ Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
 
 ### `00_data_sensors/`
 - `00_data_sensors/__init__.py` (0 lines)
-- `00_data_sensors/fundamentals_api.py` (233 lines)
-- `00_data_sensors/macro_alpha_api.py` (547 lines)
+- `00_data_sensors/fundamentals_api.py` (243 lines)
+- `00_data_sensors/macro_alpha_api.py` (575 lines)
 - `00_data_sensors/market_prices_api.py` (304 lines)
 - `00_data_sensors/newsletter_api.py` (213 lines)
 - `00_data_sensors/symbol_mapper.py` (179 lines)
@@ -89,7 +89,7 @@ Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
 ### `00_data_sensors/scrapers/`
 - `00_data_sensors/scrapers/__init__.py` (18 lines)
 - `00_data_sensors/scrapers/_http.py` (72 lines)
-- `00_data_sensors/scrapers/amf_scraper.py` (636 lines)
+- `00_data_sensors/scrapers/amf_scraper.py` (704 lines)
 - `00_data_sensors/scrapers/amf_short_scraper.py` (32 lines)
 - `00_data_sensors/scrapers/bourso_scraper.py` (490 lines)
 
@@ -109,8 +109,8 @@ Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
 - `02_quant_engine/cross_sectional.py` (49 lines)
 - `02_quant_engine/market_regime.py` (120 lines)
 - `02_quant_engine/ml_backtester.py` (22 lines)
-- `02_quant_engine/ml_feature_store.py` (355 lines)
-- `02_quant_engine/ml_trainer.py` (246 lines)
+- `02_quant_engine/ml_feature_store.py` (375 lines)
+- `02_quant_engine/ml_trainer.py` (322 lines)
 - `02_quant_engine/quantitative_math.py` (144 lines) ⭐
 - `02_quant_engine/smart_dca_engine.py` (216 lines)
 - `02_quant_engine/stochastic_models.py` (87 lines) ⭐
@@ -131,7 +131,7 @@ Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
 - `04_orchestrator_ai/__init__.py` (0 lines)
 - `04_orchestrator_ai/earnings_blackout.py` (92 lines)
 - `04_orchestrator_ai/macro_veto.py` (125 lines)
-- `04_orchestrator_ai/news_sentiment_llm.py` (156 lines)
+- `04_orchestrator_ai/news_sentiment_llm.py` (227 lines)
 - `04_orchestrator_ai/red_team_agent.py` (98 lines) ⭐
 - `04_orchestrator_ai/revocation_engine.py` (146 lines)
 - `04_orchestrator_ai/signal_priority_cascade.py` (369 lines) ⭐
@@ -295,7 +295,7 @@ port = 8501
 
 ```
 
-## FILE: 00_data_sensors/fundamentals_api.py (233 lines)
+## FILE: 00_data_sensors/fundamentals_api.py (243 lines)
 ```python
 """Fundamental data sensor with Finnhub primary + yfinance fallback.
 
@@ -351,6 +351,7 @@ class FundamentalsSensor:
             "pb_ratio": None,
             "roe": None,
             "debt_to_equity": None,
+            "ev_to_ebitda": None,
             "source": "none",
         }
         if not self.api_key:
@@ -380,6 +381,8 @@ class FundamentalsSensor:
             pb = _to_float(metric.get("pbAnnual"))
             roe = _to_float(metric.get("roeTTM"))
             debt = _to_float(metric.get("totalDebt/totalEquityAnnual"))
+            ev_ebitda = _to_float(metric.get("evToEbitda"))
+            
             # Some endpoints expose debt/equity as percent points.
             if debt is not None and debt > 50:
                 debt = debt / 100.0
@@ -389,6 +392,7 @@ class FundamentalsSensor:
                 "pb_ratio": pb,
                 "roe": roe,
                 "debt_to_equity": debt,
+                "ev_to_ebitda": ev_ebitda,
                 "source": "finnhub",
             }
             if any(v is not None for k, v in out.items() if k != "source"):
@@ -405,6 +409,7 @@ class FundamentalsSensor:
             "pb_ratio": None,
             "roe": None,
             "debt_to_equity": None,
+            "ev_to_ebitda": None,
             "source": "none",
         }
         if yf is None:
@@ -417,6 +422,8 @@ class FundamentalsSensor:
             pb = _to_float(info.get("priceToBook"))
             roe = _to_float(info.get("returnOnEquity"))
             debt = _to_float(info.get("debtToEquity"))
+            ev_ebitda = _to_float(info.get("enterpriseToEbitda"))
+            
             # yfinance debtToEquity often comes as percent points.
             if debt is not None and debt > 50:
                 debt = debt / 100.0
@@ -425,6 +432,7 @@ class FundamentalsSensor:
                 "pb_ratio": pb,
                 "roe": roe,
                 "debt_to_equity": debt,
+                "ev_to_ebitda": ev_ebitda,
                 "source": "yfinance",
             }
             if any(v is not None for k, v in out.items() if k != "source"):
@@ -437,7 +445,7 @@ class FundamentalsSensor:
     def _from_alphavantage(self, ticker: str) -> dict:
         blank = {
             "pe_ratio": None, "pb_ratio": None, "roe": None,
-            "debt_to_equity": None, "source": "none",
+            "debt_to_equity": None, "ev_to_ebitda": None, "source": "none",
         }
         av_key = (os.getenv("ALPHAVANTAGE_API_KEY") or "").strip()
         if not av_key:
@@ -458,11 +466,13 @@ class FundamentalsSensor:
             pb = _to_float(data.get("PriceToBookRatio"))
             roe = _to_float(data.get("ReturnOnEquityTTM"))
             debt = _to_float(data.get("DebtToEquity"))
+            ev_ebitda = _to_float(data.get("EVToEBITDA"))
+            
             if debt is not None and debt > 50:
                 debt = debt / 100.0
             out = {
                 "pe_ratio": pe, "pb_ratio": pb, "roe": roe,
-                "debt_to_equity": debt, "source": "alphavantage",
+                "debt_to_equity": debt, "ev_to_ebitda": ev_ebitda, "source": "alphavantage",
             }
             if any(v is not None for k, v in out.items() if k != "source"):
                 return out
@@ -504,12 +514,12 @@ class FundamentalsSensor:
         # 1. Cascade for baseline metrics
         baseline = None
         fh = self._from_finnhub(ticker)
-        if any(fh.get(k) is not None for k in ("pe_ratio", "pb_ratio", "roe", "debt_to_equity")):
+        if any(fh.get(k) is not None for k in ("pe_ratio", "pb_ratio", "roe", "debt_to_equity", "ev_to_ebitda")):
             baseline = fh
         
         if baseline is None:
             av = self._from_alphavantage(ticker)
-            if any(av.get(k) is not None for k in ("pe_ratio", "pb_ratio", "roe", "debt_to_equity")):
+            if any(av.get(k) is not None for k in ("pe_ratio", "pb_ratio", "roe", "debt_to_equity", "ev_to_ebitda")):
                 baseline = av
                 
         if baseline is None:
@@ -531,7 +541,7 @@ class FundamentalsSensor:
         return baseline
 ```
 
-## FILE: 00_data_sensors/macro_alpha_api.py (547 lines)
+## FILE: 00_data_sensors/macro_alpha_api.py (575 lines)
 ```python
 """Alternative-data / macro alpha sensors for PEA Pollux.
 
@@ -756,6 +766,34 @@ class MacroAlphaSensor:
 
         # --- 3) yfinance (tertiary) -----------------------------------------
         return self._insider_from_yfinance(ticker)
+
+    def get_threshold_crossings(self, ticker: str) -> int:
+        """Return net direction of threshold crossings (Franchissements de Seuil).
+        
+        +1 for accumulation (crossing upwards), -1 for distribution, 0 for none.
+        """
+        if AmfInsiderScraper is not None:
+            try:
+                issuer = None
+                if BoursoramaScraper is not None:
+                    try:
+                        profile = BoursoramaScraper().get_instrument_profile(ticker)
+                        if profile:
+                            issuer = profile.get("name")
+                    except Exception:
+                        pass
+                rows = AmfInsiderScraper().get_threshold_crossings(ticker, issuer=issuer)
+                if rows:
+                    # Score recent crossings
+                    acc = sum(1 for r in rows if r["Direction"] == "accumulation")
+                    dist = sum(1 for r in rows if r["Direction"] == "distribution")
+                    net = acc - dist
+                    direction = 1 if net > 0 else (-1 if net < 0 else 0)
+                    logger.info("%s threshold crossings: acc=%d dist=%d -> %+d", ticker, acc, dist, direction)
+                    return direction
+            except Exception as exc:
+                logger.debug("Threshold crossings failed for %s: %s", ticker, exc)
+        return 0
 
     @staticmethod
     def _score_amf_declarations(df: pd.DataFrame) -> int:
@@ -2172,7 +2210,7 @@ def safe_get(
         return None
 ```
 
-## FILE: 00_data_sensors/scrapers/amf_scraper.py (636 lines)
+## FILE: 00_data_sensors/scrapers/amf_scraper.py (704 lines)
 ```python
 """AMF insider-declaration scraper (antifragile, multi-source).
 
@@ -2810,6 +2848,73 @@ class AmfInsiderScraper:
                 "Source": "AMF BDIF",
             })
         return rows
+
+    def get_threshold_crossings(
+        self, ticker: str, *, issuer: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Query BDIF for 'Franchissement de seuil' (FS) for a ticker.
+        
+        A quiet accumulation crossing the 5% threshold is a structural anomaly signal.
+        """
+        q = (issuer or _issuer_name(ticker) or "").strip()
+        if not q or not amf_available():
+            return []
+            
+        try:
+            rate_limit(0.2, 0.5)
+            resp = self._session.get(
+                _BDIF_BASE + "/back/api/v1/informations",
+                params={
+                    "from": 0,
+                    "size": 20,
+                    "typesInformation": "FS",
+                    "RechercheTexte": q,
+                },
+                headers={
+                    **stealth_headers(),
+                    "Accept": "application/json",
+                },
+                timeout=12,
+            )
+            if resp.status_code != 200:
+                return []
+            payload = resp.json()
+            items = payload.get("result") or payload.get("hits") or []
+            if isinstance(items, dict):
+                items = items.get("hits") or []
+            rows: list[dict[str, Any]] = []
+            
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                src = item.get("_source") if "_source" in item else item
+                if not isinstance(src, dict):
+                    continue
+                    
+                title = str(src.get("titre") or src.get("resume") or "").lower()
+                blob = title + " " + str(src.get("description") or "").lower()
+                
+                # We specifically look for "hausse" (accumulation) crossing thresholds like 5%
+                direction = "accumulation" if "hausse" in blob or "franchissement en hausse" in blob else ("distribution" if "baisse" in blob else "unknown")
+                
+                date_raw = (
+                    src.get("datePublication")
+                    or src.get("dateInformation")
+                    or src.get("dateMiseEnLigne")
+                    or ""
+                )[:10]
+                
+                rows.append({
+                    "Date": str(date_raw),
+                    "Ticker": ticker,
+                    "Title": src.get("titre") or f"Franchissement Seuil — {q}",
+                    "Direction": direction,
+                    "Blob": blob[:500],
+                })
+            return rows
+        except Exception as exc:
+            logger.debug("BDIF FS (threshold crossing) API failed for %r: %s", q, exc)
+            return []
 ```
 
 ## FILE: 00_data_sensors/scrapers/amf_short_scraper.py (32 lines)
@@ -5706,7 +5811,7 @@ def run_autonomous_backtest(csv_path: str, initial_capital: float = 10000.0) -> 
     return df
 ```
 
-## FILE: 02_quant_engine/ml_feature_store.py (355 lines)
+## FILE: 02_quant_engine/ml_feature_store.py (375 lines)
 ```python
 """Machine Learning feature store for PEA Pollux (Phase 40).
 
@@ -5806,22 +5911,24 @@ def _news_sentiment_proxy(ticker: str, pdb: Any) -> float:
     return float(np.mean(scores)) if scores else 0.0
 
 
-def _fundamentals(ticker: str, pdb: Any, offline_mode: bool = False) -> tuple[float, float]:
-    """Return (roe, pe) from SQLite cache or Finnhub/yfinance sensor."""
+def _fundamentals(ticker: str, pdb: Any, offline_mode: bool = False) -> tuple[float, float, float]:
+    """Return (roe, pe, ev_to_ebitda) from SQLite cache or Finnhub/yfinance sensor."""
     pe = np.nan
     roe = np.nan
+    ev_ebitda = np.nan
     try:
         cached = pdb.get_cached_fundamentals(ticker, max_age_days=30) if pdb else None
         if cached:
             pe = _safe_float(cached.get("pe_ratio"))
             roe = _safe_float(cached.get("roe"))
-            if np.isfinite(pe) or np.isfinite(roe):
-                return roe, pe
+            ev_ebitda = _safe_float(cached.get("ev_to_ebitda"))
+            if np.isfinite(pe) or np.isfinite(roe) or np.isfinite(ev_ebitda):
+                return roe, pe, ev_ebitda
     except Exception:  # noqa: BLE001
         pass
         
     if offline_mode:
-        return np.nan, np.nan
+        return np.nan, np.nan, np.nan
         
     try:
         sys.path.insert(0, str(_ROOT / "00_data_sensors"))
@@ -5830,9 +5937,10 @@ def _fundamentals(ticker: str, pdb: Any, offline_mode: bool = False) -> tuple[fl
         data = FundamentalsSensor().get_basic_financials(ticker)
         pe = _safe_float(data.get("pe_ratio"))
         roe = _safe_float(data.get("roe"))
+        ev_ebitda = _safe_float(data.get("ev_to_ebitda"))
     except Exception:  # noqa: BLE001
         pass
-    return roe, pe
+    return roe, pe, ev_ebitda
 
 
 def build_ml_feature_row(
@@ -5873,12 +5981,26 @@ def build_ml_feature_row(
             vol = float(rets.std(ddof=0) * np.sqrt(252.0))
     insider = _insider_net_from_reason(reason)
     news_sent = _news_sentiment_proxy(ticker, pdb)
-    roe, pe = _fundamentals(ticker, pdb, offline_mode=offline_mode)
+    roe, pe, ev_ebitda = _fundamentals(ticker, pdb, offline_mode=offline_mode)
+    
+    # Apex Alpha: FMP Earnings Call Q&A
+    qa_score = 0.0
+    if not offline_mode:
+        try:
+            sys.path.insert(0, str(_ROOT / "04_orchestrator_ai"))
+            from news_sentiment_llm import NewsSentimentScorer
+            import asyncio
+            # Create a new event loop for this block if needed, or use asyncio.run
+            qa_score = float(asyncio.run(NewsSentimentScorer().analyze_earnings_call_qa(ticker)))
+        except Exception:
+            pass
+            
     # Jalon 1 Macro Alpha Sensors
     from macro_alpha_api import MacroAlphaSensor
     macro = MacroAlphaSensor()
     short_interest = macro.get_short_interest(ticker)
     ecb_euribor = macro.get_ecb_euribor()
+    threshold_cross = macro.get_threshold_crossings(ticker) if not offline_mode else 0
     from quantitative_math import frac_diff_ffd
     
     # Fractional Differentiation feature (d=0.4)
@@ -5956,8 +6078,11 @@ def build_ml_feature_row(
         "insider_net_score": insider,
         "finnhub_roe": roe,
         "finnhub_pe": pe,
+        "ev_to_ebitda": ev_ebitda,
         "news_sentiment": news_sent,
+        "earnings_qa_sentiment": qa_score,
         "amf_short_interest": short_interest,
+        "amf_threshold_crossing": threshold_cross,
         "ecb_euribor_3m": ecb_euribor,
         "frac_diff_04": frac_val,
         "sp500_ret1d": spillover.get("^GSPC_ret1d", np.nan),
@@ -6065,7 +6190,7 @@ if __name__ == "__main__":
     print(f"Wrote {p}")
 ```
 
-## FILE: 02_quant_engine/ml_trainer.py (246 lines)
+## FILE: 02_quant_engine/ml_trainer.py (322 lines)
 ```python
 """XGBoost trainer for forward-return prediction (Phase 44).
 
@@ -6104,8 +6229,11 @@ FEATURE_COLS = [
     "insider_net_score",
     "finnhub_roe",
     "finnhub_pe",
+    "ev_to_ebitda",
     "news_sentiment",
+    "earnings_qa_sentiment",
     "amf_short_interest",
+    "amf_threshold_crossing",
     "ecb_euribor_3m",
     "gex_proxy",
     "frac_diff_04",
@@ -6208,6 +6336,42 @@ def train_model(
         logger.info("[%s] Model saved to %s (accuracy=%.1f%%)", key, out_path, metrics.get("accuracy_pct", 0))
         all_metrics[key] = metrics
 
+        # ---------------------------------------------------------------------
+        # Meta-Labeling & Unsupervised ML Pipeline
+        # ---------------------------------------------------------------------
+        if key == "tactical":
+            # 1. Isolation Forest for Structural Anomalies (Black Swans)
+            try:
+                import joblib
+                from sklearn.ensemble import IsolationForest
+                
+                iso_model = IsolationForest(contamination=0.015, random_state=42)
+                iso_model.fit(X_train)
+                
+                iso_path = _ROOT / "database" / "isolation_forest.joblib"
+                joblib.dump(iso_model, iso_path)
+                logger.info("[unsupervised] Isolation Forest trained with 1.5%% contamination.")
+            except ImportError:
+                logger.warning("scikit-learn required for Isolation Forest. pip install scikit-learn")
+                
+            # 2. XGBoost Meta-Labeling
+            preds_train = model.predict(X_train)
+            meta_y_train = (preds_train == y_train).astype(int)
+            
+            meta_model = xgb.XGBClassifier(
+                n_estimators=50, max_depth=3, learning_rate=0.05,
+                subsample=0.8, colsample_bytree=0.8, eval_metric="logloss", random_state=42
+            )
+            meta_model.fit(X_train, meta_y_train)
+            meta_path = _ROOT / "database" / "xgboost_meta_tactical.json"
+            meta_model.save_model(str(meta_path))
+            
+            preds_test = model.predict(X_test)
+            meta_y_test = (preds_test == y_test).astype(int)
+            meta_metrics = evaluate_model(meta_model, X_test, meta_y_test)
+            all_metrics["meta_tactical"] = meta_metrics
+            logger.info("[meta_tactical] Meta-Labeling model saved to %s", meta_path)
+
     _METRICS_PATH.write_text(json.dumps(all_metrics, indent=2), encoding="utf-8")
     return all_metrics
 
@@ -6307,6 +6471,43 @@ def predict_probability_with_shap(feat_row: dict, horizon: str = "tactical") -> 
     except Exception as exc:
         logger.debug(f"predict_probability_with_shap failed: {exc}")
         return None, None
+
+
+def predict_anomaly(features: dict) -> bool | None:
+    """Return True if Isolation Forest flags this feature row as a structural anomaly."""
+    path = _ROOT / "database" / "isolation_forest.joblib"
+    if not path.exists():
+        return None
+    try:
+        import joblib
+        
+        model = joblib.load(path)
+        row = [float(features.get(c, 0.0) or 0.0) for c in FEATURE_COLS]
+        
+        # predict returns -1 for outliers, 1 for inliers
+        pred = model.predict(np.array([row]))[0]
+        return bool(pred == -1)
+    except Exception as exc:
+        logger.debug("Isolation Forest predict failed: %s", exc)
+        return None
+
+
+def predict_meta_probability(features: dict) -> float | None:
+    """Return the meta-confidence probability (XGBoost predicting if primary model is right)."""
+    path = _ROOT / "database" / "xgboost_meta_tactical.json"
+    if not path.exists():
+        return None
+    try:
+        import xgboost as xgb
+
+        model = xgb.XGBClassifier()
+        model.load_model(str(path))
+        row = [float(features.get(c, 0.0) or 0.0) for c in FEATURE_COLS]
+        prob = float(model.predict_proba(np.array([row]))[0, 1])
+        return prob if np.isfinite(prob) else None
+    except Exception as exc:
+        logger.debug("Meta ML predict failed: %s", exc)
+        return None
 
 
 if __name__ == "__main__":
@@ -9467,7 +9668,7 @@ if __name__ == "__main__":
         print(f"{d}: vetoed={vetoed} -> {msg}")
 ```
 
-## FILE: 04_orchestrator_ai/news_sentiment_llm.py (156 lines)
+## FILE: 04_orchestrator_ai/news_sentiment_llm.py (227 lines)
 ```python
 """News sentiment scorer for PEA Pollux (Phase 11).
 
@@ -9600,6 +9801,77 @@ class NewsSentimentScorer:
                 update_pipeline_status({"data_degraded_mode": True, "degraded_reason": f"news_sentiment_llm.py: {exc}"})
             except Exception:
                 pass
+            return _NEUTRAL_SCORE
+
+    async def analyze_earnings_call_qa(self, ticker: str) -> float:
+        """Fetch the latest earnings call transcript and score the Q&A section.
+        
+        Extracts the Q&A portion (or the latter half if not explicitly marked)
+        and scores management confidence on a [-100, 100] scale.
+        """
+        import requests
+        
+        fmp_key = (os.getenv("FMP_API_KEY") or "").strip()
+        if not fmp_key or not self.api_key:
+            return _NEUTRAL_SCORE
+            
+        symbol = ticker.replace(".PA", "").replace(".AS", "").upper()
+        try:
+            url = f"https://financialmodelingprep.com/api/v3/earning_call_transcript/{symbol}?limit=1&apikey={fmp_key}"
+            # Using synchronous requests here since it's a lightweight fetch, but we could use aiohttp
+            resp = requests.get(url, timeout=10)
+            if resp.status_code != 200:
+                return _NEUTRAL_SCORE
+            data = resp.json()
+            if not isinstance(data, list) or not data:
+                return _NEUTRAL_SCORE
+                
+            content = data[0].get("content") or ""
+            if not content:
+                return _NEUTRAL_SCORE
+                
+            # Try to find the Q&A section, or take the last 30% of the transcript
+            qa_text = ""
+            qa_idx = content.lower().find("question-and-answer")
+            if qa_idx == -1:
+                qa_idx = content.lower().find("questions and answers")
+                
+            if qa_idx != -1:
+                qa_text = content[qa_idx:]
+            else:
+                # Fallback: take the last 4000 chars
+                qa_text = content[-4000:] if len(content) > 4000 else content
+                
+            # Truncate to avoid blowing up the context window
+            qa_text = qa_text[:6000]
+            
+            system_prompt = (
+                "You are a quantitative NLP model evaluating management confidence "
+                "from Earnings Call Q&A sessions. Output NOTHING EXCEPT a single "
+                "integer between -100 and 100. Do not wrap the integer in markdown "
+                "or backticks."
+            )
+            user_prompt = (
+                f"Ticker: {ticker}\nQ&A Transcript Snippet:\n{qa_text}\n\n"
+                "Return ONLY one integer between -100 (evasive, negative, weak guidance) "
+                "and 100 (highly confident, raises guidance, strong answers)."
+            )
+
+            raw = await openrouter_chat(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                api_key=self.api_key,
+                model=self.model,
+                max_tokens=8,
+                temperature=0.0,
+            )
+            score = self._parse_score(raw)
+            logger.info("Earnings Q&A sentiment for %s: %.0f", ticker, score)
+            return score
+        except Exception as exc:
+            logger.debug("Failed to compute earnings Q&A sentiment for %s: %s", ticker, exc)
             return _NEUTRAL_SCORE
 
 

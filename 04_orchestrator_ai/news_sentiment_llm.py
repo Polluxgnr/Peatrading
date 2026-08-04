@@ -131,6 +131,77 @@ class NewsSentimentScorer:
                 pass
             return _NEUTRAL_SCORE
 
+    async def analyze_earnings_call_qa(self, ticker: str) -> float:
+        """Fetch the latest earnings call transcript and score the Q&A section.
+        
+        Extracts the Q&A portion (or the latter half if not explicitly marked)
+        and scores management confidence on a [-100, 100] scale.
+        """
+        import requests
+        
+        fmp_key = (os.getenv("FMP_API_KEY") or "").strip()
+        if not fmp_key or not self.api_key:
+            return _NEUTRAL_SCORE
+            
+        symbol = ticker.replace(".PA", "").replace(".AS", "").upper()
+        try:
+            url = f"https://financialmodelingprep.com/api/v3/earning_call_transcript/{symbol}?limit=1&apikey={fmp_key}"
+            # Using synchronous requests here since it's a lightweight fetch, but we could use aiohttp
+            resp = requests.get(url, timeout=10)
+            if resp.status_code != 200:
+                return _NEUTRAL_SCORE
+            data = resp.json()
+            if not isinstance(data, list) or not data:
+                return _NEUTRAL_SCORE
+                
+            content = data[0].get("content") or ""
+            if not content:
+                return _NEUTRAL_SCORE
+                
+            # Try to find the Q&A section, or take the last 30% of the transcript
+            qa_text = ""
+            qa_idx = content.lower().find("question-and-answer")
+            if qa_idx == -1:
+                qa_idx = content.lower().find("questions and answers")
+                
+            if qa_idx != -1:
+                qa_text = content[qa_idx:]
+            else:
+                # Fallback: take the last 4000 chars
+                qa_text = content[-4000:] if len(content) > 4000 else content
+                
+            # Truncate to avoid blowing up the context window
+            qa_text = qa_text[:6000]
+            
+            system_prompt = (
+                "You are a quantitative NLP model evaluating management confidence "
+                "from Earnings Call Q&A sessions. Output NOTHING EXCEPT a single "
+                "integer between -100 and 100. Do not wrap the integer in markdown "
+                "or backticks."
+            )
+            user_prompt = (
+                f"Ticker: {ticker}\nQ&A Transcript Snippet:\n{qa_text}\n\n"
+                "Return ONLY one integer between -100 (evasive, negative, weak guidance) "
+                "and 100 (highly confident, raises guidance, strong answers)."
+            )
+
+            raw = await openrouter_chat(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                api_key=self.api_key,
+                model=self.model,
+                max_tokens=8,
+                temperature=0.0,
+            )
+            score = self._parse_score(raw)
+            logger.info("Earnings Q&A sentiment for %s: %.0f", ticker, score)
+            return score
+        except Exception as exc:
+            logger.debug("Failed to compute earnings Q&A sentiment for %s: %s", ticker, exc)
+            return _NEUTRAL_SCORE
+
 
 if __name__ == "__main__":
     import asyncio
