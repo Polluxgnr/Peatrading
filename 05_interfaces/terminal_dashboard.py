@@ -4798,613 +4798,632 @@ with tab_ticker:
                                col_widths=[2.4, 1, 1, 0.9]),
                     width="stretch")
 
-    # ========== Fiche ticker (ex-Radar) =====================================
-    st.markdown("---")
-    st.markdown("### 📡 Fiche ticker — graphique & actualites")
-
-    def _ensure_ticker_profile(tk: str) -> tuple[dict, bool]:
-        db = get_portfolio_db()
-        prof = db.get_ticker_profile(tk, max_age_hours=12)
-        if prof is not None:
-            return prof, True
-            
-        pb_dir = _ROOT / "01_memory_core"
-        if str(pb_dir) not in sys.path:
-            sys.path.insert(0, str(pb_dir))
-        from profile_builder import build_and_save_ticker_profile
-        
-        # Build without LLM by default if missing, to prevent API limits if spammed.
-        # But wait, if it's the user clicking on the dashboard, they might want it?
-        # Actually, the user said: "if a profile loads instantly but the ai_synthesis is null, show a st.button... to let the user trigger it".
-        # So it's fine if the on-the-fly generation ALSO skips the LLM and forces the user to click the button.
-        new_prof = build_and_save_ticker_profile(tk, include_llm=False)
-        return new_prof, False
-
-    held = [p.ticker for p in positions]
-    options = sorted(set(held) | set(universe_df["Ticker"]))
-    default_idx = options.index(held[0]) if held and held[0] in options else 0
-    # Prefer worst performer as default when no holdings (mean-reversion lens)
-    if not held and not perf.empty:
-        w = str(perf.iloc[-1]["Ticker"])
-        if w in options:
-            default_idx = options.index(w)
-    # Mission-control <TICKER> GO overrides the default once.
-    focus = st.session_state.get("focus_ticker")
-    if focus:
-        if focus in options:
-            default_idx = options.index(focus)
-        elif focus not in options:
-            options = sorted(set(options) | {focus})
-    def _on_explore_change():
-        st.session_state["focus_ticker"] = st.session_state["selected_ticker"]
-        st.session_state["mkt_universal_search"] = st.session_state["selected_ticker"]
-
-    selected = st.selectbox(
-        "Actif a analyser", options, index=default_idx,
-        format_func=format_name, key="selected_ticker",
-        on_change=_on_explore_change
-    )
-    tv = _tv_symbol(selected)
-
-    with st.spinner("Génération du profil institutionnel..."):
-        ticker_profile, is_cached = _ensure_ticker_profile(selected)
-
-    dossier = ticker_profile.get("dossier", {})
-    logo_url = get_company_logo(selected)
-    logo_html = (
-        f"<img src='{logo_url}' alt='logo' height='40' "
-        f"style='height:40px;width:auto;max-width:48px;border-radius:6px;"
-        f"vertical-align:middle;margin-right:12px;background:#111;"
-        f"object-fit:contain;' "
-        f"onerror=\"this.style.display='none'\" />"
-        if logo_url else ""
-    )
+    @st.fragment
+    def render_fiche_ticker():
+        # ========== Fiche ticker (ex-Radar) =====================================
+        st.markdown("---")
+        st.markdown("### 📡 Fiche ticker — graphique & actualites")
     
-    badge_html = "<span style='margin-left: 10px; font-size: 0.85em; padding: 2px 6px; border-radius: 4px; background: rgba(0,255,0,0.1); color: #0f0; border: 1px solid #0f0;'>⚡ Profil pré-calculé</span>" if is_cached else "<span style='margin-left: 10px; font-size: 0.85em; padding: 2px 6px; border-radius: 4px; background: rgba(255,165,0,0.1); color: orange; border: 1px solid orange;'>⏳ Généré à la volée</span>"
-    
-    st.markdown(
-        f"<div class='eli5'>{logo_html}"
-        f"<b style='color:{_CYAN};'>Qui est {dossier.get('name')} ?</b> {badge_html}<br>"
-        f"{dossier.get('summary', '')}<br>"
-        f"<span style='color:{_MUTED};'>"
-        f"Secteur: {dossier.get('sector') or 'n/a'} · "
-        f"Industrie: {dossier.get('industry') or 'n/a'}"
-        f"{' · ETF' if dossier.get('is_etf') else ''}</span></div>",
-        unsafe_allow_html=True,
-    )
-    sub_overview, sub_fin, sub_news = st.tabs(['📈 Overview & Charts', '🧠 Financials & AI Scoring', '📰 News & Catalysts'])
-    with sub_news:
-        st.markdown("#### 🗞️ Morning Briefing (Macro Zeitgeist)")
-        briefing = load_morning_briefing()
-        zg = ""
-        headlines = []
-        if morning_briefing_is_live(briefing):
-            zg = str(briefing.get("zeitgeist") or "").strip()
-            headlines = briefing.get("headlines") or []
-            bullets = [ln.strip(" •-\t") for ln in zg.replace("\r", "").split("\n") if ln.strip() and ln.strip()[0] in "•-*–—0123456789"]
-            if not bullets: bullets = [zg]
-            cols = st.columns(min(5, max(1, len(bullets[:5]))))
-            for i, bullet in enumerate(bullets[:5]):
-                with cols[i]:
-                    st.markdown(metric_box(f"Thème {i + 1}", bullet[:90] + ("…" if len(bullet) > 90 else ""), sub="newsletter Synthèse IA", accent="cyan" if i % 2 == 0 else "amber"), unsafe_allow_html=True)
-        else:
-            st.info("Morning Briefing macro non disponible.")
-
-        st.markdown("---")
-        st.markdown("#### 📖 Catalyseurs & risques (dossier)")
-        cat1, cat2 = st.columns(2)
-        with cat1:
-            st.markdown("**News / catalyseurs qui aideraient**")
-            for c in dossier.get("catalysts") or []: st.markdown(f"- {c}")
-        with cat2:
-            st.markdown("**Evenements a surveiller (ne pas vouloir)**")
-            for r in dossier.get("risk_events") or []: st.markdown(f"- {r}")
-
-        st.markdown("---")
-        st.markdown("#### 🧠 Synthèse IA (Analyse Deep Ticker)")
-        synth = ticker_profile.get("synthesis", "")
-        if synth and synth != "Synthèse indisponible." and "Générer Synthèse IA" not in synth and "non générée" not in synth:
-            st.info(f"**Synthèse Institutionnelle**\n\n{synth}")
-        elif st.button("🧠 Générer la Synthèse IA", key=f"synth_ia_{selected}"):
-            with st.spinner("IA en cours d'analyse..."):
-                try:
-                    pb_dir = _ROOT / "01_memory_core"
-                    if str(pb_dir) not in sys.path:
-                        sys.path.insert(0, str(pb_dir))
-                    from profile_builder import build_and_save_ticker_profile
-                    
-                    new_prof = build_and_save_ticker_profile(selected, include_llm=True)
-                    synth_new = new_prof.get("synthesis", "")
-                    st.info(f"**Nouvelle Synthèse (cache)**\n\n{synth_new}")
-                except Exception as exc:
-                    st.error(f"Synthèse indisponible: {exc}")
-
-        st.markdown("---")
-        st.markdown("#### 🗞️ Actualites Historiques & Flux Unifié")
-        
-        try:
-            c_src, c_time = st.columns([2, 1])
-            with c_src:
-                filter_sources = st.multiselect("Sources", ["Boursorama", "Yahoo Finance", "Substack", "Finlight", "Google News"], default=["Boursorama", "Yahoo Finance", "Finlight"])
-            with c_time:
-                filter_time = st.radio("Fenêtre", ["7j", "30j", "1 an", "Tout"], horizontal=True)
-
-            db_news = get_portfolio_db().get_news_history(selected, limit=100) or []
+        def _ensure_ticker_profile(tk: str) -> tuple[dict, bool]:
+            db = get_portfolio_db()
+            prof = db.get_ticker_profile(tk, max_age_hours=12)
+            if prof is not None:
+                return prof, True
+                
+            pb_dir = _ROOT / "01_memory_core"
+            if str(pb_dir) not in sys.path:
+                sys.path.insert(0, str(pb_dir))
+            from profile_builder import build_and_save_ticker_profile
             
-            # Apply time filter
-            if db_news and filter_time != "Tout":
-                import datetime
-                now = datetime.datetime.now()
-                days = {"7j": 7, "30j": 30, "1 an": 365}.get(filter_time, 9999)
-                cutoff = (now - datetime.timedelta(days=days)).isoformat()
-                db_news = [n for n in db_news if (n.get("date_published") or "") >= cutoff]
-
-            # Apply source filter
-            if db_news and filter_sources:
-                db_news = [n for n in db_news if n.get("provider") in filter_sources]
-
-            if db_news:
-                html_feed = "<div style='display:flex; flex-direction:column; gap:8px;'>"
-                for r in db_news:
-                    prov = str(r.get("provider", "")).strip() or "N/A"
-                    dp = r.get("date_published") or "N/A"
-                    if len(dp) > 16: dp = dp[:16]
-                    url = str(r.get("url", ""))
-                    title = str(r.get("title", ""))
-                    score = r.get("sentiment_score")
-                    
-                    badge = "<span style='color: #9BA3AF; background: #1A1A1A; padding: 2px 6px; border: 1px solid #333333;'>⚪ NEUTRAL</span>"
-                    if score is not None:
-                        try:
-                            sv = float(score)
-                            if sv >= 30: badge = f"<span style='color: #00FF00; background: #002200; padding: 2px 6px; border: 1px solid #00FF00;'>🟢 BULLISH (+{sv:.0f})</span>"
-                            elif sv <= -30: badge = f"<span style='color: #FF3B30; background: #220000; padding: 2px 6px; border: 1px solid #FF3B30;'>🔴 BEARISH ({sv:.0f})</span>"
-                        except: pass
-                    
-                    title_link = f"<a href='{url}' target='_blank' style='color:{_CYAN}; text-decoration:none;'>{title}</a>" if url else title
-                    html_feed += f"<div style='background:rgba(255,255,255,0.03); padding:8px 12px; border-radius:6px; border-left:3px solid {_PANEL};'>"
-                    html_feed += f"<span style='color:{_MUTED}; font-size:12px; margin-right:10px;'>{dp}</span>"
-                    html_feed += f"<b style='color:#ccc; margin-right:8px;'>[{prov}]</b>"
-                    html_feed += f"{title_link} <span style='margin-left:8px;'>{badge}</span>"
-                    html_feed += "</div>"
-                html_feed += "</div>"
-                st.markdown(html_feed, unsafe_allow_html=True)
-            else:
-                st.info("Aucune actualité correspondant aux filtres.")
-        except Exception as e:
-            st.error(f"Erreur de lecture: {e}")
-
-        if st.button("Lancer un Red Teaming IA (Bull vs Bear vs Devil's Advocate)", key=f"red_team_{selected}"):
-            context_blob = (
-                f"Ticker: {selected}\n"
-                f"Name: {dossier.get('name')}\n"
-                f"Sector: {dossier.get('sector')}\n"
-                f"Summary: {dossier.get('summary')}\n"
-                f"Catalysts: {', '.join(dossier.get('catalysts') or [])}\n"
-                f"Risks: {', '.join(dossier.get('risk_events') or [])}\n"
-            )
-            with st.spinner("Red Teaming multi-agent en cours..."):
-                try:
-                    from red_team_agent import run_bull_bear_debate
-
-                    debate = asyncio.run(run_bull_bear_debate(selected, context_blob))
-                except Exception as exc:  # noqa: BLE001
-                    debate = {
-                        "bull": "Indisponible",
-                        "bear": f"Indisponible ({exc})",
-                        "devil_advocate": "Indisponible",
-                        "judge": "Indisponible",
-                    }
-            st.info(f"🐂 **Bull Agent**\n\n{debate.get('bull') or 'n/a'}")
-            st.warning(f"🐻 **Bear Agent**\n\n{debate.get('bear') or 'n/a'}")
-            st.markdown(f"😈 **Devil's Advocate PEA**\n\n{debate.get('devil_advocate') or 'n/a'}")
-            st.error(f"⚖️ **Judge Agent**\n\n{debate.get('judge') or 'n/a'}")
-
-    with sub_fin:
-        ind = get_indicators(selected)
-        alpha = get_alpha_signals(selected)
-        bprofile = get_bourso_profile(selected)
-
-        # Profile + indicators as full metric boxes (no truncation)
-        mrow1 = st.columns(4)
-        with mrow1[0]:
-            if ind:
-                st.markdown(metric_box(
-                    "Cours", f"{ind['close']:.2f} €",
-                    sub=f"{ind['chg_1d']:+.2f}% (1j) · {ind['chg_5d']:+.2f}% (5j)",
-                    help_text="Dernier cours et variations recentes.",
-                ), unsafe_allow_html=True)
-            else:
-                st.markdown(metric_box("Cours", "n/a", sub="Donnees manquantes",
-                                       accent="muted"), unsafe_allow_html=True)
-        with mrow1[1]:
-            rsi = (ind or {}).get("rsi")
-            rsi_state = ("Survendu" if rsi is not None and rsi < 30 else
-                         "Surachete" if rsi is not None and rsi > 70 else "Neutre")
-            st.markdown(metric_box(
-                "RSI(14)", f"{rsi:.1f}" if rsi is not None else "n/a",
-                sub=rsi_state,
-                accent="cyan" if rsi is not None and rsi < 30 else (
-                    "red" if rsi is not None and rsi > 70 else ""),
-                help_text="<30 survendu · >70 surachete.",
-            ), unsafe_allow_html=True)
-        with mrow1[2]:
-            trend_ok = bool(ind and ind.get("sma200") and ind["close"] > ind["sma200"])
-            st.markdown(metric_box(
-                "Tendance LT (vs SMA200)",
-                "Haussier" if trend_ok else ("Baissier" if ind else "n/a"),
-                sub=(f"SMA200 {(ind or {}).get('sma200', 0):.2f}" if ind and ind.get("sma200")
-                     else "—"),
-                accent="" if trend_ok else "red",
-                help_text="Prix au-dessus / en-dessous de la moyenne 200 jours.",
-            ), unsafe_allow_html=True)
-        with mrow1[3]:
-            vol = (ind or {}).get("vol_ann")
-            st.markdown(metric_box(
-                "Vol. annualisee",
-                f"{vol:.0f}%" if vol is not None else "n/a",
-                sub="Sizing inverse-vol",
-                accent="amber" if vol and vol > 35 else "",
-                help_text="Plus c'est eleve, plus la taille de position est reduite.",
-            ), unsafe_allow_html=True)
-
-        mrow2 = st.columns(4)
-        with mrow2[0]:
-            elig = ", ".join((bprofile or {}).get("eligibility") or []) or "n/a"
-            st.markdown(metric_box("Eligibilite PEA/SRD", elig, sub="Boursorama",
-                                   accent="cyan"), unsafe_allow_html=True)
-        with mrow2[1]:
-            cons = (bprofile or {}).get("consensus_score")
-            st.markdown(metric_box(
-                "Consensus analystes",
-                f"{cons:.2f}" if cons is not None else "n/a",
-                sub=(bprofile or {}).get("sentiment") or "—",
-            ), unsafe_allow_html=True)
-        with mrow2[2]:
-            tgt = (bprofile or {}).get("target_price")
-            pot = (bprofile or {}).get("potential_pct")
-            st.markdown(metric_box(
-                "Objectif 3 mois",
-                f"{tgt:.2f} €" if tgt is not None else "n/a",
-                sub=f"{pot:+.1f}%" if pot is not None else "—",
-            ), unsafe_allow_html=True)
-        with mrow2[3]:
-            isin = (bprofile or {}).get("isin") or "n/a"
-            st.markdown(metric_box(
-                "ISIN", isin,
-                sub=f"{(bprofile or {}).get('index') or '—'} / "
-                    f"{(bprofile or {}).get('exchange') or '—'}",
-            ), unsafe_allow_html=True)
-
-        # Phase 35: Multi-factor fundamentals (Finnhub -> cache -> yfinance fallback).
-        fmeta = (dossier or {}).get("fundamentals") or get_fundamental_metrics(selected)
-        src = str((fmeta or {}).get("source") or "none")
-        pe = (fmeta or {}).get("pe_ratio")
-        pb = (fmeta or {}).get("pb_ratio")
-        roe = (fmeta or {}).get("roe")
-        deq = (fmeta or {}).get("debt_to_equity")
-        mrow3 = st.columns(4)
-        with mrow3[0]:
-            st.markdown(
-                metric_box(
-                    "P/E (TTM)",
-                    f"{float(pe):.2f}" if pe is not None else "n/a",
-                    sub=f"Source: {src}",
-                    accent="cyan" if pe is not None and float(pe) > 0 and float(pe) < 20 else "",
-                    help_text="Valorisation bénéfices (plus bas peut être plus attractif).",
-                ),
-                unsafe_allow_html=True,
-            )
-        with mrow3[1]:
-            st.markdown(
-                metric_box(
-                    "P/B",
-                    f"{float(pb):.2f}" if pb is not None else "n/a",
-                    sub="Value factor",
-                    accent="cyan" if pb is not None and float(pb) < 2.0 else "",
-                    help_text="Valorisation fonds propres (bonus si <2).",
-                ),
-                unsafe_allow_html=True,
-            )
-        with mrow3[2]:
-            st.markdown(
-                metric_box(
-                    "ROE",
-                    f"{float(roe)*100:.1f}%" if roe is not None and float(roe) <= 1.5 else (
-                        f"{float(roe):.1f}%" if roe is not None else "n/a"
-                    ),
-                    sub="Quality factor",
-                    accent="green" if roe is not None and float(roe) >= 0.15 else "",
-                    help_text="Rentabilité des capitaux propres (qualité).",
-                ),
-                unsafe_allow_html=True,
-            )
-        with mrow3[3]:
-            st.markdown(
-                metric_box(
-                    "Debt / Equity",
-                    f"{float(deq):.2f}" if deq is not None else "n/a",
-                    sub="Risque de levier",
-                    accent="red" if deq is not None and float(deq) > 2.0 else "",
-                    help_text="Levier bilan (malus >2.0 dans le modèle multi-factor).",
-                ),
-                unsafe_allow_html=True,
-            )
-
-        st.markdown("#### 📋 Ticket d'Ordre PEA (Prêt à l'Exécution)")
-        live_price = float((ind or {}).get("close") or 0.0)
-        qty_default = max(1, int(float(portfolio.cash_available or 0.0) // live_price)) if live_price > 0 else 1
-        qty_ticket = st.number_input(
-            "Quantité à préparer",
-            min_value=1,
-            value=int(qty_default),
-            step=1,
-            key=f"mkt_order_qty_{selected}",
+            # Build without LLM by default if missing, to prevent API limits if spammed.
+            # But wait, if it's the user clicking on the dashboard, they might want it?
+            # Actually, the user said: "if a profile loads instantly but the ai_synthesis is null, show a st.button... to let the user trigger it".
+            # So it's fine if the on-the-fly generation ALSO skips the LLM and forces the user to click the button.
+            new_prof = build_and_save_ticker_profile(tk, include_llm=False)
+            return new_prof, False
+    
+        held = [p.ticker for p in positions]
+        options = sorted(set(held) | set(universe_df["Ticker"]))
+        default_idx = options.index(held[0]) if held and held[0] in options else 0
+        # Prefer worst performer as default when no holdings (mean-reversion lens)
+        if not held and not perf.empty:
+            w = str(perf.iloc[-1]["Ticker"])
+            if w in options:
+                default_idx = options.index(w)
+        # Mission-control <TICKER> GO overrides the default once.
+        focus = st.session_state.get("focus_ticker")
+        if focus:
+            if focus in options:
+                default_idx = options.index(focus)
+            elif focus not in options:
+                options = sorted(set(options) | {focus})
+        def _on_explore_change():
+            st.session_state["focus_ticker"] = st.session_state["selected_ticker"]
+            st.session_state["mkt_universal_search"] = st.session_state["selected_ticker"]
+    
+        selected = st.selectbox(
+            "Actif a analyser", options, index=default_idx,
+            format_func=format_name, key="selected_ticker",
+            on_change=_on_explore_change
         )
-        ticket = build_broker_order_ticket(
-            selected,
-            int(qty_ticket),
-            live_price,
-            isin=(bprofile or {}).get("isin"),
+        tv = _tv_symbol(selected)
+    
+        with st.spinner("Génération du profil institutionnel..."):
+            ticker_profile, is_cached = _ensure_ticker_profile(selected)
+    
+        dossier = ticker_profile.get("dossier", {})
+        logo_url = get_company_logo(selected)
+        logo_html = (
+            f"<img src='{logo_url}' alt='logo' height='40' "
+            f"style='height:40px;width:auto;max-width:48px;border-radius:6px;"
+            f"vertical-align:middle;margin-right:12px;background:#111;"
+            f"object-fit:contain;' "
+            f"onerror=\"this.style.display='none'\" />"
+            if logo_url else ""
         )
+        
+        badge_html = "<span style='margin-left: 10px; font-size: 0.85em; padding: 2px 6px; border-radius: 4px; background: rgba(0,255,0,0.1); color: #0f0; border: 1px solid #0f0;'>⚡ Profil pré-calculé</span>" if is_cached else "<span style='margin-left: 10px; font-size: 0.85em; padding: 2px 6px; border-radius: 4px; background: rgba(255,165,0,0.1); color: orange; border: 1px solid orange;'>⏳ Généré à la volée</span>"
+        
         st.markdown(
-            f"<div style='background:#0A0A0A;padding:14px 16px;margin-bottom:10px;"
-            f"border:1px solid #2A2A2A;border-left:4px solid {_CYAN};"
-            f"font-family:Courier New,monospace;'>"
-            f"<div style='color:{_CYAN};font-size:11px;letter-spacing:1.5px;'>ORDER TICKET</div>"
-            f"<div style='margin-top:8px;line-height:1.6;'>"
-            f"<b>ISIN</b>: {ticket['isin']}<br>"
-            f"<b>Type d'ordre</b>: {ticket['order_type']}<br>"
-            f"<b>Quantité</b>: {ticket['qty']}<br>"
-            f"<b>Limite suggérée</b>: {ticket['limit_price']:,.2f} €<br>"
-            f"<b>Notional estimé</b>: {ticket['notional']:,.2f} €<br>"
-            f"<b>Frais PEA max (0.5%)</b>: {ticket['estimated_fee_max']:,.2f} €"
-            f"</div></div>",
+            f"<div class='eli5'>{logo_html}"
+            f"<b style='color:{_CYAN};'>Qui est {dossier.get('name')} ?</b> {badge_html}<br>"
+            f"{dossier.get('summary', '')}<br>"
+            f"<span style='color:{_MUTED};'>"
+            f"Secteur: {dossier.get('sector') or 'n/a'} · "
+            f"Industrie: {dossier.get('industry') or 'n/a'}"
+            f"{' · ETF' if dossier.get('is_etf') else ''}</span></div>",
             unsafe_allow_html=True,
         )
-        st.markdown(f"[↗️ Ouvrir sur Boursorama]({ticket['bourso_url']})")
-
-        st.markdown("#### ✅ Checklist de Décision")
-        checklist = get_decision_checklist(selected, portfolio, float(vix))
-        chk_df = pd.DataFrame(checklist["checks"])
-        st.dataframe(chk_df, use_container_width=True, hide_index=True)
-        st.caption(f"Statut global: {checklist['overall']} · score proxy {checklist['score_hint']:.0f}/100")
-
-        st.markdown("#### 🧠 Bureau de l'Analyste & Data Lake")
-        note_db = get_portfolio_db()
-        try:
-            note_db.init_db()
-            current_note = note_db.get_ticker_note(selected)
-        except Exception:  # noqa: BLE001
-            current_note = ""
-        note_value = st.text_area(
-            f"Note analyste personnelle — {format_name(selected)}",
-            value=current_note,
-            height=120,
-            key=f"analyst_note_{selected}",
-            help="Commentaires qualitatifs manuels (thèse, trigger, risques, plan d'exécution).",
-        )
-        if st.button("Sauvegarder la note", key=f"save_note_{selected}", type="secondary"):
-            try:
-                note_db.save_ticker_note(selected, note_value)
-                st.success("Note sauvegardée dans SQLite.")
-            except Exception as exc:  # noqa: BLE001
-                st.error(f"Sauvegarde impossible: {exc}")
-
-        # Multi-model raw pack for full transparency.
-        model_breakdown = {}
-        model_context = {}
-        hist_dl = pd.DataFrame()
-        try:
-            from duckdb_manager import TimeSeriesDB
-            from technical_scorer import SignalGenerator
-
-            db_ro = get_ts_db()
-            hist_dl = db_ro.get_historical_prices(selected, days=260)
-            if hist_dl is not None and not hist_dl.empty:
-                conv_dl = SignalGenerator().evaluate(selected, hist_dl)
-                model_breakdown = conv_dl.get("model_scores") or {}
-                model_context = conv_dl.get("context_breakdown") or {}
-        except Exception:  # noqa: BLE001
-            model_breakdown = {}
-            model_context = {}
-
-        # Phase 53+: SHAP XAI Inference for single ticker
-        try:
-            from ml_trainer import predict_probability_with_shap
-            from ml_feature_store import build_ml_feature_row
-        
-            if hist_dl is not None and not hist_dl.empty:
-                # We don't have CW8 and EXOG ready here instantly without DB calls, but we can try to fetch them or pass None
-                cw8_df = db_ro.get_historical_prices("CW8.PA", days=260)
-                cw8_close = cw8_df["Close"].astype(float) if cw8_df is not None and not cw8_df.empty else None
+        sub_overview, sub_fin, sub_news = st.tabs(['📈 Overview & Charts', '🧠 Financials & AI Scoring', '📰 News & Catalysts'])
+        with sub_news:
+            st.markdown("#### 🗞️ Morning Briefing (Macro Zeitgeist)")
+            import re
+            spam_regex = re.compile(r'(?i)(discount|free|referral|rewards|newsletter|email|sponsor|pitch deck|vc|substack|attio|seo agency|gtm|seed|founder|startup|saas|cap table|récompense|mettre [aà] jour|update your|unsubscribe|cliquez ici|abonnez-vous|subscribe|webinar|masterclass)')
             
-                exog_dfs = {}
-                for sym in ["^GSPC", "^IXIC", "EURUSD=X", "OAT.PA"]:
+            briefing = load_morning_briefing()
+            zg = ""
+            headlines = []
+            if morning_briefing_is_live(briefing):
+                zg = str(briefing.get("zeitgeist") or "").strip()
+                
+                # Remove metadata and source lists
+                zg_lines = zg.split('\n')
+                clean_zg_lines = []
+                for line in zg_lines:
+                    if 'titre(s) source' in line and 'Généré' in line:
+                        continue
+                    clean_zg_lines.append(line)
+                zg = '\n'.join(clean_zg_lines)
+                
+                headlines = briefing.get("headlines") or []
+                
+                bullets = [ln.strip(" •-\t") for ln in zg.replace("\r", "").split("\n") if ln.strip() and ln.strip()[0] in "•-*–—0123456789"]
+                
+                clean_bullets = []
+                for b in bullets:
+                    if spam_regex.search(b):
+                        continue
+                    if b.lower().startswith('http') or 'http://' in b.lower() or 'https://' in b.lower():
+                        continue
+                    clean_bullets.append(b)
+                    
+                if not clean_bullets: clean_bullets = [zg]
+                cols = st.columns(min(5, max(1, len(clean_bullets[:5]))))
+                for i, bullet in enumerate(clean_bullets[:5]):
+                    with cols[i]:
+                        st.markdown(metric_box(f"Thème {i + 1}", bullet[:90] + ("…" if len(bullet) > 90 else ""), sub="newsletter Synthèse IA", accent="cyan" if i % 2 == 0 else "amber"), unsafe_allow_html=True)
+            else:
+                st.info("Morning Briefing macro non disponible.")
+    
+            st.markdown("---")
+            st.markdown("#### 📖 Catalyseurs & risques (dossier)")
+            cat1, cat2 = st.columns(2)
+            with cat1:
+                st.markdown("**News / catalyseurs qui aideraient**")
+                for c in dossier.get("catalysts") or []: st.markdown(f"- {c}")
+            with cat2:
+                st.markdown("**Evenements a surveiller (ne pas vouloir)**")
+                for r in dossier.get("risk_events") or []: st.markdown(f"- {r}")
+    
+            st.markdown("---")
+            st.markdown("#### 🧠 Synthèse IA (Analyse Deep Ticker)")
+            synth = ticker_profile.get("synthesis", "")
+            if synth and synth != "Synthèse indisponible." and "Générer Synthèse IA" not in synth and "non générée" not in synth:
+                st.info(f"**Synthèse Institutionnelle**\n\n{synth}")
+            elif st.button("🧠 Générer la Synthèse IA", key=f"synth_ia_{selected}"):
+                with st.spinner("IA en cours d'analyse..."):
                     try:
-                        df_ex = db_ro.get_historical_prices(sym, days=260)
-                        if df_ex is not None and not df_ex.empty:
-                            exog_dfs[sym] = df_ex["Close"].astype(float)
-                    except Exception:
-                        pass
+                        pb_dir = _ROOT / "01_memory_core"
+                        if str(pb_dir) not in sys.path:
+                            sys.path.insert(0, str(pb_dir))
+                        from profile_builder import build_and_save_ticker_profile
+                        
+                        new_prof = build_and_save_ticker_profile(selected, include_llm=True)
+                        synth_new = new_prof.get("synthesis", "")
+                        st.info(f"**Nouvelle Synthèse (cache)**\n\n{synth_new}")
+                    except Exception as exc:
+                        st.error(f"Synthèse indisponible: {exc}")
+    
+            st.markdown("---")
+            st.markdown("#### 🗞️ Actualites Historiques & Flux Unifié")
             
-                feat_dict = build_ml_feature_row(
-                    selected, 
-                    close=hist_dl["Close"].astype(float), 
-                    cw8_close=cw8_close, 
-                    exog_closes=exog_dfs, 
-                    reason="ui_inference", 
-                    pdb=note_db, 
-                    asof_idx=-1
-                )
-                proba, shap_vals = predict_probability_with_shap(feat_dict)
-            
-                if proba is not None and shap_vals is not None:
-                    st.markdown("### 🤖 Meta-Labeling & Explainable AI (SHAP)")
+            try:
+                c_src, c_time = st.columns([2, 1])
+                with c_src:
+                    filter_sources = st.multiselect("Sources", ["Boursorama", "Yahoo Finance", "Substack", "Finlight", "Google News"], default=["Boursorama", "Yahoo Finance", "Finlight"])
+                with c_time:
+                    filter_time = st.radio("Fenêtre", ["7j", "30j", "1 an", "Tout"], horizontal=True)
+    
+                db_news = get_portfolio_db().get_news_history(selected, limit=100) or []
                 
-                    status_color = _NEON if proba >= 0.50 else _RED
-                    status_text = "VALIDÉ" if proba >= 0.50 else "REJETÉ"
-                
-                    st.markdown(f"<div style='font-size:20px'>Probabilité Alpha: <strong style='color:{status_color}'>{proba*100:.1f}%</strong> ({status_text})</div>", unsafe_allow_html=True)
-                
-                    # Waterfall or bar chart of top positive and negative
-                    import plotly.graph_objects as go
-                
-                    # Sort all non-zero
-                    sorted_shaps = sorted([(k, v) for k, v in shap_vals.items() if abs(v) > 0.001], key=lambda x: x[1])
-                
-                    if sorted_shaps:
-                        y_labels = [x[0] for x in sorted_shaps]
-                        x_vals = [x[1] for x in sorted_shaps]
-                        colors = [_NEON if x > 0 else _RED for x in x_vals]
-                    
-                        fig = go.Figure(go.Bar(
-                            x=x_vals, y=y_labels, orientation='h',
-                            marker_color=colors
-                        ))
-                        fig.update_layout(
-                            title="Décomposition de la décision (SHAP Values)",
-                            xaxis_title="Impact sur la probabilité d'Alpha",
-                            yaxis_title="Feature",
-                            template="plotly_dark",
-                            plot_bgcolor="rgba(0,0,0,0)",
-                            paper_bgcolor="rgba(0,0,0,0)",
-                            margin=dict(l=20, r=20, t=40, b=20),
-                            height=400
-                        )
-                        st.plotly_chart(fig, use_container_width=True)
+                # Apply time filter
+                if db_news and filter_time != "Tout":
+                    import datetime
+                    now = datetime.datetime.now()
+                    days = {"7j": 7, "30j": 30, "1 an": 365}.get(filter_time, 9999)
+                    cutoff = (now - datetime.timedelta(days=days)).isoformat()
+                    db_news = [n for n in db_news if (n.get("date_published") or "") >= cutoff]
+    
+                # Apply source filter
+                if db_news and filter_sources:
+                    db_news = [n for n in db_news if n.get("provider") in filter_sources]
+    
+                if db_news:
+                    html_feed = "<div style='display:flex; flex-direction:column; gap:8px;'>"
+                    valid_news_count = 0
+                    for r in db_news:
+                        title = str(r.get("title", ""))
+                        if spam_regex.search(title):
+                            continue
+                        if title.lower().startswith('http') or 'http://' in title.lower() or 'https://' in title.lower():
+                            continue
+                            
+                        valid_news_count += 1
+                        prov = str(r.get("provider", "")).strip() or "N/A"
+                        dp = r.get("date_published") or "N/A"
+                        if len(dp) > 16: dp = dp[:16]
+                        url = str(r.get("url", ""))
+                        title = str(r.get("title", ""))
+                        score = r.get("sentiment_score")
+                        
+                        badge = "<span style='color: #9BA3AF; background: #1A1A1A; padding: 2px 6px; border: 1px solid #333333;'>⚪ NEUTRAL</span>"
+                        if score is not None:
+                            try:
+                                sv = float(score)
+                                if sv >= 30: badge = f"<span style='color: #00FF00; background: #002200; padding: 2px 6px; border: 1px solid #00FF00;'>🟢 BULLISH (+{sv:.0f})</span>"
+                                elif sv <= -30: badge = f"<span style='color: #FF3B30; background: #220000; padding: 2px 6px; border: 1px solid #FF3B30;'>🔴 BEARISH ({sv:.0f})</span>"
+                            except: pass
+                        
+                        title_link = f"<a href='{url}' target='_blank' style='color:{_CYAN}; text-decoration:none;'>{title}</a>" if url else title
+                        html_feed += f"<div style='background:rgba(255,255,255,0.03); padding:8px 12px; border-radius:6px; border-left:3px solid {_PANEL};'>"
+                        html_feed += f"<span style='color:{_MUTED}; font-size:12px; margin-right:10px;'>{dp}</span>"
+                        html_feed += f"<b style='color:#ccc; margin-right:8px;'>[{prov}]</b>"
+                        html_feed += f"{title_link} <span style='margin-left:8px;'>{badge}</span>"
+                        html_feed += "</div>"
+                    html_feed += "</div>"
+                    if valid_news_count > 0:
+                        st.markdown(html_feed, unsafe_allow_html=True)
                     else:
-                        st.caption("Aucune feature n'a eu d'impact significatif.")
-        except Exception as exc:
-            st.caption(f"Inférence ML indisponible: {exc}")
-
-        if True:
-            st.markdown("### Voir toutes les données brutes (Data Lake)")
-            st.caption("Transparence totale sur les entrées consommées par l'analyste quant.")
-
-            st.markdown("**Prix / OHLCV (DuckDB, ~260 jours)**")
-            if hist_dl is None or hist_dl.empty:
-                st.caption("Aucune série OHLCV locale disponible.")
-            else:
-                st.dataframe(hist_dl.tail(120), use_container_width=True, hide_index=True)
-
-            st.markdown("**Indicateurs instantanés**")
-            st.dataframe(pd.DataFrame([ind or {}]), use_container_width=True, hide_index=True)
-
-            st.markdown("**Fondamentaux (Finnhub/yfinance/cache)**")
-            st.dataframe(pd.DataFrame([fmeta or {}]), use_container_width=True, hide_index=True)
-
-            st.markdown("**Comité Multi-Modèles**")
-            if model_breakdown:
-                st.dataframe(
-                    pd.DataFrame(
-                        [{"Model": k, "Score": v} for k, v in model_breakdown.items()]
-                    ),
-                    use_container_width=True,
-                    hide_index=True,
+                        st.info("Aucune actualité pertinente (filtre anti-spam actif).")
+                else:
+                    st.info("Aucune actualité correspondant aux filtres.")
+            except Exception as e:
+                st.error(f"Erreur de lecture: {e}")
+    
+            if st.button("Lancer un Red Teaming IA (Bull vs Bear vs Devil's Advocate)", key=f"red_team_{selected}"):
+                context_blob = (
+                    f"Ticker: {selected}\n"
+                    f"Name: {dossier.get('name')}\n"
+                    f"Sector: {dossier.get('sector')}\n"
+                    f"Summary: {dossier.get('summary')}\n"
+                    f"Catalysts: {', '.join(dossier.get('catalysts') or [])}\n"
+                    f"Risks: {', '.join(dossier.get('risk_events') or [])}\n"
                 )
-            else:
-                st.caption("Breakdown multi-modèles indisponible.")
-            if model_context:
-                st.markdown("**Détail du modèle Context**")
-                st.dataframe(
-                    pd.DataFrame(
-                        [{"Context_Factor": k, "Score": v} for k, v in model_context.items()]
-                    ),
-                    use_container_width=True,
-                    hide_index=True,
-                )
-
-        # Technical analysis explanation (full width)
-        st.markdown(
-            f"<div class='eli5'><b style='color:{_AMBER};'>"
-            f"Analyse technique expliquee — {format_name(selected)}</b><br>"
-            f"{build_ta_explanation(ind, alpha)}</div>",
-            unsafe_allow_html=True,
-        )
-
-        # What-if simulator (Command Center) — radar lives below Phase 18 valuation
-        st.markdown("#### 🧪 Simulateur (What-If)")
-        st.markdown(
-            "<div class='info-text'>Impact théorique d'un achat de "
-            "<b>1000 €</b> avant qu'un signal ne soit généré — cash, "
-            "poids sectoriel, corrélation max vs positions.</div>",
-            unsafe_allow_html=True,
-        )
-        if st.button(
-            "Simuler un achat de 1000€",
-            key=f"whatif_1000_{selected}",
-            type="primary",
-        ):
-            sim = simulate_buy_what_if(portfolio, selected, 1000.0)
-            if not sim.get("affordable"):
-                st.warning(
-                    f"Pas assez de cash ou cours trop élevé "
-                    f"(cash {sim['cash_before']:,.0f} € · "
-                    f"cours {sim['price']:,.2f} €)."
-                )
-            else:
-                corr_txt = (
-                    f"{sim['max_corr']:+.2f}"
-                    if sim.get("max_corr") is not None else "n/a"
-                )
+                with st.spinner("Red Teaming multi-agent en cours..."):
+                    try:
+                        from red_team_agent import run_bull_bear_debate
+    
+                        debate = asyncio.run(run_bull_bear_debate(selected, context_blob))
+                    except Exception as exc:  # noqa: BLE001
+                        debate = {
+                            "bull": "Indisponible",
+                            "bear": f"Indisponible ({exc})",
+                            "devil_advocate": "Indisponible",
+                            "judge": "Indisponible",
+                        }
+                st.info(f"🐂 **Bull Agent**\n\n{debate.get('bull') or 'n/a'}")
+                st.warning(f"🐻 **Bear Agent**\n\n{debate.get('bear') or 'n/a'}")
+                st.markdown(f"😈 **Devil's Advocate PEA**\n\n{debate.get('devil_advocate') or 'n/a'}")
+                st.error(f"⚖️ **Judge Agent**\n\n{debate.get('judge') or 'n/a'}")
+    
+        with sub_fin:
+            ind = get_indicators(selected)
+            alpha = get_alpha_signals(selected)
+            bprofile = get_bourso_profile(selected)
+    
+            # Profile + indicators as full metric boxes (no truncation)
+            mrow1 = st.columns(4)
+            with mrow1[0]:
+                if ind:
+                    st.markdown(metric_box(
+                        "Cours", f"{ind['close']:.2f} €",
+                        sub=f"{ind['chg_1d']:+.2f}% (1j) · {ind['chg_5d']:+.2f}% (5j)",
+                        help_text="Dernier cours et variations recentes.",
+                    ), unsafe_allow_html=True)
+                else:
+                    st.markdown(metric_box("Cours", "n/a", sub="Donnees manquantes",
+                                           accent="muted"), unsafe_allow_html=True)
+            with mrow1[1]:
+                rsi = (ind or {}).get("rsi")
+                rsi_state = ("Survendu" if rsi is not None and rsi < 30 else
+                             "Surachete" if rsi is not None and rsi > 70 else "Neutre")
+                st.markdown(metric_box(
+                    "RSI(14)", f"{rsi:.1f}" if rsi is not None else "n/a",
+                    sub=rsi_state,
+                    accent="cyan" if rsi is not None and rsi < 30 else (
+                        "red" if rsi is not None and rsi > 70 else ""),
+                    help_text="<30 survendu · >70 surachete.",
+                ), unsafe_allow_html=True)
+            with mrow1[2]:
+                trend_ok = bool(ind and ind.get("sma200") and ind["close"] > ind["sma200"])
+                st.markdown(metric_box(
+                    "Tendance LT (vs SMA200)",
+                    "Haussier" if trend_ok else ("Baissier" if ind else "n/a"),
+                    sub=(f"SMA200 {(ind or {}).get('sma200', 0):.2f}" if ind and ind.get("sma200")
+                         else "—"),
+                    accent="" if trend_ok else "red",
+                    help_text="Prix au-dessus / en-dessous de la moyenne 200 jours.",
+                ), unsafe_allow_html=True)
+            with mrow1[3]:
+                vol = (ind or {}).get("vol_ann")
+                st.markdown(metric_box(
+                    "Vol. annualisee",
+                    f"{vol:.0f}%" if vol is not None else "n/a",
+                    sub="Sizing inverse-vol",
+                    accent="amber" if vol and vol > 35 else "",
+                    help_text="Plus c'est eleve, plus la taille de position est reduite.",
+                ), unsafe_allow_html=True)
+    
+            mrow2 = st.columns(4)
+            with mrow2[0]:
+                elig = ", ".join((bprofile or {}).get("eligibility") or []) or "n/a"
+                st.markdown(metric_box("Eligibilite PEA/SRD", elig, sub="Boursorama",
+                                       accent="cyan"), unsafe_allow_html=True)
+            with mrow2[1]:
+                cons = (bprofile or {}).get("consensus_score")
+                st.markdown(metric_box(
+                    "Consensus analystes",
+                    f"{cons:.2f}" if cons is not None else "n/a",
+                    sub=(bprofile or {}).get("sentiment") or "—",
+                ), unsafe_allow_html=True)
+            with mrow2[2]:
+                tgt = (bprofile or {}).get("target_price")
+                pot = (bprofile or {}).get("potential_pct")
+                st.markdown(metric_box(
+                    "Objectif 3 mois",
+                    f"{tgt:.2f} €" if tgt is not None else "n/a",
+                    sub=f"{pot:+.1f}%" if pot is not None else "—",
+                ), unsafe_allow_html=True)
+            with mrow2[3]:
+                isin = (bprofile or {}).get("isin") or "n/a"
+                st.markdown(metric_box(
+                    "ISIN", isin,
+                    sub=f"{(bprofile or {}).get('index') or '—'} / "
+                        f"{(bprofile or {}).get('exchange') or '—'}",
+                ), unsafe_allow_html=True)
+    
+            # Phase 35: Multi-factor fundamentals (Finnhub -> cache -> yfinance fallback).
+            fmeta = (dossier or {}).get("fundamentals") or get_fundamental_metrics(selected)
+            src = str((fmeta or {}).get("source") or "none")
+            pe = (fmeta or {}).get("pe_ratio")
+            pb = (fmeta or {}).get("pb_ratio")
+            roe = (fmeta or {}).get("roe")
+            deq = (fmeta or {}).get("debt_to_equity")
+            mrow3 = st.columns(4)
+            with mrow3[0]:
                 st.markdown(
-                    f"<div class='metric-box cyan'>"
-                    f"<div class='metric-title'>WHAT-IF 1000 €</div>"
-                    f"<div class='metric-value'>{sim['qty']} × "
-                    f"{sim['price']:,.2f} € = {sim['cost']:,.0f} €</div>"
-                    f"<div class='metric-sub sub-muted'>"
-                    f"Cash {sim['cash_before']:,.0f} → "
-                    f"<b style='color:{_AMBER};'>{sim['cash_after']:,.0f} €</b>"
-                    f"<br>Secteur {sim['sector']}: "
-                    f"{sim['sector_pct_before']:.1f}% → "
-                    f"<b>{sim['sector_pct_after']:.1f}%</b>"
-                    f"<br>Corr. max vs book: {corr_txt}"
-                    f"</div></div>",
+                    metric_box(
+                        "P/E (TTM)",
+                        f"{float(pe):.2f}" if pe is not None else "n/a",
+                        sub=f"Source: {src}",
+                        accent="cyan" if pe is not None and float(pe) > 0 and float(pe) < 20 else "",
+                        help_text="Valorisation bénéfices (plus bas peut être plus attractif).",
+                    ),
                     unsafe_allow_html=True,
                 )
-
-    with sub_overview:
-        full_hist_mode = st.checkbox("🔓 Charger l'historique complet (10 ans)", key=f"full_hist_{selected}")
-        
-        # Load data from DuckDB for candlestick
-        df_hist = db_ro.get_historical_prices(selected, days=3650 if full_hist_mode else 750)
-        if df_hist is not None and not df_hist.empty:
-            if not full_hist_mode:
-                df_hist = df_hist.tail(500)
-            
-            fig_candle = go.Figure(data=[go.Candlestick(
-                x=df_hist.index,
-                open=df_hist['Open'], high=df_hist['High'],
-                low=df_hist['Low'], close=df_hist['Close'],
-                increasing_line_color=_NEON, decreasing_line_color=_RED
-            )])
-            fig_candle.update_layout(
-                title=f"Historique OHLCV — {selected}",
-                template="plotly_dark", plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
-                height=600, margin=dict(l=20, r=20, t=40, b=20), xaxis_rangeslider_visible=False
+            with mrow3[1]:
+                st.markdown(
+                    metric_box(
+                        "P/B",
+                        f"{float(pb):.2f}" if pb is not None else "n/a",
+                        sub="Value factor",
+                        accent="cyan" if pb is not None and float(pb) < 2.0 else "",
+                        help_text="Valorisation fonds propres (bonus si <2).",
+                    ),
+                    unsafe_allow_html=True,
+                )
+            with mrow3[2]:
+                st.markdown(
+                    metric_box(
+                        "ROE",
+                        f"{float(roe)*100:.1f}%" if roe is not None and float(roe) <= 1.5 else (
+                            f"{float(roe):.1f}%" if roe is not None else "n/a"
+                        ),
+                        sub="Quality factor",
+                        accent="green" if roe is not None and float(roe) >= 0.15 else "",
+                        help_text="Rentabilité des capitaux propres (qualité).",
+                    ),
+                    unsafe_allow_html=True,
+                )
+            with mrow3[3]:
+                st.markdown(
+                    metric_box(
+                        "Debt / Equity",
+                        f"{float(deq):.2f}" if deq is not None else "n/a",
+                        sub="Risque de levier",
+                        accent="red" if deq is not None and float(deq) > 2.0 else "",
+                        help_text="Levier bilan (malus >2.0 dans le modèle multi-factor).",
+                    ),
+                    unsafe_allow_html=True,
+                )
+    
+            st.markdown("#### 📋 Ticket d'Ordre PEA (Prêt à l'Exécution)")
+            live_price = float((ind or {}).get("close") or 0.0)
+            qty_default = max(1, int(float(portfolio.cash_available or 0.0) // live_price)) if live_price > 0 else 1
+            qty_ticket = st.number_input(
+                "Quantité à préparer",
+                min_value=1,
+                value=int(qty_default),
+                step=1,
+                key=f"mkt_order_qty_{selected}",
             )
-            st.plotly_chart(fig_candle, use_container_width=True)
-        else:
-            st.warning("Données OHLCV indisponibles pour le graphique.")
+            ticket = build_broker_order_ticket(
+                selected,
+                int(qty_ticket),
+                live_price,
+                isin=(bprofile or {}).get("isin"),
+            )
+            st.markdown(
+                f"<div style='background:#0A0A0A;padding:14px 16px;margin-bottom:10px;"
+                f"border:1px solid #2A2A2A;border-left:4px solid {_CYAN};"
+                f"font-family:Courier New,monospace;'>"
+                f"<div style='color:{_CYAN};font-size:11px;letter-spacing:1.5px;'>ORDER TICKET</div>"
+                f"<div style='margin-top:8px;line-height:1.6;'>"
+                f"<b>ISIN</b>: {ticket['isin']}<br>"
+                f"<b>Type d'ordre</b>: {ticket['order_type']}<br>"
+                f"<b>Quantité</b>: {ticket['qty']}<br>"
+                f"<b>Limite suggérée</b>: {ticket['limit_price']:,.2f} €<br>"
+                f"<b>Notional estimé</b>: {ticket['notional']:,.2f} €<br>"
+                f"<b>Frais PEA max (0.5%)</b>: {ticket['estimated_fee_max']:,.2f} €"
+                f"</div></div>",
+                unsafe_allow_html=True,
+            )
+            st.markdown(f"[↗️ Ouvrir sur Boursorama]({ticket['bourso_url']})")
+    
+            st.markdown("#### ✅ Checklist de Décision")
+            checklist = get_decision_checklist(selected, portfolio, float(vix))
+            chk_df = pd.DataFrame(checklist["checks"])
+            st.dataframe(chk_df, use_container_width=True, hide_index=True)
+            st.caption(f"Statut global: {checklist['overall']} · score proxy {checklist['score_hint']:.0f}/100")
+    
+            st.markdown("#### 🧠 Bureau de l'Analyste & Data Lake")
+            note_db = get_portfolio_db()
+            try:
+                note_db.init_db()
+                current_note = note_db.get_ticker_note(selected)
+            except Exception:  # noqa: BLE001
+                current_note = ""
+            note_value = st.text_area(
+                f"Note analyste personnelle — {format_name(selected)}",
+                value=current_note,
+                height=120,
+                key=f"analyst_note_{selected}",
+                help="Commentaires qualitatifs manuels (thèse, trigger, risques, plan d'exécution).",
+            )
+            if st.button("Sauvegarder la note", key=f"save_note_{selected}", type="secondary"):
+                try:
+                    note_db.save_ticker_note(selected, note_value)
+                    st.success("Note sauvegardée dans SQLite.")
+                except Exception as exc:  # noqa: BLE001
+                    st.error(f"Sauvegarde impossible: {exc}")
+    
+            # Multi-model raw pack for full transparency.
+            model_breakdown = {}
+            model_context = {}
+            hist_dl = pd.DataFrame()
+            try:
+                from duckdb_manager import TimeSeriesDB
+                from technical_scorer import SignalGenerator
+    
+                db_ro = get_ts_db()
+                hist_dl = db_ro.get_historical_prices(selected, days=260)
+                if hist_dl is not None and not hist_dl.empty:
+                    conv_dl = SignalGenerator().evaluate(selected, hist_dl)
+                    model_breakdown = conv_dl.get("model_scores") or {}
+                    model_context = conv_dl.get("context_breakdown") or {}
+            except Exception:  # noqa: BLE001
+                model_breakdown = {}
+                model_context = {}
+    
+            # Phase 53+: SHAP XAI Inference for single ticker
+            try:
+                from ml_trainer import predict_probability_with_shap
+                from ml_feature_store import build_ml_feature_row
             
-        _tv_resolved = _tv_symbol(selected)
-
-        # TA widget + SMAs under chart
-        tw1, tw2 = st.columns([1, 1])
-        with tw1:
-            ta_html = f"""
-            <div class="tradingview-widget-container">
-              <div class="tradingview-widget-container__widget"></div>
-              <script type="text/javascript"
-                src="https://s3.tradingview.com/external-embedding/embed-widget-technical-analysis.js" async>
-              {{"interval":"1D","width":"100%","isTransparent":true,"height":380,
-                "symbol":"{_tv_resolved}","showIntervalTabs":true,"locale":"fr","colorTheme":"dark"}}
-              </script>
-            </div>
-            """
-            components.html(ta_html, height=400, key=f"ta_{selected}")
-        with tw2:
+                if hist_dl is not None and not hist_dl.empty:
+                    # We don't have CW8 and EXOG ready here instantly without DB calls, but we can try to fetch them or pass None
+                    cw8_df = db_ro.get_historical_prices("CW8.PA", days=260)
+                    cw8_close = cw8_df["Close"].astype(float) if cw8_df is not None and not cw8_df.empty else None
+                
+                    exog_dfs = {}
+                    for sym in ["^GSPC", "^IXIC", "EURUSD=X", "OAT.PA"]:
+                        try:
+                            df_ex = db_ro.get_historical_prices(sym, days=260)
+                            if df_ex is not None and not df_ex.empty:
+                                exog_dfs[sym] = df_ex["Close"].astype(float)
+                        except Exception:
+                            pass
+                
+                    feat_dict = build_ml_feature_row(
+                        selected, 
+                        close=hist_dl["Close"].astype(float), 
+                        cw8_close=cw8_close, 
+                        exog_closes=exog_dfs, 
+                        reason="ui_inference", 
+                        pdb=note_db, 
+                        asof_idx=-1
+                    )
+                    proba, shap_vals = predict_probability_with_shap(feat_dict)
+                
+                    if proba is not None and shap_vals is not None:
+                        st.markdown("### 🤖 Meta-Labeling & Explainable AI (SHAP)")
+                    
+                        status_color = _NEON if proba >= 0.50 else _RED
+                        status_text = "VALIDÉ" if proba >= 0.50 else "REJETÉ"
+                    
+                        st.markdown(f"<div style='font-size:20px'>Probabilité Alpha: <strong style='color:{status_color}'>{proba*100:.1f}%</strong> ({status_text})</div>", unsafe_allow_html=True)
+                    
+                        # Waterfall or bar chart of top positive and negative
+                        import plotly.graph_objects as go
+                    
+                        # Sort all non-zero
+                        sorted_shaps = sorted([(k, v) for k, v in shap_vals.items() if abs(v) > 0.001], key=lambda x: x[1])
+                    
+                        if sorted_shaps:
+                            y_labels = [x[0] for x in sorted_shaps]
+                            x_vals = [x[1] for x in sorted_shaps]
+                            colors = [_NEON if x > 0 else _RED for x in x_vals]
+                        
+                            fig = go.Figure(go.Bar(
+                                x=x_vals, y=y_labels, orientation='h',
+                                marker_color=colors
+                            ))
+                            fig.update_layout(
+                                title="Décomposition de la décision (SHAP Values)",
+                                xaxis_title="Impact sur la probabilité d'Alpha",
+                                yaxis_title="Feature",
+                                template="plotly_dark",
+                                plot_bgcolor="rgba(0,0,0,0)",
+                                paper_bgcolor="rgba(0,0,0,0)",
+                                margin=dict(l=20, r=20, t=40, b=20),
+                                height=400
+                            )
+                            st.plotly_chart(fig, use_container_width=True)
+                        else:
+                            st.caption("Aucune feature n'a eu d'impact significatif.")
+            except Exception as exc:
+                st.caption(f"Inférence ML indisponible: {exc}")
+    
+            if True:
+                st.markdown("### Voir toutes les données brutes (Data Lake)")
+                st.caption("Transparence totale sur les entrées consommées par l'analyste quant.")
+    
+                st.markdown("**Prix / OHLCV (DuckDB, ~260 jours)**")
+                if hist_dl is None or hist_dl.empty:
+                    st.caption("Aucune série OHLCV locale disponible.")
+                else:
+                    st.dataframe(hist_dl.tail(120), use_container_width=True, hide_index=True)
+    
+                st.markdown("**Indicateurs instantanés**")
+                st.dataframe(pd.DataFrame([ind or {}]), use_container_width=True, hide_index=True)
+    
+                st.markdown("**Fondamentaux (Finnhub/yfinance/cache)**")
+                st.dataframe(pd.DataFrame([fmeta or {}]), use_container_width=True, hide_index=True)
+    
+                st.markdown("**Comité Multi-Modèles**")
+                if model_breakdown:
+                    st.dataframe(
+                        pd.DataFrame(
+                            [{"Model": k, "Score": v} for k, v in model_breakdown.items()]
+                        ),
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+                else:
+                    st.caption("Breakdown multi-modèles indisponible.")
+                if model_context:
+                    st.markdown("**Détail du modèle Context**")
+                    st.dataframe(
+                        pd.DataFrame(
+                            [{"Context_Factor": k, "Score": v} for k, v in model_context.items()]
+                        ),
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+    
+            # Technical analysis explanation (full width)
+            st.markdown(
+                f"<div class='eli5'><b style='color:{_AMBER};'>"
+                f"Analyse technique expliquee — {format_name(selected)}</b><br>"
+                f"{build_ta_explanation(ind, alpha)}</div>",
+                unsafe_allow_html=True,
+            )
+    
+            # What-if simulator (Command Center) — radar lives below Phase 18 valuation
+            st.markdown("#### 🧪 Simulateur (What-If)")
+            st.markdown(
+                "<div class='info-text'>Impact théorique d'un achat de "
+                "<b>1000 €</b> avant qu'un signal ne soit généré — cash, "
+                "poids sectoriel, corrélation max vs positions.</div>",
+                unsafe_allow_html=True,
+            )
+            if st.button(
+                "Simuler un achat de 1000€",
+                key=f"whatif_1000_{selected}",
+                type="primary",
+            ):
+                sim = simulate_buy_what_if(portfolio, selected, 1000.0)
+                if not sim.get("affordable"):
+                    st.warning(
+                        f"Pas assez de cash ou cours trop élevé "
+                        f"(cash {sim['cash_before']:,.0f} € · "
+                        f"cours {sim['price']:,.2f} €)."
+                    )
+                else:
+                    corr_txt = (
+                        f"{sim['max_corr']:+.2f}"
+                        if sim.get("max_corr") is not None else "n/a"
+                    )
+                    st.markdown(
+                        f"<div class='metric-box cyan'>"
+                        f"<div class='metric-title'>WHAT-IF 1000 €</div>"
+                        f"<div class='metric-value'>{sim['qty']} × "
+                        f"{sim['price']:,.2f} € = {sim['cost']:,.0f} €</div>"
+                        f"<div class='metric-sub sub-muted'>"
+                        f"Cash {sim['cash_before']:,.0f} → "
+                        f"<b style='color:{_AMBER};'>{sim['cash_after']:,.0f} €</b>"
+                        f"<br>Secteur {sim['sector']}: "
+                        f"{sim['sector_pct_before']:.1f}% → "
+                        f"<b>{sim['sector_pct_after']:.1f}%</b>"
+                        f"<br>Corr. max vs book: {corr_txt}"
+                        f"</div></div>",
+                        unsafe_allow_html=True,
+                    )
+    
+        with sub_overview:
+            full_hist_mode = st.checkbox("🔓 Charger l'historique complet (10 ans)", key=f"full_hist_{selected}")
+            
+            # Load data from DuckDB for candlestick
+            df_hist = db_ro.get_historical_prices(selected, days=3650 if full_hist_mode else 750)
+            if df_hist is not None and not df_hist.empty:
+                if not full_hist_mode:
+                    df_hist = df_hist.tail(500)
+                
+                fig_candle = go.Figure(data=[go.Candlestick(
+                    x=df_hist.index,
+                    open=df_hist['Open'], high=df_hist['High'],
+                    low=df_hist['Low'], close=df_hist['Close'],
+                    increasing_line_color=_NEON, decreasing_line_color=_RED
+                )])
+                fig_candle.update_layout(
+                    title=f"Historique OHLCV — {selected}",
+                    template="plotly_dark", plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    height=600, margin=dict(l=20, r=20, t=40, b=20), xaxis_rangeslider_visible=False
+                )
+                st.plotly_chart(fig_candle, use_container_width=True)
+            else:
+                st.warning("Données OHLCV indisponibles pour le graphique.")
+                
             sma_bits = []
             if ind:
                 for k, lab in (("sma5", "SMA5"), ("sma50", "SMA50"), ("sma200", "SMA200")):
@@ -5417,7 +5436,7 @@ with tab_ticker:
             )
             st.markdown(
                 f"<div style='background:#0A0A0A;padding:16px;border:1px solid #222;"
-                f"min-height:360px;line-height:1.7;color:#E0E0E0;'>"
+                f"min-height:150px;line-height:1.7;color:#E0E0E0;margin-top:20px;'>"
                 f"<div style='color:{_CYAN};font-size:12px;letter-spacing:1px;'>"
                 f"RECAP QUANT</div>"
                 f"<div style='margin-top:10px;'>{' · '.join(sma_bits) or 'SMA n/a'}</div>"
@@ -5426,324 +5445,325 @@ with tab_ticker:
                 f"<span style='color:{_MUTED};font-size:12px;'>"
                 f"(souvent neutre sur small/mid .PA — chaine options rare)</span></div>"
                 f"<div style='margin-top:12px;'><b>Insiders</b> : {ins_txt}</div>"
-                f"<div style='margin-top:12px;color:{_MUTED};font-size:13px;'>"
-                f"TradingView: <code>{_tv_resolved}</code></div>"
                 f"</div>",
                 unsafe_allow_html=True,
             )
-
-        # --- Phase 18: Valuation / buy zone + 10y annual returns ----------------
-        st.markdown("---")
-        st.markdown("#### 🎯 Valorisation & Recommandation de Prix")
-        st.markdown(
-            "<div class='info-text'>Multiples et objectifs analystes via yfinance "
-            "(souvent plus riches sur large caps). La <b>zone d'achat suggérée</b> "
-            "est une bande heuristique (52w low → milieu vers target low) — "
-            "contexte pour ton jugement PEA, pas un ordre automatique.</div>",
-            unsafe_allow_html=True,
-        )
-        val = get_valuation_metrics(selected)
-        if not val.get("ok"):
-            st.caption(
-                "Valorisation indisponible pour ce ticker "
-                "(réseau, delisting, ou champs Yahoo vides)."
-            )
-        else:
-            cur = val.get("current_price")
-            # Prefer live indicator close when Yahoo info price is missing.
-            if cur is None and ind and ind.get("close"):
-                cur = float(ind["close"])
-            tmean = val.get("target_mean")
-            upside = None
-            if cur and tmean and cur > 0:
-                upside = (tmean / cur - 1.0) * 100.0
-
-            v1, v2, v3, v4 = st.columns(4)
-            with v1:
-                st.markdown(metric_box(
-                    "Cours actuel",
-                    f"{cur:,.2f} €" if cur is not None else "n/a",
-                    sub=(f"vs target mean {upside:+.1f}%" if upside is not None
-                         else "prix Yahoo / indicateur"),
-                    accent="" if (upside is None or upside >= 0) else "red",
-                    sub_cls=("sub-green" if upside is not None and upside >= 0
-                             else "sub-red" if upside is not None else "sub-muted"),
-                    help_text="Dernier cours connu (Yahoo info ou close indicateur).",
-                ), unsafe_allow_html=True)
-            with v2:
-                st.markdown(metric_box(
-                    "Target mean analystes",
-                    f"{tmean:,.2f} €" if tmean is not None else "n/a",
-                    sub=(f"Target low {val['target_low']:,.2f} €"
-                         if val.get("target_low") is not None else "consensus Yahoo"),
-                    accent="cyan",
-                    help_text="Objectif moyen des analystes (Yahoo Finance).",
-                ), unsafe_allow_html=True)
-            with v3:
-                pe = val.get("trailing_pe")
-                st.markdown(metric_box(
-                    "P/E trailing",
-                    f"{pe:.1f}×" if pe is not None else "n/a",
-                    sub="multiple de bénéfices",
-                    help_text="Price / trailing EPS. Vide sur ETF ou pertes.",
-                ), unsafe_allow_html=True)
-            with v4:
-                pb = val.get("price_to_book")
-                st.markdown(metric_box(
-                    "Price / Book",
-                    f"{pb:.2f}×" if pb is not None else "n/a",
-                    sub="valeur comptable",
-                    help_text="Cours / book value par action.",
-                ), unsafe_allow_html=True)
-
-            r1m = val.get("return_1m_pct")
-            r1y = val.get("return_1y_pct")
-            p1, p2 = st.columns(2)
-            with p1:
-                st.markdown(metric_box(
-                    "Perf. 1 mois",
-                    f"{r1m:+.1f}%" if r1m is not None else "n/a",
-                    sub="~21 séances",
-                    accent="" if r1m is None or r1m >= 0 else "red",
-                    sub_cls=("sub-green" if r1m is not None and r1m >= 0
-                             else "sub-red" if r1m is not None else "sub-muted"),
-                    help_text="Variation du close sur ~1 mois de séances.",
-                ), unsafe_allow_html=True)
-            with p2:
-                st.markdown(metric_box(
-                    "Perf. 1 an",
-                    f"{r1y:+.1f}%" if r1y is not None else "n/a",
-                    sub="trailing 12 mois",
-                    accent="" if r1y is None or r1y >= 0 else "red",
-                    sub_cls=("sub-green" if r1y is not None and r1y >= 0
-                             else "sub-red" if r1y is not None else "sub-muted"),
-                    help_text="Close actuel vs close il y a ~1 an.",
-                ), unsafe_allow_html=True)
-
-            bz_lo = val.get("buy_zone_low")
-            bz_hi = val.get("buy_zone_high")
-            w52_lo = val.get("fifty_two_week_low")
-            w52_hi = val.get("fifty_two_week_high")
-            in_zone = (
-                cur is not None and bz_lo is not None and bz_hi is not None
-                and bz_lo <= cur <= bz_hi
-            )
-            zone_color = _NEON if in_zone else _AMBER
-            zone_label = (
-                f"{bz_lo:,.2f} € → {bz_hi:,.2f} €"
-                if bz_lo is not None and bz_hi is not None
-                else "n/a (données manquantes)"
-            )
-            status = (
-                "DANS LA ZONE — setup prix intéressant à croiser avec le MRE"
-                if in_zone else
-                "HORS ZONE — attendre un meilleur point d'entrée ou ignorer"
-                if bz_hi is not None and cur is not None else
-                "Zone non calculable"
-            )
+    
+            # --- Phase 18: Valuation / buy zone + 10y annual returns ----------------
+            st.markdown("---")
+            st.markdown("#### 🎯 Valorisation & Recommandation de Prix")
             st.markdown(
-                f"<div style='background:#0A0A0A;padding:14px 16px;margin-top:8px;"
-                f"border:1px solid #2A2A2A;border-left:4px solid {zone_color};"
-                f"font-family:Courier New,monospace;'>"
-                f"<div style='color:{_CYAN};font-size:11px;letter-spacing:1.5px;'>"
-                f"ZONE D'ACHAT SUGGÉRÉE</div>"
-                f"<div style='color:{_WHITE};font-size:20px;font-weight:700;"
-                f"margin-top:6px;'>{zone_label}</div>"
-                f"<div style='color:{zone_color};margin-top:8px;font-size:13px;'>"
-                f"{status}</div>"
-                f"<div style='color:{_MUTED};margin-top:8px;font-size:12px;'>"
-                f"52w low "
-                f"{f'{w52_lo:,.2f} €' if w52_lo is not None else 'n/a'} · "
-                f"52w high "
-                f"{f'{w52_hi:,.2f} €' if w52_hi is not None else 'n/a'} · "
-                f"règle = milieu(52w low, target low) comme plafond de zone"
-                f"</div></div>",
+                "<div class='info-text'>Multiples et objectifs analystes via yfinance "
+                "(souvent plus riches sur large caps). La <b>zone d'achat suggérée</b> "
+                "est une bande heuristique (52w low → milieu vers target low) — "
+                "contexte pour ton jugement PEA, pas un ordre automatique.</div>",
                 unsafe_allow_html=True,
             )
-
-        st.markdown("#### 📊 Performances Annuelles (10 dernières années)")
-        ann = get_annual_returns(selected)
-        if ann is None or ann.empty:
-            st.caption(
-                "Historique annuel indisponible (ticker trop récent, delisté, "
-                "ou erreur réseau Yahoo)."
-            )
-        else:
-            st.plotly_chart(
-                render_annual_returns_chart(ann, selected),
-                width="stretch",
-                key=f"explore_annual_returns_{selected}",
-            )
-            pos_yrs = int((ann["Return_Pct"] >= 0).sum())
-            st.caption(
-                f"{len(ann)} année(s) · {pos_yrs} positive(s) · "
-                f"moyenne {ann['Return_Pct'].mean():+.1f}% / an (arithmétique)."
-            )
-
-        # --- Phase 20 UI: Multi-strategy fingerprint radar (below Phase 18) ----
-        st.markdown("---")
-        st.markdown("#### 🕸️ Empreinte Multi-Stratégies (Radar)")
-        st.markdown(
-            "<div class='info-text'>Quatre axes normalisés <b>0–100</b> : "
-            "Mean Reversion (RSI), Momentum (Close vs SMA5/50/200), "
-            "Quality/Value (P/E / EPS), Insider Confidence. "
-            "Lecture visuelle Bloomberg — pas un ordre automatique.</div>",
-            unsafe_allow_html=True,
-        )
-        with st.spinner("Calcul empreinte…"):
-            fingerprint = get_strategy_fingerprint(selected)
-        if fingerprint and any(float(v) > 0 for v in fingerprint.values()):
-            st.plotly_chart(
-                render_strategy_radar(fingerprint, selected),
-                width="stretch",
-                key=f"explore_strategy_radar_{selected}",
-            )
-            mcols = st.columns(4)
-            for i, (axis, score) in enumerate(fingerprint.items()):
-                with mcols[i]:
-                    st.markdown(
-                        metric_box(
-                            axis,
-                            f"{float(score):.0f}",
-                            sub="/ 100",
-                            accent="cyan" if float(score) >= 60 else (
-                                "amber" if float(score) >= 35 else "muted"
-                            ),
-                        ),
-                        unsafe_allow_html=True,
-                    )
-        else:
-            st.caption("Empreinte indisponible (indicateurs / valorisation manquants).")
-
-        if True:
-            st.markdown("### Comprendre l'Empreinte (Abréviations)")
-            st.markdown(
-                "- **MR** — Mean Reversion : mesure la sous-évaluation statistique via le RSI et la distance au prix moyen.\n"
-                "- **Mom** — Momentum : force de la tendance (Close > SMA5 > SMA50 > SMA200).\n"
-                "- **Q/V** — Quality / Value : fondamentaux (P/E, P/B, ROE, Debt/Equity via Finnhub/yfinance).\n"
-                "- **Ins** — Insider Confidence : achats récents de dirigeants (AMF/FMP).\n\n"
-                "Le score total (0–100) est la moyenne pondérée : MR 35% + Mom 25% + Q/V 20% + Ins 20%. "
-                "Un signal BUY n'est émis que si le score dépasse **65**."
-            )
-
-        # --- AMF / Insider deep module ------------------------------------------
-        st.markdown("---")
-        st.markdown("#### 🕵️ Activité des dirigeants (insiders) — module AMF")
-        st.markdown(
-            "<div class='info-text'><b>Cascade stricte : AMF BDIF → FMP → Yahoo</b>. "
-            "Synthèse nette achats/ventes (12 mois approximatifs selon la source). "
-            "Signal de confiance interne — <b>pas un ordre automatique</b>.</div>",
-            unsafe_allow_html=True,
-        )
-        insider_df = get_insider_data(selected)
-        if insider_df.empty:
-            st.warning(
-                f"Aucune transaction insider pour {format_name(selected)}. "
-                "AMF/FMP/Yahoo n'ont rien renvoyé (couverture variable sur .PA)."
-            )
-            st.markdown(
-                "[🔍 Rechercher sur le BDIF Officiel AMF](https://bdif.amf-france.org/)"
-            )
-        else:
-            summary = summarize_insider_activity(insider_df)
-            accent = {
-                "green": _NEON,
-                "red": _RED,
-                "amber": _AMBER,
-                "muted": _MUTED,
-            }.get(summary.get("tone") or "muted", _MUTED)
-            st.markdown(
-                f"<div style='background:#0A0A0A;padding:14px 16px;margin-bottom:10px;"
-                f"border:1px solid #2A2A2A;border-left:4px solid {accent};"
-                f"font-family:Courier New,monospace;'>"
-                f"<div style='color:{_CYAN};font-size:11px;letter-spacing:1.5px;'>"
-                f"AMF / INSIDERS · {(summary.get('source') or 'multi-source')}</div>"
-                f"<div style='color:{_WHITE};font-size:15px;margin-top:8px;"
-                f"line-height:1.45;'>{summary.get('signal')}</div>"
-                f"<div style='color:{_MUTED};font-size:12px;margin-top:8px;'>"
-                f"Net actions : {summary.get('net_shares', 0):+,.0f} · "
-                f"Net valeur : {summary.get('net_value', 0):+,.0f} € · "
-                f"Achats {summary.get('n_buys', 0)} / Ventes {summary.get('n_sells', 0)}"
-                f"</div></div>",
-                unsafe_allow_html=True,
-            )
-            st.markdown(
-                "[🔍 Rechercher sur le BDIF Officiel AMF](https://bdif.amf-france.org/)"
-            )
-            disp_cols = {}
-            for src, dst in (("Insider", "Insider"), ("Position", "Poste"),
-                             ("Transaction", "Transaction"), ("Title", "Titre"),
-                             ("Shares", "Actions"), ("Value", "Valeur"),
-                             ("Date", "Date"), ("Source", "Source")):
-                if src not in insider_df.columns:
-                    continue
-                if src in ("Shares", "Value"):
-                    disp_cols[dst] = [
-                        f"{v:,.0f}" if pd.notna(v) else "—" for v in insider_df[src]
-                    ]
-                elif src == "Title":
-                    disp_cols[dst] = [
-                        str(v)[:80] if pd.notna(v) else "—" for v in insider_df[src]
-                    ]
-                elif src == "Date":
-                    disp_cols[dst] = [
-                        str(v)[:10] if pd.notna(v) else "—" for v in insider_df[src]
-                    ]
-                else:
-                    disp_cols[dst] = insider_df[src].astype(str)
-            disp = pd.DataFrame(disp_cols)
-            font_map = None
-            if "Transaction" in disp.columns:
-                colors = []
-                for t in disp["Transaction"]:
-                    tl = str(t).lower()
-                    if "buy" in tl or "purchase" in tl or "achat" in tl:
-                        colors.append(_NEON)
-                    elif "sale" in tl or "sell" in tl or "vente" in tl:
-                        colors.append(_RED)
-                    else:
-                        colors.append(_WHITE)
-                font_map = {"Transaction": colors}
-            st.plotly_chart(
-                dark_table(
-                    disp,
-                    height=min(420, 44 + 30 * max(len(disp), 1)),
-                    font_color_map=font_map,
-                ),
-                width="stretch",
-                key=f"explore_insider_table_{selected}",
-            )
-
-        # Polymarket — real section
-        st.markdown("---")
-        st.markdown("#### 🎲 Polymarket — probabilites macro")
-        st.markdown(
-            "<div class='info-text'>Marches de prediction (API Gamma). "
-            "Filtre macro/politique (sports exclus). "
-            "<b>Contexte seulement</b> — jamais un trigger d'ordre.</div>",
-            unsafe_allow_html=True,
-        )
-        poly_events = get_polymarket_macro(limit=10)
-        if not poly_events:
-            st.caption(
-                "Polymarket indisponible (reseau / API). "
-                "Le briefing geopolitique dans General reste la reference."
-            )
-        else:
-            # Clickable markdown table (Plotly tables can't host real links).
-            lines = [
-                "| Marche | P(YES) | Vol 24h | Impact PEA | Lien |",
-                "|---|---:|---:|---|---|",
-            ]
-            for ev in poly_events:
-                yp = ev.get("yes_prob")
-                yp_s = f"**{yp*100:.0f}%**" if yp is not None else "—"
-                title = (ev.get("title") or "").replace("|", "/")
-                lines.append(
-                    f"| {title} | {yp_s} | {ev.get('volume24h', 0):,.0f} | "
-                    f"{ev.get('impact', '—')} | [ouvrir]({ev.get('url')}) |"
+            val = get_valuation_metrics(selected)
+            if not val.get("ok"):
+                st.caption(
+                    "Valorisation indisponible pour ce ticker "
+                    "(réseau, delisting, ou champs Yahoo vides)."
                 )
-            st.markdown("\n".join(lines))
+            else:
+                cur = val.get("current_price")
+                # Prefer live indicator close when Yahoo info price is missing.
+                if cur is None and ind and ind.get("close"):
+                    cur = float(ind["close"])
+                tmean = val.get("target_mean")
+                upside = None
+                if cur and tmean and cur > 0:
+                    upside = (tmean / cur - 1.0) * 100.0
+    
+                v1, v2, v3, v4 = st.columns(4)
+                with v1:
+                    st.markdown(metric_box(
+                        "Cours actuel",
+                        f"{cur:,.2f} €" if cur is not None else "n/a",
+                        sub=(f"vs target mean {upside:+.1f}%" if upside is not None
+                             else "prix Yahoo / indicateur"),
+                        accent="" if (upside is None or upside >= 0) else "red",
+                        sub_cls=("sub-green" if upside is not None and upside >= 0
+                                 else "sub-red" if upside is not None else "sub-muted"),
+                        help_text="Dernier cours connu (Yahoo info ou close indicateur).",
+                    ), unsafe_allow_html=True)
+                with v2:
+                    st.markdown(metric_box(
+                        "Target mean analystes",
+                        f"{tmean:,.2f} €" if tmean is not None else "n/a",
+                        sub=(f"Target low {val['target_low']:,.2f} €"
+                             if val.get("target_low") is not None else "consensus Yahoo"),
+                        accent="cyan",
+                        help_text="Objectif moyen des analystes (Yahoo Finance).",
+                    ), unsafe_allow_html=True)
+                with v3:
+                    pe = val.get("trailing_pe")
+                    st.markdown(metric_box(
+                        "P/E trailing",
+                        f"{pe:.1f}×" if pe is not None else "n/a",
+                        sub="multiple de bénéfices",
+                        help_text="Price / trailing EPS. Vide sur ETF ou pertes.",
+                    ), unsafe_allow_html=True)
+                with v4:
+                    pb = val.get("price_to_book")
+                    st.markdown(metric_box(
+                        "Price / Book",
+                        f"{pb:.2f}×" if pb is not None else "n/a",
+                        sub="valeur comptable",
+                        help_text="Cours / book value par action.",
+                    ), unsafe_allow_html=True)
+    
+                r1m = val.get("return_1m_pct")
+                r1y = val.get("return_1y_pct")
+                p1, p2 = st.columns(2)
+                with p1:
+                    st.markdown(metric_box(
+                        "Perf. 1 mois",
+                        f"{r1m:+.1f}%" if r1m is not None else "n/a",
+                        sub="~21 séances",
+                        accent="" if r1m is None or r1m >= 0 else "red",
+                        sub_cls=("sub-green" if r1m is not None and r1m >= 0
+                                 else "sub-red" if r1m is not None else "sub-muted"),
+                        help_text="Variation du close sur ~1 mois de séances.",
+                    ), unsafe_allow_html=True)
+                with p2:
+                    st.markdown(metric_box(
+                        "Perf. 1 an",
+                        f"{r1y:+.1f}%" if r1y is not None else "n/a",
+                        sub="trailing 12 mois",
+                        accent="" if r1y is None or r1y >= 0 else "red",
+                        sub_cls=("sub-green" if r1y is not None and r1y >= 0
+                                 else "sub-red" if r1y is not None else "sub-muted"),
+                        help_text="Close actuel vs close il y a ~1 an.",
+                    ), unsafe_allow_html=True)
+    
+                bz_lo = val.get("buy_zone_low")
+                bz_hi = val.get("buy_zone_high")
+                w52_lo = val.get("fifty_two_week_low")
+                w52_hi = val.get("fifty_two_week_high")
+                in_zone = (
+                    cur is not None and bz_lo is not None and bz_hi is not None
+                    and bz_lo <= cur <= bz_hi
+                )
+                zone_color = _NEON if in_zone else _AMBER
+                zone_label = (
+                    f"{bz_lo:,.2f} € → {bz_hi:,.2f} €"
+                    if bz_lo is not None and bz_hi is not None
+                    else "n/a (données manquantes)"
+                )
+                status = (
+                    "DANS LA ZONE — setup prix intéressant à croiser avec le MRE"
+                    if in_zone else
+                    "HORS ZONE — attendre un meilleur point d'entrée ou ignorer"
+                    if bz_hi is not None and cur is not None else
+                    "Zone non calculable"
+                )
+                st.markdown(
+                    f"<div style='background:#0A0A0A;padding:14px 16px;margin-top:8px;"
+                    f"border:1px solid #2A2A2A;border-left:4px solid {zone_color};"
+                    f"font-family:Courier New,monospace;'>"
+                    f"<div style='color:{_CYAN};font-size:11px;letter-spacing:1.5px;'>"
+                    f"ZONE D'ACHAT SUGGÉRÉE</div>"
+                    f"<div style='color:{_WHITE};font-size:20px;font-weight:700;"
+                    f"margin-top:6px;'>{zone_label}</div>"
+                    f"<div style='color:{zone_color};margin-top:8px;font-size:13px;'>"
+                    f"{status}</div>"
+                    f"<div style='color:{_MUTED};margin-top:8px;font-size:12px;'>"
+                    f"52w low "
+                    f"{f'{w52_lo:,.2f} €' if w52_lo is not None else 'n/a'} · "
+                    f"52w high "
+                    f"{f'{w52_hi:,.2f} €' if w52_hi is not None else 'n/a'} · "
+                    f"règle = milieu(52w low, target low) comme plafond de zone"
+                    f"</div></div>",
+                    unsafe_allow_html=True,
+                )
+    
+            st.markdown("#### 📊 Performances Annuelles (10 dernières années)")
+            ann = get_annual_returns(selected)
+            if ann is None or ann.empty:
+                st.caption(
+                    "Historique annuel indisponible (ticker trop récent, delisté, "
+                    "ou erreur réseau Yahoo)."
+                )
+            else:
+                st.plotly_chart(
+                    render_annual_returns_chart(ann, selected),
+                    width="stretch",
+                    key=f"explore_annual_returns_{selected}",
+                )
+                pos_yrs = int((ann["Return_Pct"] >= 0).sum())
+                st.caption(
+                    f"{len(ann)} année(s) · {pos_yrs} positive(s) · "
+                    f"moyenne {ann['Return_Pct'].mean():+.1f}% / an (arithmétique)."
+                )
+    
+            # --- Phase 20 UI: Multi-strategy fingerprint radar (below Phase 18) ----
+            st.markdown("---")
+            st.markdown("#### 🕸️ Empreinte Multi-Stratégies (Radar)")
+            st.markdown(
+                "<div class='info-text'>Quatre axes normalisés <b>0–100</b> : "
+                "Mean Reversion (RSI), Momentum (Close vs SMA5/50/200), "
+                "Quality/Value (P/E / EPS), Insider Confidence. "
+                "Lecture visuelle Bloomberg — pas un ordre automatique.</div>",
+                unsafe_allow_html=True,
+            )
+            with st.spinner("Calcul empreinte…"):
+                fingerprint = get_strategy_fingerprint(selected)
+            if fingerprint and any(float(v) > 0 for v in fingerprint.values()):
+                st.plotly_chart(
+                    render_strategy_radar(fingerprint, selected),
+                    width="stretch",
+                    key=f"explore_strategy_radar_{selected}",
+                )
+                mcols = st.columns(4)
+                for i, (axis, score) in enumerate(fingerprint.items()):
+                    with mcols[i]:
+                        st.markdown(
+                            metric_box(
+                                axis,
+                                f"{float(score):.0f}",
+                                sub="/ 100",
+                                accent="cyan" if float(score) >= 60 else (
+                                    "amber" if float(score) >= 35 else "muted"
+                                ),
+                            ),
+                            unsafe_allow_html=True,
+                        )
+            else:
+                st.caption("Empreinte indisponible (indicateurs / valorisation manquants).")
+    
+            if True:
+                st.markdown("### Comprendre l'Empreinte (Abréviations)")
+                st.markdown(
+                    "- **MR** — Mean Reversion : mesure la sous-évaluation statistique via le RSI et la distance au prix moyen.\n"
+                    "- **Mom** — Momentum : force de la tendance (Close > SMA5 > SMA50 > SMA200).\n"
+                    "- **Q/V** — Quality / Value : fondamentaux (P/E, P/B, ROE, Debt/Equity via Finnhub/yfinance).\n"
+                    "- **Ins** — Insider Confidence : achats récents de dirigeants (AMF/FMP).\n\n"
+                    "Le score total (0–100) est la moyenne pondérée : MR 35% + Mom 25% + Q/V 20% + Ins 20%. "
+                    "Un signal BUY n'est émis que si le score dépasse **65**."
+                )
+    
+            # --- AMF / Insider deep module ------------------------------------------
+            st.markdown("---")
+            st.markdown("#### 🕵️ Activité des dirigeants (insiders) — module AMF")
+            st.markdown(
+                "<div class='info-text'><b>Cascade stricte : AMF BDIF → FMP → Yahoo</b>. "
+                "Synthèse nette achats/ventes (12 mois approximatifs selon la source). "
+                "Signal de confiance interne — <b>pas un ordre automatique</b>.</div>",
+                unsafe_allow_html=True,
+            )
+            insider_df = get_insider_data(selected)
+            if insider_df.empty:
+                st.warning(
+                    f"Aucune transaction insider pour {format_name(selected)}. "
+                    "AMF/FMP/Yahoo n'ont rien renvoyé (couverture variable sur .PA)."
+                )
+                st.markdown(
+                    "[🔍 Rechercher sur le BDIF Officiel AMF](https://bdif.amf-france.org/)"
+                )
+            else:
+                summary = summarize_insider_activity(insider_df)
+                accent = {
+                    "green": _NEON,
+                    "red": _RED,
+                    "amber": _AMBER,
+                    "muted": _MUTED,
+                }.get(summary.get("tone") or "muted", _MUTED)
+                st.markdown(
+                    f"<div style='background:#0A0A0A;padding:14px 16px;margin-bottom:10px;"
+                    f"border:1px solid #2A2A2A;border-left:4px solid {accent};"
+                    f"font-family:Courier New,monospace;'>"
+                    f"<div style='color:{_CYAN};font-size:11px;letter-spacing:1.5px;'>"
+                    f"AMF / INSIDERS · {(summary.get('source') or 'multi-source')}</div>"
+                    f"<div style='color:{_WHITE};font-size:15px;margin-top:8px;"
+                    f"line-height:1.45;'>{summary.get('signal')}</div>"
+                    f"<div style='color:{_MUTED};font-size:12px;margin-top:8px;'>"
+                    f"Net actions : {summary.get('net_shares', 0):+,.0f} · "
+                    f"Net valeur : {summary.get('net_value', 0):+,.0f} € · "
+                    f"Achats {summary.get('n_buys', 0)} / Ventes {summary.get('n_sells', 0)}"
+                    f"</div></div>",
+                    unsafe_allow_html=True,
+                )
+                st.markdown(
+                    "[🔍 Rechercher sur le BDIF Officiel AMF](https://bdif.amf-france.org/)"
+                )
+                disp_cols = {}
+                for src, dst in (("Insider", "Insider"), ("Position", "Poste"),
+                                 ("Transaction", "Transaction"), ("Title", "Titre"),
+                                 ("Shares", "Actions"), ("Value", "Valeur"),
+                                 ("Date", "Date"), ("Source", "Source")):
+                    if src not in insider_df.columns:
+                        continue
+                    if src in ("Shares", "Value"):
+                        disp_cols[dst] = [
+                            f"{v:,.0f}" if pd.notna(v) else "—" for v in insider_df[src]
+                        ]
+                    elif src == "Title":
+                        disp_cols[dst] = [
+                            str(v)[:80] if pd.notna(v) else "—" for v in insider_df[src]
+                        ]
+                    elif src == "Date":
+                        disp_cols[dst] = [
+                            str(v)[:10] if pd.notna(v) else "—" for v in insider_df[src]
+                        ]
+                    else:
+                        disp_cols[dst] = insider_df[src].astype(str)
+                disp = pd.DataFrame(disp_cols)
+                font_map = None
+                if "Transaction" in disp.columns:
+                    colors = []
+                    for t in disp["Transaction"]:
+                        tl = str(t).lower()
+                        if "buy" in tl or "purchase" in tl or "achat" in tl:
+                            colors.append(_NEON)
+                        elif "sale" in tl or "sell" in tl or "vente" in tl:
+                            colors.append(_RED)
+                        else:
+                            colors.append(_WHITE)
+                    font_map = {"Transaction": colors}
+                st.plotly_chart(
+                    dark_table(
+                        disp,
+                        height=min(420, 44 + 30 * max(len(disp), 1)),
+                        font_color_map=font_map,
+                    ),
+                    width="stretch",
+                    key=f"explore_insider_table_{selected}",
+                )
+    
+            # Polymarket — real section
+            st.markdown("---")
+            st.markdown("#### 🎲 Polymarket — probabilites macro")
+            st.markdown(
+                "<div class='info-text'>Marches de prediction (API Gamma). "
+                "Filtre macro/politique (sports exclus). "
+                "<b>Contexte seulement</b> — jamais un trigger d'ordre.</div>",
+                unsafe_allow_html=True,
+            )
+            poly_events = get_polymarket_macro(limit=10)
+            if not poly_events:
+                st.caption(
+                    "Polymarket indisponible (reseau / API). "
+                    "Le briefing geopolitique dans General reste la reference."
+                )
+            else:
+                # Clickable markdown table (Plotly tables can't host real links).
+                lines = [
+                    "| Marche | P(YES) | Vol 24h | Impact PEA | Lien |",
+                    "|---|---:|---:|---|---|",
+                ]
+                for ev in poly_events:
+                    yp = ev.get("yes_prob")
+                    yp_s = f"**{yp*100:.0f}%**" if yp is not None else "—"
+                    title = (ev.get("title") or "").replace("|", "/")
+                    lines.append(
+                        f"| {title} | {yp_s} | {ev.get('volume24h', 0):,.0f} | "
+                        f"{ev.get('impact', '—')} | [ouvrir]({ev.get('url')}) |"
+                    )
+                st.markdown("\n".join(lines))
+    
+
+    render_fiche_ticker()
 
 # --- Tab: Full Universe ------------------------------------------------------
 with tab_macro:
