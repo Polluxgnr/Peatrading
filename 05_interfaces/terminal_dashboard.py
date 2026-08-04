@@ -31,6 +31,7 @@ import pandas as pd
 import plotly.express as pex
 import plotly.graph_objects as go
 import streamlit as st
+from streamlit_autorefresh import st_autorefresh
 import streamlit.components.v1 as components
 import yaml
 import yfinance as yf
@@ -1735,10 +1736,10 @@ def _fetch_news_from_apis(symbol: str, limit: int = 6) -> list[dict]:
         key = (title or "").strip().casefold()
         if not key or key in seen_titles:
             return
-        if key.startswith("http://") or key.startswith("https://"):
+        if key.startswith("http://") or key.startswith("https://") or key.startswith("http"):
             return
             
-        spam_pattern = re.compile(r"(?i)(discount|free|referral|rewards|newsletter|email|sponsor|pitch deck|vc|substack|attio|seo agency|gtm|seed|founder|startup|saas|cap table|suivre mes récompenses|mettre à jour votre email)")
+        spam_pattern = re.compile(r"(?i)(discount|free|referral|rewards|newsletter|email|sponsor|pitch deck|vc|substack|attio|seo agency|gtm|seed|founder|startup|saas|cap table|récompense|mettre [aà] jour|update your|unsubscribe|cliquez ici|abonnez-vous|subscribe|webinar|masterclass)")
         if spam_pattern.search(key):
             return
             
@@ -3339,6 +3340,7 @@ def _french_dossier_summary(ticker: str, name: str, english: str) -> str:
 
 def get_ticker_dossier(ticker: str) -> dict:
     """Company identity + catalysts + risk events (yfinance + heuristics)."""
+
     out: dict = {
         "name": format_name(ticker),
         "summary": "",
@@ -3914,58 +3916,7 @@ with tab_macro:
         unsafe_allow_html=True,
     )
 
-    # --- Phase 19: Morning Briefing (Synthèse IA) — top of General ----------
-    st.markdown("#### 🗞️ Morning Briefing (Synthèse IA)")
-    briefing = load_morning_briefing()
-    if not morning_briefing_is_live(briefing):
-        gen_at_raw = str(briefing.get("generated_at") or "") if briefing else ""
-        if gen_at_raw:
-            st.caption(f"Dernière synthèse : {gen_at_raw[:16].replace('T', ' à ')}")
-        st.info("Briefing en attente de génération ou données insuffisantes.")
-        if st.button(
-            "Générer le Briefing maintenant",
-            type="primary",
-            key="gen_morning_briefing_now",
-        ):
-            import subprocess
-            subprocess.Popen(
-                [sys.executable, str(_ROOT / "main_scheduler.py"), "--briefing"],
-                cwd=str(_ROOT),
-            )
-            st.toast("Génération lancée en arrière-plan. L'IA analyse les newsletters, revenez dans 2 minutes.", icon="🗞️")
-    else:
-        zg = str(briefing.get("zeitgeist") or "").strip()
-        headlines = briefing.get("headlines") or []
-        gen_at = str(briefing.get("generated_at") or "")[:19]
-        # Split LLM bullets into metric boxes when possible
-        bullets = [
-            ln.strip(" •-\t")
-            for ln in zg.replace("\r", "").split("\n")
-            if ln.strip() and ln.strip()[0] in "•-*–—0123456789"
-        ]
-        if not bullets:
-            bullets = [zg]
-        cols = st.columns(min(5, max(1, len(bullets[:5]))))
-        for i, bullet in enumerate(bullets[:5]):
-            with cols[i]:
-                st.markdown(
-                    metric_box(
-                        f"Thème {i + 1}",
-                        bullet[:90] + ("…" if len(bullet) > 90 else ""),
-                        sub="newsletter Synthèse IA",
-                        accent="cyan" if i % 2 == 0 else "amber",
-                        help_text="Narratif macro extrait des newsletters overnight.",
-                    ),
-                    unsafe_allow_html=True,
-                )
-        if gen_at:
-            st.caption(f"Généré {gen_at} UTC · {len(headlines)} titre(s) source")
-        if True:
-            if headlines:
-                st.markdown("\n".join(f"- {h}" for h in headlines))
-            else:
-                st.caption("Aucun titre source dans le JSON.")
-
+    # Moved Morning Briefing to News & Catalysts tab
     held_tickers = [p.ticker for p in positions]
     blue_chips = ["MC.PA", "OR.PA", "AI.PA", "RMS.PA", "SAN.PA",
                   "TTE.PA", "BNP.PA", "AIR.PA", _CORE_TICKER]
@@ -5107,6 +5058,40 @@ with tab_ticker:
     st.markdown("---")
     st.markdown("### 📡 Fiche ticker — graphique & actualites")
 
+    def _ensure_ticker_profile(tk: str) -> dict:
+        db = get_portfolio_db()
+        prof = db.get_ticker_profile(tk, max_age_hours=12)
+        if prof is not None:
+            return prof
+            
+        dossier_data = get_ticker_dossier(tk)
+        fmeta = get_fundamental_metrics(tk)
+        ts_db = get_ts_db()
+        ohlcv_df = ts_db.get_historical_prices(tk, days=30)
+        if ohlcv_df is not None and not ohlcv_df.empty:
+            import json
+            ohlcv = json.loads(ohlcv_df.to_json(orient='records', date_format='iso'))
+        else:
+            ohlcv = []
+            
+        news_items = _fetch_news_from_apis(tk, limit=12)
+        headlines = tuple(str(n.get("title") or "").strip() for n in news_items if str(n.get("title") or "").strip())
+        try:
+            synth = get_deep_news_synthesis(tk, headlines[:15])
+        except Exception:
+            synth = "Synthèse indisponible."
+            
+        new_prof = {
+            "ticker": tk,
+            "dossier": dossier_data,
+            "fundamentals": fmeta,
+            "ohlcv": ohlcv,
+            "synthesis": synth,
+            "news_count": len(headlines)
+        }
+        db.upsert_ticker_profile(tk, new_prof)
+        return new_prof
+
     held = [p.ticker for p in positions]
     options = sorted(set(held) | set(universe_df["Ticker"]))
     default_idx = options.index(held[0]) if held and held[0] in options else 0
@@ -5133,7 +5118,10 @@ with tab_ticker:
     )
     tv = _tv_symbol(selected)
 
-    dossier = get_ticker_dossier(selected)
+    with st.spinner("Génération du profil institutionnel..."):
+        ticker_profile = _ensure_ticker_profile(selected)
+
+    dossier = ticker_profile.get("dossier", {})
     logo_url = get_company_logo(selected)
     logo_html = (
         f"<img src='{logo_url}' alt='logo' height='40' "
@@ -5155,104 +5143,106 @@ with tab_ticker:
     )
     sub_overview, sub_fin, sub_news = st.tabs(['📈 Overview & Charts', '🧠 Financials & AI Scoring', '📰 News & Catalysts'])
     with sub_news:
+        st.markdown("#### 🗞️ Morning Briefing (Macro Zeitgeist)")
+        briefing = load_morning_briefing()
+        zg = ""
+        headlines = []
+        if morning_briefing_is_live(briefing):
+            zg = str(briefing.get("zeitgeist") or "").strip()
+            headlines = briefing.get("headlines") or []
+            bullets = [ln.strip(" •-\t") for ln in zg.replace("\r", "").split("\n") if ln.strip() and ln.strip()[0] in "•-*–—0123456789"]
+            if not bullets: bullets = [zg]
+            cols = st.columns(min(5, max(1, len(bullets[:5]))))
+            for i, bullet in enumerate(bullets[:5]):
+                with cols[i]:
+                    st.markdown(metric_box(f"Thème {i + 1}", bullet[:90] + ("…" if len(bullet) > 90 else ""), sub="newsletter Synthèse IA", accent="cyan" if i % 2 == 0 else "amber"), unsafe_allow_html=True)
+        else:
+            st.info("Morning Briefing macro non disponible.")
+
+        st.markdown("---")
         st.markdown("#### 📖 Catalyseurs & risques (dossier)")
         cat1, cat2 = st.columns(2)
         with cat1:
             st.markdown("**News / catalyseurs qui aideraient**")
-            for c in dossier.get("catalysts") or []:
-                st.markdown(f"- {c}")
+            for c in dossier.get("catalysts") or []: st.markdown(f"- {c}")
         with cat2:
             st.markdown("**Evenements a surveiller (ne pas vouloir)**")
-            for r in dossier.get("risk_events") or []:
-                st.markdown(f"- {r}")
+            for r in dossier.get("risk_events") or []: st.markdown(f"- {r}")
 
         st.markdown("---")
-        st.markdown("#### 🗞️ Actualites Historiques")
-        
-        # Phase 55: Multi-Source Filter & History Merging
-        providers_opt = ["Boursorama", "Yahoo Finance", "Newsletters Substack", "Google News", "Finlight"]
-        sel_providers = st.multiselect(
-            "Filtrer par Source", 
-            providers_opt,
-            default=providers_opt
-        )
-        time_filter = st.radio("Historique", ["7j", "30j", "1 an", "Tout"], horizontal=True)
-        limit_days = {"7j": 7, "30j": 30, "1 an": 365, "Tout": 9999}[time_filter]
-        
-        try:
-            news_rows = get_portfolio_db().get_news_history(selected, limit=200)
-            
-            if not news_rows:
-                st.info("Aucune actualité récente en base.")
-                if st.button("🔄 Actualiser les flux", key=f"refresh_news_{selected}"):
-                    with st.spinner("Recherche des flux en direct..."):
-                        _fetch_news_from_apis(selected, limit=12)
-                    st.rerun()
-            else:
-                # Filter and deduplicate
-                filtered = []
-                seen_hashes = set()
-                now = datetime.now()
-                
-                for r in news_rows:
-                    prov = str(r.get("provider", "")).strip()
-                    if sel_providers and "Tout" not in sel_providers:
-                        if not any(p.casefold() in prov.casefold() for p in sel_providers):
-                            continue
-                            
-                    dp = r.get("date_published")
-                    if dp:
-                        try:
-                            dt = datetime.fromisoformat(dp.replace("Z", "+00:00")).replace(tzinfo=None)
-                            if (now - dt).days > limit_days:
-                                continue
-                        except Exception:
-                            pass
-                    
-                    url = str(r.get("url", ""))
-                    title = str(r.get("title", ""))
-                    thash = hash(url + title)
-                    if thash in seen_hashes:
-                        continue
-                    seen_hashes.add(thash)
-                    
-                    score = r.get("sentiment_score")
-                    badge = "⚪"
-                    if score is not None:
-                        try:
-                            score_val = float(score)
-                            if score_val >= 30: badge = "Bullish 🟢"
-                            elif score_val <= -30: badge = "Bearish 🔴"
-                        except (ValueError, TypeError):
-                            pass
-
-                    filtered.append({
-                        "Date": dp[:16] if dp else "N/A",
-                        "Source": prov,
-                        "Titre": f"[{title}]({url})" if url else title,
-                        "Sentiment IA": badge,
-                    })
-                    
-                if not filtered:
-                    st.info("Aucune actualité trouvée pour ces filtres.")
-                else:
-                    df_news = pd.DataFrame(filtered)
-                    df_news = df_news.sort_values(by="Date", ascending=False)
-                    st.markdown(df_news.to_markdown(index=False), unsafe_allow_html=True)
-                    # Use markdown table since st.dataframe doesn't render markdown links natively without config hacks
-        except Exception as exc:
-            st.error(f"Erreur chargement news: {exc}")
-            
-        st.markdown("---")
-        st.markdown("#### 🧠 Synthèse IA (Analyse Deep)")
-        if st.button("Générer Synthèse IA", key=f"synth_ia_{selected}"):
+        st.markdown("#### 🧠 Synthèse IA (Analyse Deep Ticker)")
+        synth = ticker_profile.get("synthesis", "")
+        if synth and synth != "Synthèse indisponible.":
+            st.info(f"**Synthèse Institutionnelle**\n\n{synth}")
+        elif st.button("Générer Synthèse IA", key=f"synth_ia_{selected}"):
             with st.spinner("IA en cours d'analyse..."):
                 try:
-                    headlines_tuple = tuple(r.get("title", "") for r in news_rows[:15])
-                    deep = get_deep_news_synthesis(selected, headlines_tuple)
-                    st.info(f"**Synthèse (cache 24h)**\n\n{deep}")
+                    news_items = _fetch_news_from_apis(selected, limit=12)
+                    hs = tuple(str(n.get("title") or "").strip() for n in news_items if str(n.get("title") or "").strip())
+                    synth_new = get_deep_news_synthesis(selected, hs[:15])
+                    ticker_profile["synthesis"] = synth_new
+                    get_portfolio_db().upsert_ticker_profile(selected, ticker_profile)
+                    st.info(f"**Nouvelle Synthèse (cache)**\n\n{synth_new}")
                 except Exception as exc:
                     st.error(f"Synthèse indisponible: {exc}")
+
+        st.markdown("---")
+        st.markdown("#### 🗞️ Actualites Historiques & Flux Unifié")
+        
+        # Merge Morning Briefing headlines with DB news
+        unified_news = []
+        now = datetime.now()
+        seen_hashes = set()
+        
+        for h in headlines:
+            thash = hash(h)
+            if thash not in seen_hashes:
+                unified_news.append({"Date": "Aujourd'hui", "Source": "Morning Briefing", "Titre": h, "Sentiment IA": "⚪", "_dt": now})
+                seen_hashes.add(thash)
+                
+        try:
+            db_news = get_portfolio_db().get_news_history(selected, limit=200) or []
+            for r in db_news:
+                prov = str(r.get("provider", "")).strip()
+                dp = r.get("date_published")
+                dt = now
+                if dp:
+                    try: dt = datetime.fromisoformat(dp.replace("Z", "+00:00")).replace(tzinfo=None)
+                    except: pass
+                    
+                url = str(r.get("url", ""))
+                title = str(r.get("title", ""))
+                thash = hash(url + title)
+                if thash in seen_hashes: continue
+                seen_hashes.add(thash)
+                
+                score = r.get("sentiment_score")
+                badge = "⚪"
+                if score is not None:
+                    try:
+                        sv = float(score)
+                        if sv >= 30: badge = "Bullish 🟢"
+                        elif sv <= -30: badge = "Bearish 🔴"
+                    except: pass
+                
+                unified_news.append({
+                    "Date": dp[:16] if dp else "N/A",
+                    "Source": prov,
+                    "Titre": f"[{title}]({url})" if url else title,
+                    "Sentiment IA": badge,
+                    "_dt": dt
+                })
+        except Exception as e:
+            pass
+            
+        if unified_news:
+            unified_news.sort(key=lambda x: x["_dt"], reverse=True)
+            for item in unified_news:
+                del item["_dt"]
+            df_unified = pd.DataFrame(unified_news)
+            st.markdown(df_unified.to_markdown(index=False), unsafe_allow_html=True)
+        else:
+            st.info("Aucune actualité en base.")
 
         if st.button("Lancer un Red Teaming IA (Bull vs Bear vs Devil's Advocate)", key=f"red_team_{selected}"):
             context_blob = (

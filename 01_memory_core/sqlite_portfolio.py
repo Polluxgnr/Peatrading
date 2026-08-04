@@ -173,6 +173,17 @@ class PortfolioDB:
                 except sqlite3.OperationalError:
                     pass  # Column likely already exists
 
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS ticker_profiles (
+                        ticker          TEXT PRIMARY KEY,
+                        profile_json    TEXT,
+                        last_updated    TEXT NOT NULL
+                    );
+                    """
+                )
+
+
             logger.info("SQLite schema initialized at %s", self.db_path)
         except sqlite3.Error:
             logger.exception("Failed to initialize SQLite schema.")
@@ -702,3 +713,52 @@ class PortfolioDB:
         except sqlite3.Error:
             logger.exception("Failed to read ticker note for %s.", tk)
             return ""
+
+    def upsert_ticker_profile(self, ticker: str, profile_dict: dict) -> None:
+        """Store the complete ticker profile (OHLCV, fundamentals, synthesis, news) as JSON."""
+        tk = str(ticker or "").strip().upper()
+        if not tk:
+            return
+        import json
+        payload = json.dumps(profile_dict, default=str)
+        now_iso = datetime.now(timezone.utc).isoformat()
+        try:
+            with self._connect() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO ticker_profiles (ticker, profile_json, last_updated)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(ticker) DO UPDATE SET
+                        profile_json=excluded.profile_json,
+                        last_updated=excluded.last_updated;
+                    """,
+                    (tk, payload, now_iso),
+                )
+        except sqlite3.Error:
+            logger.exception("Failed to upsert ticker profile for %s.", tk)
+            raise
+
+    def get_ticker_profile(self, ticker: str, max_age_hours: int = 12) -> dict | None:
+        """Retrieve the ticker profile if it exists and is fresher than max_age_hours."""
+        tk = str(ticker or "").strip().upper()
+        if not tk:
+            return None
+        try:
+            with self._connect() as conn:
+                row = conn.execute(
+                    "SELECT profile_json, last_updated FROM ticker_profiles WHERE ticker = ?;",
+                    (tk,),
+                ).fetchone()
+            if row is None:
+                return None
+            last_up = datetime.fromisoformat(row["last_updated"])
+            # Ensure it is timezone-aware for the comparison
+            if last_up.tzinfo is None:
+                last_up = last_up.replace(tzinfo=timezone.utc)
+            if (datetime.now(timezone.utc) - last_up).total_seconds() > max_age_hours * 3600:
+                return None  # Stale
+            import json
+            return json.loads(row["profile_json"])
+        except Exception:
+            logger.exception("Failed to read ticker profile for %s.", tk)
+            return None
