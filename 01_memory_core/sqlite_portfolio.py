@@ -169,7 +169,7 @@ class PortfolioDB:
                 
                 # Migration: Add piotroski_score if missing
                 try:
-                    conn.execute("ALTER TABLE ticker_fundamentals ADD COLUMN piotroski_score REAL;")
+                    conn.execute("ALTER TABLE fundamentals_cache ADD COLUMN piotroski_score REAL;")
                 except sqlite3.OperationalError:
                     pass  # Column likely already exists
 

@@ -186,6 +186,7 @@ def build_ml_feature_row(
     short_interest = macro.get_short_interest(ticker)
     ecb_euribor = macro.get_ecb_euribor()
     threshold_cross = macro.get_threshold_crossings(ticker) if not offline_mode else 0
+    gex_proxy = macro.get_gamma_exposure(ticker) if hasattr(macro, 'get_gamma_exposure') else 0.0
     from quantitative_math import frac_diff_ffd
     
     # Fractional Differentiation feature (d=0.4)
@@ -269,6 +270,7 @@ def build_ml_feature_row(
         "amf_short_interest": short_interest,
         "amf_threshold_crossing": threshold_cross,
         "ecb_euribor_3m": ecb_euribor,
+        "gex_proxy": gex_proxy,
         "frac_diff_04": frac_val,
         "sp500_ret1d": spillover.get("^GSPC_ret1d", np.nan),
         "ndx_ret1d": spillover.get("^IXIC_ret1d", np.nan),
