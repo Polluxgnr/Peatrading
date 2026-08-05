@@ -5882,9 +5882,8 @@ def build_ml_feature_row(
             pass
             
     # Jalon 1 Macro Alpha Sensors
-    sensors_path = str(_ROOT / "00_data_sensors")
-    if sensors_path not in sys.path:
-        sys.path.insert(0, sensors_path)
+    import sys, os
+    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '00_data_sensors')))
     from macro_alpha_api import MacroAlphaSensor
     macro = MacroAlphaSensor()
     short_interest = macro.get_short_interest(ticker)
