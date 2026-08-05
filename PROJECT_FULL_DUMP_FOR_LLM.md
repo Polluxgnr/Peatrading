@@ -5887,7 +5887,7 @@ def build_ml_feature_row(
     short_interest = macro.get_short_interest(ticker)
     ecb_euribor = macro.get_ecb_euribor()
     threshold_cross = macro.get_threshold_crossings(ticker) if not offline_mode else 0
-    gex_proxy = macro.get_gamma_exposure(ticker) if hasattr(macro, 'get_gamma_exposure') else 0.0
+    gex_proxy = macro.get_gamma_exposure(ticker)
     from quantitative_math import frac_diff_ffd
     
     # Fractional Differentiation feature (d=0.4)
