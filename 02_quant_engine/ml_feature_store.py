@@ -417,7 +417,6 @@ def build_training_dataset(
     df['target_structural_126d'] = df.groupby('ticker')['Close'].shift(-126) / df['Close'] - 1.0
 
     # 3. Force numeric types (coercing any weird values to NaN)
-    import pandas as pd
     df['target_tactical_30d'] = pd.to_numeric(df['target_tactical_30d'], errors='coerce')
     df['target_structural_126d'] = pd.to_numeric(df['target_structural_126d'], errors='coerce')
 
