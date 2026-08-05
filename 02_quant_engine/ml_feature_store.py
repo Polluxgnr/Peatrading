@@ -391,22 +391,6 @@ def build_training_dataset(
         df_ind["rsi14"] = df_ind["RSI_14"] if "RSI_14" in df_ind.columns else np.nan
         df_ind["zscore_50"] = df_ind["Z_SCORE_50"] if "Z_SCORE_50" in df_ind.columns else np.nan
         
-        # STRICT TARGET COMPUTATION: .shift(-N) 
-        # Make sure the dataframe is sorted by Date just in case
-        if "Date" in df_ind.columns:
-            df_ind = df_ind.sort_values("Date").reset_index(drop=True)
-        elif df_ind.index.name == "Date":
-            df_ind = df_ind.sort_index()
-
-        fwd_ret_30d = (df_ind["Close"].shift(-_FORWARD_DAYS_TACTICAL) / df_ind["Close"]) - 1.0
-        fwd_ret_126d = (df_ind["Close"].shift(-_FORWARD_DAYS_STRUCTURAL) / df_ind["Close"]) - 1.0
-        
-        df_ind["target_tactical_30d"] = fwd_ret_30d
-        df_ind["target_structural_126d"] = fwd_ret_126d
-        
-        # Drop the last N days where target is NaN (Absolute strict requirement)
-        df_ind = df_ind.dropna(subset=["target_tactical_30d", "target_structural_126d"])
-        
         # We sample end-of-week (e.g. step=5) to avoid huge correlation
         # We also skip the first 200 rows due to SMA200 warm-up
         if len(df_ind) > 200:
@@ -423,8 +407,27 @@ def build_training_dataset(
     if not dfs:
         return pd.DataFrame()
         
-    final_df = pd.concat(dfs, ignore_index=True)
-    return final_df
+    df = pd.concat(dfs, ignore_index=True)
+
+    # 1. Strict sorting and index reset
+    df = df.sort_values(['ticker', 'Date']).reset_index(drop=True)
+
+    # 2. Calculate targets (Future Return)
+    df['target_tactical_30d'] = df.groupby('ticker')['Close'].shift(-30) / df['Close'] - 1.0
+    df['target_structural_126d'] = df.groupby('ticker')['Close'].shift(-126) / df['Close'] - 1.0
+
+    # 3. Force numeric types (coercing any weird values to NaN)
+    import pandas as pd
+    df['target_tactical_30d'] = pd.to_numeric(df['target_tactical_30d'], errors='coerce')
+    df['target_structural_126d'] = pd.to_numeric(df['target_structural_126d'], errors='coerce')
+
+    # 4. EXPLICITLY DROP NaNs AND REASSIGN TO df
+    df = df.dropna(subset=['target_tactical_30d', 'target_structural_126d'])
+
+    # 5. Log the new shape to prove rows were dropped
+    logger.info("Dataset shape after dropping NaN targets: %s", df.shape)
+
+    return df
 
 def build_ml_dataset(portfolio_db=None, timeseries_db=None, max_signals=500):
     """Wrapper to maintain backwards compatibility while forcing training dataset gen."""
