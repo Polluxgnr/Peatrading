@@ -1,301 +1,13 @@
-# PEA Pollux — Full Project Dump for LLM
+# PEA Pollux - Full Project Dump
 
-> **PEA Pollux** · Generated `2026-08-05 08:03 UTC` · Root `C:\Users\PolluxGronier\Downloads\pea_sniper_terminal`
+## File: .\00_data_sensors\__init__.py
 
-One-shot context for external LLM agents. Includes source, configs, and docs.
-Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
-
----
-## Architecture snapshot (for agents)
-
-| Layer | Path | Role |
-|-------|------|------|
-| Sensors | `00_data_sensors/` | OHLCV, VIX, insiders (AMF→FMP→YF), Polymarket, Bourso scrapers, newsletter IMAP |
-| Memory | `01_memory_core/` | Pydantic models, SQLite (`portfolio`, `audit_logs`, `portfolio_history`, **`news_history`**), DuckDB OHLCV |
-| Quant | `02_quant_engine/` | Ensemble conviction scorer (MR + vol + insider + inst + **news/poly modifiers**), Smart DCA |
-| Risk | `03_risk_portfolio/` | Cascade vetoes, Half-Kelly sizing, correlation firewall, ATR rebalancer |
-| Orchestrator | `04_orchestrator_ai/` | Pipeline conductor, earnings blackout, macro veto, revocation, weekly historian |
-| UI | `05_interfaces/` | Streamlit Mission Control — **native HTML ticker tape**, exploration 600+ tickers, live telemetry tab |
-| Ops | `main_scheduler.py` | Paris daemon (09:00 / 13:30 / 17:10 + briefing 08:25 + ATR 08:35) |
-
-**Dashboard highlights (Phase 26–28):**
-- Auto-sync on session open (`load_universe`, `get_last_prices`, `get_vix`)
-- Native CSS marquee tape (no TradingView widget for `.PA`)
-- `news_history` SQLite archive — exact timestamps, cross-session memory
-- Portfolio tab: explicit ATR 2.5× stop table
-- Exploration: universal ticker search, order ticket, decision checklist
-- Architecture tab: live source health + active `risk_params.yaml` + logic expanders
-
-**Hard rules:** no auto-broker execution · LLM explains only · conviction emit ≥ 65 · manual Discord/Streamlit approve.
-
----
-
-### Priority files (read first)
-- `README.md`
-- `config/risk_params.yaml`
-- `config/pea_universe.yaml`
-- `01_memory_core/data_models.py`
-- `01_memory_core/sqlite_portfolio.py`
-- `01_memory_core/duckdb_manager.py`
-- `02_quant_engine/technical_scorer.py`
-- `02_quant_engine/quantitative_math.py`
-- `02_quant_engine/stochastic_models.py`
-- `03_risk_portfolio/stress_tester.py`
-- `03_risk_portfolio/pea_position_sizer.py`
-- `04_orchestrator_ai/signal_priority_cascade.py`
-- `04_orchestrator_ai/red_team_agent.py`
-- `05_interfaces/terminal_dashboard.py`
-- `main_scheduler.py`
-
----
-## File index (97 files)
-### `(root)/`
-- `.gitignore` (42 lines)
-- `docker-compose.yml` (71 lines)
-- `Dockerfile` (30 lines)
-- `main_scheduler.py` (976 lines) ⭐
-- `README.md` (1539 lines) ⭐
-- `requirements.txt` (51 lines)
-- `run_dashboard.ps1` (15 lines)
-- `run_discord.py` (100 lines)
-- `scratch_clear.py` (3 lines)
-- `scratch_extract.py` (82 lines)
-- `scratch_regex.py` (22 lines)
-- `seed_account.py` (129 lines)
-
-### `.github/workflows/`
-- `.github/workflows/ci.yml` (33 lines)
-
-### `.streamlit/`
-- `.streamlit/config.toml` (25 lines)
-
-### `00_data_sensors/`
-- `00_data_sensors/__init__.py` (0 lines)
-- `00_data_sensors/fundamentals_api.py` (243 lines)
-- `00_data_sensors/macro_alpha_api.py` (575 lines)
-- `00_data_sensors/market_prices_api.py` (375 lines)
-- `00_data_sensors/newsletter_api.py` (213 lines)
-- `00_data_sensors/symbol_mapper.py` (179 lines)
-
-### `00_data_sensors/newsletter_ingest/ingest/`
-- `00_data_sensors/newsletter_ingest/ingest/__init__.py` (1 lines)
-- `00_data_sensors/newsletter_ingest/ingest/dedupe.py` (51 lines)
-- `00_data_sensors/newsletter_ingest/ingest/env_loader.py` (36 lines)
-- `00_data_sensors/newsletter_ingest/ingest/html_parser.py` (116 lines)
-- `00_data_sensors/newsletter_ingest/ingest/imap_client.py` (167 lines)
-- `00_data_sensors/newsletter_ingest/ingest/whitelist.py` (35 lines)
-- `00_data_sensors/newsletter_ingest/ingest/writer.py` (33 lines)
-
-### `00_data_sensors/scrapers/`
-- `00_data_sensors/scrapers/__init__.py` (18 lines)
-- `00_data_sensors/scrapers/_http.py` (72 lines)
-- `00_data_sensors/scrapers/amf_scraper.py` (704 lines)
-- `00_data_sensors/scrapers/amf_short_scraper.py` (32 lines)
-- `00_data_sensors/scrapers/bourso_scraper.py` (490 lines)
-
-### `01_memory_core/`
-- `01_memory_core/__init__.py` (0 lines)
-- `01_memory_core/config_validator.py` (96 lines)
-- `01_memory_core/data_models.py` (162 lines) ⭐
-- `01_memory_core/duckdb_manager.py` (231 lines) ⭐
-- `01_memory_core/env_loader.py` (34 lines)
-- `01_memory_core/logging_setup.py` (285 lines)
-- `01_memory_core/profile_builder.py` (289 lines)
-- `01_memory_core/sqlite_portfolio.py` (773 lines) ⭐
-
-### `02_quant_engine/`
-- `02_quant_engine/__init__.py` (0 lines)
-- `02_quant_engine/contextual_bandit.py` (95 lines)
-- `02_quant_engine/cross_sectional.py` (49 lines)
-- `02_quant_engine/market_regime.py` (120 lines)
-- `02_quant_engine/ml_backtester.py` (22 lines)
-- `02_quant_engine/ml_feature_store.py` (377 lines)
-- `02_quant_engine/ml_trainer.py` (347 lines)
-- `02_quant_engine/quantitative_math.py` (144 lines) ⭐
-- `02_quant_engine/smart_dca_engine.py` (216 lines)
-- `02_quant_engine/stochastic_models.py` (87 lines) ⭐
-- `02_quant_engine/technical_scorer.py` (809 lines) ⭐
-- `02_quant_engine/walk_forward_backtester.py` (296 lines)
-
-### `03_risk_portfolio/`
-- `03_risk_portfolio/__init__.py` (0 lines)
-- `03_risk_portfolio/correlation_firewall.py` (296 lines)
-- `03_risk_portfolio/drawdown_breaker.py` (83 lines)
-- `03_risk_portfolio/equity_metrics.py` (143 lines)
-- `03_risk_portfolio/hrp_sizer.py` (141 lines)
-- `03_risk_portfolio/monthly_rebalancer.py` (232 lines)
-- `03_risk_portfolio/pea_position_sizer.py` (296 lines) ⭐
-- `03_risk_portfolio/stress_tester.py` (145 lines) ⭐
-
-### `04_orchestrator_ai/`
-- `04_orchestrator_ai/__init__.py` (0 lines)
-- `04_orchestrator_ai/earnings_blackout.py` (92 lines)
-- `04_orchestrator_ai/macro_veto.py` (125 lines)
-- `04_orchestrator_ai/news_sentiment_llm.py` (227 lines)
-- `04_orchestrator_ai/red_team_agent.py` (98 lines) ⭐
-- `04_orchestrator_ai/revocation_engine.py` (146 lines)
-- `04_orchestrator_ai/signal_priority_cascade.py` (372 lines) ⭐
-- `04_orchestrator_ai/weekly_historian.py` (226 lines)
-
-### `05_interfaces/`
-- `05_interfaces/__init__.py` (0 lines)
-- `05_interfaces/discord_copilot.py` (134 lines)
-- `05_interfaces/llm_explainer.py` (272 lines)
-- `05_interfaces/terminal_dashboard.py` (6445 lines) ⭐
-- `05_interfaces/trade_cards.py` (166 lines)
-
-### `05_interfaces/components/`
-- `05_interfaces/components/__init__.py` (1 lines)
-
-### `config/`
-- `config/api_keys.env.example` (54 lines)
-- `config/earnings_calendar.yaml` (18 lines)
-- `config/macro_calendar.yaml` (17 lines)
-- `config/pea_universe.yaml` (1901 lines) ⭐
-- `config/risk_params.yaml` (53 lines) ⭐
-
-### `scratch/`
-- `scratch/apply_subtabs.py` (89 lines)
-
-### `tests/`
-- `tests/__init__.py` (1 lines)
-- `tests/test_funnel_analytics.py` (63 lines)
-- `tests/test_newsletter_whitelist.py` (24 lines)
-- `tests/test_phase16_foundations.py` (92 lines)
-- `tests/test_ui_and_sandbox.py` (66 lines)
-
-### `tools/`
-- `tools/add_backtest_ui.py` (78 lines)
-- `tools/add_deployment.py` (53 lines)
-- `tools/backup_databases.py` (52 lines)
-- `tools/bootstrap_ml_dataset.py` (209 lines)
-- `tools/build_llm_dump.py` (232 lines)
-- `tools/build_universe.py` (273 lines)
-- `tools/fix_indent.py` (15 lines)
-- `tools/rebrand_pea_pollux.py` (65 lines)
-- `tools/refactor_ui.py` (172 lines)
-- `tools/run_wfo.py` (66 lines)
-- `tools/sync_universe_from_bourso.py` (236 lines)
-- `tools/train_rl_sizer.py` (80 lines)
-
----
-## FILE: .github/workflows/ci.yml (33 lines)
-```yaml
-# PEA Pollux — CI
-name: ci
-
-on:
-  push:
-    branches: [main, master]
-  pull_request:
-    branches: [main, master]
-
-jobs:
-  lint:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-      - run: pip install ruff
-      - run: ruff check . --select E,F,W --ignore E501
-
-  pytest:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-      - name: Install deps
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-      - name: Run tests
-        run: python -m pytest -q
-```
-
-## FILE: .gitignore (42 lines)
-```text
-# --- Secrets & config ---
-config/api_keys.env
-*.env
-!*.env.example
-
-# --- Databases (state & time-series) ---
-database/
-*.db
-*.duckdb
-*.sqlite
-*.sqlite3
-
-# --- Python ---
-__pycache__/
-*.py[cod]
-*$py.class
-.venv/
-venv/
-venv_x64/
-venv*/
-env/
-.python-version
-*.egg-info/
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-
-# --- Notebooks ---
-.ipynb_checkpoints/
-
-# --- OS / Editor ---
-.DS_Store
-Thumbs.db
-.vscode/
-.idea/
-
-# --- Logs & data dumps ---
-*.log
-logs/
-data/
-database/backups/
-```
-
-## FILE: .streamlit/config.toml (25 lines)
-```toml
-# Force a pure-black "Bloomberg terminal" dark theme so native widgets
-# (st.dataframe grid, st.metric, inputs) never render on a white background.
-[theme]
-base = "dark"
-backgroundColor = "#050505"
-secondaryBackgroundColor = "#0A0A0A"
-textColor = "#FFFFFF"
-primaryColor = "#00FF00"
-font = "monospace"
-
-[client]
-# false for any non-local deploy (Docker / public IP) — avoids leaking paths.
-# Local debug: set STREAMLIT_CLIENT_SHOW_ERROR_DETAILS=true or flip to true.
-showErrorDetails = false
-toolbarMode = "minimal"
-
-[browser]
-gatherUsageStats = false
-serverAddress = "localhost"
-
-[server]
-# Local default: open a browser. Docker overrides with --server.headless=true
-# (see docker-compose.yml dashboard service) — containers have no display.
-headless = false
-port = 8501
-```
-
-## FILE: 00_data_sensors/__init__.py (0 lines)
 ```python
 
 ```
 
-## FILE: 00_data_sensors/fundamentals_api.py (243 lines)
+## File: .\00_data_sensors\fundamentals_api.py
+
 ```python
 """Fundamental data sensor with Finnhub primary + yfinance fallback.
 
@@ -539,9 +251,12 @@ class FundamentalsSensor:
                 baseline["source"] = f"{baseline['source']}+fmp"
                 
         return baseline
+
+
 ```
 
-## FILE: 00_data_sensors/macro_alpha_api.py (575 lines)
+## File: .\00_data_sensors\macro_alpha_api.py
+
 ```python
 """Alternative-data / macro alpha sensors for PEA Pollux.
 
@@ -1118,9 +833,11 @@ if __name__ == "__main__":
     print("Put/Call ASML.AS   :", sensor.get_put_call_ratio("ASML.AS"))
     print("Insider MC.PA      :", sensor.get_insider_activity("MC.PA"))
     print("Polymarket stub    :", sensor.get_polymarket_sentiment("recession 2026"))
+
 ```
 
-## FILE: 00_data_sensors/market_prices_api.py (375 lines)
+## File: .\00_data_sensors\market_prices_api.py
+
 ```python
 """Market data ingestion for PEA Pollux.
 
@@ -1497,9 +1214,11 @@ if __name__ == "__main__":
     print("--- Columns:", list(frame.columns))
     print("--- Tickers:", sorted(frame["Ticker"].unique()) if not frame.empty else [])
     print(frame.tail(10).to_string(index=False))
+
 ```
 
-## FILE: 00_data_sensors/newsletter_api.py (213 lines)
+## File: .\00_data_sensors\newsletter_api.py
+
 ```python
 """Newsletter IMAP sensor + LLM morning Zeitgeist (Phase 19).
 
@@ -1614,7 +1333,7 @@ class NewsletterSensor:
 
         deduped = dedupe_articles(articles)
         import re
-        spam_pattern = re.compile(r"(?i)(discount|free|referral|rewards|newsletter|email|sponsor|pitch deck|vc|substack|attio|seo agency|gtm|seed|founder|startup|saas|cap table|récompense|mettre [aà] jour|update your|unsubscribe|cliquez ici|abonnez-vous|subscribe|webinar|masterclass)")
+        spam_pattern = re.compile(r"(?i)(discount|free|referral|rewards|newsletter|email|sponsor|pitch deck|vc|substack|attio|seo agency|gtm|seed|founder|startup|saas|cap table|récompense|mettre [aà] jour|update your|unsubscribe|cliquez ici|abonnez-vous|subscribe|webinar|masterclass|lifestyle|promo|offre|gift|cadeau|bonus|vip|exclusive|limited time|last chance)")
         
         titles = []
         for a in deduped:
@@ -1714,14 +1433,18 @@ def run_morning_briefing_sync(folder: str = "Finance") -> dict[str, Any]:
         zeitgeist = "Indisponible"
     sensor.write_briefing(zeitgeist, headlines)
     return {"zeitgeist": zeitgeist, "headlines": headlines}
+
 ```
 
-## FILE: 00_data_sensors/newsletter_ingest/ingest/__init__.py (1 lines)
+## File: .\00_data_sensors\newsletter_ingest\ingest\__init__.py
+
 ```python
 # Package marker for newsletter ingest sandbox.
+
 ```
 
-## FILE: 00_data_sensors/newsletter_ingest/ingest/dedupe.py (51 lines)
+## File: .\00_data_sensors\newsletter_ingest\ingest\dedupe.py
+
 ```python
 """Simple near-duplicate headline collapse (no ML)."""
 
@@ -1774,9 +1497,11 @@ def dedupe_articles(articles: List[dict]) -> List[dict]:
     if removed:
         logger.info("Removed %d near-duplicate headline(s).", removed)
     return kept
+
 ```
 
-## FILE: 00_data_sensors/newsletter_ingest/ingest/env_loader.py (36 lines)
+## File: .\00_data_sensors\newsletter_ingest\ingest\env_loader.py
+
 ```python
 """Load sandbox ``.env`` without touching production ``config/api_keys.env``."""
 
@@ -1814,9 +1539,11 @@ def load_sandbox_env(path: Path) -> dict[str, str]:
     except OSError as exc:
         logger.error("Could not read %s: %s", path, exc)
     return out
+
 ```
 
-## FILE: 00_data_sensors/newsletter_ingest/ingest/html_parser.py (116 lines)
+## File: .\00_data_sensors\newsletter_ingest\ingest\html_parser.py
+
 ```python
 """Extract article titles/links from verbose newsletter HTML."""
 
@@ -1934,9 +1661,11 @@ def parse_newsletter(msg: RawMessage) -> dict[str, Any]:
         "date": msg.date,
         "articles": articles,
     }
+
 ```
 
-## FILE: 00_data_sensors/newsletter_ingest/ingest/imap_client.py (167 lines)
+## File: .\00_data_sensors\newsletter_ingest\ingest\imap_client.py
+
 ```python
 """Read-only Yahoo Mail IMAP client (SSL, app password)."""
 
@@ -2105,9 +1834,11 @@ class YahooImapClient:
             else:
                 text = body
         return html, text
+
 ```
 
-## FILE: 00_data_sensors/newsletter_ingest/ingest/whitelist.py (35 lines)
+## File: .\00_data_sensors\newsletter_ingest\ingest\whitelist.py
+
 ```python
 """Strict sender whitelist for newsletter IMAP ingest.
 
@@ -2144,9 +1875,11 @@ def is_allowed_sender(from_header: str) -> bool:
     """Return True iff the From address is on the newsletter whitelist."""
     email = extract_sender_email(from_header)
     return bool(email) and email in ALLOWED_SENDERS
+
 ```
 
-## FILE: 00_data_sensors/newsletter_ingest/ingest/writer.py (33 lines)
+## File: .\00_data_sensors\newsletter_ingest\ingest\writer.py
+
 ```python
 """Write timestamped JSON under the sandbox ``output/`` folder only."""
 
@@ -2181,9 +1914,11 @@ def write_output(payload: dict[str, Any], out_dir: Path) -> Path:
     path.write_text(json.dumps(body, indent=2, ensure_ascii=False), encoding="utf-8")
     logger.info("Sandbox output written (%d bytes).", path.stat().st_size)
     return path
+
 ```
 
-## FILE: 00_data_sensors/scrapers/__init__.py (18 lines)
+## File: .\00_data_sensors\scrapers\__init__.py
+
 ```python
 """French-market scrapers (AMF BDIF + Boursorama).
 
@@ -2203,9 +1938,11 @@ __all__ = [
     "bourso_slug_to_yahoo",
     "yahoo_to_bourso_slug",
 ]
+
 ```
 
-## FILE: 00_data_sensors/scrapers/_http.py (72 lines)
+## File: .\00_data_sensors\scrapers\_http.py
+
 ```python
 """Shared HTTP helpers for fragile French-market scrapers."""
 
@@ -2279,9 +2016,11 @@ def safe_get(
     except Exception as exc:  # noqa: BLE001
         log("Scraper GET failed for %s: %s", url, exc)
         return None
+
 ```
 
-## FILE: 00_data_sensors/scrapers/amf_scraper.py (704 lines)
+## File: .\00_data_sensors\scrapers\amf_scraper.py
+
 ```python
 """AMF insider-declaration scraper (antifragile, multi-source).
 
@@ -2986,9 +2725,12 @@ class AmfInsiderScraper:
         except Exception as exc:
             logger.debug("BDIF FS (threshold crossing) API failed for %r: %s", q, exc)
             return []
+
+
 ```
 
-## FILE: 00_data_sensors/scrapers/amf_short_scraper.py (32 lines)
+## File: .\00_data_sensors\scrapers\amf_short_scraper.py
+
 ```python
 """AMF Short Interest Scraper for PEA Pollux.
 
@@ -3022,9 +2764,11 @@ class AmfShortScraper:
         except Exception as exc:
             logger.debug("AMF short scrape failed for ISIN %s: %s", isin, exc)
             return 0.0
+
 ```
 
-## FILE: 00_data_sensors/scrapers/bourso_scraper.py (490 lines)
+## File: .\00_data_sensors\scrapers\bourso_scraper.py
+
 ```python
 """Boursorama scraper — news, consensus, PEA flags, and PEA universe harvest.
 
@@ -3516,9 +3260,11 @@ class BoursoramaScraper:
             return value
         except Exception:  # noqa: BLE001
             return value
+
 ```
 
-## FILE: 00_data_sensors/symbol_mapper.py (179 lines)
+## File: .\00_data_sensors\symbol_mapper.py
+
 ```python
 """Symbol mapper using OpenFIGI API — resolves Yahoo tickers to ISIN/FIGI.
 
@@ -3699,14 +3445,17 @@ class SymbolMapper:
                 pass
 
         return results
+
 ```
 
-## FILE: 01_memory_core/__init__.py (0 lines)
+## File: .\01_memory_core\__init__.py
+
 ```python
 
 ```
 
-## FILE: 01_memory_core/config_validator.py (96 lines)
+## File: .\01_memory_core\config_validator.py
+
 ```python
 """Strict Pydantic validation for ``risk_params.yaml``.
 
@@ -3804,9 +3553,11 @@ try:
     RISK: RiskParamsConfig = load_risk_config()
 except (FileNotFoundError, ValueError):
     RISK = None  # type: ignore[assignment]
+
 ```
 
-## FILE: 01_memory_core/data_models.py (162 lines)
+## File: .\01_memory_core\data_models.py
+
 ```python
 """Strict data contracts for PEA Pollux.
 
@@ -3970,9 +3721,11 @@ class Signal(BaseModel):
     created_at: datetime = Field(default_factory=_utcnow)
     reason: str = Field(default="", description="Explanation for the UI.")
     lineage: dict = Field(default_factory=dict, description="Data provenance trace.")
+
 ```
 
-## FILE: 01_memory_core/duckdb_manager.py (231 lines)
+## File: .\01_memory_core\duckdb_manager.py
+
 ```python
 """DuckDB time-series engine for PEA Pollux.
 
@@ -4205,9 +3958,11 @@ class TimeSeriesDB:
         except duckdb.Error:
             logger.exception("Failed to fetch historical prices for %s.", ticker)
             raise
+
 ```
 
-## FILE: 01_memory_core/env_loader.py (34 lines)
+## File: .\01_memory_core\env_loader.py
+
 ```python
 """Native ``config/api_keys.env`` loader (no python-dotenv dependency)."""
 
@@ -4243,9 +3998,11 @@ def load_api_keys(env_path: Path | str | None = None) -> Path | None:
             if key not in os.environ or not str(os.environ.get(key) or "").strip():
                 os.environ[key] = value
     return path
+
 ```
 
-## FILE: 01_memory_core/logging_setup.py (285 lines)
+## File: .\01_memory_core\logging_setup.py
+
 ```python
 """Central logging setup for PEA Pollux.
 
@@ -4532,9 +4289,11 @@ def send_discord_alert(message: str) -> None:
         resp.raise_for_status()
     except Exception as exc:
         logging.getLogger(__name__).warning("Failed to send Discord alert: %s", exc)
+
 ```
 
-## FILE: 01_memory_core/profile_builder.py (289 lines)
+## File: .\01_memory_core\profile_builder.py
+
 ```python
 """Profile builder logic extracted from dashboard for Night Run."""
 import sys
@@ -4659,7 +4418,7 @@ def _fetch_news_from_apis(symbol: str, limit: int=6) ->list[dict]:
             ) or key.startswith('http'):
             return
         spam_pattern = re.compile(
-            '(?i)(discount|free|referral|rewards|newsletter|email|sponsor|pitch deck|vc|substack|attio|seo agency|gtm|seed|founder|startup|saas|cap table|récompense|mettre [aà] jour|update your|unsubscribe|cliquez ici|abonnez-vous|subscribe|webinar|masterclass)'
+            r"(?i)(discount|free|referral|rewards|newsletter|email|sponsor|pitch deck|vc|substack|attio|seo agency|gtm|seed|founder|startup|saas|cap table|récompense|mettre [aà] jour|update your|unsubscribe|cliquez ici|abonnez-vous|subscribe|webinar|masterclass|lifestyle|promo|offre|gift|cadeau|bonus|vip|exclusive|limited time|last chance)"
             )
         if spam_pattern.search(key):
             return
@@ -4825,9 +4584,11 @@ def get_ticker_dossier(ticker: str) ->dict:
     except Exception:
         out['fundamentals'] = {}
     return out
+
 ```
 
-## FILE: 01_memory_core/sqlite_portfolio.py (773 lines)
+## File: .\01_memory_core\sqlite_portfolio.py
+
 ```python
 """SQLite state manager for PEA Pollux.
 
@@ -5395,11 +5156,11 @@ class PortfolioDB:
             logger.exception("Failed to save news history.")
             raise
 
-    def get_news_history(self, ticker: str, limit: int = 50) -> list[dict]:
-        """Return archived news for a ticker, newest first.
+    def get_news_history(self, ticker: str | None = None, limit: int = 100) -> list[dict]:
+        """Return archived news for a ticker (or all), newest first.
 
         Args:
-            ticker: Yahoo symbol (e.g. ``MC.PA``).
+            ticker: Yahoo symbol (e.g. ``MC.PA``). If None, returns global feed.
             limit: Max rows to return.
 
         Returns:
@@ -5408,17 +5169,29 @@ class PortfolioDB:
         """
         try:
             with self._connect() as conn:
-                rows = conn.execute(
-                    """
-                    SELECT url, ticker, title, date_published, provider,
-                           sentiment_score, inserted_at
-                    FROM news_history
-                    WHERE ticker = ?
-                    ORDER BY date_published DESC, inserted_at DESC
-                    LIMIT ?;
-                    """,
-                    (ticker, int(limit)),
-                ).fetchall()
+                if ticker:
+                    rows = conn.execute(
+                        """
+                        SELECT url, ticker, title, date_published, provider,
+                               sentiment_score, inserted_at
+                        FROM news_history
+                        WHERE ticker = ?
+                        ORDER BY date_published DESC, inserted_at DESC
+                        LIMIT ?;
+                        """,
+                        (ticker, int(limit)),
+                    ).fetchall()
+                else:
+                    rows = conn.execute(
+                        """
+                        SELECT url, ticker, title, date_published, provider,
+                               sentiment_score, inserted_at
+                        FROM news_history
+                        ORDER BY date_published DESC, inserted_at DESC
+                        LIMIT ?;
+                        """,
+                        (int(limit),),
+                    ).fetchall()
             return [
                 {
                     "title": row["title"],
@@ -5426,10 +5199,12 @@ class PortfolioDB:
                     "date": row["date_published"],
                     "provider": row["provider"],
                     "sentiment_score": row["sentiment_score"],
+                    "ticker": row["ticker"],
                 }
                 for row in rows
             ]
         except sqlite3.Error:
+            logger.exception("Failed to retrieve news history.")
             logger.exception("Failed to read news history for %s.", ticker)
             raise
 
@@ -5602,14 +5377,17 @@ class PortfolioDB:
         except Exception:
             logger.exception("Failed to read ticker profile for %s.", tk)
             return None
+
 ```
 
-## FILE: 02_quant_engine/__init__.py (0 lines)
+## File: .\02_quant_engine\__init__.py
+
 ```python
 
 ```
 
-## FILE: 02_quant_engine/contextual_bandit.py (95 lines)
+## File: .\02_quant_engine\contextual_bandit.py
+
 ```python
 """Contextual Bandits for Dynamic Sub-model Weighting.
 
@@ -5706,9 +5484,11 @@ class UCBBandit:
         self.state[regime][arm]["counts"] += 1
         self.state[regime][arm]["rewards"] += reward
         self.save_state()
+
 ```
 
-## FILE: 02_quant_engine/cross_sectional.py (49 lines)
+## File: .\02_quant_engine\cross_sectional.py
+
 ```python
 """Cross-Sectional Momentum Engine for PEA Pollux.
 
@@ -5759,9 +5539,11 @@ class CrossSectionalScorer:
         
         logger.info("Computed cross-sectional momentum for %d tickers.", len(ranks))
         return ranks.to_dict()
+
 ```
 
-## FILE: 02_quant_engine/market_regime.py (120 lines)
+## File: .\02_quant_engine\market_regime.py
+
 ```python
 """Market Regime Classifier for PEA Pollux.
 
@@ -5883,9 +5665,11 @@ class MarketRegimeClassifier:
             return 70.0, 25.0
         else:
             return base_conviction, base_rsi
+
 ```
 
-## FILE: 02_quant_engine/ml_backtester.py (22 lines)
+## File: .\02_quant_engine\ml_backtester.py
+
 ```python
 import pandas as pd
 import numpy as np
@@ -5909,9 +5693,11 @@ def run_autonomous_backtest(csv_path: str, initial_capital: float = 10000.0) -> 
     df = df.sort_values('Date')
     
     return df
+
 ```
 
-## FILE: 02_quant_engine/ml_feature_store.py (377 lines)
+## File: .\02_quant_engine\ml_feature_store.py
+
 ```python
 """Machine Learning feature store for PEA Pollux (Phase 40).
 
@@ -6290,9 +6076,11 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     p = export_ml_dataset_csv()
     print(f"Wrote {p}")
+
 ```
 
-## FILE: 02_quant_engine/ml_trainer.py (347 lines)
+## File: .\02_quant_engine\ml_trainer.py
+
 ```python
 """XGBoost trainer for forward-return prediction (Phase 44).
 
@@ -6641,9 +6429,11 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     m = train_model()
     print(json.dumps(m, indent=2))
+
 ```
 
-## FILE: 02_quant_engine/quantitative_math.py (144 lines)
+## File: .\02_quant_engine\quantitative_math.py
+
 ```python
 """Academic quantitative-math utilities for portfolio analytics.
 
@@ -6788,9 +6578,12 @@ def calculate_annualized_volatility(returns: pd.Series, periods_per_year: int = 
     if std_ewm.empty:
         return 0.0
     return float(std_ewm.iloc[-1] * np.sqrt(float(periods_per_year)))
+
+
 ```
 
-## FILE: 02_quant_engine/smart_dca_engine.py (216 lines)
+## File: .\02_quant_engine\smart_dca_engine.py
+
 ```python
 """Smart DCA core engine for PEA Pollux (Phase 10).
 
@@ -7008,9 +6801,11 @@ if __name__ == "__main__":
                                      np.linspace(260.0, 170.0, 60)]))
     s2 = core.evaluate_cw8(_MockDB(crash), current_cash=8000.0, total_equity=20000.0)
     print(f"  score={s2.score:.0f} qty={s2.target_qty}\n  {s2.reason}")
+
 ```
 
-## FILE: 02_quant_engine/stochastic_models.py (87 lines)
+## File: .\02_quant_engine\stochastic_models.py
+
 ```python
 """Stochastic portfolio models (vectorized numpy implementations)."""
 
@@ -7098,9 +6893,12 @@ def run_correlated_monte_carlo(
             "p95": pct[4],
         }
     )
+
+
 ```
 
-## FILE: 02_quant_engine/technical_scorer.py (809 lines)
+## File: .\02_quant_engine\technical_scorer.py
+
 ```python
 """Quantitative signal engine for PEA Pollux.
 
@@ -7911,9 +7709,11 @@ if __name__ == "__main__":
     for s in results:
         print(f"  {s.id[:8]} {s.ticker} score={s.score:.1f}")
         print(f"  reason: {s.reason}")
+
 ```
 
-## FILE: 02_quant_engine/walk_forward_backtester.py (296 lines)
+## File: .\02_quant_engine\walk_forward_backtester.py
+
 ```python
 """Walk-forward backtester scaffold (Phase 20 companion).
 
@@ -8211,14 +8011,17 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 ```
 
-## FILE: 03_risk_portfolio/__init__.py (0 lines)
+## File: .\03_risk_portfolio\__init__.py
+
 ```python
 
 ```
 
-## FILE: 03_risk_portfolio/correlation_firewall.py (296 lines)
+## File: .\03_risk_portfolio\correlation_firewall.py
+
 ```python
 """Correlation Firewall for PEA Pollux.
 
@@ -8516,9 +8319,11 @@ if __name__ == "__main__":
                      positions=[saf, orp], last_updated=datetime.now(timezone.utc))
     ok, msg = fw.check_correlation("AIR.PA", portfolio2, _MockDB())
     print(f"AIR.PA correlation check -> {ok}: {msg}")
+
 ```
 
-## FILE: 03_risk_portfolio/drawdown_breaker.py (83 lines)
+## File: .\03_risk_portfolio\drawdown_breaker.py
+
 ```python
 """Drawdown circuit breaker — enforces DAILY/WEEKLY/MONTHLY_MAX_LOSS_PCT.
 
@@ -8603,9 +8408,11 @@ class DrawdownBreaker:
             return True, f"DRAWDOWN VETO: monthly PnL {monthly_pnl:.2%} < {self.monthly_limit:.2%}"
 
         return False, ""
+
 ```
 
-## FILE: 03_risk_portfolio/equity_metrics.py (143 lines)
+## File: .\03_risk_portfolio\equity_metrics.py
+
 ```python
 """Shared equity-curve analytics for live dashboard and future backtests.
 
@@ -8750,9 +8557,11 @@ def compute_equity_metrics(
         except Exception:  # noqa: BLE001
             out["cash_last"] = None
     return out
+
 ```
 
-## FILE: 03_risk_portfolio/hrp_sizer.py (141 lines)
+## File: .\03_risk_portfolio\hrp_sizer.py
+
 ```python
 """Hierarchical Risk Parity (HRP) module.
 
@@ -8895,9 +8704,11 @@ class HRPSizer:
         # Scale to max_budget
         allocations = {t: w * max_budget for t, w in weights.items()}
         return allocations
+
 ```
 
-## FILE: 03_risk_portfolio/monthly_rebalancer.py (232 lines)
+## File: .\03_risk_portfolio\monthly_rebalancer.py
+
 ```python
 """Portfolio rebalancer for PEA Pollux (Phase 12/15/16).
 
@@ -9131,9 +8942,11 @@ class PortfolioRebalancer:
 
         logger.info("Rebalancer produced %d SELL signal(s).", len(signals))
         return signals
+
 ```
 
-## FILE: 03_risk_portfolio/pea_position_sizer.py (296 lines)
+## File: .\03_risk_portfolio\pea_position_sizer.py
+
 ```python
 """PEA position sizer for PEA Pollux.
 
@@ -9431,9 +9244,11 @@ if __name__ == "__main__":
     # target ~1125 EUR but only 300 cash ; floor(300/180)=1
     qty3 = sizer.calculate_target_qty(sig3, poor, current_price=180.0)
     print(f"ASML.AS @180 EUR, cash 300 -> {qty3} shares (expected 1)")
+
 ```
 
-## FILE: 03_risk_portfolio/stress_tester.py (145 lines)
+## File: .\03_risk_portfolio\stress_tester.py
+
 ```python
 """Historical stress testing utilities (black swan replay)."""
 
@@ -9580,14 +9395,17 @@ def simulate_historical_shocks(
         )
 
     return pd.DataFrame(out_rows)
+
 ```
 
-## FILE: 04_orchestrator_ai/__init__.py (0 lines)
+## File: .\04_orchestrator_ai\__init__.py
+
 ```python
 
 ```
 
-## FILE: 04_orchestrator_ai/earnings_blackout.py (92 lines)
+## File: .\04_orchestrator_ai\earnings_blackout.py
+
 ```python
 """Per-ticker earnings / dividend blackout (same pattern as MacroVetoEngine).
 
@@ -9681,9 +9499,11 @@ class EarningsBlackoutEngine:
                 logger.info("%s", reason)
                 return True, reason
         return False, "Clear"
+
 ```
 
-## FILE: 04_orchestrator_ai/macro_veto.py (125 lines)
+## File: .\04_orchestrator_ai\macro_veto.py
+
 ```python
 """Macro Veto Engine for PEA Pollux.
 
@@ -9810,9 +9630,11 @@ if __name__ == "__main__":
     for d in ("2026-07-14", "2026-07-15", "2026-07-16", "2026-07-25"):
         vetoed, msg = engine.check_veto(dt.date.fromisoformat(d))
         print(f"{d}: vetoed={vetoed} -> {msg}")
+
 ```
 
-## FILE: 04_orchestrator_ai/news_sentiment_llm.py (227 lines)
+## File: .\04_orchestrator_ai\news_sentiment_llm.py
+
 ```python
 """News sentiment scorer for PEA Pollux (Phase 11).
 
@@ -10041,9 +9863,11 @@ if __name__ == "__main__":
     ]
     result = asyncio.run(scorer.analyze_news("TEST.PA", demo))
     print("Live sentiment (0 if no API key):", result)
+
 ```
 
-## FILE: 04_orchestrator_ai/red_team_agent.py (98 lines)
+## File: .\04_orchestrator_ai\red_team_agent.py
+
 ```python
 """LLM multi-agent red teaming: bull vs bear vs devil's advocate vs judge."""
 
@@ -10143,9 +9967,11 @@ async def run_bull_bear_debate(ticker: str, context_data: str) -> dict:
         "devil_advocate": devil,
         "judge": (judge or "Verdict indisponible.").strip(),
     }
+
 ```
 
-## FILE: 04_orchestrator_ai/revocation_engine.py (146 lines)
+## File: .\04_orchestrator_ai\revocation_engine.py
+
 ```python
 """Revocation Engine for PEA Pollux.
 
@@ -10293,9 +10119,11 @@ if __name__ == "__main__":
                 reason="Mean-reversion setup")
     s3 = engine.evaluate_signal(s3, current_price=100.5, original_price=100.0)
     print(f"status={s3.status.value} | reason='{s3.reason}'")
+
 ```
 
-## FILE: 04_orchestrator_ai/signal_priority_cascade.py (372 lines)
+## File: .\04_orchestrator_ai\signal_priority_cascade.py
+
 ```python
 """Signal Priority Cascade for PEA Pollux.
 
@@ -10669,9 +10497,11 @@ if __name__ == "__main__":
     orch.macro_veto.calendar = {}
     _show("Cascade on a macro-CLEAR day",
           orch.process_raw_signals([s.model_copy() for s in raw], portfolio, prices))
+
 ```
 
-## FILE: 04_orchestrator_ai/weekly_historian.py (226 lines)
+## File: .\04_orchestrator_ai\weekly_historian.py
+
 ```python
 """Weekly Historian for PEA Pollux (Phase 12).
 
@@ -10899,19 +10729,24 @@ if __name__ == "__main__":
     report = asyncio.run(hist.generate_weekly_report(_MockDB()))
     print("\n===== WEEKLY REPORT =====\n")
     print(report)
+
 ```
 
-## FILE: 05_interfaces/__init__.py (0 lines)
+## File: .\05_interfaces\__init__.py
+
 ```python
 
 ```
 
-## FILE: 05_interfaces/components/__init__.py (1 lines)
+## File: .\05_interfaces\components\__init__.py
+
 ```python
 """Dashboard component modules — extracted from terminal_dashboard.py (Phase 42)."""
+
 ```
 
-## FILE: 05_interfaces/discord_copilot.py (134 lines)
+## File: .\05_interfaces\discord_copilot.py
+
 ```python
 """Discord Copilot Webhook for PEA Pollux.
 
@@ -11047,9 +10882,11 @@ class DiscordCopilot:
                         logger.info("Discord Webhook alert sent for %s.", signal.ticker)
         except Exception as exc:
             logger.exception("Aiohttp webhook post failed for %s.", signal.ticker)
+
 ```
 
-## FILE: 05_interfaces/llm_explainer.py (272 lines)
+## File: .\05_interfaces\llm_explainer.py
+
 ```python
 """LLM narrative explainer for PEA Pollux.
 
@@ -11323,9 +11160,11 @@ if __name__ == "__main__":
         print("\nExplanation:\n", text)
 
     asyncio.run(_demo())
+
 ```
 
-## FILE: 05_interfaces/terminal_dashboard.py (6445 lines)
+## File: .\05_interfaces\terminal_dashboard.py
+
 ```python
 """Web Terminal (Streamlit dashboard) for PEA Pollux.
 
@@ -15005,31 +14844,20 @@ with tab_macro:
         held_tickers,
     )
 
-    st.markdown("#### 🎯 Meilleur portefeuille suggere (adaptatif)")
+    st.markdown("#### 🎯 Meilleur portefeuille suggéré (adaptatif)")
     st.markdown(
         f"<div class='eli5'>{suggestion.get('summary', '')}</div>",
         unsafe_allow_html=True,
     )
-    if True:
-        st.markdown("### 💡 Lire le détail de la stratégie")
-        st.markdown(
-            f"<div class='info-text'>"
-            f"<b style='color:{_AMBER};'>Pourquoi ce mode "
-            f"({suggestion.get('mode')}) :</b><br>"
-            f"{suggestion.get('mode_why', '')}<br><br>"
-            f"{suggestion.get('cash_explain', '')}</div>",
-            unsafe_allow_html=True,
-        )
-        if True:
-            st.markdown("### 📖 Comprendre cette recommandation")
-            st.caption(
-                "Le résumé reste visible ci-dessus. Ici : justification du mode "
-                "(MICRO/STARTER/…) et lecture cash / runway (court_why)."
-            )
-            st.markdown(
-                f"**mode_why:** {suggestion.get('mode_why', '—')}\n\n"
-                f"**cash_explain / court_why:** {suggestion.get('cash_explain', '—')}"
-            )
+    st.markdown(
+        f"<div class='info-text'>"
+        f"<b style='color:{_AMBER};'>Pourquoi ce mode "
+        f"({suggestion.get('mode')}) :</b><br>"
+        f"{suggestion.get('mode_why', '')}<br><br>"
+        f"{suggestion.get('cash_explain', '')}</div>",
+        unsafe_allow_html=True,
+    )
+
     sug_lines = suggestion.get("lines") or []
     if sug_lines:
         sdisp = pd.DataFrame([{
@@ -15231,6 +15059,48 @@ with tab_macro:
             unsafe_allow_html=True,
         )
 
+    st.markdown("---")
+    p1, p2 = st.columns(2)
+    with p1:
+        st.markdown("#### 📈 Top / Flop (1 mois)")
+        perf_watch = get_market_performance(watch, period="1mo")
+        if perf_watch.empty or "Performance (%)" not in perf_watch.columns:
+            st.caption("Performances indisponibles.")
+        else:
+            pf = perf_watch.copy()
+            pf["Titre"] = [format_name(t) for t in pf["Ticker"]]
+            top = pf.nlargest(5, "Performance (%)")
+            # Exclusive flop: exclude tickers already in Top, require strictly worse.
+            flop_pool = pf[~pf["Ticker"].isin(top["Ticker"])]
+            flop = flop_pool.nsmallest(5, "Performance (%)")
+            tcol, fcol = st.columns(2)
+            with tcol:
+                st.caption("Top")
+                disp_t = pd.DataFrame({
+                    "Titre": top["Titre"],
+                    "Perf": [f"{v:+.1f}%" for v in top["Performance (%)"]],
+                })
+                st.dataframe(disp_t, use_container_width=True, hide_index=True)
+            with fcol:
+                st.caption("Flop")
+                disp_f = pd.DataFrame({
+                    "Titre": flop["Titre"],
+                    "Perf": [f"{v:+.1f}%" for v in flop["Performance (%)"]],
+                })
+                st.dataframe(disp_f, use_container_width=True, hide_index=True)
+    with p2:
+        st.markdown("#### 📅 Evénements à venir")
+        events = get_earnings_events(watch)
+        if not events:
+            st.caption("Aucun calendrier earnings detecte (yfinance).")
+        else:
+            edf = pd.DataFrame([{
+                "Titre": format_name(e["ticker"]),
+                "Evenement": e["event"],
+                "Date": e["date"],
+            } for e in events])
+            st.dataframe(edf, use_container_width=True, hide_index=True)
+
     # --- Phase 17: Decision funnel (audit-log analytics) --------------------
     st.markdown("---")
     with st.expander("📊 Entonnoir de Décision (Funnel 7J)", expanded=True):
@@ -15353,27 +15223,23 @@ with tab_macro:
                 sc = int(a.get("score") or 0)
                 rows.append({
                     "Ticker": t,
-                    "Score": f"{sc}/100",
-                    "RSI": f"{float(rsi):.0f}" if rsi is not None else "—",
+                    "Score": sc,
+                    "RSI": float(rsi) if rsi is not None else None,
                     "Manquant": missing,
                 })
 
             disp = pd.DataFrame(rows)
-            score_colors = [
-                (_NEON if int(s.split("/")[0]) >= 62 else
-                 _AMBER if int(s.split("/")[0]) >= 58 else
-                 _CYAN)
-                for s in disp["Score"].tolist()
-            ]
-            st.plotly_chart(
-                dark_table(
-                    disp,
-                    height=min(420, 44 + 28 * len(disp)),
-                    col_widths=[1.2, 0.8, 0.7, 3.2],
-                    font_color_map={"Score": score_colors},
-                ),
-                width="stretch",
-                key="gen_near_miss_radar",
+            st.dataframe(
+                disp,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Score": st.column_config.ProgressColumn(
+                        "Score", format="%f / 100", min_value=0, max_value=100
+                    ),
+                    "RSI": st.column_config.NumberColumn("RSI", format="%.0f"),
+                    "Manquant": st.column_config.TextColumn("Condition manquante", width="large")
+                }
             )
     with col2:
         st.markdown("##### Historique (20 derniers)")
@@ -15388,72 +15254,26 @@ with tab_macro:
                 "Titre": [format_name(t) for t in hist["ticker"]],
                 "Statut": hist["status"],
                 "Type": hist["signal_type"],
-                "Score": [f"{s:.1f}" for s in hist["score"]],
+                "Score": hist["score"],
                 "Date": [str(x)[:16] for x in hist["created_at"]],
             })
-            st.plotly_chart(
-                dark_table(disp, height=320,
-                           font_color_map={"Statut": statut_colors},
-                           col_widths=[2, 1.1, 0.9, 0.7, 1.2]),
-                width="stretch",
-                key="gen_hist_signals_table",
+            
+            def _color_status(val):
+                if val == "EXECUTED": return "color: #00FF00"
+                if val == "REVOKED": return "color: #FF3333"
+                if val == "REJECTED": return "color: #9BA3AF"
+                if val == "EXPIRED": return "color: #FFB000"
+                return ""
+
+            st.dataframe(
+                disp.style.map(_color_status, subset=["Statut"]),
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Score": st.column_config.NumberColumn("Score", format="%.1f"),
+                }
             )
-    st.markdown("---")
-    p1, p2 = st.columns(2)
-    with p1:
-        st.markdown("#### 📈 Top / Flop (1 mois)")
-        perf_watch = get_market_performance(watch, period="1mo")
-        if perf_watch.empty or "Performance (%)" not in perf_watch.columns:
-            st.caption("Performances indisponibles.")
-        else:
-            pf = perf_watch.copy()
-            pf["Titre"] = [format_name(t) for t in pf["Ticker"]]
-            top = pf.nlargest(5, "Performance (%)")
-            # Exclusive flop: exclude tickers already in Top, require strictly worse.
-            flop_pool = pf[~pf["Ticker"].isin(top["Ticker"])]
-            flop = flop_pool.nsmallest(5, "Performance (%)")
-            tcol, fcol = st.columns(2)
-            with tcol:
-                st.caption("Top")
-                disp_t = pd.DataFrame({
-                    "Titre": top["Titre"],
-                    "Perf": [f"{v:+.1f}%" for v in top["Performance (%)"]],
-                })
-                st.plotly_chart(
-                    dark_table(disp_t, height=220,
-                               font_color_map={"Perf": [_NEON] * len(disp_t)},
-                               col_widths=[2.2, 0.8]),
-                    width="stretch",
-                    key="gen_top_perf_table",
-                )
-            with fcol:
-                st.caption("Flop")
-                disp_f = pd.DataFrame({
-                    "Titre": flop["Titre"],
-                    "Perf": [f"{v:+.1f}%" for v in flop["Performance (%)"]],
-                })
-                st.plotly_chart(
-                    dark_table(disp_f, height=220,
-                               font_color_map={"Perf": [_RED] * len(disp_f)},
-                               col_widths=[2.2, 0.8]),
-                    width="stretch",
-                    key="gen_flop_perf_table",
-                )
-    with p2:
-        st.markdown("#### 📅 Evenements a venir")
-        events = get_earnings_events(watch)
-        if not events:
-            st.caption("Aucun calendrier earnings detecte (yfinance).")
-        else:
-            edf = pd.DataFrame([{
-                "Titre": format_name(e["ticker"]),
-                "Evenement": e["event"],
-                "Date": e["date"],
-            } for e in events])
-            st.plotly_chart(
-                dark_table(edf, height=220), width="stretch",
-                key="gen_earnings_table",
-            )
+
     st.markdown("---")
     st.markdown("#### 📰 Actualites (contexte marche)")
     st.markdown(
@@ -16214,7 +16034,7 @@ with tab_ticker:
         with sub_news:
             st.markdown("#### 🗞️ Morning Briefing (Macro Zeitgeist)")
             import re
-            spam_regex = re.compile(r'(?i)(discount|free|referral|rewards|newsletter|email|sponsor|pitch deck|vc|substack|attio|seo agency|gtm|seed|founder|startup|saas|cap table|récompense|mettre [aà] jour|update your|unsubscribe|cliquez ici|abonnez-vous|subscribe|webinar|masterclass|refer\.cafedelabourse)')
+            spam_regex = re.compile(r'(?i)(discount|free|referral|rewards|newsletter|email|sponsor|pitch deck|vc|substack|attio|seo agency|gtm|seed|founder|startup|saas|cap table|récompense|mettre [aà] jour|update your|unsubscribe|cliquez ici|abonnez-vous|subscribe|webinar|masterclass|refer\.cafedelabourse|lifestyle|promo|offre|gift|cadeau|bonus|vip|exclusive|limited time|last chance)')
             
             briefing = load_morning_briefing()
             zg = ""
@@ -16306,8 +16126,7 @@ with tab_ticker:
                     db_news = [n for n in db_news if n.get("provider") in filter_sources]
     
                 if db_news:
-                    html_feed = "<div style='display:flex; flex-direction:column; gap:8px;'>"
-                    valid_news_count = 0
+                    clean_news = []
                     for r in db_news:
                         title = str(r.get("title", ""))
                         if spam_regex.search(title):
@@ -16315,31 +16134,41 @@ with tab_ticker:
                         if title.lower().startswith('http') or 'http://' in title.lower() or 'https://' in title.lower():
                             continue
                             
-                        valid_news_count += 1
-                        prov = str(r.get("provider", "")).strip() or "N/A"
                         dp = r.get("date_published") or "N/A"
                         if len(dp) > 16: dp = dp[:16]
-                        url = str(r.get("url", ""))
-                        title = str(r.get("title", ""))
-                        score = r.get("sentiment_score")
                         
-                        badge = "<span style='color: #9BA3AF; background: #1A1A1A; padding: 2px 6px; border: 1px solid #333333;'>⚪ NEUTRAL</span>"
+                        score = r.get("sentiment_score")
+                        badge = "⚪ NEUTRE"
                         if score is not None:
                             try:
                                 sv = float(score)
-                                if sv >= 30: badge = f"<span style='color: #00FF00; background: #002200; padding: 2px 6px; border: 1px solid #00FF00;'>🟢 BULLISH (+{sv:.0f})</span>"
-                                elif sv <= -30: badge = f"<span style='color: #FF3B30; background: #220000; padding: 2px 6px; border: 1px solid #FF3B30;'>🔴 BEARISH ({sv:.0f})</span>"
+                                if sv >= 30: badge = f"🟢 BULLISH (+{sv:.0f})"
+                                elif sv <= -30: badge = f"🔴 BEARISH ({sv:.0f})"
                             except: pass
+                            
+                        clean_news.append({
+                            "Date": dp,
+                            "Source": str(r.get("provider", "")).strip() or "N/A",
+                            "Titre": title,
+                            "URL": str(r.get("url", "")),
+                            "Sentiment": badge
+                        })
                         
-                        title_link = f"<a href='{url}' target='_blank' style='color:{_CYAN}; text-decoration:none;'>{title}</a>" if url else title
-                        html_feed += f"<div style='background:rgba(255,255,255,0.03); padding:8px 12px; border-radius:6px; border-left:3px solid {_PANEL};'>"
-                        html_feed += f"<span style='color:{_MUTED}; font-size:12px; margin-right:10px;'>{dp}</span>"
-                        html_feed += f"<b style='color:#ccc; margin-right:8px;'>[{prov}]</b>"
-                        html_feed += f"{title_link} <span style='margin-left:8px;'>{badge}</span>"
-                        html_feed += "</div>"
-                    html_feed += "</div>"
-                    if valid_news_count > 0:
-                        st.markdown(html_feed, unsafe_allow_html=True)
+                    if clean_news:
+                        df_news = pd.DataFrame(clean_news)
+                        st.dataframe(
+                            df_news,
+                            column_config={
+                                "URL": st.column_config.LinkColumn(
+                                    "Lien", display_text="Ouvrir ↗", max_chars=100
+                                ),
+                                "Titre": st.column_config.TextColumn(
+                                    "Titre de l'Article", width="large"
+                                )
+                            },
+                            hide_index=True,
+                            use_container_width=True
+                        )
                     else:
                         st.info("Aucune actualité pertinente (filtre anti-spam actif).")
                 else:
@@ -16740,26 +16569,70 @@ with tab_ticker:
         with sub_overview:
             full_hist_mode = st.checkbox("🔓 Charger l'historique complet (10 ans)", key=f"full_hist_{selected}")
             
-            # Load data from DuckDB for candlestick
-            df_hist = db_ro.get_historical_prices(selected, days=3650 if full_hist_mode else 750)
-            if df_hist is not None and not df_hist.empty:
-                if not full_hist_mode:
-                    df_hist = df_hist.tail(500)
-                
-                fig_candle = go.Figure(data=[go.Candlestick(
-                    x=df_hist.index,
-                    open=df_hist['Open'], high=df_hist['High'],
-                    low=df_hist['Low'], close=df_hist['Close'],
-                    increasing_line_color=_NEON, decreasing_line_color=_RED
-                )])
-                fig_candle.update_layout(
-                    title=f"Historique OHLCV — {selected}",
-                    template="plotly_dark", plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
-                    height=600, margin=dict(l=20, r=20, t=40, b=20), xaxis_rangeslider_visible=False
-                )
-                st.plotly_chart(fig_candle, use_container_width=True)
-            else:
-                st.warning("Données OHLCV indisponibles pour le graphique.")
+            # TradingView Advanced Chart Widget (with Plotly fallback)
+            clean_ticker = str(selected).strip()
+            tv_sym = _tv_symbol(clean_ticker)
+            chart_html = f"""
+            <!-- TradingView Widget BEGIN -->
+            <div class="tradingview-widget-container" style="height:100%;width:100%">
+              <div id="tradingview_{clean_ticker.replace('.', '_')}" style="height:600px;width:100%"></div>
+              <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
+              <script type="text/javascript">
+              new TradingView.widget(
+              {{
+              "autosize": true,
+              "symbol": "{tv_sym}",
+              "interval": "D",
+              "timezone": "Europe/Paris",
+              "theme": "dark",
+              "style": "1",
+              "locale": "fr",
+              "enable_publishing": false,
+              "backgroundColor": "#050505",
+              "gridColor": "#111111",
+              "hide_top_toolbar": false,
+              "hide_legend": false,
+              "save_image": false,
+              "container_id": "tradingview_{clean_ticker.replace('.', '_')}"
+              }}
+              );
+              </script>
+            </div>
+            <!-- TradingView Widget END -->
+            """
+            
+            try:
+                # IMPORTANT: Streamlit's components.html does not accept a 'key' parameter!
+                components.html(chart_html, height=600)
+            except Exception as e:
+                _dash_log.warning(f"TradingView widget failed for {selected}: {e}. Falling back to Plotly.")
+                # Load data from DuckDB for candlestick
+                df_hist = db_ro.get_historical_prices(selected, days=3650 if full_hist_mode else 750)
+                if df_hist is not None and not df_hist.empty:
+                    if not full_hist_mode:
+                        df_hist = df_hist.tail(500)
+                    
+                    fig_candle = go.Figure(data=[go.Candlestick(
+                        x=df_hist.index,
+                        open=df_hist['Open'], high=df_hist['High'],
+                        low=df_hist['Low'], close=df_hist['Close'],
+                        increasing_line_color=_NEON, decreasing_line_color=_RED
+                    )])
+                    
+                    # Add SMA 50 and 200 if they exist in df_hist or ind
+                    if ind and ind.get("sma50"):
+                        fig_candle.add_trace(go.Scatter(x=[df_hist.index[-1]], y=[ind["sma50"]], mode='markers', marker=dict(color='orange', size=8), name='SMA 50 (current)'))
+                    if ind and ind.get("sma200"):
+                        fig_candle.add_trace(go.Scatter(x=[df_hist.index[-1]], y=[ind["sma200"]], mode='markers', marker=dict(color='cyan', size=8), name='SMA 200 (current)'))
+                        
+                    fig_candle.update_layout(
+                        title=f"Historique OHLCV — {selected}",
+                        template="plotly_dark", plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                        height=600, margin=dict(l=20, r=20, t=40, b=20), xaxis_rangeslider_visible=False
+                    )
+                    st.plotly_chart(fig_candle, use_container_width=True)
+                else:
+                    st.warning("Données OHLCV indisponibles pour le graphique.")
                 
             sma_bits = []
             if ind:
@@ -17488,7 +17361,7 @@ L'IA **n'approuve jamais** un trade. Discord = copilot manuel.
 
 ### 🖥️ Architecture technique
 
-``​`
+```
 AMF → FMP → yfinance / VIX / Bourso best-effort
         → SignalGenerator + SmartDCA
         → CorrelationFirewall + PeaSizer + MacroVeto
@@ -17496,7 +17369,7 @@ AMF → FMP → yfinance / VIX / Bourso best-effort
         → Discord Copilot
         → SQLite (portfolio + equity curve + news_history)  ↔  Streamlit Dashboard
         → DuckDB (OHLCV)
-``​`
+```
 
 Le dashboard lit l'etat en continu. L'editeur de wallet peut ecrire
 cash/positions. Les ordres restent Discord + scheduler.
@@ -17772,9 +17645,11 @@ st.caption(
 
 if auto_refresh:
     pass  # Auto-refresh handled by @st.fragment(run_every=...) on ticker tape & HUD
+
 ```
 
-## FILE: 05_interfaces/trade_cards.py (166 lines)
+## File: .\05_interfaces\trade_cards.py
+
 ```python
 """HTML trade / signal cards for the Streamlit terminal.
 
@@ -17942,2072 +17817,11 @@ def render_signal_card(
   <div style="margin-top:8px;">{when}</div>
 </div>
 """
+
 ```
 
-## FILE: config/api_keys.env.example (54 lines)
-```text
-# =============================================================================
-# PEA Pollux — Secrets template
-# -----------------------------------------------------------------------------
-# Copy this file to `config/api_keys.env` and fill in real values.
-# `config/api_keys.env` is git-ignored and must NEVER be committed.
-# =============================================================================
+## File: .\docker-compose.yml
 
-# Discord bot token (Discord Developer Portal -> Bot -> Reset Token).
-DISCORD_TOKEN=your_discord_bot_token_here
-
-# Numeric ID of the channel where alerts are posted (enable Developer Mode,
-# right-click the channel -> Copy ID).
-DISCORD_CHANNEL_ID=123456789012345678
-
-# Discord webhook URL used by the daemon for the weekly report and monthly
-# rebalance notifications (Channel -> Edit -> Integrations -> Webhooks -> New).
-# This works without a running bot process, so the scheduler can post directly.
-DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/xxxx/yyyy
-
-# OpenRouter API key (https://openrouter.ai/keys).
-OPENROUTER_API_KEY=sk-or-your_openrouter_key_here
-
-# Optional: OpenRouter model slug used for explanations (defaults below).
-OPENROUTER_MODEL=mistralai/mistral-7b-instruct
-
-# Financial Modeling Prep (https://site.financialmodelingprep.com/developer/docs).
-# Secondary insider-trading fallback after AMF BDIF / Opendatasoft.
-FMP_API_KEY=your_fmp_api_key_here
-
-# Finnhub (https://finnhub.io/) — primary EU fundamentals for Value/Quality.
-FINNHUB_API_KEY=your_finnhub_api_key_here
-
-# AMF public data (Opendatasoft / BDIF) — no paid key required.
-# Placeholder kept so env validation / telemetry stay consistent.
-AMF_API_KEY=free_public_ods_api
-
-# EOD Historical Data (https://eodhistoricaldata.com/) — optional market data.
-EODHD_API_KEY=your_eodhd_api_key_here
-
-# Yahoo Mail IMAP for Morning Briefing (use an App Password, SSL 993).
-YAHOO_MAIL_USER=your_yahoo_email@yahoo.com
-YAHOO_MAIL_APP_PASSWORD=your_yahoo_app_password_here
-
-# Alpha Vantage (https://www.alphavantage.co/) — fundamentals fallback.
-ALPHAVANTAGE_API_KEY=your_alphavantage_key_here
-
-# OpenFIGI (Bloomberg) — symbol/ISIN resolution.
-OPENFIGI_API_KEY=your_openfigi_key_here
-
-# MASSIVE API — Primary market data (historical OHLCV)
-MASSIVE_API_KEY=your_massive_api_key_here
-
-# Finlight API — Structured news and intelligence
-FINLIGHT_API_KEY=your_finlight_api_key_here
-```
-
-## FILE: config/earnings_calendar.yaml (18 lines)
-```yaml
-# =============================================================================
-# PEA Pollux — Earnings / dividend blackout calendar
-# -----------------------------------------------------------------------------
-# Per-ticker corporate events. The cascade vetoes NEW satellite buys for a
-# ticker when an event falls within EARNINGS_BLACKOUT_DAYS (risk_params.yaml).
-#
-# Format:
-#   events:
-#     MC.PA:
-#       2026-07-24: "Q2 earnings"
-#     OR.PA:
-#       2026-08-01: "Ex-dividend"
-#
-# Prefer official / API calendars later (Euronext, Trading Economics). Keep
-# HTML scraping of broker sites as a last resort.
-# =============================================================================
-
-events: {}
-```
-
-## FILE: config/macro_calendar.yaml (17 lines)
-```yaml
-# =============================================================================
-# PEA Pollux - Macro Event Calendar (dummy / seed data)
-# -----------------------------------------------------------------------------
-# High-impact macro events that trigger a hard veto on new offensive signals
-# within MACRO_VETO_DAYS_BEFORE (see risk_params.yaml).
-#
-# In production this file is refreshed from Trading Economics / Finnhub. For now
-# it is seeded manually. Keys are ISO dates (YYYY-MM-DD), values are event names.
-# =============================================================================
-
-events:
-  2026-06-17: "ECB Rate Decision"
-  2026-07-16: "ECB Rate Decision"
-  2026-07-17: "Euro Area CPI (Flash)"
-  2026-07-31: "US Non-Farm Payrolls (NFP)"
-  2026-08-13: "US CPI"
-  2026-09-17: "FED Rate Decision"
-```
-
-## FILE: config/pea_universe.yaml (1901 lines)
-```yaml
-# PEA Pollux - investable universe
-# Synced from Boursorama Eligibilité PEA filter (tools/sync_universe_from_bourso.py).
-# Extra flags: srd=true (liquid SRD), pea_pme=true.
-
-universe:
-  Basic Materials:
-  - ticker: AI.PA
-    name: Air Liquide
-    srd: true
-  - ticker: AKE.PA
-    name: Arkema
-    srd: true
-  - ticker: ALAFY.PA
-    name: AFYREN
-    pea_pme: true
-  - ticker: ALBKK.PA
-    name: BAIKOWSKI
-    pea_pme: true
-  - ticker: ALCOG.PA
-    name: COGRA
-    pea_pme: true
-  - ticker: ALCRB.PA
-    name: CARBIOS
-    pea_pme: true
-  - ticker: ALDUB.PA
-    name: ENCRES DUBUIT
-    pea_pme: true
-  - ticker: ALFLO.PA
-    name: FLORENTAISE
-    pea_pme: true
-  - ticker: ALGLD.PA
-    name: GOLD BY GOLD
-    pea_pme: true
-  - ticker: ALHGR.PA
-    name: HOFFMANN GREEN CEMENT TEC.
-    pea_pme: true
-  - ticker: ALHRG.PA
-    name: HERIGE
-    pea_pme: true
-  - ticker: ALKOM.PA
-    name: PLASTICOS COMP
-    pea_pme: true
-  - ticker: ALLUX.PA
-    name: INSTALLUX
-    pea_pme: true
-  - ticker: ALMIB.PA
-    name: AMOEBA
-    pea_pme: true
-  - ticker: ALMOU.PA
-    name: MOULINVEST
-    pea_pme: true
-  - ticker: ALRGR.PA
-    name: ROUGIER S.A.
-    pea_pme: true
-  - ticker: ALVIN.PA
-    name: VINPAI
-  - ticker: CBE.PA
-    name: ROBERTET CI E87
-    pea_pme: true
-  - ticker: ERA.PA
-    name: Eramet
-    pea_pme: true
-    srd: true
-  - ticker: EXPL.PA
-    name: EPC GROUPE
-    pea_pme: true
-  - ticker: GRVO.PA
-    name: VOLTZ (GRAINES)
-  - ticker: JCQ.PA
-    name: Jacquet Metals
-    pea_pme: true
-    srd: true
-  - ticker: LHYFE.PA
-    name: LHYFE
-    pea_pme: true
-  - ticker: MLDYN.PA
-    name: DYNAFOND
-    pea_pme: true
-  - ticker: MLPRX.PA
-    name: PARX MATERIALS
-    pea_pme: true
-  - ticker: NK.PA
-    name: Imerys
-    srd: true
-  - ticker: RBT.PA
-    name: ROBERTET
-    pea_pme: true
-  - ticker: VCT.PA
-    name: Vicat
-    srd: true
-  - ticker: VK.PA
-    name: Vallourec
-    srd: true
-  Communication Services:
-  - ticker: ALALO.PA
-    name: ACHETER-LOUER.FR
-    pea_pme: true
-  - ticker: ALATA.PA
-    name: ATARI
-    pea_pme: true
-  - ticker: ALBIZ.PA
-    name: OBIZ
-    pea_pme: true
-  - ticker: ALBLD.PA
-    name: BILENDI
-    pea_pme: true
-  - ticker: ALDNE.PA
-    name: DONTNOD
-    pea_pme: true
-  - ticker: ALDNX.PA
-    name: DNXCORP
-    pea_pme: true
-  - ticker: ALDUX.PA
-    name: ADUX
-    pea_pme: true
-  - ticker: ALECP.PA
-    name: EUROPACORP
-    pea_pme: true
-    srd: true
-  - ticker: ALENT.PA
-    name: ETHERO
-    pea_pme: true
-  - ticker: ALFUM.PA
-    name: FILL UP MEDIA
-    pea_pme: true
-  - ticker: ALHOP.PA
-    name: HOPSCOTCH GRP
-    pea_pme: true
-  - ticker: ALINV.PA
-    name: INVIBES ADV
-    pea_pme: true
-  - ticker: ALISP.PA
-    name: ISPD NETWORK
-    pea_pme: true
-  - ticker: ALKLA.PA
-    name: KLARSEN
-    pea_pme: true
-  - ticker: ALLLN.PA
-    name: LLEID SERV TELEM
-    pea_pme: true
-  - ticker: ALMEX.PA
-    name: MEXEDIA
-    pea_pme: true
-  - ticker: ALMKS.PA
-    name: MAKING SCI GRP
-    pea_pme: true
-  - ticker: ALNMG.PA
-    name: NETMEDIA GROUP
-    pea_pme: true
-  - ticker: ALPRI.PA
-    name: PRISMAFLEX INTL
-    pea_pme: true
-  - ticker: ALPUL.PA
-    name: PULLUP ENTERTAINMENT
-    pea_pme: true
-  - ticker: ALSRS.PA
-    name: SIRIUS MEDIA
-    pea_pme: true
-  - ticker: ALUNI.PA
-    name: UNIFY GROUP
-  - ticker: ALWIN.PA
-    name: WINAMP GROUP
-  - ticker: ALWIT.PA
-    name: WITBE
-  - ticker: ALXIL.PA
-    name: XILAM ANIMATION
-  - ticker: BOL.PA
-    name: Bollore
-    srd: true
-  - ticker: DEC.PA
-    name: JCDecaux
-    pea_pme: true
-    srd: true
-  - ticker: DEEZR.PA
-    name: DEEZER
-    pea_pme: true
-  - ticker: DKUPL.PA
-    name: DEKUPLE
-    pea_pme: true
-  - ticker: EFG.PA
-    name: EAGLE FOOTBALL GR
-    pea_pme: true
-  - ticker: ETL.PA
-    name: Eutelsat
-    pea_pme: true
-    srd: true
-  - ticker: GAM.PA
-    name: GAUMONT
-    pea_pme: true
-  - ticker: HCO.PA
-    name: HIGH CO
-    pea_pme: true
-  - ticker: LOCAL.PA
-    name: Solocal
-    pea_pme: true
-    srd: true
-  - ticker: MLHPE.PA
-    name: HOPENING
-    pea_pme: true
-  - ticker: MLIML.PA
-    name: IMALLIANCE
-    pea_pme: true
-  - ticker: MLIMP.PA
-    name: IMPRIMERIE CHIRAT
-    pea_pme: true
-  - ticker: MMT.PA
-    name: M6 Metropole Television
-    pea_pme: true
-    srd: true
-  - ticker: NACON.PA
-    name: NACON
-    pea_pme: true
-  - ticker: NRG.PA
-    name: NRJ GRP
-    pea_pme: true
-  - ticker: ODET.PA
-    name: Compagnie de l'Odet
-    srd: true
-  - ticker: ORA.PA
-    name: Orange
-    pea_pme: true
-    srd: true
-  - ticker: PRC.PA
-    name: Artmarket.com
-    pea_pme: true
-    srd: true
-  - ticker: PUB.PA
-    name: Publicis Groupe
-    pea_pme: true
-    srd: true
-  - ticker: TFI.PA
-    name: TF1
-    srd: true
-  - ticker: UBI.PA
-    name: Ubisoft
-    srd: true
-  - ticker: VANTI.PA
-    name: VANTIVA
-  - ticker: VIV.PA
-    name: VIVENDI
-  Consumer Cyclical:
-  - ticker: ABEO.PA
-    name: ABEO
-    pea_pme: true
-  - ticker: AC.PA
-    name: Accor
-    srd: true
-  - ticker: AKW.PA
-    name: Akwel
-    pea_pme: true
-    srd: true
-  - ticker: ALAIR.PA
-    name: AIRWELL
-    pea_pme: true
-  - ticker: ALATI.PA
-    name: ACTIA GROUP
-    pea_pme: true
-  - ticker: ALBI.PA
-    name: GASCOGNE
-    pea_pme: true
-  - ticker: ALBOU.PA
-    name: BOURRELIER GRP
-    pea_pme: true
-  - ticker: ALCAF.PA
-    name: CAFOM
-    pea_pme: true
-  - ticker: ALCAT.PA
-    name: Catana Group
-    pea_pme: true
-    srd: true
-  - ticker: ALDAR.PA
-    name: DAMARTEX
-    pea_pme: true
-  - ticker: ALDBL.PA
-    name: BERNARD LOISEAU
-    pea_pme: true
-  - ticker: ALDEL.PA
-    name: DELFINGEN
-    pea_pme: true
-  - ticker: ALDEV.PA
-    name: DEVERNOIS
-    pea_pme: true
-  - ticker: ALDLT.PA
-    name: DELTA PLUS GRP
-    pea_pme: true
-  - ticker: ALEMV.PA
-    name: EMOVA GRP
-    pea_pme: true
-  - ticker: ALFOR.PA
-    name: FORSEE POWER
-    pea_pme: true
-  - ticker: ALFPC.PA
-    name: FOUNTAINE PAJOT
-    pea_pme: true
-  - ticker: ALGIL.PA
-    name: GROUPE GUILLIN
-    pea_pme: true
-  - ticker: ALHEX.PA
-    name: Hexaom
-    pea_pme: true
-    srd: true
-  - ticker: ALHPI.PA
-    name: HOPIUM
-    pea_pme: true
-  - ticker: ALHRS.PA
-    name: HRS (HYDROGEN REFUELING SOL.)
-    pea_pme: true
-  - ticker: ALHUN.PA
-    name: HUNYVERS
-    pea_pme: true
-  - ticker: ALKLN.PA
-    name: KALEON
-    pea_pme: true
-  - ticker: ALLEX.PA
-    name: LEXIBOOK LINGUIST
-    pea_pme: true
-  - ticker: ALLPL.PA
-    name: LEPERMISLIBRE
-    pea_pme: true
-  - ticker: ALLSF.PA
-    name: LE SLIP FRANCAIS
-    pea_pme: true
-  - ticker: ALMLB.PA
-    name: MILIBOO
-    pea_pme: true
-  - ticker: ALMRB.PA
-    name: MR BRICOLAGE
-    pea_pme: true
-  - ticker: ALNLF.PA
-    name: NEOLIFE
-    pea_pme: true
-  - ticker: ALPAS.PA
-    name: PASSAT
-    pea_pme: true
-  - ticker: ALPDX.PA
-    name: PISCINES DESJOYAUX
-    pea_pme: true
-  - ticker: ALPET.PA
-    name: PET SVC HLDG
-    pea_pme: true
-  - ticker: ALPG.PA
-    name: PREATONI GRP
-    pea_pme: true
-  - ticker: ALPVL.PA
-    name: PLASTiVALOIRE
-    pea_pme: true
-    srd: true
-  - ticker: ALRFG.PA
-    name: RACING FORCE
-    pea_pme: true
-  - ticker: ALSPT.PA
-    name: SPARTOO
-    pea_pme: true
-  - ticker: ALU10.PA
-    name: U10 CORP
-  - ticker: ALUPG.PA
-    name: UPERGY
-  - ticker: ALVAP.PA
-    name: KUMULUS VAPE
-    pea_pme: true
-  - ticker: ALVIA.PA
-    name: VIALIFE
-  - ticker: ALVU.PA
-    name: VENTE UNIQUE.COM
-  - ticker: ARAMI.PA
-    name: ARAMIS GROUP
-    pea_pme: true
-  - ticker: BAIN.PA
-    name: BAINS DE MER MONACO
-    srd: true
-  - ticker: BB.PA
-    name: Bic
-    srd: true
-  - ticker: BEN.PA
-    name: Beneteau
-    pea_pme: true
-    srd: true
-  - ticker: BUI.PA
-    name: BARBARA BUI
-    pea_pme: true
-  - ticker: BUR.PA
-    name: BURELLE
-    pea_pme: true
-  - ticker: CDA.PA
-    name: Compagnie des Alpes
-    pea_pme: true
-    srd: true
-  - ticker: CDI.PA
-    name: Christian Dior
-    srd: true
-  - ticker: CHSR.PA
-    name: LA CHAUSSERIA
-    pea_pme: true
-  - ticker: DPT.PA
-    name: ST DUPONT
-    pea_pme: true
-  - ticker: ELIOR.PA
-    name: ELIOR GROUP
-    pea_pme: true
-    srd: true
-  - ticker: FCMC.PA
-    name: CASINO CANNES
-    pea_pme: true
-  - ticker: FDJU.PA
-    name: FDJ United
-    pea_pme: true
-    srd: true
-  - ticker: FNAC.PA
-    name: Fnac Darty
-    pea_pme: true
-    srd: true
-  - ticker: FR.PA
-    name: Valeo
-    srd: true
-  - ticker: FRVIA.PA
-    name: Forvia
-    pea_pme: true
-    srd: true
-  - ticker: GJAJ.PA
-    name: GROUPE JAJ (EX JAJ DISTRIBUTION)
-    pea_pme: true
-  - ticker: HDP.PA
-    name: HOTELS DE PARIS
-    pea_pme: true
-  - ticker: ITXT.PA
-    name: INTL TEXT.ASSOCIES
-    pea_pme: true
-  - ticker: KER.PA
-    name: Kering
-    srd: true
-  - ticker: KOF.PA
-    name: KAUFMAN ET BROAD
-    pea_pme: true
-  - ticker: LEBL.PA
-    name: FONCIERE 7 INV
-    pea_pme: true
-  - ticker: MC.PA
-    name: LVMH
-    srd: true
-  - ticker: MDM.PA
-    name: MAISONS DU MONDE
-    pea_pme: true
-  - ticker: MHM.PA
-    name: MYHOTELMATCH
-    pea_pme: true
-  - ticker: MLAA.PA
-    name: L'AGENCE AUTOMOBILIERE
-    pea_pme: true
-  - ticker: MLARD.PA
-    name: ARDOIN AMAND N-A
-    pea_pme: true
-  - ticker: MLCLI.PA
-    name: MAISON CLIO
-    pea_pme: true
-  - ticker: MLCLP.PA
-    name: Colipays
-    pea_pme: true
-  - ticker: MLCMB.PA
-    name: COMPAGNIE MONT BLANC
-    pea_pme: true
-  - ticker: MLHBP.PA
-    name: HOTELES BESTPR
-    pea_pme: true
-  - ticker: MLHCF.PA
-    name: HOME CONCEPT
-    pea_pme: true
-  - ticker: MLHIN.PA
-    name: HOTELIERE IMMOBILIERE DE NICE
-    pea_pme: true
-  - ticker: MLHOT.PA
-    name: HOTELIM
-    pea_pme: true
-  - ticker: MLIFS.PA
-    name: IMPULSE FITNESS
-    pea_pme: true
-  - ticker: MLODT.PA
-    name: ODIOT
-    pea_pme: true
-  - ticker: MLONE.PA
-    name: BODY ONE
-    pea_pme: true
-  - ticker: MLSML.PA
-    name: SMALTO
-    pea_pme: true
-  - ticker: MLSTR.PA
-    name: STREIT MECANIQ.
-    pea_pme: true
-  - ticker: MMB.PA
-    name: Lagardere
-    srd: true
-  - ticker: NR21.PA
-    name: NR21
-    pea_pme: true
-  - ticker: OPM.PA
-    name: OPmobility
-    pea_pme: true
-    srd: true
-  - ticker: PARP.PA
-    name: PARTOUCHE
-    pea_pme: true
-  - ticker: RBO.PA
-    name: ROCHE BOBOIS
-    pea_pme: true
-  - ticker: RMS.PA
-    name: Hermes International
-    srd: true
-  - ticker: RNO.PA
-    name: Renault
-    pea_pme: true
-    srd: true
-  - ticker: SFCA.PA
-    name: SOC FRANC CASINOS
-    pea_pme: true
-  - ticker: SK.PA
-    name: SEB
-    srd: true
-  - ticker: SMCP.PA
-    name: SMCP
-    pea_pme: true
-  - ticker: SRP.PA
-    name: SHOWROOMPRIVE
-    pea_pme: true
-  - ticker: STLAP.PA
-    name: Stellantis
-    pea_pme: true
-    srd: true
-  - ticker: TFF.PA
-    name: TFF Group
-    srd: true
-  - ticker: TRI.PA
-    name: Trigano
-    srd: true
-  - ticker: VAC.PA
-    name: Pierre et Vacances
-    pea_pme: true
-    srd: true
-  - ticker: VRLA.PA
-    name: VERALLIA
-  Consumer Defensive:
-  - ticker: ALAVI.PA
-    name: ADVINI
-    pea_pme: true
-  - ticker: ALECO.PA
-    name: ECOMIAM
-    pea_pme: true
-  - ticker: ALFLE.PA
-    name: FLEURY MICHON
-    pea_pme: true
-  - ticker: ALIEV.PA
-    name: IEVA GROUP
-    pea_pme: true
-  - ticker: ALKKO.PA
-    name: KKO INTL
-    pea_pme: true
-  - ticker: ALLAN.PA
-    name: LANSON-BCC
-    pea_pme: true
-  - ticker: ALMER.PA
-    name: SAPMER
-    pea_pme: true
-  - ticker: ALODC.PA
-    name: OMER-DECUGIS & CIE
-    pea_pme: true
-  - ticker: ALPAU.PA
-    name: PAULIC MEUNERIE
-    pea_pme: true
-  - ticker: ALPOU.PA
-    name: POULAILLON
-    pea_pme: true
-  - ticker: ALVAL.PA
-    name: VALBIOTIS
-  - ticker: BN.PA
-    name: Danone
-    srd: true
-  - ticker: BOI.PA
-    name: Boiron
-    pea_pme: true
-    srd: true
-  - ticker: BON.PA
-    name: Bonduelle
-    pea_pme: true
-    srd: true
-  - ticker: CA.PA
-    name: Carrefour
-    srd: true
-  - ticker: CO.PA
-    name: Casino Guichard
-    pea_pme: true
-    srd: true
-  - ticker: ITP.PA
-    name: Interparfums
-    srd: true
-  - ticker: JBOG.PA
-    name: BOGART
-    pea_pme: true
-  - ticker: LOUP.PA
-    name: LDC
-    pea_pme: true
-    srd: true
-  - ticker: LPE.PA
-    name: LAURENT PERRIER
-    pea_pme: true
-  - ticker: MALT.PA
-    name: MALTER.FRANCO-BEL
-    pea_pme: true
-  - ticker: MBWS.PA
-    name: Marie Brizard
-    pea_pme: true
-    srd: true
-  - ticker: MLAAH.PA
-    name: AMATHEON AGRI
-    pea_pme: true
-  - ticker: MLCAC.PA
-    name: LOMBARD ET MEDOT
-    pea_pme: true
-  - ticker: MLFDV.PA
-    name: FD
-    pea_pme: true
-  - ticker: MLGAL.PA
-    name: GALEO
-    pea_pme: true
-  - ticker: MLGRC.PA
-    name: GROUPE CARNIVOR
-    pea_pme: true
-  - ticker: MLONL.PA
-    name: ONLINEFORMAPRO N
-    pea_pme: true
-  - ticker: MLSCI.PA
-    name: SCIENTIA SCHOOL
-    pea_pme: true
-  - ticker: MLSDN.PA
-    name: SAVONNERIE NYONS
-    pea_pme: true
-  - ticker: MLSRP.PA
-    name: SPEED RABBIT PIZZA
-    pea_pme: true
-  - ticker: OR.PA
-    name: L'Oreal
-    srd: true
-  - ticker: POMRY.PA
-    name: MAISON POMMERY & ASS.
-    pea_pme: true
-    srd: true
-  - ticker: RCO.PA
-    name: Remy Cointreau
-    pea_pme: true
-    srd: true
-  - ticker: RI.PA
-    name: Pernod Ricard
-    srd: true
-  - ticker: SABE.PA
-    name: SAINT JEAN GRP
-    pea_pme: true
-  - ticker: SAVE.PA
-    name: Savencia
-    pea_pme: true
-    srd: true
-  - ticker: SBT.PA
-    name: Oeneo
-    pea_pme: true
-    srd: true
-  Divers:
-  - ticker: ALSEI.PA
-    name: SOC EDIT IL FAT
-    pea_pme: true
-  - ticker: AUGR.PA
-    name: AUGROS COSM PACK
-    pea_pme: true
-  - ticker: FGRMC.PA
-    name: EIFFAGE
-    srd: true
-  - ticker: ML.PA
-    name: MICHELIN
-    srd: true
-  - ticker: MLBIO.PA
-    name: NORTEM BIOGROUP
-    pea_pme: true
-  - ticker: MLCOR.PA
-    name: COREP LIGHTING
-    pea_pme: true
-  - ticker: MLEAV.PA
-    name: E.A.V.S. GROUPE
-    pea_pme: true
-  - ticker: MLMFI.PA
-    name: CONDOR TECH
-    pea_pme: true
-  - ticker: MLVIE.PA
-    name: INTEGRIT VIAGER
-    pea_pme: true
-  - ticker: YOUNI.PA
-    name: YOUNITED FINL
-  ETF:
-  - ticker: C50.PA
-    name: Amundi Euro Stoxx 50 UCITS ETF
-  - ticker: CAC.PA
-    name: Amundi CAC 40 UCITS ETF
-  - ticker: CW8.PA
-    name: Amundi MSCI World UCITS ETF (Core)
-  - ticker: ESE.PA
-    name: BNP Paribas Easy S&P 500 UCITS ETF
-  - ticker: LYPS.DE
-    name: Amundi S&P 500 UCITS ETF
-  - ticker: PAASI.PA
-    name: Amundi PEA Asie Emergente UCITS ETF
-  - ticker: PABZ.PA
-    name: Amundi PEA MSCI USA UCITS ETF
-  - ticker: PAEEM.PA
-    name: Amundi PEA Emerging Markets UCITS ETF
-  - ticker: PANX.PA
-    name: Amundi Nasdaq-100 UCITS ETF
-  - ticker: PCEU.PA
-    name: Amundi PEA MSCI Europe UCITS ETF
-  - ticker: PE500.PA
-    name: Amundi PEA S&P 500 UCITS ETF
-  - ticker: PUST.PA
-    name: Amundi PEA Nasdaq-100 UCITS ETF
-  - ticker: WPEA.PA
-    name: iShares MSCI World Swap PEA UCITS ETF
-  Energy:
-  - ticker: ALDOL.PA
-    name: DOLFINES
-    pea_pme: true
-  - ticker: ALESA.PA
-    name: ECOSLOPS
-    pea_pme: true
-  - ticker: DPAM.PA
-    name: DOCKS PETR.D'AMBE
-    pea_pme: true
-  - ticker: FDE.PA
-    name: FRANCAISE DE L'ENERGIE
-    pea_pme: true
-  - ticker: GTT.PA
-    name: GTT
-    srd: true
-  - ticker: MAU.PA
-    name: Maurel et Prom
-    pea_pme: true
-    srd: true
-  - ticker: MLSEQ.PA
-    name: SEQUA PETROLEUM
-    pea_pme: true
-  - ticker: NAE.PA
-    name: NORTH ATLANTIC ENERGIES
-    pea_pme: true
-  - ticker: RUI.PA
-    name: Rubis
-    srd: true
-  - ticker: TE.PA
-    name: Technip Energies
-    srd: true
-  - ticker: TTE.PA
-    name: TotalEnergies
-    pea_pme: true
-    srd: true
-  - ticker: VIRI.PA
-    name: VIRIDIEN
-  Financial Services:
-  - ticker: ABCA.PA
-    name: ABC Arbitrage
-    pea_pme: true
-    srd: true
-  - ticker: ACA.PA
-    name: Credit Agricole
-    pea_pme: true
-    srd: true
-  - ticker: ALAUD.PA
-    name: AUDACIA
-    pea_pme: true
-  - ticker: ALBON.PA
-    name: LEBON
-    pea_pme: true
-  - ticker: ALCBI.PA
-    name: CRYPTO BLOCKCHAIN INDUSTRIES
-    pea_pme: true
-  - ticker: ALEFA.PA
-    name: EDUFORM'ACTION
-    pea_pme: true
-  - ticker: ALERO.PA
-    name: EUROLAND CORP
-    pea_pme: true
-  - ticker: ALEXP.PA
-    name: ONE EXPERIENCE
-    pea_pme: true
-  - ticker: ALVAZ.PA
-    name: VAZIVA
-  - ticker: AMUN.PA
-    name: Amundi
-    srd: true
-  - ticker: ANTIN.PA
-    name: ANTIN INFRA. PARTNERS
-    pea_pme: true
-  - ticker: BNP.PA
-    name: BNP Paribas
-    srd: true
-  - ticker: BSD.PA
-    name: BOURSE DIRECT
-    pea_pme: true
-  - ticker: CAF.PA
-    name: CRCAM PARIS ET IDF
-    pea_pme: true
-  - ticker: CAT31.PA
-    name: CA TOULOUSE 31 CCI
-    pea_pme: true
-  - ticker: CBDG.PA
-    name: CAMBODGE DIV.24
-  - ticker: CCN.PA
-    name: CRCAM NOR.SE.CCI
-    pea_pme: true
-  - ticker: CIV.PA
-    name: CRCAM ILLE CCI
-    pea_pme: true
-  - ticker: CMO.PA
-    name: CRCAM MORBIHAN CCI
-    pea_pme: true
-  - ticker: CNDF.PA
-    name: CRCAM NORD FRANCE
-    pea_pme: true
-  - ticker: COFA.PA
-    name: Coface
-    pea_pme: true
-    srd: true
-  - ticker: CRAP.PA
-    name: CRCAM ALPES PROVENCE.CCI
-    pea_pme: true
-  - ticker: CRAV.PA
-    name: LOIRE ATL.VEND.CCI
-    pea_pme: true
-  - ticker: CRBP2.PA
-    name: CRCAM BRIE PIC2CCI
-    pea_pme: true
-  - ticker: CRLA.PA
-    name: CRCAM LANGUEDOC
-    pea_pme: true
-  - ticker: CRLO.PA
-    name: CRCAM LOIRE HAUTE LOIRE
-    pea_pme: true
-  - ticker: CRSU.PA
-    name: CRCAM SRA CI
-    pea_pme: true
-  - ticker: CRTO.PA
-    name: CRCAM TOURAINE CCI
-    pea_pme: true
-  - ticker: CS.PA
-    name: AXA
-    srd: true
-  - ticker: EDEN.PA
-    name: Edenred
-    srd: true
-  - ticker: EEM.PA
-    name: EEM
-    pea_pme: true
-  - ticker: EGR.PA
-    name: TRANSITION EVERGREEN
-  - ticker: ENX.PA
-    name: Euronext
-    srd: true
-  - ticker: FMONC.PA
-    name: FINANCIERE MONCEY
-    pea_pme: true
-    srd: true
-  - ticker: GLE.PA
-    name: Societe Generale
-    srd: true
-  - ticker: IDIP.PA
-    name: IDI
-    pea_pme: true
-  - ticker: LTA.PA
-    name: Altamir
-    pea_pme: true
-    srd: true
-  - ticker: MF.PA
-    name: Wendel
-    srd: true
-  - ticker: MLAEM.PA
-    name: ASHLER MANSON
-    pea_pme: true
-  - ticker: MLGEQ.PA
-    name: GENTLEMEN'S
-    pea_pme: true
-  - ticker: MLHBB.PA
-    name: HOCHE BAINS LES BAINS
-    pea_pme: true
-  - ticker: MLIRF.PA
-    name: INNOVATIVE-RFK
-    pea_pme: true
-  - ticker: MLMUT.PA
-    name: MUTTER VENTURE-WI23
-    pea_pme: true
-  - ticker: MLNMA.PA
-    name: NICOLAS MIGUET N
-    pea_pme: true
-  - ticker: MLPHO.PA
-    name: PHOTONIKE
-    pea_pme: true
-  - ticker: MLPTZ.PA
-    name: PYRATZ CORP.
-    pea_pme: true
-  - ticker: PEUG.PA
-    name: Peugeot Invest
-    pea_pme: true
-    srd: true
-  - ticker: RF.PA
-    name: Eurazeo
-    srd: true
-  - ticker: SCR.PA
-    name: SCOR
-    srd: true
-  - ticker: TBSO.PA
-    name: TBSO
-  - ticker: TKO.PA
-    name: Tikehau Capital
-    srd: true
-  - ticker: VIL.PA
-    name: VIEL
-  Healthcare:
-  - ticker: AB.PA
-    name: AB Science
-    pea_pme: true
-    srd: true
-  - ticker: ABLD.PA
-    name: ABL DIAGNOSTICS
-    pea_pme: true
-  - ticker: ABNX.PA
-    name: ABIONYX PHARMA
-    pea_pme: true
-  - ticker: ABVX.PA
-    name: ABIVAX
-    pea_pme: true
-  - ticker: ADOC.PA
-    name: Adocia
-    pea_pme: true
-    srd: true
-  - ticker: AELIS.PA
-    name: AELIS FARMA
-    pea_pme: true
-  - ticker: ALBIO.PA
-    name: BIOSYNEX
-    pea_pme: true
-  - ticker: ALBLU.PA
-    name: BLUELINEA
-    pea_pme: true
-  - ticker: ALBPS.PA
-    name: BIOPHYTIS
-    pea_pme: true
-  - ticker: ALCGM.PA
-    name: Cegedim
-    pea_pme: true
-    srd: true
-  - ticker: ALCJ.PA
-    name: CROSSJECT
-    pea_pme: true
-  - ticker: ALCOX.PA
-    name: NICOX
-    pea_pme: true
-  - ticker: ALDMS.PA
-    name: DMS
-    pea_pme: true
-  - ticker: ALDVI.PA
-    name: ADVICENNE
-    pea_pme: true
-  - ticker: ALECR.PA
-    name: EUROFINS-CEREP
-    pea_pme: true
-  - ticker: ALEMG.PA
-    name: EUROMEDIS GROUP
-    pea_pme: true
-  - ticker: ALERS.PA
-    name: EUROBIO SCIENTIFIC
-    pea_pme: true
-  - ticker: ALGAE.PA
-    name: FERMENTALG
-    pea_pme: true
-  - ticker: ALIKO.PA
-    name: IKONISYS
-    pea_pme: true
-  - ticker: ALIMP.PA
-    name: IMPLANET
-    pea_pme: true
-  - ticker: ALINT.PA
-    name: INTEGRAGEN
-    pea_pme: true
-  - ticker: ALKLH.PA
-    name: KLEA HOLDING (ex VISIOMED)
-    pea_pme: true
-  - ticker: ALMDT.PA
-    name: MEDIAN TECHNOLOGIES
-    pea_pme: true
-  - ticker: ALMKT.PA
-    name: MAUNA KEA
-    pea_pme: true
-  - ticker: ALNEV.PA
-    name: NEOVACS
-    pea_pme: true
-  - ticker: ALNFL.PA
-    name: NFL BIOSCIENCES
-    pea_pme: true
-  - ticker: ALNOV.PA
-    name: NOVACYT
-    pea_pme: true
-  - ticker: ALOPM.PA
-    name: ONCODESIGN PM
-    pea_pme: true
-  - ticker: ALPAT.PA
-    name: PLANT ADVANCED
-    pea_pme: true
-  - ticker: ALPRE.PA
-    name: PREDILIFE
-    pea_pme: true
-  - ticker: ALQGC.PA
-    name: QUANTUM GENOMICS
-    pea_pme: true
-  - ticker: ALSAF.PA
-    name: SAFE
-    pea_pme: true
-  - ticker: ALSEN.PA
-    name: SENSORION
-    pea_pme: true
-  - ticker: ALSGD.PA
-    name: SPINEGUARD
-    pea_pme: true
-  - ticker: ALSMA.PA
-    name: SMAIO
-    pea_pme: true
-  - ticker: ALSPW.PA
-    name: SPINEWAY
-    pea_pme: true
-  - ticker: ALTAO.PA
-    name: ATON
-    pea_pme: true
-  - ticker: ALTHE.PA
-    name: THERACLION
-  - ticker: ALTHX.PA
-    name: THX PHARMA (EX THERANEXUS)
-  - ticker: ALTME.PA
-    name: TME PHARMA
-  - ticker: ALVIO.PA
-    name: VALERIO THER. (EX...
-    pea_pme: true
-    srd: true
-  - ticker: BIM.PA
-    name: bioMerieux
-    srd: true
-  - ticker: BLC.PA
-    name: BASTIDE LE CONFORT MED.
-    pea_pme: true
-  - ticker: CLARI.PA
-    name: Clariane
-    pea_pme: true
-    srd: true
-  - ticker: CVX.PA
-    name: CARVOLIX
-    pea_pme: true
-  - ticker: DBV.PA
-    name: DBV Technologies
-    pea_pme: true
-    srd: true
-  - ticker: DIM.PA
-    name: Sartorius Stedim Biotech
-    srd: true
-  - ticker: EAPI.PA
-    name: EuroAPI
-    pea_pme: true
-    srd: true
-  - ticker: EL.PA
-    name: EssilorLuxottica
-    srd: true
-  - ticker: EMEIS.PA
-    name: Emeis
-    pea_pme: true
-    srd: true
-  - ticker: EQS.PA
-    name: EQUASENS
-    pea_pme: true
-    srd: true
-  - ticker: ERF.PA
-    name: Eurofins Scientific
-    srd: true
-  - ticker: GBT.PA
-    name: GUERBET
-    pea_pme: true
-  - ticker: GDS.PA
-    name: Ramsay Generale de Sante
-    pea_pme: true
-    srd: true
-  - ticker: GNFT.PA
-    name: Genfit
-    pea_pme: true
-    srd: true
-  - ticker: IPH.PA
-    name: Innate Pharma
-    pea_pme: true
-    srd: true
-  - ticker: IPN.PA
-    name: Ipsen
-    srd: true
-  - ticker: IVA.PA
-    name: INVENTIVA
-    pea_pme: true
-  - ticker: LBIRD.PA
-    name: Lumibird
-    pea_pme: true
-    srd: true
-  - ticker: LNA.PA
-    name: LNA Sante
-    pea_pme: true
-    srd: true
-  - ticker: MAAT.PA
-    name: MAAT PHARMA
-    pea_pme: true
-  - ticker: MEDCL.PA
-    name: MEDINCELL
-    pea_pme: true
-  - ticker: MLBON.PA
-    name: BONYF
-    pea_pme: true
-  - ticker: MLINA.PA
-    name: INMOLECULE NANO
-    pea_pme: true
-  - ticker: MLLAB.PA
-    name: MEDIA LAB
-    pea_pme: true
-  - ticker: MLMIB.PA
-    name: METRICS IN BAL
-    pea_pme: true
-  - ticker: NANO.PA
-    name: Nanobiotix
-    pea_pme: true
-    srd: true
-  - ticker: OSE.PA
-    name: OSE Immunotherapeutics
-    pea_pme: true
-    srd: true
-  - ticker: POXEL.PA
-    name: POXEL
-    pea_pme: true
-  - ticker: SAN.PA
-    name: Sanofi
-    srd: true
-  - ticker: SIGHT.PA
-    name: GENSIGHT BIOLOGICS
-    pea_pme: true
-  - ticker: TNG.PA
-    name: TRANSGENE
-  - ticker: VETO.PA
-    name: Vetoquinol
-    srd: true
-  - ticker: VIRP.PA
-    name: Virbac
-    srd: true
-  - ticker: VLA.PA
-    name: Valneva
-    srd: true
-  Industrials:
-  - ticker: AAA.PA
-    name: ALAN ALLMAN ASSOCIATES
-    pea_pme: true
-  - ticker: ADP.PA
-    name: Aeroports de Paris
-    srd: true
-  - ticker: AF.PA
-    name: Air France-KLM
-    srd: true
-  - ticker: AIR.PA
-    name: Airbus
-    srd: true
-  - ticker: ALBOA.PA
-    name: BOA CONCEPT
-    pea_pme: true
-  - ticker: ALCIS.PA
-    name: Catering International Services
-    pea_pme: true
-    srd: true
-  - ticker: ALCUR.PA
-    name: ARCURE
-    pea_pme: true
-  - ticker: ALDBT.PA
-    name: DBT
-    pea_pme: true
-  - ticker: ALEAC.PA
-    name: EDILIZIACROB
-    pea_pme: true
-  - ticker: ALENO.PA
-    name: ENOGIA
-    pea_pme: true
-  - ticker: ALEUP.PA
-    name: EUROPLASMA
-    pea_pme: true
-  - ticker: ALEXA.PA
-    name: Exail Technologies
-    pea_pme: true
-  - ticker: ALFER.PA
-    name: SERGE FERRARI
-    pea_pme: true
-  - ticker: ALGEV.PA
-    name: GEVELOT
-    pea_pme: true
-  - ticker: ALGIR.PA
-    name: SIGNAUX GIROD
-    pea_pme: true
-  - ticker: ALGRO.PA
-    name: GROLLEAU
-    pea_pme: true
-  - ticker: ALHG.PA
-    name: LOUIS HACHETTE GROUP
-    pea_pme: true
-  - ticker: ALIBR.PA
-    name: CALIBRE
-    pea_pme: true
-  - ticker: ALMAR.PA
-    name: MARE NOSTRUM
-    pea_pme: true
-  - ticker: ALMCE.PA
-    name: MON COURTIER ENERGIE
-    pea_pme: true
-  - ticker: ALMGI.PA
-    name: MG INTERNATIONAL
-    pea_pme: true
-  - ticker: ALNSC.PA
-    name: NSC GROUPE
-    pea_pme: true
-  - ticker: ALO.PA
-    name: Alstom
-    srd: true
-  - ticker: ALODY.PA
-    name: ODYSSEE TECHNOLOGIES
-    pea_pme: true
-  - ticker: ALORA.PA
-    name: ALTHEORA
-    pea_pme: true
-  - ticker: ALPJT.PA
-    name: POUJOULAT
-    pea_pme: true
-  - ticker: ALPM.PA
-    name: PRECIA
-    pea_pme: true
-  - ticker: ALSEC.PA
-    name: SODITECH
-    pea_pme: true
-  - ticker: ALSOG.PA
-    name: SOGECLAIR
-    pea_pme: true
-  - ticker: ALSTI.PA
-    name: STIF
-    pea_pme: true
-  - ticker: ALTD.PA
-    name: TONNER DRONES
-  - ticker: ALTOO.PA
-    name: TOOSLA
-  - ticker: ALTOU.PA
-    name: TOUAX
-  - ticker: ALTPC.PA
-    name: SMTPC
-    pea_pme: true
-  - ticker: ALTUV.PA
-    name: BIO-UV GRP
-    pea_pme: true
-  - ticker: ALUCI.PA
-    name: LUCIBEL
-    pea_pme: true
-  - ticker: ALUVI.PA
-    name: UV GERMI
-  - ticker: ALWF.PA
-    name: WINFARM
-  - ticker: ALWTR.PA
-    name: WATERA
-  - ticker: AM.PA
-    name: Dassault Aviation
-    srd: true
-  - ticker: ASY.PA
-    name: Assystem
-    pea_pme: true
-    srd: true
-  - ticker: AURE.PA
-    name: AUREA
-    pea_pme: true
-  - ticker: AYV.PA
-    name: Ayvens
-    srd: true
-  - ticker: BVI.PA
-    name: Bureau Veritas
-    srd: true
-  - ticker: CEN.PA
-    name: Groupe CRIT
-    pea_pme: true
-    srd: true
-  - ticker: CRI.PA
-    name: Chargeurs
-    pea_pme: true
-    srd: true
-  - ticker: DBG.PA
-    name: DERICHEBOURG
-    pea_pme: true
-  - ticker: DG.PA
-    name: Vinci
-    pea_pme: true
-    srd: true
-  - ticker: ELIS.PA
-    name: Elis
-    srd: true
-  - ticker: EN.PA
-    name: Bouygues
-    pea_pme: true
-    srd: true
-  - ticker: EXA.PA
-    name: EXAIL TECHNOLOGIES
-    pea_pme: true
-    srd: true
-  - ticker: EXE.PA
-    name: Exel Industries
-    pea_pme: true
-    srd: true
-  - ticker: EXENS.PA
-    name: EXOSENS
-    pea_pme: true
-  - ticker: FGA.PA
-    name: FIGEAC AERO
-    pea_pme: true
-  - ticker: FII.PA
-    name: LISI
-    pea_pme: true
-  - ticker: FINM.PA
-    name: FIN MARJOS
-    pea_pme: true
-  - ticker: GEA.PA
-    name: GEA
-    pea_pme: true
-  - ticker: GET.PA
-    name: GETLINK
-    srd: true
-  - ticker: GLO.PA
-    name: GL Events
-    pea_pme: true
-    srd: true
-  - ticker: GPE.PA
-    name: GPE PIZZORNO ENVI
-    pea_pme: true
-  - ticker: HO.PA
-    name: Thales
-    srd: true
-  - ticker: IDL.PA
-    name: ID Logistics
-    pea_pme: true
-    srd: true
-  - ticker: IPS.PA
-    name: Ipsos
-    pea_pme: true
-    srd: true
-  - ticker: LAT.PA
-    name: LATECOERE
-    pea_pme: true
-  - ticker: LR.PA
-    name: Legrand
-    srd: true
-  - ticker: MLAAT.PA
-    name: AZOREAN
-    pea_pme: true
-  - ticker: MLAGI.PA
-    name: GROUPE AG3I
-    pea_pme: true
-  - ticker: MLAIG.PA
-    name: ANDINO GLB
-    pea_pme: true
-  - ticker: MLCFD.PA
-    name: CHEMIN FER DEPARTEMENTAUX
-    pea_pme: true
-  - ticker: MLCMI.PA
-    name: SCEMI
-    pea_pme: true
-  - ticker: MLFXO.PA
-    name: FINAXO
-    pea_pme: true
-  - ticker: MLHK.PA
-    name: H&K
-    pea_pme: true
-  - ticker: MLHYD.PA
-    name: HYDRAULIQUE HLD
-    pea_pme: true
-  - ticker: MLHYE.PA
-    name: HYDRO-EXPLOITATIONS
-    pea_pme: true
-  - ticker: MLITN.PA
-    name: ITALY INNOV
-    pea_pme: true
-  - ticker: MLPHW.PA
-    name: PHONE WEB
-    pea_pme: true
-  - ticker: MLPLC.PA
-    name: PLACOPLATRE
-    pea_pme: true
-  - ticker: MLROT.PA
-    name: ROTH MIONS
-    pea_pme: true
-  - ticker: MRN.PA
-    name: Mersen
-    pea_pme: true
-    srd: true
-  - ticker: MTU.PA
-    name: Manitou
-    pea_pme: true
-    srd: true
-  - ticker: NEX.PA
-    name: NEXANS
-    srd: true
-  - ticker: OREGE.PA
-    name: OREGE
-    pea_pme: true
-  - ticker: PERR.PA
-    name: PERRIER INDUSTRIE
-    pea_pme: true
-  - ticker: PIG.PA
-    name: Haulotte Group
-    pea_pme: true
-    srd: true
-  - ticker: PLX.PA
-    name: PLUXEE
-    pea_pme: true
-  - ticker: RXL.PA
-    name: Rexel
-    srd: true
-  - ticker: SACI.PA
-    name: FIDUCIAL OFF.SOLU
-    pea_pme: true
-  - ticker: SAF.PA
-    name: Safran
-    pea_pme: true
-    srd: true
-  - ticker: SAMS.PA
-    name: SAMSE
-    pea_pme: true
-  - ticker: SCHP.PA
-    name: Seche Environnement
-    pea_pme: true
-    srd: true
-  - ticker: SDG.PA
-    name: SYNERGIE
-    srd: true
-  - ticker: SFPI.PA
-    name: GROUPE SFPI
-    pea_pme: true
-  - ticker: SGO.PA
-    name: Saint-Gobain
-    pea_pme: true
-    srd: true
-  - ticker: SPIE.PA
-    name: Spie
-    srd: true
-  - ticker: STF.PA
-    name: STEF
-    pea_pme: true
-    srd: true
-  - ticker: SU.PA
-    name: Schneider Electric
-    srd: true
-  - ticker: SW.PA
-    name: Sodexo
-    srd: true
-  - ticker: TEP.PA
-    name: Teleperformance
-    srd: true
-  - ticker: THEP.PA
-    name: THERMADOR
-  - ticker: VIE.PA
-    name: Veolia
-    srd: true
-  - ticker: WAGA.PA
-    name: WAGA ENERGY
-  Real Estate:
-  - ticker: ALADO.PA
-    name: ADOMOS
-    pea_pme: true
-  - ticker: ALEUA.PA
-    name: EURASIA GROUPE
-    pea_pme: true
-  - ticker: ALIMO.PA
-    name: GROUPIMO
-    pea_pme: true
-  - ticker: ALREA.PA
-    name: REALITES
-    pea_pme: true
-  - ticker: ALREB.PA
-    name: REBIRTH
-    pea_pme: true
-  - ticker: ALRIS.PA
-    name: RISING STONE
-    pea_pme: true
-  - ticker: ALTA.PA
-    name: ALTAREA
-    srd: true
-  - ticker: AREIT.PA
-    name: ALTAREIT
-    pea_pme: true
-  - ticker: ARG.PA
-    name: ARGAN
-    srd: true
-  - ticker: ARTE.PA
-    name: ARTEA
-    pea_pme: true
-  - ticker: ATLD.PA
-    name: ATLAND
-  - ticker: BASS.PA
-    name: BASSAC
-    pea_pme: true
-  - ticker: CFI.PA
-    name: CFI
-    pea_pme: true
-  - ticker: COUR.PA
-    name: COURTOIS N
-    pea_pme: true
-  - ticker: CROS.PA
-    name: CROSSWOOD
-    pea_pme: true
-  - ticker: EFI.PA
-    name: EFI
-  - ticker: EIFF.PA
-    name: Societe de la Tour Eiffel
-    srd: true
-  - ticker: FSDV.PA
-    name: FSDV
-    pea_pme: true
-  - ticker: MLALV.PA
-    name: ALVEEN
-    pea_pme: true
-  - ticker: MLCOU.PA
-    name: COURBET HERITAGE
-    pea_pme: true
-  - ticker: MLFTI.PA
-    name: FRANCE TOURISME
-    pea_pme: true
-  - ticker: MLIPP.PA
-    name: IMM.PARIS.PERLE
-    pea_pme: true
-  - ticker: MLLCB.PA
-    name: LES CONSTRUCTEURS DU BOIS
-    pea_pme: true
-  - ticker: MLPRE.PA
-    name: PRELUDE
-    pea_pme: true
-  - ticker: MLPRI.PA
-    name: SOC NAT PR IMM
-    pea_pme: true
-  - ticker: MLVIN.PA
-    name: FONCIERE VINDI
-    pea_pme: true
-  - ticker: NXI.PA
-    name: Nexity
-    pea_pme: true
-    srd: true
-  - ticker: ORIA.PA
-    name: FIDUCIAL REAL ESTATE
-    pea_pme: true
-  - ticker: SPEL.PA
-    name: FONCIERE VOLTA
-    pea_pme: true
-  Technology:
-  - ticker: 74SW.PA
-    name: 74Software
-    pea_pme: true
-    srd: true
-  - ticker: AL2SI.PA
-    name: 2CRSI
-    pea_pme: true
-    srd: true
-  - ticker: ALARF.PA
-    name: ADEUNIS
-    pea_pme: true
-  - ticker: ALBFR.PA
-    name: SIDETRADE
-    pea_pme: true
-  - ticker: ALBOO.PA
-    name: BOOSTHEAT
-    pea_pme: true
-  - ticker: ALBPK.PA
-    name: BROADPEAK
-    pea_pme: true
-  - ticker: ALCBX.PA
-    name: CIBOX INTER ACTIVE
-    pea_pme: true
-  - ticker: ALCLA.PA
-    name: CLARANOVA
-    pea_pme: true
-  - ticker: ALCOF.PA
-    name: COFIDUR
-    pea_pme: true
-  - ticker: ALCPA.PA
-    name: MACOMPTA.FR
-    pea_pme: true
-  - ticker: ALCPB.PA
-    name: CAPITAL B
-    pea_pme: true
-  - ticker: ALDRV.PA
-    name: DRONE VOLT
-    pea_pme: true
-  - ticker: ALGEC.PA
-    name: GECI INTL
-    pea_pme: true
-  - ticker: ALGID.PA
-    name: EGIDE
-    pea_pme: true
-  - ticker: ALGTR.PA
-    name: GROUPE TERA
-    pea_pme: true
-  - ticker: ALHF.PA
-    name: HF COMPANY
-    pea_pme: true
-  - ticker: ALHIT.PA
-    name: HITECHPROS
-    pea_pme: true
-  - ticker: ALHYP.PA
-    name: HIPAY GROUP
-    pea_pme: true
-  - ticker: ALICA.PA
-    name: ICAPE HOLDING
-    pea_pme: true
-  - ticker: ALIMR.PA
-    name: IMMERSION
-    pea_pme: true
-  - ticker: ALINN.PA
-    name: INNELEC MULTIMEDIA
-    pea_pme: true
-  - ticker: ALITL.PA
-    name: IT LINK
-    pea_pme: true
-  - ticker: ALJXR.PA
-    name: ARCHOS
-    pea_pme: true
-  - ticker: ALKAL.PA
-    name: KALRAY
-    pea_pme: true
-  - ticker: ALKEY.PA
-    name: KEYRUS
-    pea_pme: true
-  - ticker: ALKLK.PA
-    name: KERLINK
-    pea_pme: true
-  - ticker: ALLDL.PA
-    name: GROUPE LDLC
-    pea_pme: true
-  - ticker: ALLGO.PA
-    name: LARGO
-    pea_pme: true
-  - ticker: ALLIX.PA
-    name: WALLIX GROUP
-  - ticker: ALLOG.PA
-    name: LOGIC INSTRUMENT
-    pea_pme: true
-  - ticker: ALMDG.PA
-    name: MGI DIGIT TECH
-    pea_pme: true
-  - ticker: ALMUN.PA
-    name: MUNIC
-    pea_pme: true
-  - ticker: ALNMR.PA
-    name: NAM.R
-    pea_pme: true
-  - ticker: ALNN6.PA
-    name: ENENSYS TECHNO
-    pea_pme: true
-  - ticker: ALNRG.PA
-    name: ENERGISME
-    pea_pme: true
-  - ticker: ALNSE.PA
-    name: NSE
-    pea_pme: true
-  - ticker: ALNTG.PA
-    name: NETGEM
-    pea_pme: true
-  - ticker: ALORD.PA
-    name: ORDISSIMO
-    pea_pme: true
-  - ticker: ALPHI.PA
-    name: FACEPHI BIOMETR
-    pea_pme: true
-  - ticker: ALPRG.PA
-    name: Prologue
-    pea_pme: true
-    srd: true
-  - ticker: ALPWG.PA
-    name: PRODWAYS
-    pea_pme: true
-  - ticker: ALRIB.PA
-    name: RIBER
-    pea_pme: true
-  - ticker: ALROC.PA
-    name: ROCTOOL
-    pea_pme: true
-  - ticker: ALSEM.PA
-    name: SEMCO TECHNOLOGIES
-    pea_pme: true
-  - ticker: ALTAI.PA
-    name: LIGHTON
-    pea_pme: true
-  - ticker: ALTHO.PA
-    name: METAVISIO (THOMSON COMP.)
-    pea_pme: true
-  - ticker: ALTRA.PA
-    name: TRACTIAL
-  - ticker: ALUAV.PA
-    name: EMB SIST INTEL
-    pea_pme: true
-  - ticker: ALVGO.PA
-    name: VOGO
-  - ticker: ALWEC.PA
-    name: WE.CONNECT
-  - ticker: ARTO.PA
-    name: ARTOIS
-    pea_pme: true
-  - ticker: ATE.PA
-    name: Alten
-    srd: true
-  - ticker: ATEME.PA
-    name: ATEME
-    pea_pme: true
-  - ticker: ATO.PA
-    name: ATOS GROUP
-    pea_pme: true
-  - ticker: AUB.PA
-    name: Aubay
-    pea_pme: true
-    srd: true
-  - ticker: AVT.PA
-    name: Avenir Telecom
-    pea_pme: true
-    srd: true
-  - ticker: BIG.PA
-    name: Bigben Interactive
-    pea_pme: true
-    srd: true
-  - ticker: CAP.PA
-    name: Capgemini
-    srd: true
-  - ticker: COH.PA
-    name: COHERIS
-    pea_pme: true
-  - ticker: DSY.PA
-    name: Dassault Systemes
-    srd: true
-  - ticker: EKI.PA
-    name: Ekinops
-    pea_pme: true
-    srd: true
-  - ticker: EOS.PA
-    name: ACTEOS (EX DATATRONIC)
-    pea_pme: true
-  - ticker: FPG.PA
-    name: UTI GROUP
-  - ticker: GUI.PA
-    name: GUILLEMOT CORP.
-    pea_pme: true
-  - ticker: INF.PA
-    name: INFOTEL
-    pea_pme: true
-  - ticker: LACR.PA
-    name: LACROIX
-    pea_pme: true
-  - ticker: LIN.PA
-    name: LINEDATA SERVICES
-    pea_pme: true
-  - ticker: LSS.PA
-    name: Lectra
-    pea_pme: true
-    srd: true
-  - ticker: MEMS.PA
-    name: MEMSCAP REGPT
-    pea_pme: true
-  - ticker: MLACT.PA
-    name: ACTIVIUM GROUP
-    pea_pme: true
-  - ticker: MLCHE.PA
-    name: CHEOPS TECH FCE
-    pea_pme: true
-  - ticker: MLCNT.PA
-    name: CONSORT NT
-    pea_pme: true
-  - ticker: MLDAM.PA
-    name: DAMARIS
-    pea_pme: true
-  - ticker: MLFNP.PA
-    name: FNP TECH
-    pea_pme: true
-  - ticker: MLIDS.PA
-    name: IDS
-    pea_pme: true
-  - ticker: MLIFC.PA
-    name: INFOCLIP
-    pea_pme: true
-  - ticker: MLLOI.PA
-    name: LOCASYSTEM INTERNATIONAL
-    pea_pme: true
-  - ticker: MLMGL.PA
-    name: MD SERVICES
-    pea_pme: true
-  - ticker: MLNOV.PA
-    name: NOVATECH INDUSTRIES
-    pea_pme: true
-  - ticker: MLOCT.PA
-    name: OCTOPUS BIOSAF
-    pea_pme: true
-  - ticker: MLPAC.PA
-    name: PACTE NOVATION
-    pea_pme: true
-  - ticker: NRO.PA
-    name: Neurones
-    pea_pme: true
-    srd: true
-  - ticker: OVH.PA
-    name: OVHCLOUD
-    pea_pme: true
-  - ticker: PARRO.PA
-    name: PARROT
-    pea_pme: true
-  - ticker: PLNW.PA
-    name: PLANISWARE
-    pea_pme: true
-  - ticker: PROAC.PA
-    name: PROACTIS
-    pea_pme: true
-  - ticker: QDT.PA
-    name: Quadient
-    pea_pme: true
-    srd: true
-  - ticker: S30.PA
-    name: Solutions 30
-    pea_pme: true
-    srd: true
-  - ticker: SOI.PA
-    name: Soitec
-    pea_pme: true
-    srd: true
-  - ticker: SOP.PA
-    name: Sopra Steria
-    srd: true
-  - ticker: STMPA.PA
-    name: STMicroelectronics
-    pea_pme: true
-    srd: true
-  - ticker: SWP.PA
-    name: Sword Group
-    srd: true
-  - ticker: VMX.PA
-    name: Verimatrix
-    srd: true
-  - ticker: VU.PA
-    name: VusionGroup
-    srd: true
-  - ticker: WAVE.PA
-    name: Wavestone
-    srd: true
-  - ticker: WLN.PA
-    name: Worldline
-    srd: true
-  - ticker: XFAB.PA
-    name: X-FAB SILICON
-  Utilities:
-  - ticker: ALAGO.PA
-    name: E-PANGO
-    pea_pme: true
-  - ticker: ALAGP.PA
-    name: AGRIPOWER
-    pea_pme: true
-  - ticker: ALCWE.PA
-    name: CHARWOOD ENERGY
-    pea_pme: true
-  - ticker: ALESE.PA
-    name: ENTECH
-    pea_pme: true
-  - ticker: ALETC.PA
-    name: ENERGY SOL TECH
-    pea_pme: true
-  - ticker: ALHAF.PA
-    name: HAFFNER ENERGY
-    pea_pme: true
-  - ticker: ALMIN.PA
-    name: MINT
-    pea_pme: true
-  - ticker: ALOKW.PA
-    name: GROUPE OKWIND
-    pea_pme: true
-  - ticker: ARVEN.PA
-    name: ARVERNE
-    pea_pme: true
-  - ticker: ELEC.PA
-    name: ELECTRICITE DE STRASBOURG
-    pea_pme: true
-  - ticker: ENGI.PA
-    name: Engie
-    srd: true
-  - ticker: HDF.PA
-    name: HYDROGENE DE FRANCE
-    pea_pme: true
-  - ticker: MLBSP.PA
-    name: BLUE SHARK PS
-    pea_pme: true
-  - ticker: MLCMG.PA
-    name: CMG CLEANTECH
-    pea_pme: true
-  - ticker: MLEDR.PA
-    name: EAUX DE ROYAN
-    pea_pme: true
-  - ticker: VLTSA.PA
-    name: Voltalia
-    srd: true
-```
-
-## FILE: config/risk_params.yaml (53 lines)
-```yaml
-# =============================================================================
-# PEA Pollux - Institutional Risk Parameters
-# -----------------------------------------------------------------------------
-# These limits are NON-NEGOTIABLE. They are enforced by the Correlation Firewall
-# (03_risk_portfolio), the Position Sizer, and the Macro Veto Engine.
-# All percentages are expressed as fractions (0.15 == 15%).
-# =============================================================================
-
-# --- Position Sizing ---------------------------------------------------------
-KELLY_FRACTION: 0.5              # Half-Kelly. Never use full Kelly.
-MAX_SINGLE_POSITION_PCT: 0.15    # Max 15% of total equity in a single name.
-MAX_SECTOR_WEIGHT_PCT: 0.25      # Max 25% of total equity in a single sector.
-MAX_ALLOCATION_PER_DAY_PCT: 0.03 # Max 3% of capital deployed per calendar day.
-
-# --- Risk Limits (circuit breakers) -----------------------------------------
-DAILY_MAX_LOSS_PCT: -0.005       # Halt execution if daily P&L < -0.5%.
-WEEKLY_MAX_LOSS_PCT: -0.02       # Max weekly drawdown before pause.
-MONTHLY_MAX_LOSS_PCT: -0.05      # Max monthly drawdown -> liquidate + manual review.
-
-# --- Correlation Limits ------------------------------------------------------
-MAX_CORRELATION_TO_PORTFOLIO: 0.70  # Pearson vs any holding.
-MAX_CORRELATION_SAME_SECTOR: 0.80   # Stricter allowance within same sector.
-CORRELATION_LOOKBACK_DAYS: 60       # Trading days for Pearson window.
-
-# --- Signals -----------------------------------------------------------------
-CONVICTION_EMIT_FLOOR: 65.0      # Minimum conviction score (0-100) to emit a BUY.
-SIGNAL_SELL_THRESHOLD: 35        # Score below which a SELL is considered.
-SIGNAL_VALIDITY_HOURS: 12        # Signal expires after 12h.
-MACRO_VETO_DAYS_BEFORE: 3        # Veto new trades within N days of macro event.
-EARNINGS_BLACKOUT_DAYS: 2        # Per-ticker earnings/div blackout window.
-RSI_OVERSOLD_THRESHOLD: 30.0     # MRE trigger; later walk-forward calibrable.
-MIN_LIQUIDITY_ADV: 50000         # Min average daily € volume (20d) for new buys.
-MAX_POSITIONS_TOTAL: 12          # Cap on simultaneous satellite lines.
-
-# --- Core / Satellite model (Phase 10) --------------------------------------
-CORE_TICKER: "CW8.PA"            # Amundi MSCI World UCITS ETF (PEA eligible).
-MAX_IDLE_CASH_PCT: 0.02          # Phase 40: cash above 2% equity is swept to Core.
-CORE_TARGET_PCT: 0.70            # Standard core weight when market overheated.
-CORE_CRASH_TARGET_PCT: 0.75      # Larger core weight when CW8 < SMA200 (crash).
-CORE_DCA_MAX_TRANCHE_PCT: 0.05   # Max % of equity deployed to core per pass.
-SATELLITE_MAX_BUDGET_PCT: 0.30   # Max total equity in satellite stock-picking.
-
-# --- Volatility & VIX defense (Phase 10) ------------------------------------
-VOLATILITY_REFERENCE: 0.20       # Baseline annualized vol for parity scaling.
-VOLATILITY_MAX_FACTOR: 1.5       # Cap on inverse-volatility up-scaling.
-VIX_PANIC_THRESHOLD: 30.0        # V2TX above this vetoes new satellite buys.
-
-# --- Rebalancing (Phase 12 / 15) --------------------------------------------
-REBALANCE_PROFIT_SHAVE_PCT: 0.20   # Trim 20% of a winner above +20% PnL.
-REBALANCE_PROFIT_TRIGGER_PCT: 20.0 # Profit-shave trigger (unrealized %).
-# Dynamic ATR stop: exit if price < avg_entry - REBALANCE_ATR_STOP_MULT * ATR_14.
-# (Static -10% stop removed in Phase 15.)
-REBALANCE_ATR_STOP_MULT: 2.5
-```
-
-## FILE: docker-compose.yml (71 lines)
 ```yaml
 # PEA Pollux - fleet.
 #   daemon    : always-on backend (scheduled analysis, weekly report, rebalance)
@@ -20080,43 +17894,49 @@ services:
   #     - ./logs:/app/logs
   #     - ./config:/app/config:ro
   #   command: ["python", "run_discord.py"]
+
 ```
 
-## FILE: Dockerfile (30 lines)
-```text
-# PEA Pollux - single image, two roles (daemon + dashboard).
-# Python 3.11 (x64) is required: streamlit's pyarrow has no 3.13/arm64 wheel.
-FROM python:3.11-slim
+## File: .\generate_dumps.py
 
-ENV PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1 \
-    PIP_NO_CACHE_DIR=1 \
-    TZ=Europe/Paris
+```python
+import os
 
-WORKDIR /app
+def build_dump(target_file, is_dashboard_only=False):
+    files_to_dump = []
+    for root, dirs, files in os.walk('.'):
+        if '.git' in root or 'venv' in root or '__pycache__' in root or 'database' in root or '.gemini' in root:
+            continue
+        for f in files:
+            if f.endswith('.py') or f.endswith('.md') or f.endswith('.yml') or f.endswith('.ps1') or f.endswith('.txt'):
+                if 'DUMP' not in f and f != 'README.md':
+                    # Filter for dashboard only if requested
+                    if is_dashboard_only and 'terminal_dashboard.py' not in f and 'components.html' not in f:
+                        continue
+                        
+                    files_to_dump.append(os.path.join(root, f))
 
-# System deps: tzdata for Paris scheduling, build tools for wheels that need them,
-# plus small utilities for docker healthchecks.
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends tzdata gcc procps curl \
-    && rm -rf /var/lib/apt/lists/*
+    files_to_dump.sort()
+    with open(target_file, 'w', encoding='utf-8') as out:
+        out.write(f'# PEA Pollux - {"Dashboard " if is_dashboard_only else "Full Project "}Dump\n\n')
+        for f in files_to_dump:
+            try:
+                with open(f, 'r', encoding='utf-8') as infile:
+                    content = infile.read()
+                ext = f.split('.')[-1]
+                lang = 'python' if ext == 'py' else 'markdown' if ext == 'md' else 'yaml' if ext == 'yml' else 'powershell' if ext == 'ps1' else 'text'
+                out.write(f'## File: {f}\n\n```{lang}\n{content}\n```\n\n')
+            except Exception as e:
+                pass
 
-# Install Python deps first (better layer caching).
-COPY requirements.txt .
-RUN pip install --upgrade pip && pip install -r requirements.txt
+build_dump('PROJECT_FULL_DUMP_FOR_LLM.md', is_dashboard_only=False)
+build_dump('DASHBOARD_FULL_DUMP_FOR_LLM.md', is_dashboard_only=True)
+print("Dumps updated successfully.")
 
-# Copy the application code.
-COPY . .
-
-# Persisted state + Streamlit UI port.
-VOLUME ["/app/database"]
-EXPOSE 8501
-
-# Default role is the daemon; docker-compose overrides the command for the UI.
-CMD ["python", "main_scheduler.py"]
 ```
 
-## FILE: main_scheduler.py (976 lines)
+## File: .\main_scheduler.py
+
 ```python
 """Root daemon scheduler for PEA Pollux.
 
@@ -21094,1552 +18914,11 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 ```
 
-## FILE: README.md (1539 lines)
-```markdown
-# PEA Pollux â€” Terminal quantitatif personnel
+## File: .\requirements.txt
 
-
-
-> **Un bureau d'analyse quantitatif pour votre PEA â€” transparent, manuel, sans exÃ©cution automatique.**
-
-
-
-**PEA Pollux** est un terminal de recherche et de suivi de portefeuille conÃ§u pour un
-
-**PEA personnel** (Plan d'Ã‰pargne en Actions). Il ingÃ¨re les donnÃ©es de marchÃ©,
-
-calcule des signaux multi-facteurs, applique une cascade de risque stricte, puis
-
-prÃ©sente des propositions **Ã  valider manuellement** dans le dashboard Streamlit
-
-ou via Discord.
-
-
-
-**Le systÃ¨me n'envoie jamais d'ordres Ã  un courtier.** Les modÃ¨les quantitatifs
-
-dÃ©cident *ce qui mÃ©rite d'Ãªtre Ã©tudiÃ©* ; l'IA *explique* (rationale, sentiment,
-
-briefing hebdo, red teaming Bull/Bear). **Ce n'est pas un conseil en investissement.**
-
-
-
-Repo: [github.com/Polluxgnr/Peatrading](https://github.com/Polluxgnr/Peatrading)
-
-
-
----
-
-
-
-## Pourquoi PEA Pollux ?
-
-
-
-| Besoin | RÃ©ponse |
-
-|--------|---------|
-
-| Comprendre *pourquoi* un signal apparaÃ®t | Score multi-modÃ¨le + Data Lake transparent |
-
-| GÃ©rer le risque avant d'acheter | Cascade VIX, corrÃ©lation, liquiditÃ©, earnings blackout |
-
-| Suivre la performance | Courbe d'equity, VaR/CVaR, Monte Carlo corrÃ©lÃ© |
-
-| Challenger une idÃ©e | Red teaming IA (Bull vs Bear + Judge) |
-
-| DÃ©ployer proprement | Docker, healthchecks, logs rotatifs, CI pytest |
-
-
-
----
-
-
-
-## Table of contents
-
-
-
-1. [Philosophy](#-philosophy)
-
-2. [Feature map](#-feature-map)
-
-3. [Strategy in depth](#-strategy-in-depth)
-
-4. [Architecture](#-architecture)
-
-5. [Logging & observability](#-logging--observability)
-
-6. [Module reference](#-module-reference)
-
-7. [APIs that work](#-apis-that-work)
-
-8. [Installation](#-installation)
-
-9. [Configuration](#-configuration)
-
-10. [Usage](#-usage)
-
-11. [Dashboard](#-dashboard)
-
-12. [LLM full dump](#-llm-full-dump)
-
-13. [Deployment](#-deployment)
-
-14. [Scheduling](#-scheduling)
-
-15. [Roadmap](#-roadmap--future-improvements)
-
-16. [Troubleshooting](#-troubleshooting)
-
-17. [Disclaimer](#-disclaimer)
-
-18. [English guide](#english-guide)
-
-
-
----
-
-
-
-## Philosophy
-
-
-
-1. **No fractional shares.** PEA sizing always uses `math.floor` â€” one share or nothing.
-
-2. **Math first, AI second.** LLMs never generate or approve trades. They only:
-
-   explain an already-decided signal, compress news into an integer (âˆ’100â€¦+100),
-
-   and write the Friday CIO digest.
-
-3. **Official sources first.** Insider cascade is strict:
-
-   **AMF BDIF â†’ FMP â†’ yfinance**. OHLCV stays on `yfinance` â†’ DuckDB. HTML
-
-   scrapers are best-effort with circuit-breakers (AMF BDIF is often WAF-blocked).
-
-4. **Split state.** DuckDB = heavy OHLCV; SQLite = portfolio, positions, immutable
-
-   audit log, **daily equity curve** (`portfolio_history`), and **news archive**
-
-   (`news_history` â€” cross-session headlines with real timestamps).
-
-5. **Zero crash tolerance.** A failed pass logs `CRITICAL` and writes a red
-
-   pipeline heartbeat; the daemon keeps running for the next slot.
-
-6. **Manual execution.** You always have the last word (Discord **or** Streamlit
-
-   Approuver / Rejeter â†’ SQLite).
-
-7. **Personal portfolio demo, not a SaaS fleet.** Observability is detailed and
-
-   copy-friendly, but deliberately human-scale (rotating local logs, Mission Control).
-
-
-
----
-
-
-
-## Feature map
-
-
-
-| Layer | What it does (why it exists) |
-
-|------|------------------------------|
-
-| **Data** | OHLCV â†’ DuckDB; VIX/VSTOXX; Put/Call; insiders **AMFâ†’FMPâ†’Yahoo**; Polymarket Gamma; Bourso + **Google News / Yahoo** news (archived in **`news_history`**); **newsletter IMAP** (whitelist) |
-
-| **Quant** | **Ensemble conviction (0â€“100)**: MR â‰¤35 + Vol â‰¤25 + Insider â‰¤20 + Inst â‰¤20 + **News/Polymarket modifiers** â€” emit if â‰¥65 |
-
-| **Core/Satellite** | Smart DCA on `CW8.PA` (more aggressive under SMA200); satellites capped ~30% equity |
-
-| **Risk cascade** | VIX panic, **EPS &lt; 0**, macro veto, **earnings blackout**, max satellite lines, **ADV â‚¬ floor**, sector, correlation, vol-parity sizing |
-
-| **Exits** | **Daily** ATR stop (`price < entry âˆ’ 2.5Ã—ATR14`); **monthly** +20% profit-shave |
-
-| **Memory** | SQLite equity curve + **`news_history`** + shared `equity_metrics` + `morning_briefing.json` Zeitgeist |
-
-| **AI (explain only)** | Trade rationale, news sentiment, weekly digest, geo brief, **morning newsletter Zeitgeist**, deep news synthesis (24h cache) |
-
-| **UI** | Mission Control + **native HTML ticker tape** + Discord + Streamlit (**Command Center**, funnel, radar, what-if, **order ticket**, **decision checklist**, **live telemetry**) |
-
-| **Ops** | Paris daemon (incl. **08:25 briefing**), session auto-sync on dashboard open, walk-forward scaffold, seed CLI, CI pytest |
-
-
-
----
-
-
-
-## Strategy in depth
-
-
-
-### 1. Core / Satellite allocation
-
-
-
-Capital is split so the PEA stays diversified even when stock-picking is quiet:
-
-
-
-- **Core (~70â€“75%)** â€” Amundi MSCI World PEA ETF (`CW8.PA`) via **Smart DCA**.
-
-  When CW8 trades **below** its 200-day SMA (fear), the engine raises the target
-
-  weight and buys a larger tranche; **above** the SMA it drips smaller amounts.
-
-- **Satellite (â‰¤30%)** â€” individual EU names under `SATELLITE_MAX_BUDGET_PCT`.
-
-  Also capped by `MAX_POSITIONS_TOTAL` so the 30% budget is not fragmented into
-
-  too many tiny lines.
-
-
-
-### 2. Empreinte Multi-StratÃ©gies (how signals are scored)
-
-
-
-Every ticker receives a **score from 0 to 100** called the **Empreinte**
-
-(fingerprint). It combines four weighted axes into a single conviction number.
-
-A BUY signal is only emitted when **conviction â‰¥ 65**. Hard vetoes (VIX,
-
-EPS < 0) are enforced later in the risk cascade â€” scoring runs first.
-
-
-
-| Abbreviation | Axis | Weight | What it measures |
-
-|:------------:|------|:------:|------------------|
-
-| **MR** | Mean Reversion | 35 % | Statistical under-valuation: RSI-14 oversold + price above long-term SMA-200. A Z-Score < âˆ’2 on a 50-day window adds a bonus. |
-
-| **Mom** | Momentum | 25 % | Trend strength: Close > SMA-5 > SMA-50 > SMA-200, MACD histogram positive and growing, close near upper Bollinger Band. |
-
-| **Q/V** | Quality / Value | 20 % | Fundamentals from Finnhub or yfinance: low P/E (< 15 = high score), low P/B (< 2 = bonus), high ROE (> 15 %), low Debt/Equity. |
-
-| **Ins** | Insider Confidence | 20 % | Directors buying their own stock: AMF/FMP/EODHD buy-cluster â‰¥ 2 = max, single buy = half. |
-
-
-
-**Modifiers** applied on top of the base score:
-
-
-
-| Modifier | Range | Source |
-
-|----------|-------|--------|
-
-| News sentiment | +10 / âˆ’15 | LLM integer score (âˆ’100â€¦+100) or heuristic keyword fallback |
-
-| Polymarket macro | +10 / âˆ’10 | YES probability â‰¥ 0.62 â†’ bullish, â‰¤ 0.38 â†’ bearish (context only) |
-
-
-
-The final score is clamped to 0â€“100 and displayed in the dashboard as a
-
-**polar radar chart** (Exploration tab). Colour coding: **amber 65â€“75** /
-
-**neon 76â€“100**.
-
-
-
-### 3. Risk cascade (order matters â€” cheap checks first)
-
-
-
-Implemented in `signal_priority_cascade.py`:
-
-
-
-0. Live price exists  
-
-1. **VIX panic** â€” if V2TX/VIX &gt; `VIX_PANIC_THRESHOLD`, freeze **new satellite buys** (Core DCA still runs)  
-
-1b. **EPS &lt; 0** â€” quality veto (Orchestrator)  
-
-2. **Macro veto** â€” blackout window before ECB/CPI/NFP (`macro_calendar.yaml`)  
-
-2b. **Earnings / dividend blackout** â€” per ticker (`earnings_calendar.yaml` + `EARNINGS_BLACKOUT_DAYS`)  
-
-2c. **Max satellite positions** â€” `MAX_POSITIONS_TOTAL`  
-
-2d. **Min liquidity** â€” average daily â‚¬ volume â‰¥ `MIN_LIQUIDITY_ADV`  
-
-3. Sector weight cap  
-
-4. Pearson correlation vs holdings (`CORRELATION_LOOKBACK_DAYS`)  
-
-5. **Sizing** â€” Half-Kelly Ã— score Ã— inverse-vol parity â†’ whole shares, clamped by cash + satellite room  
-
-
-
-Approved reasons now embed the sizing breakdown (Kelly, vol, weight % equity)
-
-so Discord and the dashboard stay auditable.
-
-
-
-### 4. Exits (split on purpose)
-
-
-
-| Job | Cadence | Rule |
-
-|-----|---------|------|
-
-| **ATR stop** | Weekdays 08:35 (`--atr-stops`) | Losing satellite & `price < avg_entry âˆ’ REBALANCE_ATR_STOP_MULT Ã— ATR14` â†’ SELL 100% |
-
-| **Profit-shave** | 1st of month (`--rebalance`) | Unrealized &gt; +20% â†’ SELL 20% of shares |
-
-
-
-Core ETF is never shaved or stopped by these jobs (accumulation vehicle).
-
-
-
-**ATR absolute vs %:** the stop uses **absolute** ATR (correct per name â€” ATR
-
-already scales with price). `ATR% = ATR/price` is logged for cross-name
-
-comparisons; use % for vol-style dashboards, absolute for the stop distance.
-
-
-
-### 5. AI as post-hoc analyst only
-
-
-
-- Trade explainer (2â€“3 sentences)  
-
-- News â†’ forced integer âˆ’100â€¦+100  
-
-- Friday Historian â†’ Discord webhook  
-
-
-
----
-
-
-
-## Architecture
-
-
-
-``​`
-
-                       â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”�
-
-                       â”‚            main_scheduler.py          â”‚
-
-                       â”‚  Paris: 09:00 / 13:30 / 17:10         â”‚
-
-                       â”‚  + ATR 08:35 Â· shave 1st Â· Fri 18:00  â”‚
-
-                       â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
-
-   00_data_sensors        01/02              03_risk_portfolio        04_orchestrator_ai
-
- â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”�   â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”�   â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”�   â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”�
-
- â”‚ market_prices â”‚â”€â”€â–¶â”‚ DuckDB OHLCV â”‚â”€â”€â–¶â”‚ correlation_firewall  â”‚â”€â”€â–¶â”‚ cascade + earnings  â”‚
-
- â”‚ macro_alpha   â”‚   â”‚ technical_   â”‚   â”‚ pea_position_sizer    â”‚   â”‚ revocation / LLM    â”‚
-
- â”‚ AMFâ†’FMPâ†’YF    â”‚   â”‚ scorer+DCA   â”‚   â”‚ ATR rebalancer        â”‚   â”‚ weekly historian    â”‚
-
- â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜   â”‚ equity_metricsâ”‚   â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜   â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
-
-                     â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜                                         â–¼
-
-   SQLite: portfolio Â· audit Â· equity curve              Discord + Streamlit (Mission Control)
-
-   logs/ + database/pipeline_status.json
-
-``​`
-
-
-
-**One analysis pass:** fetch â†’ VIX â†’ raw signals â†’ mark-to-market (+ equity
-
-snapshot) â†’ cascade â†’ Smart-DCA â†’ audit log â†’ Discord alerts â†’ pipeline heartbeat.
-
-
-
-### Phase 38 add-on architecture (Monte Carlo + Stress + Red Team)
-
-
-
-``​`
-
-Portfolio Weights + DuckDB Returns
-
-              â”‚
-
-              â–¼
-
-  02_quant_engine/stochastic_models.py
-
-  - Cholesky(cov)
-
-  - Correlated GBM paths
-
-  - Fan chart percentiles (P05..P95)
-
-              â”‚
-
-              â–¼
-
-  Streamlit Portefeuille Tab
-
-  - On-demand Monte Carlo fan chart
-
-  - Tail risk (VaR/CVaR)
-
-  - Black swan stress table
-
-``​`
-
-
-
-``​`
-
-Exploration Tab (selected ticker)
-
-              â”‚
-
-              â–¼
-
-04_orchestrator_ai/red_team_agent.py
-
-  Bull Agent  â”€â”�
-
-               â”œâ”€ asyncio.gather â”€â–º Judge Agent â”€â–º 3-sentence verdict
-
-  Bear Agent  â”€â”˜
-
-              â”‚
-
-              â–¼
-
-UI Boxes: st.info (Bull), st.warning (Bear), st.error (Judge)
-
-``​`
-
-
-
----
-
-
-
-## Logging & observability
-
-
-
-Designed for a **personal** PEA terminal: enough detail to copy into notes or
-
-debug a silent day, without enterprise noise.
-
-
-
-| Piece | Role |
-
-|-------|------|
-
-| `01_memory_core/logging_setup.py` | Console (compact INFO) + rotating **DEBUG** files |
-
-| `logs/<component>.log` | Per-component trails (`scheduler`, `dashboard`, `cascade`, â€¦) |
-
-| `logs/pea_pollux_all.log` | Fan-in of everything |
-
-| `database/pipeline_status.json` | Last pass health for Mission Control (green / amber / red) |
-
-| Dashboard â†’ **Architecture & Logs** | Pick a file, tail N lines, select/copy |
-
-
-
-Format in files: `timestamp | LEVEL | logger | file:line function | message`.
-
-
-
-Entry points call `setup_app_logging()` once (scheduler already does). `logs/`
-
-is git-ignored.
-
-
-
----
-
-
-
-## Module reference
-
-
-
-| Path | Responsibility |
-
-|------|----------------|
-
-| `00_data_sensors/market_prices_api.py` | Batch OHLCV download â†’ DuckDB |
-
-| `00_data_sensors/macro_alpha_api.py` | VIX, Put/Call, insiders (**AMFâ†’FMPâ†’YF**), Polymarket |
-
-| `00_data_sensors/scrapers/amf_scraper.py` | AMF Opendatasoft v2.1 + BDIF `/back` (`RechercheTexte`) â†’ legacy BDIF + 12h circuit |
-
-| `01_memory_core/env_loader.py` | Native `api_keys.env` parser (no python-dotenv) |
-
-| `01_memory_core/data_models.py` | Pydantic contracts (`Signal`, `Position`, `PortfolioState`) |
-
-| `01_memory_core/sqlite_portfolio.py` | Account, positions, audit, **`portfolio_history`**, **`news_history`** |
-
-| `01_memory_core/duckdb_manager.py` | OHLCV store (ATR / correlation / indicators) |
-
-| `01_memory_core/logging_setup.py` | Rotating logs + pipeline heartbeat |
-
-| `02_quant_engine/technical_scorer.py` | MRE signals; `RSI_OVERSOLD_THRESHOLD` from YAML |
-
-| `02_quant_engine/smart_dca_engine.py` | Regime-aware Core DCA |
-
-| `03_risk_portfolio/pea_position_sizer.py` | Half-Kelly Ã— vol parity; **`size_with_explanation`** for UI |
-
-| `03_risk_portfolio/correlation_firewall.py` | Sector / Pearson / VIX panic |
-
-| `03_risk_portfolio/monthly_rebalancer.py` | Modes `atr` (daily) vs `shave` (monthly) |
-
-| `03_risk_portfolio/equity_metrics.py` | Shared DD / CAGR / Sharpe / Sortino |
-
-| `04_orchestrator_ai/signal_priority_cascade.py` | Conductor (all vetoes + sizing) |
-
-| `04_orchestrator_ai/earnings_blackout.py` | Per-ticker corporate blackout |
-
-| `04_orchestrator_ai/macro_veto.py` | Macro calendar blackout |
-
-| `04_orchestrator_ai/revocation_engine.py` | Expire / revoke stale PENDING |
-
-| `04_orchestrator_ai/weekly_historian.py` | Friday CIO digest + rejection taxonomy |
-
-| `05_interfaces/terminal_dashboard.py` | Mission Control + tabs |
-
-| `05_interfaces/trade_cards.py` | HTML cards: Tier, Kelly, ATR risk â‚¬, sector impact |
-
-| `05_interfaces/discord_copilot.py` | Alerts + approve/revoke buttons |
-
-| `main_scheduler.py` | Daemon + CLI (`--now`, `--weekly`, `--atr-stops`, `--rebalance`) |
-
-| `seed_account.py` | Seed / reset PEA cash & positions |
-
-| `tools/build_llm_dump.py` | Regenerate `PROJECT_FULL_DUMP_FOR_LLM.md` |
-
-| `tools/sync_universe_from_bourso.py` | Refresh PEA universe YAML |
-
-| `00_data_sensors/newsletter_api.py` | IMAP headlines + LLM morning Zeitgeist |
-
-| `00_data_sensors/newsletter_ingest/` | Modules IMAP (whitelist, dedupe, parse) |
-
-| `00_data_sensors/fundamentals_api.py` | Finnhub + yfinance (Value/Quality) |
-
-| `02_quant_engine/quantitative_math.py` | VaR, CVaR, Z-Score, variance (NumPy pur) |
-
-| `02_quant_engine/stochastic_models.py` | Monte Carlo corrÃ©lÃ© (Cholesky + GBM) |
-
-| `03_risk_portfolio/stress_tester.py` | Stress tests historiques (2008/2020/2022) |
-
-| `04_orchestrator_ai/red_team_agent.py` | DÃ©bat Bull/Bear/Judge (OpenRouter) |
-
-| `02_quant_engine/walk_forward_backtester.py` | Walk-forward equity scaffold on DuckDB |
-
-| `tests/` | pytest foundations (sizing, equity metrics, cards, dedupe) |
-
-| `.github/workflows/ci.yml` | CI on push/PR |
-
-
-
----
-
-
-
-## APIs that work
-
-
-
-| Source | Status | Notes |
-
-|--------|--------|-------|
-
-| **yfinance OHLCV** | Works | Primary market data â†’ DuckDB |
-
-| **`^V2TX` / `^VIX`** | Partial | VSTOXX often missing on Yahoo â†’ falls back to US VIX as panic proxy |
-
-| **AMF ODS / BDIF back** | Primary | Public, no paid key; ODS explore v2.1 + `/back/api/v1` with `RechercheTexte` |
-
-| **AMF BDIF legacy** | Fragile | `/api/v1` often WAF/500 â†’ 12h circuit â†’ FMP â†’ Yahoo |
-
-| **FMP insider API** | Optional | Needs `FMP_API_KEY` |
-
-| **yfinance insiders** | Tertiary | Sparse on many `.PA` mid-caps |
-
-| **Options Put/Call** | Partial | Sparse for EU â†’ neutral `1.0` |
-
-| **Polymarket Gamma** | Live | Macro context + conviction modifier (never a trade trigger) |
-
-| **OpenRouter** | Optional | Explanations / sentiment / weekly report / deep news |
-
-| **Boursorama scraper** | Fragile | PEA profile, consensus, news (dates normalized to ISO) |
-
-| **Native ticker tape** | Works | HTML/CSS marquee â€” blue chips + Clearbit logos (no TradingView tape) |
-
-| **Yahoo Mail IMAP** | Optional | Morning Briefing Zeitgeist (`YAHOO_MAIL_USER`) |
-
-
-
-Graceful degradation: missing sources return **neutral** values; the daemon does not crash.
-
-
-
----
-
-
-
-## Installation
-
-
-
-> Streamlit depends on `pyarrow` â†’ use **Python 3.11 or 3.12 x64** (`venv_x64`).
-
-
-
-``​`bash
-
-git clone https://github.com/Polluxgnr/Peatrading.git pea_pollux
-
-cd pea_pollux
-
-
-
-python3.11 -m venv venv_x64
-
-# Windows:  venv_x64\Scripts\Activate.ps1
-
-# Unix:     source venv_x64/bin/activate
-
-
-
-pip install --upgrade pip
-
-pip install -r requirements.txt
-
-
-
-cp config/api_keys.env.example config/api_keys.env
-
-# fill Discord / OpenRouter / FMP as needed
-
-
-
-python seed_account.py --cash 10000
-
-python main_scheduler.py --now    # first fetch + equity snapshot
-
-.\run_dashboard.ps1
-
-``​`
-
-
-
----
-
-
-
-## Configuration
-
-
-
-### `config/api_keys.env` (git-ignored)
-
-
-
-| Variable | Required | Purpose |
-
-|----------|----------|---------|
-
-| `DISCORD_TOKEN` / `DISCORD_CHANNEL_ID` | bot | Copilot with buttons |
-
-| `DISCORD_WEBHOOK_URL` | daemon | Weekly + monthly / ATR notifications |
-
-| `OPENROUTER_API_KEY` / `OPENROUTER_MODEL` | optional | LLM explain / sentiment |
-
-| `FMP_API_KEY` | optional | Secondary insider source after AMF |
-
-| `AMF_API_KEY` | placeholder | Public ODS/BDIF â€” use `free_public_ods_api` |
-
-| `YAHOO_MAIL_USER` / `YAHOO_MAIL_APP_PASSWORD` | briefing | Morning Briefing IMAP |
-
-| `EODHD_API_KEY` | optional | Reserved for paid EU market data |
-
-| `ALPHAVANTAGE_API_KEY` | optional | Fundamentals fallback (Finnhub â†’ Alpha Vantage â†’ yfinance) |
-
-| `OPENFIGI_API_KEY` | optional | Bloomberg OpenFIGI symbol/ISIN mapper (cached in SQLite) |
-
-
-
-Keys are loaded by a **native** parser (`01_memory_core/env_loader.py`) â€”
-
-**no `python-dotenv` required**. `main_scheduler.py` and the Streamlit dashboard
-
-force-load `config/api_keys.env` at boot.
-
-
-
-### `config/risk_params.yaml` (the rulebook)
-
-
-
-| Group | Keys (intent) |
-
-|-------|----------------|
-
-| **Sizing** | `KELLY_FRACTION`, `MAX_SINGLE_POSITION_PCT`, `MAX_SECTOR_WEIGHT_PCT`, `MAX_ALLOCATION_PER_DAY_PCT` |
-
-| **Circuit breakers** | `DAILY/WEEKLY/MONTHLY_MAX_LOSS_PCT` |
-
-| **Correlation** | `MAX_CORRELATION_*`, **`CORRELATION_LOOKBACK_DAYS`** |
-
-| **Signals** | `SIGNAL_*`, `MACRO_VETO_DAYS_BEFORE`, **`RSI_OVERSOLD_THRESHOLD`** |
-
-| **Cascade guards** | **`EARNINGS_BLACKOUT_DAYS`**, **`MIN_LIQUIDITY_ADV`**, **`MAX_POSITIONS_TOTAL`** |
-
-| **Core/Satellite** | `CORE_TICKER`, `CORE_*_PCT`, `SATELLITE_MAX_BUDGET_PCT` |
-
-| **VIX** | `VIX_PANIC_THRESHOLD`, vol parity refs |
-
-| **Rebalance** | `REBALANCE_PROFIT_*`, **`REBALANCE_ATR_STOP_MULT`** (default 2.5) |
-
-
-
-### Calendars
-
-
-
-- `config/macro_calendar.yaml` â€” ECB / CPI / NFP style events (manual; later API sync)  
-
-- `config/earnings_calendar.yaml` â€” per-ticker earnings/div dates (starts empty)  
-
-- `config/pea_universe.yaml` â€” ~600 PEA-eligible names by sector  
-
-
-
----
-
-
-
-## Usage
-
-
-
-``​`bash
-
-python seed_account.py --cash 10000
-
-python seed_account.py --position MC.PA:3:620:Luxury
-
-python seed_account.py --show
-
-
-
-python main_scheduler.py --now          # full analysis pass
-
-python main_scheduler.py --weekly       # CIO digest now
-
-python main_scheduler.py --briefing     # newsletter Zeitgeist now
-
-python main_scheduler.py --atr-stops    # daily ATR evaluation now
-
-python main_scheduler.py --rebalance    # monthly profit-shave now
-
-python main_scheduler.py                # daemon (Paris schedule)
-
-
-
-python 02_quant_engine/walk_forward_backtester.py --start 2020-01-01
-
-python run_discord.py
-
-.\run_dashboard.ps1
-
-
-
-python -m pytest -q
-
-python tools/build_llm_dump.py          # refresh LLM one-shot dump
-
-``​`
-
-
-
----
-
-
-
-## Dashboard
-
-
-
-Launch: `.\run_dashboard.ps1` â†’ http://localhost:8501
-
-
-
-On first open each session, the dashboard **auto-syncs** market data
-
-(`load_universe`, `get_last_prices`, `get_vix`) behind a global spinner.
-
-
-
-### Native ticker tape (top of page)
-
-
-
-Replaces the old TradingView widget (which showed red errors on `.PA` small caps).
-
-A **CSS marquee** scrolls blue-chip performances with **Clearbit logos** and a
-
-period selector: **1j / 5j / 1m**. Data from `get_market_performance` â€” no
-
-external widget dependency.
-
-
-
-### Mission Control (above tabs)
-
-
-
-Designed so you read **market state in ~3 seconds** before diving into tabs:
-
-
-
-- Euronext Paris open/closed + local time  
-
-- Last pipeline pass status (from `pipeline_status.json`)  
-
-- Equity + day variation (from `portfolio_history`)  
-
-- VIX gauge, count of PENDING Discord signals  
-
-- Quick actions: clickable ranking/universe rows (jumps Exploration dossier), ledger hint, manual pass reminder  
-
-
-
-**Palette:** off-white `#E0E0E0` for body text; neon `#00FF00` reserved for
-
-**positive PnL / APPROVED**; amber for alerts/vetoes; red for losses. Closer to
-
-real Bloomberg conventions and easier on long sessions than green-everywhere.
-
-
-
-### Tabs
-
-
-
-| Tab | Content |
-
-|-----|---------|
-
-| **General & Signaux** | Morning Briefing (chargement patient), suggestion + ranking/pÃ©pites **cliquables**, geo brief, funnel |
-
-| **Portefeuille** | Equity curve, sunburst, **stops ATR 2.5x**, wallet editor â†’ SQLite |
-
-| **Exploration** | **Recherche univers 600+** (selectbox haut de page), dossier ticker, **ticket d'ordre PEA**, **checklist dÃ©cision**, news archivÃ©es SQLite, synthÃ¨se IA 24h |
-
-| **Univers** | Liste PEA + tags techniques **cliquables** (full filtered view) |
-
-| **Architecture & Logs** | **TÃ©lÃ©mÃ©trie live** (health check env + DB), **`risk_params.yaml` actifs**, expanders logique quant, logs (5000 lignes) |
-
-
-
-### News memory (`news_history`)
-
-
-
-Headlines are **upserted into SQLite** on each fetch (`PortfolioDB.save_news`).
-
-The UI reads `get_news_history(ticker)` first; live APIs run only if fewer than
-
-3 cached articles. Boursorama relative dates (`il y a 2h`, empty, `Recent`) are
-
-normalized to `YYYY-MM-DD HH:MM` at scrape time.
-
-
-
-### Rich trade cards (what you see before approving)
-
-
-
-For each PENDING BUY the card shows:
-
-
-
-1. **Conviction score** (colour: amber 65â€“75 / neon 76â€“100) + Tier label  
-
-2. **Sizing rationale** â€” Kelly fraction, measured vol + vol factor, ticket â‚¬, weight % of equity  
-
-3. **R-style risk** â€” max â‚¬ / % equity loss if the **2.5Ã—ATR** stop is hit  
-
-4. **Sector impact** â€” e.g. Luxury 18% â†’ 23% (cap 25%), not just pass/fail  
-
-5. **Streamlit Approuver / Rejeter** â€” updates SQLite instantly (complements Discord)  
-
-
-
----
-
-
-
-## LLM full dump
-
-
-
-For one-shot context in another LLM / agent:
-
-
-
-``​`bash
-
-python tools/build_llm_dump.py
-
-# optional: skip architecture preamble
-
-python tools/build_llm_dump.py --no-summary
-
-``​`
-
-
-
-Writes **`PROJECT_FULL_DUMP_FOR_LLM.md`** with:
-
-
-
-- **Architecture snapshot** â€” layer map, Phase 26â€“28 highlights, hard rules
-
-- **Priority file list** â€” README, risk YAML, scorer, dashboard, scheduler
-
-- **Grouped file index** â€” by directory, with line counts and â­� on key files
-
-- **Full source bodies** â€” fenced code blocks for every included file
-
-
-
-Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
-
-Regenerate after meaningful code or README changes so external agents stay in sync.
-
-
-
----
-
-
-
-## Deployment
-
-
-
-### Docker (recommended)
-
-
-
-`docker-compose.yml` is production-oriented for a single personal instance:
-
-
-
-- **persistent volumes**:
-
-  - `./database:/app/database` (SQLite + DuckDB + heartbeat JSON)
-
-  - `./logs:/app/logs` (component logs + `pea_pollux_all.log`)
-
-  - `./config:/app/config` (risk params, calendars, universe, env template)
-
-- **timezone pinned**:
-
-  - `TZ=Europe/Paris` in both `daemon` and `dashboard`
-
-  - scheduler itself also uses explicit `schedule.every().day.at(..., "Europe/Paris")`
-
-    in `main_scheduler.py`
-
-
-
-``​`bash
-
-cp config/api_keys.env.example config/api_keys.env
-
-# Fill secrets locally (never commit config/api_keys.env)
-
-
-
-docker compose config            # final compose validation
-
-docker compose up -d --build
-
-docker compose ps
-
-docker compose logs -f daemon
-
-docker compose logs -f dashboard
-
-``​`
-
-
-
-First-time bootstrap (inside daemon container):
-
-
-
-``​`bash
-
-docker compose exec daemon python seed_account.py --cash 10000
-
-docker compose exec daemon python main_scheduler.py --now
-
-``​`
-
-
-
-Dashboard is exposed on `:8501`.
-
-
-
-### Pre-deploy final checks
-
-
-
-Run these before each push/deploy:
-
-
-
-``​`bash
-
-python -m pytest -q
-
-python tools/build_llm_dump.py
-
-git status --short
-
-``​`
-
-
-
-Expected outcomes:
-
-
-
-- pytest green (current baseline: `10 passed`)
-
-- `PROJECT_FULL_DUMP_FOR_LLM.md` regenerated and in sync with README/code
-
-- no secret files staged (`config/api_keys.env` must stay untracked/ignored)
-
-
-
-### Test coverage snapshot
-
-
-
-Current automated tests are focused and fast:
-
-
-
-- `tests/test_phase16_foundations.py`
-
-  - equity metrics (`max_drawdown`, `sharpe`, summary metrics)
-
-  - rebalancer mode split (`shave` vs `atr`) without network dependencies
-
-  - earnings blackout logic from YAML windows
-
-- `tests/test_ui_and_sandbox.py`
-
-  - sizing explanation metadata contract (`size_with_explanation`)
-
-  - trade-card helper rendering logic (tier/risk/sector-impact text)
-
-  - newsletter dedupe for near-duplicate titles
-
-- `tests/test_newsletter_whitelist.py`
-
-  - sender extraction + whitelist allow/deny behavior
-
-- `tests/test_funnel_analytics.py`
-
-  - rejection taxonomy mapping for funnel analytics consistency
-
-
-
-Alternatives: systemd (`Restart=always` on `main_scheduler.py`) or cron for
-
-`--now` / `--weekly` / `--atr-stops` / `--rebalance`.
-
-
-
----
-
-
-
-## Scheduling
-
-
-
-| Job | When (Europe/Paris) | Action |
-
-|-----|---------------------|--------|
-
-| **Morning briefing** | **08:25** | Newsletter IMAP â†’ LLM Zeitgeist â†’ `morning_briefing.json` |
-
-| ATR stops | 08:35 weekdays | Dynamic ATR SELLs â†’ webhook |
-
-| Profit-shave | Probe 08:30 (acts on the **1st**) | +20% trim â†’ webhook |
-
-| Analysis | 09:00, 13:30, 17:10 weekdays | Full pipeline â†’ Discord + heartbeat |
-
-| Weekly report | Friday 18:00 | Historian â†’ webhook |
-
-
-
-Weekends: analysis / ATR skipped automatically.
-
-
-
----
-
-
-
-## Roadmap / future improvements
-
-
-
-Prioritized for a **validated personal PEA process**, not feature theatre.
-
-Broker import must **diff** vs SQLite (never blind overwrite). Prefer official/API
-
-sources over furtive HTML scraping.
-
-
-
-### Done (Phase 15â€“20)
-
-
-
-| Item | Notes |
-
-|------|-------|
-
-| AMFâ†’FMPâ†’Yahoo insider cascade | Official FR source first |
-
-| Equity curve + shared metrics | Live dashboard; ready for backtest reuse |
-
-| Daily ATR vs monthly shave | Split jobs / CLI flags |
-
-| Earnings blackout engine | Calendar empty â€” fill via API later |
-
-| ADV / max positions / RSI / corr lookback | Wired in `risk_params.yaml` + cascade |
-
-| Mission Control + trade cards + logs | Operator UX |
-
-| **Decision funnel waterfall + rejection pie** | âœ… Phase 17 â€” 7J/30J audit-log analytics in General |
-
-| **Valuation + 10y annual returns** | âœ… Phase 18 â€” Exploration (buy zone, P/E, P/B, **1M/1Y**, annual bars) |
-
-| **Newsletter whitelist + Zeitgeist** | âœ… Phase 19 â€” `NewsletterSensor` + 08:25 job + dashboard |
-
-| **Ensemble conviction scoring** | âœ… Phase 20 â€” 4 axes, emit â‰¥65; radar + Command Center approve |
-
-| **What-if 1000â‚¬ + walk-forward scaffold** | âœ… Exploration simulator + `walk_forward_backtester.py` |
-
-| **Terminal polish (TV / zone / ranking / Polymarket)** | âœ… Phase 21 â€” EPA: ticker map, flat buy-zone fix, fingerprint ranking, SSL-tolerant Gamma |
-
-| **Smart UX + deep news + logos + pÃ©pites** | âœ… Phase 22 |
-
-| **UX overhaul (tape / GO / news diversity)** | âœ… Phase 23 â€” no GO, logos off, multi-source news, deep IA narrative |
-
-| **Polymarket harden + news clean + tape + logs** | âœ… Phase 24 â€” JSONDecode guard, no heuristic pills, blue-chip tape, briefing button, log tail 5k |
-
-| **Auto-sync + score holistique + UI exÃ©cution** | âœ… Phase 26 â€” warmup au dÃ©marrage, News/Polymarket dans le score, stops ATR visibles, tickets/checklist, tables cliquables |
-
-| **Bandeau natif + news SQLite + exploration universelle** | âœ… Phase 27 â€” marquee HTML/CSS, `news_history`, dates exactes, selectbox 600+ tickers |
-
-| **TÃ©lÃ©mÃ©trie live Architecture & Logs** | âœ… Phase 28 â€” health check sources, risk_params actifs, expanders logique quant |
-
-| **UX rename + clickable tape + news history** | âœ… Phase 29 â€” Pollux branding, query-param tape, SynthÃ¨se IA, full news DB |
-
-| **Native env + AMF ODS + TV EURONEXT + uncapped lists** | âœ… Phase 32 |
-
-| **Multi-factor + Finnhub + Data Lake analyste** | âœ… Phase 35â€“36 |
-
-| **VaR/CVaR + Z-Score acadÃ©mique** | âœ… Phase 37 |
-
-| **Monte Carlo + stress tests + red teaming IA** | âœ… Phase 38 |
-
-| **UX (tape fix, briefing async, near-miss radar, ML export)** | âœ… Phase 39 |
-
-| **Cash sweep, Discord daily digest, 10y backfill, forward curve, ML store** | âœ… Phase 40 |
-
-| **AMF semantic parsing (legal FR regex), fluid log viewer, system telemetry** | âœ… Phase 41 |
-
-| **Institutional Overhaul: data quality (auto_adjust), parallel I/O, drawdown breaker, OpenFIGI, Alpha Vantage, backtester look-ahead fix, CI ruff** | âœ… Phase 42 |
-
-| **Pydantic config validation, backtester exits, dashboard DuckDB dedup, XGBoost ML, Devil's Advocate PEA** | âœ… Phase 44 |
-
-| **Dynamic Market Regime, EWMA Risk Math, Pipeline Idempotency** | âœ… Phase 45 |
-
-| **ML Historical Bootstrapper, Gemini 2.5 Optimization** | âœ… Phase 46 |
-
-| **Ultimate Performance (SQLite I/O fix), Pure Webhooks for Discord** | âœ… Phase 47 |
-
-| pytest + GitHub Actions CI | Expand coverage over time |
-
-
-
-### Next (highest leverage)
-
-
-
-| Item | Why |
-
-|------|-----|
-
-| Richer walk-forward (full Orchestrator + costs) | Validate RSI / conviction weights on PEA universe |
-
-| Fundsmith/Amundi holdings scraper | Replace institutional proxy set |
-
-| Broker CSV diff import | Keep SQLite honest vs reality |
-
-| Fill **earnings_calendar** (Euronext / API) | Blackout already coded |
-
-| Relative strength / 52w / analyst drift | Post-backtester calibration knobs |
-
-
-
-### Phase 40: Predictive Machine Learning (XGBoost / NLP)
-
-
-
-Goal: train a classifier on the `news_history` and `audit_log` SQLite tables to
-
-predict the probability that a given signal will result in a profitable trade.
-
-
-
-- **Features:** headline sentiment embeddings (NLP), RSI/MACD/Bollinger at signal
-
-  time, VIX level, sector, day-of-week, insider cluster flag.
-
-- **Labels:** from `audit_log` â€” did the signal reach +5% within 20 trading days
-
-  after APPROVED/EXECUTED?
-
-- **Model:** XGBoost gradient-boosted trees (tabular) + optional sentence-transformer
-
-  embeddings for headline text.
-
-- **Integration:** predicted probability displayed alongside the existing conviction
-
-  score in the dashboard (e.g., "ML confidence: 72%").
-
-- **Data export:** available today in the Architecture tab (CSV download of both tables).
-
-
-
-### Later
-
-
-
-Paid VSTOXX Â· AMF resilience Â· multi-core ETF rotation Â· trailing ATR after shave Â·
-
-EUR/USD note in CIO digest Â· rolling Sharpe chart.
-
-
-
-**Non-goals:** auto-broker execution, leverage, LLM-as-trader, US pennies.
-
-
-
----
-
-
-
-## Troubleshooting
-
-
-
-| Symptom | Fix |
-
-|---------|-----|
-
-| Dashboard Â« En attenteâ€¦ Â» | `python seed_account.py --cash 10000` then `--now` |
-
-| Empty equity curve | Needs at least one `update_portfolio` (pass or wallet save) |
-
-| Mission Control pass = Â« jamais Â» | Run `python main_scheduler.py --now` once |
-
-| Empty `logs/` | Same â€” scheduler/dashboard create files on first run |
-
-| `pyarrow` / Streamlit fail | Python **3.11/3.12 x64** |
-
-| VIX stuck / `^V2TX` 404 | Falls back to `^VIX` |
-
-| AMF HTTP 500 | Expected; FMP then Yahoo; circuit ~12h |
-
-| No FMP insiders | Set `FMP_API_KEY` |
-
-| ATR stop never fires | Need DuckDB history + losing position; try `--atr-stops` |
-
-| Cards show ATR risk n/a | Fetch history with `--now` first |
-
-| LLM / weekly silent | `OPENROUTER_API_KEY` / `DISCORD_WEBHOOK_URL` |
-
-| Cash too small for CW8 | MICRO mode: 1 liquid share + cash runway (by design) |
-
-| Newsletter IMAP auth fail | Use Yahoo **app password**, folder name exact, SSL 993 |
-
-| News dates show `Recent` | Re-open ticker in Exploration â€” scraper now stamps ISO; archive in `news_history` |
-
-| Red TradingView tape errors | Fixed in Phase 27 â€” native HTML marquee replaces TV widget |
-
-| Briefing flashes error on boot | Phase 27 â€” patient `st.info` + manual generate button |
-
-| CI / pytest | `python -m pytest -q` |
-
-
-
----
-
-
-
-## Disclaimer
-
-
-
-Decision-support and educational tool only. **No automated execution. No financial
-
-advice.** You are solely responsible for every trade. Past or backtested results
-
-do not guarantee future performance.
-
-
-
-Â© 2026 Pollux Gronier â€” PEA Pollux.
-
-
-
----
-
-
-
-## English guide
-
-
-
-**PEA Pollux** is a personal quantitative research terminal for a French **PEA**
-
-( tax-advantaged equity savings plan ). It helps you *research*, *size*, and *risk-manage*
-
-ideas â€” but **never places broker orders**.
-
-
-
-### What it does
-
-
-
-1. **Ingests data** â€” OHLCV (yfinance â†’ DuckDB), insiders (AMF â†’ FMP â†’ Yahoo),
-
-   news, newsletters, macro proxies (VIX, Polymarket).
-
-2. **Scores opportunities** â€” multi-model ensemble (Trend, Mean-Reversion, Breakout,
-
-   Context) with fundamentals (Finnhub) and sentiment modifiers.
-
-3. **Filters through risk** â€” VIX panic, sector caps, correlation firewall, earnings
-
-   blackout, liquidity floor, vol-parity sizing (whole shares only).
-
-4. **Surfaces decisions** â€” Streamlit dashboard + optional Discord copilot for
-
-   manual approve/reject.
-
-5. **Explains & challenges** â€” LLM rationales, weekly digest, Bull/Bear red teaming.
-
-
-
-### Phase 38â€“41 highlights
-
-
-
-| Feature | Module | Phase |
-
-|---------|--------|:-----:|
-
-| Monte Carlo fan chart | `stochastic_models.py` | 38 |
-
-| Black swan replay | `stress_tester.py` | 38 |
-
-| Tail risk VaR & CVaR | `quantitative_math.py` | 37 |
-
-| AI red team (Bull/Bear/Judge) | `red_team_agent.py` | 38 |
-
-| Ticker tape 1d fix + near-miss radar | `terminal_dashboard.py` | 39 |
-
-| ML feature store + CSV export | `ml_feature_store.py` | 40 |
-
-| Cash sweep (zero idle cash) | `smart_dca_engine.py` | 40 |
-
-| Discord daily concise report | `discord_copilot.py` | 40 |
-
-| 10-year OHLCV backfill (`--backfill-10y`) | `main_scheduler.py` | 40 |
-
-| Forward equity curve vs CW8 benchmark | `terminal_dashboard.py` | 40 |
-
-| AMF semantic parsing (FR legal regex) | `amf_scraper.py` | 41 |
-
-| Filtered + color-coded log viewer | `terminal_dashboard.py` | 41 |
-
-| System telemetry (DB sizes, CPU, mem) | `terminal_dashboard.py` | 41 |
-
-
-
-### Architecture (high level)
-
-
-
-``​`
-
-Data sensors â†’ DuckDB/SQLite â†’ Quant engine â†’ Risk cascade â†’ UI (Streamlit/Discord)
-
-                                      â†“
-
-                         Stochastic models + stress tests + LLM explainers
-
-``​`
-
-
-
-### Quick start
-
-
-
-``​`bash
-
-git clone https://github.com/Polluxgnr/Peatrading.git pea_pollux
-
-cd pea_pollux
-
-python3.11 -m venv venv_x64 && source venv_x64/bin/activate  # or Windows Activate.ps1
-
-pip install -r requirements.txt
-
-cp config/api_keys.env.example config/api_keys.env
-
-python seed_account.py --cash 10000
-
-python main_scheduler.py --now
-
-streamlit run 05_interfaces/terminal_dashboard.py
-
-``​`
-
-
-
-### Design principles
-
-
-
-- **Math-first, AI-second** â€” models decide eligibility; LLMs only explain or debate.
-
-- **Manual execution** â€” you always confirm trades.
-
-- **Graceful degradation** â€” missing API keys â†’ neutral fallbacks, no crashes.
-
-- **Vectorized math** â€” NumPy/Pandas for VaR, Monte Carlo, Z-Scores.
-
-- **On-demand heavy compute** â€” Monte Carlo runs behind a button + cache, not on every page load.
-
-
-
----
-
-## Phase 49 : The Apex Optimization (Current)
-
-
-
-*   **âš¡ Blazing Fast UI :** Caching systÃ©matique (@st.cache_resource, @st.cache_data) et lazy loading pour un Dashboard sub-seconde.
-
-*   **ðŸ“Š Interactive Metrics :** Drill-down des mÃ©triques via st.popover (Market Breadth dynamique, Mini-charts VIX).
-
-*   **ðŸ¤– DÃ©ploiement StratÃ©gique (80% Rule) :** Force le dÃ©ploiement de capital sur les meilleurs signaux techniques rejetÃ©s si l'exposition Cash est > 20% en rÃ©gime Bull.
-
-*   **ðŸ“ˆ Simulateur ML Autonome :** Backtester visuel intÃ©grÃ© dans le Dashboard permettant d'Ã©valuer la stratÃ©gie Machine Learning vis-Ã -vis d'un Buy & Hold (CW8) avec prise en compte du slippage.
-
-*   **ðŸ“¡ Ingestion IncrÃ©mentale :** Optimisation drastique des appels rÃ©seaux (DuckDB get_latest_dates) pour ne tÃ©lÃ©charger que le strict nÃ©cessaire depuis yfinance.
-
-*   **ðŸš¨ Copilot Discord V2 :** Refonte des webhooks avec intÃ©gration du Notional estimÃ©, formatage premium et ping @everyone.
-
-
-
----
-
-## Phase 51 : Robust ML Pipeline Refactoring (Current)
-
-
-
-*   **Sequential Bootstrapping:** Remplacement du multiprocessing instable sous Docker par une boucle sÃ©quentielle stricte avec barre de progression (\	qdm\).
-
-*   **Memory Optimization:** Sauvegarde incrÃ©mentale directe dans le CSV (\ml_training_dataset.csv\) pour Ã©viter les crash OOM lors du balayage de 10 ans d'historique sur plus de 600 tickers.
-
-*   **No Look-Ahead Bias / No Ban IP:** DÃ©sactivation intelligente des webhooks de scraping live (Sentiment Boursorama / YFinance) lorsque le bot tourne en simulation historique. L'infÃ©rence live conserve 100% de ses capacitÃ©s.
-
-*   **Error Resilience:** Poursuite automatique du bootstrap mÃªme si des API financiÃ¨res flanchent ou que l'historique d'un ticker est corrompu.
-
-
-
----
-
-## Phase 54.5 : Loud Fallback, UI Fluidity & Production Prep (Current)
-
-
-
-*   **10-Year Data Lake Uncapping:** L'historique stockÃ© dans DuckDB par `market_prices_api.py` monte jusqu'Ã  10 ans, offrant un set de donnÃ©es massif pour les modÃ¨les ML tout en limitant les appels d'API.
-
-*   **Loud Fallback Mechanism:** En cas de panne d'une API tierce (Boursorama, OpenRouter, etc.), le systÃ¨me maintient une fluiditÃ© totale en tombant sur des valeurs neutres (`0.0`), tout en dÃ©clarant un Ã©tat `data_degraded_mode=True` dans `pipeline_status.json` pour avertir l'utilisateur.
-
-*   **FluiditÃ© & Ticker Sync:** RÃ©solution d'un bug majeur de dÃ©synchronisation de l'UI grÃ¢ce Ã  l'utilisation d'Ã©vÃ©nements `on_change` asynchrones dans Streamlit, couplÃ© Ã  une limitation des graphiques Plotly aux 500 derniÃ¨res bougies pour maintenir 60 FPS.
-
-*   **UI Reorganization & Sub-Tabs:** Restructuration totale du Dashboard pour Ã©liminer le bruit visuel avec 4 onglets principaux (`Market & Macro`, `Ticker Deep-Dive`, `Portfolio & Execution`, `System Logs`) et 3 sous-onglets encapsulÃ©s pour les fiches actions.
-
-*   **Strict News Filtering:** ImplÃ©mentation d'un filtre regex anti-spam universel (`discount|free|referral|newsletter|sponsor...`) qui intercepte et purifie les flux RSS avant leur traitement IA (Morning Briefing).
-
-
- - - - 
- # #   P h a s e   5 5   :   M u l t i - S o u r c e   N e w s   E n g i n e ,   D a t a   L i n e a g e   &   Q u a n t   M L   E v o l u t i o n   ( C u r r e n t ) 
- 
- *       * * M u l t i - S o u r c e   N e w s   E n g i n e : * *   F i l t r e   m u l t i - s o u r c e s   ( S u b s t a c k ,   G o o g l e   N e w s ,   B o u r s o r a m a )   a v e c   h i s t o r i q u e   d e s   n e w s   a r c h i v é e s   d a n s   D u c k D B / S Q L i t e   e t   b a d g e s   I A   ( B u l l i s h / B e a r i s h ) . 
- *       * * D a t a   L i n e a g e   T a b : * *   S e c t i o n   a r c h i t e c t u r e   d u   t a b l e a u   d e   b o r d   a f f i c h a n t   l a   p r o v e n a n c e   d e s   d o n n é e s ,   l ' h e u r e   d e   s y n c h r o n i s a t i o n ,   e t   l e   s t a t u t   v i a   p i p e l i n e _ s t a t u s . j s o n . 
- *       * * X G B o o s t   M u l t i - H o r i z o n : * *   S u p p o r t   i n t é g r é   d e   c i b l e s   M L   d u a l - h o r i z o n   ( 3 0   j o u r s   t a c t i q u e ,   1 2 6   j o u r s   s t r u c t u r e l )   a v e c   i n f é r e n c e   S H A P   X A I . 
- *       * * P i o t r o s k i   S c o r e   &   V a l u e   T r a p   V e t o : * *   I n t é g r a t i o n   d u   s c o r e   P i o t r o s k i   ( v i a   F M P )   d a n s   l e   c a c h e   S Q L i t e   a v e c   u n   v e t o   s t r i c t   ( < 4 )   a u   n i v e a u   d u   c a s c a d e . 
- *       * * P e r f o r m a n c e s   &   S é c u r i t é : * *   O p t i m i s a t i o n   d e   P l o t l y ,   f i x   d u   T h r e a d   l o c k   d e s   c o n n e x i o n s   D B   a v e c   @ s t . c a c h e _ r e s o u r c e ,   e t   v a l i d a t i o n   é t e n d u e   d e   l a   w h i t e l i s t   n e w s l e t t e r . 
- 
- 
-```
-
-## FILE: requirements.txt (51 lines)
 ```text
 --extra-index-url https://download.pytorch.org/whl/cpu
 
@@ -22692,9 +18971,11 @@ streamlit-autorefresh==1.0.1
 
 
 streamlit-autorefresh==1.0.1
+
 ```
 
-## FILE: run_dashboard.ps1 (15 lines)
+## File: .\run_dashboard.ps1
+
 ```powershell
 # Launch PEA Pollux dashboard.
 # Streamlit opens the browser itself when headless=false — do NOT also Start-Process
@@ -22711,9 +18992,11 @@ if (-not (Test-Path $py)) {
 
 Write-Host "Starting PEA Pollux on http://localhost:8501 ..." -ForegroundColor Green
 & $py run "05_interfaces/terminal_dashboard.py" --server.headless false --browser.gatherUsageStats false --server.port 8501
+
 ```
 
-## FILE: run_discord.py (100 lines)
+## File: .\run_discord.py
+
 ```python
 """Entry point to launch the PEA Pollux Discord Copilot.
 
@@ -22815,9 +19098,11 @@ def _attach_demo(copilot: "DiscordCopilot") -> None:
 
 if __name__ == "__main__":
     main()
+
 ```
 
-## FILE: scratch/apply_subtabs.py (89 lines)
+## File: .\scratch\apply_subtabs.py
+
 ```python
 import os
 import re
@@ -22908,16 +19193,11 @@ with open(path, "w", encoding="utf-8") as f:
     f.writelines(out_lines)
 
 print("Applied sub-tabs!")
+
 ```
 
-## FILE: scratch_clear.py (3 lines)
-```python
-��i m p o r t   p a t h l i b ;   p a t h l i b . P a t h ( ' d a t a b a s e / m o r n i n g _ b r i e f i n g . j s o n ' ) . w r i t e _ t e x t ( ' { } ' ,   e n c o d i n g = ' u t f - 8 ' ) 
- 
- 
-```
+## File: .\scratch_extract.py
 
-## FILE: scratch_extract.py (82 lines)
 ```python
 import ast
 import astor
@@ -23001,9 +19281,11 @@ def build_and_save_ticker_profile(ticker: str, include_llm: bool = False) -> dic
 
 with open('c:/Users/PolluxGronier/Downloads/pea_sniper_terminal/01_memory_core/profile_builder.py', 'w', encoding='utf-8') as f:
     f.write(header + '\n'.join(extracted))
+
 ```
 
-## FILE: scratch_regex.py (22 lines)
+## File: .\scratch_regex.py
+
 ```python
 import re
 
@@ -23027,9 +19309,11 @@ content = re.sub(r'def get_ticker_dossier.*?return out\n', '', content, flags=re
 
 with open('05_interfaces/terminal_dashboard.py', 'w', encoding='utf-8') as f:
     f.write(content)
+
 ```
 
-## FILE: seed_account.py (129 lines)
+## File: .\seed_account.py
+
 ```python
 """Account seeding CLI for PEA Pollux.
 
@@ -23160,14 +19444,18 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 ```
 
-## FILE: tests/__init__.py (1 lines)
+## File: .\tests\__init__.py
+
 ```python
 # Empty package marker for pytest discovery.
+
 ```
 
-## FILE: tests/test_funnel_analytics.py (63 lines)
+## File: .\tests\test_funnel_analytics.py
+
 ```python
 """Phase 17 funnel taxonomy tests (no Streamlit runtime)."""
 
@@ -23232,9 +19520,11 @@ def test_funnel_drop_mapping_logic():
         "rejected_other", "REJECTED: Insufficient cash for 1 share"
     ) == "cash_sizing"
     assert map_drop("vetoed_sector", "Sector weight") == "sector"
+
 ```
 
-## FILE: tests/test_newsletter_whitelist.py (24 lines)
+## File: .\tests\test_newsletter_whitelist.py
+
 ```python
 """Whitelist sender filter for newsletter ingest."""
 
@@ -23260,9 +19550,11 @@ def test_extract_and_allow_known_senders():
     assert is_allowed_sender("Brief <hello@brief.me>")
     assert not is_allowed_sender("Yahoo <noreply@yahoo.com>")
     assert not is_allowed_sender("Security Alert <account-protection@yahoo.com>")
+
 ```
 
-## FILE: tests/test_phase16_foundations.py (92 lines)
+## File: .\tests\test_phase16_foundations.py
+
 ```python
 """Unit tests for equity metrics and rebalancer mode split."""
 
@@ -23356,9 +19648,11 @@ def test_earnings_blackout_window(tmp_path):
     assert veto and "Q2" in reason
     clear, _ = eng.check_veto("OR.PA", date(2026, 7, 24))
     assert not clear
+
 ```
 
-## FILE: tests/test_ui_and_sandbox.py (66 lines)
+## File: .\tests\test_ui_and_sandbox.py
+
 ```python
 """Tests for trade-card helpers and newsletter dedupe (no network)."""
 
@@ -23426,9 +19720,11 @@ def test_newsletter_dedupe_collapses_near_dupes():
     ]
     out = dedupe_articles(arts)
     assert len(out) == 2
+
 ```
 
-## FILE: tools/add_backtest_ui.py (78 lines)
+## File: .\tools\add_backtest_ui.py
+
 ```python
 import os
 
@@ -23508,9 +19804,11 @@ with open(path, "w", encoding="utf-8") as f:
     f.write(content)
 
 print("Done")
+
 ```
 
-## FILE: tools/add_deployment.py (53 lines)
+## File: .\tools\add_deployment.py
+
 ```python
 import os
 
@@ -23565,9 +19863,11 @@ if target in content:
     print("Deployment logic inserted successfully.")
 else:
     print("Target block not found.")
+
 ```
 
-## FILE: tools/backup_databases.py (52 lines)
+## File: .\tools\backup_databases.py
+
 ```python
 """Export key SQLite tables to Parquet for backup and portability.
 
@@ -23621,9 +19921,11 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 ```
 
-## FILE: tools/bootstrap_ml_dataset.py (209 lines)
+## File: .\tools\bootstrap_ml_dataset.py
+
 ```python
 """ML Historical Bootstrapper for PEA Pollux.
 
@@ -23834,9 +20136,250 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 ```
 
-## FILE: tools/build_llm_dump.py (232 lines)
+## File: .\tools\build_dashboard_dump.py
+
+```python
+#!/usr/bin/env python3
+"""Regenerate PROJECT_FULL_DUMP_FOR_LLM.md for one-shot LLM context.
+
+Usage (from repo root):
+    python tools/build_llm_dump.py
+    python tools/build_llm_dump.py --no-summary   # skip architecture preamble
+"""
+
+from __future__ import annotations
+
+import argparse
+import re
+from collections import defaultdict
+from datetime import datetime, timezone
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+OUT = ROOT / "DASHBOARD_FULL_DUMP_FOR_LLM.md"
+README = ROOT / "README.md"
+
+SKIP_DIRS = {
+    ".git",
+    "venv_x64",
+    "venv",
+    ".venv",
+    "__pycache__",
+    ".pytest_cache",
+    "node_modules",
+    ".cursor",
+    "database",
+    "mcps",
+    "agent-transcripts",
+    "terminals",
+    "tests",
+    "scratch",
+    "tools",
+    "docs",
+    "notebooks",
+}
+
+EXTS = {
+    ".py",
+    ".yaml",
+    ".yml",
+    ".toml",
+    ".md",
+    ".txt",
+    ".ps1",
+    ".json",
+    ".ini",
+    ".cfg",
+    ".css",
+    ".html",
+}
+
+NAME_ALLOW = {
+    "Dockerfile",
+    "docker-compose.yml",
+    "requirements.txt",
+    "api_keys.env.example",
+    ".gitignore",
+}
+
+SKIP_FILES = {
+    "PROJECT_FULL_DUMP_FOR_LLM.md",
+    "DASHBOARD_FULL_DUMP_FOR_LLM.md",
+}
+
+# High-signal files surfaced first in the index (read these before the rest).
+PRIORITY_FILES = [
+    "README.md",
+    "config/risk_params.yaml",
+    "config/pea_universe.yaml",
+    "05_interfaces/terminal_dashboard.py",
+    "01_memory_core/data_models.py",
+    "01_memory_core/sqlite_portfolio.py",
+    "01_memory_core/duckdb_manager.py",
+    "04_orchestrator_ai/news_sentiment_llm.py",
+]
+
+ARCHITECTURE_SUMMARY = """\
+## Architecture snapshot (for agents)
+
+| Layer | Path | Role |
+|-------|------|------|
+| Sensors | `00_data_sensors/` | OHLCV, VIX, insiders (AMF→FMP→YF), Polymarket, Bourso scrapers, newsletter IMAP |
+| Memory | `01_memory_core/` | Pydantic models, SQLite (`portfolio`, `audit_logs`, `portfolio_history`, **`news_history`**), DuckDB OHLCV |
+| Quant | `02_quant_engine/` | Ensemble conviction scorer (MR + vol + insider + inst + **news/poly modifiers**), Smart DCA |
+| Risk | `03_risk_portfolio/` | Cascade vetoes, Half-Kelly sizing, correlation firewall, ATR rebalancer |
+| Orchestrator | `04_orchestrator_ai/` | Pipeline conductor, earnings blackout, macro veto, revocation, weekly historian |
+| UI | `05_interfaces/` | Streamlit Mission Control — **native HTML ticker tape**, exploration 600+ tickers, live telemetry tab |
+| Ops | `main_scheduler.py` | Paris daemon (09:00 / 13:30 / 17:10 + briefing 08:25 + ATR 08:35) |
+
+**Dashboard highlights (Phase 26–28):**
+- Auto-sync on session open (`load_universe`, `get_last_prices`, `get_vix`)
+- Native CSS marquee tape (no TradingView widget for `.PA`)
+- `news_history` SQLite archive — exact timestamps, cross-session memory
+- Portfolio tab: explicit ATR 2.5× stop table
+- Exploration: universal ticker search, order ticket, decision checklist
+- Architecture tab: live source health + active `risk_params.yaml` + logic expanders
+
+**Hard rules:** no auto-broker execution · LLM explains only · conviction emit ≥ 65 · manual Discord/Streamlit approve.
+"""
+
+
+def _read_phase_from_readme() -> str:
+    try:
+        first = README.read_text(encoding="utf-8").splitlines()[0]
+        m = re.search(r"Phase\s+[\d–\-]+", first)
+        return m.group(0) if m else "PEA Pollux"
+    except OSError:
+        return "PEA Pollux"
+
+
+def _lang(path: Path) -> str:
+    return {
+        ".py": "python",
+        ".yaml": "yaml",
+        ".yml": "yaml",
+        ".toml": "toml",
+        ".md": "markdown",
+        ".txt": "text",
+        ".ps1": "powershell",
+        ".json": "json",
+        ".ini": "ini",
+        ".cfg": "ini",
+    }.get(path.suffix.lower(), "text")
+
+
+def _should_include(path: Path) -> bool:
+    if path.name in SKIP_FILES:
+        return False
+    if any(part in SKIP_DIRS for part in path.parts):
+        return False
+    if path.name in NAME_ALLOW:
+        return True
+    if path.suffix.lower() in EXTS:
+        if path.suffix.lower() == ".env" or path.name.endswith(".env"):
+            return path.name.endswith(".env.example")
+        return True
+    return False
+
+
+def collect_files() -> list[Path]:
+    files: list[Path] = []
+    for path in sorted(ROOT.rglob("*")):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(ROOT)
+        if _should_include(rel):
+            files.append(rel)
+    return files
+
+
+def _group_index(files: list[Path]) -> list[str]:
+    by_dir: dict[str, list[Path]] = defaultdict(list)
+    for rel in files:
+        parent = rel.parent.as_posix() if rel.parent != Path(".") else "(root)"
+        by_dir[parent].append(rel)
+
+    lines: list[str] = []
+    for parent in sorted(by_dir.keys(), key=lambda x: (x != "(root)", x)):
+        lines.append(f"### `{parent}/`")
+        for rel in sorted(by_dir[parent], key=lambda p: p.name.lower()):
+            try:
+                nlines = len((ROOT / rel).read_text(encoding="utf-8", errors="replace").splitlines())
+            except OSError:
+                nlines = 0
+            prio = " ⭐" if rel.as_posix() in PRIORITY_FILES else ""
+            lines.append(f"- `{rel.as_posix()}` ({nlines} lines){prio}")
+        lines.append("")
+    return lines
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Build PROJECT_FULL_DUMP_FOR_LLM.md")
+    parser.add_argument(
+        "--no-summary",
+        action="store_true",
+        help="Omit architecture snapshot preamble",
+    )
+    args = parser.parse_args()
+
+    files = collect_files()
+    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    phase = _read_phase_from_readme()
+
+    lines: list[str] = [
+        "# PEA Pollux — Full Project Dump for LLM",
+        "",
+        f"> **{phase}** · Generated `{stamp}` · Root `{ROOT}`",
+        "",
+        "One-shot context for external LLM agents. Includes source, configs, and docs.",
+        "Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.",
+        "",
+        "---",
+    ]
+
+    if not args.no_summary:
+        lines.append(ARCHITECTURE_SUMMARY)
+        lines.append("---")
+        lines.append("")
+        lines.append("### Priority files (read first)")
+        for p in PRIORITY_FILES:
+            if (ROOT / p).exists():
+                lines.append(f"- `{p}`")
+        lines.append("")
+        lines.append("---")
+
+    lines.append(f"## File index ({len(files)} files)")
+    lines.extend(_group_index(files))
+    lines.append("---")
+
+    for rel in files:
+        abs_path = ROOT / rel
+        try:
+            text = abs_path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            text = abs_path.read_text(encoding="utf-8", errors="replace")
+        safe = text.replace("```", "``\u200b`")
+        nlines = len(text.splitlines())
+        lines.append(f"## FILE: {rel.as_posix()} ({nlines} lines)")
+        lines.append(f"```{_lang(rel)}")
+        lines.append(safe.rstrip() + "\n```")
+        lines.append("")
+
+    OUT.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+    size_kb = OUT.stat().st_size / 1024
+    print(f"Wrote {OUT.name}: {len(files)} files, {size_kb:.0f} KB ({phase})")
+
+
+if __name__ == "__main__":
+    main()
+
+```
+
+## File: .\tools\build_llm_dump.py
+
 ```python
 #!/usr/bin/env python3
 """Regenerate PROJECT_FULL_DUMP_FOR_LLM.md for one-shot LLM context.
@@ -24056,11 +20599,11 @@ def main() -> None:
             text = abs_path.read_text(encoding="utf-8")
         except UnicodeDecodeError:
             text = abs_path.read_text(encoding="utf-8", errors="replace")
-        safe = text.replace("``​`", "``\u200b`")
+        safe = text.replace("```", "``\u200b`")
         nlines = len(text.splitlines())
         lines.append(f"## FILE: {rel.as_posix()} ({nlines} lines)")
-        lines.append(f"``​`{_lang(rel)}")
-        lines.append(safe.rstrip() + "\n``​`")
+        lines.append(f"```{_lang(rel)}")
+        lines.append(safe.rstrip() + "\n```")
         lines.append("")
 
     OUT.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
@@ -24070,9 +20613,11 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 ```
 
-## FILE: tools/build_universe.py (273 lines)
+## File: .\tools\build_universe.py
+
 ```python
 """Universe builder for PEA Pollux.
 
@@ -24347,9 +20892,11 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 ```
 
-## FILE: tools/fix_indent.py (15 lines)
+## File: .\tools\fix_indent.py
+
 ```python
 import os
 
@@ -24366,9 +20913,11 @@ for i, line in enumerate(lines):
 
 with open(path, "w", encoding="utf-8") as f:
     f.writelines(lines)
+
 ```
 
-## FILE: tools/rebrand_pea_pollux.py (65 lines)
+## File: .\tools\rebrand_pea_pollux.py
+
 ```python
 #!/usr/bin/env python3
 """One-shot UTF-8 safe rebrand: PEA Pollux -> PEA Pollux."""
@@ -24435,9 +20984,11 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 ```
 
-## FILE: tools/refactor_ui.py (172 lines)
+## File: .\tools\refactor_ui.py
+
 ```python
 import re
 import os
@@ -24611,9 +21162,11 @@ content = re.sub(r'with st\.expander\("([^"]+)", expanded=False\):', r'if True:\
 
 with open(path, "w", encoding="utf-8") as f:
     f.write(content)
+
 ```
 
-## FILE: tools/run_wfo.py (66 lines)
+## File: .\tools\run_wfo.py
+
 ```python
 """Walk-Forward Optimization (WFO) for RSI_OVERSOLD.
 
@@ -24681,9 +21234,11 @@ def run_wfo():
 
 if __name__ == "__main__":
     run_wfo()
+
 ```
 
-## FILE: tools/sync_universe_from_bourso.py (236 lines)
+## File: .\tools\sync_universe_from_bourso.py
+
 ```python
 """Sync ``config/pea_universe.yaml`` from Boursorama's PEA eligibility filter.
 
@@ -24921,9 +21476,11 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 ```
 
-## FILE: tools/train_rl_sizer.py (80 lines)
+## File: .\tools\train_rl_sizer.py
+
 ```python
 """Train PPO Reinforcement Learning model for Position Sizing.
 
@@ -25005,4 +21562,6 @@ def train_agent():
 
 if __name__ == "__main__":
     train_agent()
+
 ```
+

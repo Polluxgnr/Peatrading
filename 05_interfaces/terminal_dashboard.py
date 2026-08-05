@@ -3676,31 +3676,20 @@ with tab_macro:
         held_tickers,
     )
 
-    st.markdown("#### 🎯 Meilleur portefeuille suggere (adaptatif)")
+    st.markdown("#### 🎯 Meilleur portefeuille suggéré (adaptatif)")
     st.markdown(
         f"<div class='eli5'>{suggestion.get('summary', '')}</div>",
         unsafe_allow_html=True,
     )
-    if True:
-        st.markdown("### 💡 Lire le détail de la stratégie")
-        st.markdown(
-            f"<div class='info-text'>"
-            f"<b style='color:{_AMBER};'>Pourquoi ce mode "
-            f"({suggestion.get('mode')}) :</b><br>"
-            f"{suggestion.get('mode_why', '')}<br><br>"
-            f"{suggestion.get('cash_explain', '')}</div>",
-            unsafe_allow_html=True,
-        )
-        if True:
-            st.markdown("### 📖 Comprendre cette recommandation")
-            st.caption(
-                "Le résumé reste visible ci-dessus. Ici : justification du mode "
-                "(MICRO/STARTER/…) et lecture cash / runway (court_why)."
-            )
-            st.markdown(
-                f"**mode_why:** {suggestion.get('mode_why', '—')}\n\n"
-                f"**cash_explain / court_why:** {suggestion.get('cash_explain', '—')}"
-            )
+    st.markdown(
+        f"<div class='info-text'>"
+        f"<b style='color:{_AMBER};'>Pourquoi ce mode "
+        f"({suggestion.get('mode')}) :</b><br>"
+        f"{suggestion.get('mode_why', '')}<br><br>"
+        f"{suggestion.get('cash_explain', '')}</div>",
+        unsafe_allow_html=True,
+    )
+
     sug_lines = suggestion.get("lines") or []
     if sug_lines:
         sdisp = pd.DataFrame([{
@@ -3902,6 +3891,48 @@ with tab_macro:
             unsafe_allow_html=True,
         )
 
+    st.markdown("---")
+    p1, p2 = st.columns(2)
+    with p1:
+        st.markdown("#### 📈 Top / Flop (1 mois)")
+        perf_watch = get_market_performance(watch, period="1mo")
+        if perf_watch.empty or "Performance (%)" not in perf_watch.columns:
+            st.caption("Performances indisponibles.")
+        else:
+            pf = perf_watch.copy()
+            pf["Titre"] = [format_name(t) for t in pf["Ticker"]]
+            top = pf.nlargest(5, "Performance (%)")
+            # Exclusive flop: exclude tickers already in Top, require strictly worse.
+            flop_pool = pf[~pf["Ticker"].isin(top["Ticker"])]
+            flop = flop_pool.nsmallest(5, "Performance (%)")
+            tcol, fcol = st.columns(2)
+            with tcol:
+                st.caption("Top")
+                disp_t = pd.DataFrame({
+                    "Titre": top["Titre"],
+                    "Perf": [f"{v:+.1f}%" for v in top["Performance (%)"]],
+                })
+                st.dataframe(disp_t, use_container_width=True, hide_index=True)
+            with fcol:
+                st.caption("Flop")
+                disp_f = pd.DataFrame({
+                    "Titre": flop["Titre"],
+                    "Perf": [f"{v:+.1f}%" for v in flop["Performance (%)"]],
+                })
+                st.dataframe(disp_f, use_container_width=True, hide_index=True)
+    with p2:
+        st.markdown("#### 📅 Evénements à venir")
+        events = get_earnings_events(watch)
+        if not events:
+            st.caption("Aucun calendrier earnings detecte (yfinance).")
+        else:
+            edf = pd.DataFrame([{
+                "Titre": format_name(e["ticker"]),
+                "Evenement": e["event"],
+                "Date": e["date"],
+            } for e in events])
+            st.dataframe(edf, use_container_width=True, hide_index=True)
+
     # --- Phase 17: Decision funnel (audit-log analytics) --------------------
     st.markdown("---")
     with st.expander("📊 Entonnoir de Décision (Funnel 7J)", expanded=True):
@@ -4024,27 +4055,23 @@ with tab_macro:
                 sc = int(a.get("score") or 0)
                 rows.append({
                     "Ticker": t,
-                    "Score": f"{sc}/100",
-                    "RSI": f"{float(rsi):.0f}" if rsi is not None else "—",
+                    "Score": sc,
+                    "RSI": float(rsi) if rsi is not None else None,
                     "Manquant": missing,
                 })
 
             disp = pd.DataFrame(rows)
-            score_colors = [
-                (_NEON if int(s.split("/")[0]) >= 62 else
-                 _AMBER if int(s.split("/")[0]) >= 58 else
-                 _CYAN)
-                for s in disp["Score"].tolist()
-            ]
-            st.plotly_chart(
-                dark_table(
-                    disp,
-                    height=min(420, 44 + 28 * len(disp)),
-                    col_widths=[1.2, 0.8, 0.7, 3.2],
-                    font_color_map={"Score": score_colors},
-                ),
-                width="stretch",
-                key="gen_near_miss_radar",
+            st.dataframe(
+                disp,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Score": st.column_config.ProgressColumn(
+                        "Score", format="%f / 100", min_value=0, max_value=100
+                    ),
+                    "RSI": st.column_config.NumberColumn("RSI", format="%.0f"),
+                    "Manquant": st.column_config.TextColumn("Condition manquante", width="large")
+                }
             )
     with col2:
         st.markdown("##### Historique (20 derniers)")
@@ -4059,72 +4086,26 @@ with tab_macro:
                 "Titre": [format_name(t) for t in hist["ticker"]],
                 "Statut": hist["status"],
                 "Type": hist["signal_type"],
-                "Score": [f"{s:.1f}" for s in hist["score"]],
+                "Score": hist["score"],
                 "Date": [str(x)[:16] for x in hist["created_at"]],
             })
-            st.plotly_chart(
-                dark_table(disp, height=320,
-                           font_color_map={"Statut": statut_colors},
-                           col_widths=[2, 1.1, 0.9, 0.7, 1.2]),
-                width="stretch",
-                key="gen_hist_signals_table",
+            
+            def _color_status(val):
+                if val == "EXECUTED": return "color: #00FF00"
+                if val == "REVOKED": return "color: #FF3333"
+                if val == "REJECTED": return "color: #9BA3AF"
+                if val == "EXPIRED": return "color: #FFB000"
+                return ""
+
+            st.dataframe(
+                disp.style.map(_color_status, subset=["Statut"]),
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Score": st.column_config.NumberColumn("Score", format="%.1f"),
+                }
             )
-    st.markdown("---")
-    p1, p2 = st.columns(2)
-    with p1:
-        st.markdown("#### 📈 Top / Flop (1 mois)")
-        perf_watch = get_market_performance(watch, period="1mo")
-        if perf_watch.empty or "Performance (%)" not in perf_watch.columns:
-            st.caption("Performances indisponibles.")
-        else:
-            pf = perf_watch.copy()
-            pf["Titre"] = [format_name(t) for t in pf["Ticker"]]
-            top = pf.nlargest(5, "Performance (%)")
-            # Exclusive flop: exclude tickers already in Top, require strictly worse.
-            flop_pool = pf[~pf["Ticker"].isin(top["Ticker"])]
-            flop = flop_pool.nsmallest(5, "Performance (%)")
-            tcol, fcol = st.columns(2)
-            with tcol:
-                st.caption("Top")
-                disp_t = pd.DataFrame({
-                    "Titre": top["Titre"],
-                    "Perf": [f"{v:+.1f}%" for v in top["Performance (%)"]],
-                })
-                st.plotly_chart(
-                    dark_table(disp_t, height=220,
-                               font_color_map={"Perf": [_NEON] * len(disp_t)},
-                               col_widths=[2.2, 0.8]),
-                    width="stretch",
-                    key="gen_top_perf_table",
-                )
-            with fcol:
-                st.caption("Flop")
-                disp_f = pd.DataFrame({
-                    "Titre": flop["Titre"],
-                    "Perf": [f"{v:+.1f}%" for v in flop["Performance (%)"]],
-                })
-                st.plotly_chart(
-                    dark_table(disp_f, height=220,
-                               font_color_map={"Perf": [_RED] * len(disp_f)},
-                               col_widths=[2.2, 0.8]),
-                    width="stretch",
-                    key="gen_flop_perf_table",
-                )
-    with p2:
-        st.markdown("#### 📅 Evenements a venir")
-        events = get_earnings_events(watch)
-        if not events:
-            st.caption("Aucun calendrier earnings detecte (yfinance).")
-        else:
-            edf = pd.DataFrame([{
-                "Titre": format_name(e["ticker"]),
-                "Evenement": e["event"],
-                "Date": e["date"],
-            } for e in events])
-            st.plotly_chart(
-                dark_table(edf, height=220), width="stretch",
-                key="gen_earnings_table",
-            )
+
     st.markdown("---")
     st.markdown("#### 📰 Actualites (contexte marche)")
     st.markdown(
@@ -4885,7 +4866,7 @@ with tab_ticker:
         with sub_news:
             st.markdown("#### 🗞️ Morning Briefing (Macro Zeitgeist)")
             import re
-            spam_regex = re.compile(r'(?i)(discount|free|referral|rewards|newsletter|email|sponsor|pitch deck|vc|substack|attio|seo agency|gtm|seed|founder|startup|saas|cap table|récompense|mettre [aà] jour|update your|unsubscribe|cliquez ici|abonnez-vous|subscribe|webinar|masterclass|refer\.cafedelabourse)')
+            spam_regex = re.compile(r'(?i)(discount|free|referral|rewards|newsletter|email|sponsor|pitch deck|vc|substack|attio|seo agency|gtm|seed|founder|startup|saas|cap table|récompense|mettre [aà] jour|update your|unsubscribe|cliquez ici|abonnez-vous|subscribe|webinar|masterclass|refer\.cafedelabourse|lifestyle|promo|offre|gift|cadeau|bonus|vip|exclusive|limited time|last chance)')
             
             briefing = load_morning_briefing()
             zg = ""
@@ -4977,8 +4958,7 @@ with tab_ticker:
                     db_news = [n for n in db_news if n.get("provider") in filter_sources]
     
                 if db_news:
-                    html_feed = "<div style='display:flex; flex-direction:column; gap:8px;'>"
-                    valid_news_count = 0
+                    clean_news = []
                     for r in db_news:
                         title = str(r.get("title", ""))
                         if spam_regex.search(title):
@@ -4986,31 +4966,41 @@ with tab_ticker:
                         if title.lower().startswith('http') or 'http://' in title.lower() or 'https://' in title.lower():
                             continue
                             
-                        valid_news_count += 1
-                        prov = str(r.get("provider", "")).strip() or "N/A"
                         dp = r.get("date_published") or "N/A"
                         if len(dp) > 16: dp = dp[:16]
-                        url = str(r.get("url", ""))
-                        title = str(r.get("title", ""))
-                        score = r.get("sentiment_score")
                         
-                        badge = "<span style='color: #9BA3AF; background: #1A1A1A; padding: 2px 6px; border: 1px solid #333333;'>⚪ NEUTRAL</span>"
+                        score = r.get("sentiment_score")
+                        badge = "⚪ NEUTRE"
                         if score is not None:
                             try:
                                 sv = float(score)
-                                if sv >= 30: badge = f"<span style='color: #00FF00; background: #002200; padding: 2px 6px; border: 1px solid #00FF00;'>🟢 BULLISH (+{sv:.0f})</span>"
-                                elif sv <= -30: badge = f"<span style='color: #FF3B30; background: #220000; padding: 2px 6px; border: 1px solid #FF3B30;'>🔴 BEARISH ({sv:.0f})</span>"
+                                if sv >= 30: badge = f"🟢 BULLISH (+{sv:.0f})"
+                                elif sv <= -30: badge = f"🔴 BEARISH ({sv:.0f})"
                             except: pass
+                            
+                        clean_news.append({
+                            "Date": dp,
+                            "Source": str(r.get("provider", "")).strip() or "N/A",
+                            "Titre": title,
+                            "URL": str(r.get("url", "")),
+                            "Sentiment": badge
+                        })
                         
-                        title_link = f"<a href='{url}' target='_blank' style='color:{_CYAN}; text-decoration:none;'>{title}</a>" if url else title
-                        html_feed += f"<div style='background:rgba(255,255,255,0.03); padding:8px 12px; border-radius:6px; border-left:3px solid {_PANEL};'>"
-                        html_feed += f"<span style='color:{_MUTED}; font-size:12px; margin-right:10px;'>{dp}</span>"
-                        html_feed += f"<b style='color:#ccc; margin-right:8px;'>[{prov}]</b>"
-                        html_feed += f"{title_link} <span style='margin-left:8px;'>{badge}</span>"
-                        html_feed += "</div>"
-                    html_feed += "</div>"
-                    if valid_news_count > 0:
-                        st.markdown(html_feed, unsafe_allow_html=True)
+                    if clean_news:
+                        df_news = pd.DataFrame(clean_news)
+                        st.dataframe(
+                            df_news,
+                            column_config={
+                                "URL": st.column_config.LinkColumn(
+                                    "Lien", display_text="Ouvrir ↗", max_chars=100
+                                ),
+                                "Titre": st.column_config.TextColumn(
+                                    "Titre de l'Article", width="large"
+                                )
+                            },
+                            hide_index=True,
+                            use_container_width=True
+                        )
                     else:
                         st.info("Aucune actualité pertinente (filtre anti-spam actif).")
                 else:
@@ -5411,26 +5401,70 @@ with tab_ticker:
         with sub_overview:
             full_hist_mode = st.checkbox("🔓 Charger l'historique complet (10 ans)", key=f"full_hist_{selected}")
             
-            # Load data from DuckDB for candlestick
-            df_hist = db_ro.get_historical_prices(selected, days=3650 if full_hist_mode else 750)
-            if df_hist is not None and not df_hist.empty:
-                if not full_hist_mode:
-                    df_hist = df_hist.tail(500)
-                
-                fig_candle = go.Figure(data=[go.Candlestick(
-                    x=df_hist.index,
-                    open=df_hist['Open'], high=df_hist['High'],
-                    low=df_hist['Low'], close=df_hist['Close'],
-                    increasing_line_color=_NEON, decreasing_line_color=_RED
-                )])
-                fig_candle.update_layout(
-                    title=f"Historique OHLCV — {selected}",
-                    template="plotly_dark", plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
-                    height=600, margin=dict(l=20, r=20, t=40, b=20), xaxis_rangeslider_visible=False
-                )
-                st.plotly_chart(fig_candle, use_container_width=True)
-            else:
-                st.warning("Données OHLCV indisponibles pour le graphique.")
+            # TradingView Advanced Chart Widget (with Plotly fallback)
+            clean_ticker = str(selected).strip()
+            tv_sym = _tv_symbol(clean_ticker)
+            chart_html = f"""
+            <!-- TradingView Widget BEGIN -->
+            <div class="tradingview-widget-container" style="height:100%;width:100%">
+              <div id="tradingview_{clean_ticker.replace('.', '_')}" style="height:600px;width:100%"></div>
+              <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
+              <script type="text/javascript">
+              new TradingView.widget(
+              {{
+              "autosize": true,
+              "symbol": "{tv_sym}",
+              "interval": "D",
+              "timezone": "Europe/Paris",
+              "theme": "dark",
+              "style": "1",
+              "locale": "fr",
+              "enable_publishing": false,
+              "backgroundColor": "#050505",
+              "gridColor": "#111111",
+              "hide_top_toolbar": false,
+              "hide_legend": false,
+              "save_image": false,
+              "container_id": "tradingview_{clean_ticker.replace('.', '_')}"
+              }}
+              );
+              </script>
+            </div>
+            <!-- TradingView Widget END -->
+            """
+            
+            try:
+                # IMPORTANT: Streamlit's components.html does not accept a 'key' parameter!
+                components.html(chart_html, height=600)
+            except Exception as e:
+                _dash_log.warning(f"TradingView widget failed for {selected}: {e}. Falling back to Plotly.")
+                # Load data from DuckDB for candlestick
+                df_hist = db_ro.get_historical_prices(selected, days=3650 if full_hist_mode else 750)
+                if df_hist is not None and not df_hist.empty:
+                    if not full_hist_mode:
+                        df_hist = df_hist.tail(500)
+                    
+                    fig_candle = go.Figure(data=[go.Candlestick(
+                        x=df_hist.index,
+                        open=df_hist['Open'], high=df_hist['High'],
+                        low=df_hist['Low'], close=df_hist['Close'],
+                        increasing_line_color=_NEON, decreasing_line_color=_RED
+                    )])
+                    
+                    # Add SMA 50 and 200 if they exist in df_hist or ind
+                    if ind and ind.get("sma50"):
+                        fig_candle.add_trace(go.Scatter(x=[df_hist.index[-1]], y=[ind["sma50"]], mode='markers', marker=dict(color='orange', size=8), name='SMA 50 (current)'))
+                    if ind and ind.get("sma200"):
+                        fig_candle.add_trace(go.Scatter(x=[df_hist.index[-1]], y=[ind["sma200"]], mode='markers', marker=dict(color='cyan', size=8), name='SMA 200 (current)'))
+                        
+                    fig_candle.update_layout(
+                        title=f"Historique OHLCV — {selected}",
+                        template="plotly_dark", plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                        height=600, margin=dict(l=20, r=20, t=40, b=20), xaxis_rangeslider_visible=False
+                    )
+                    st.plotly_chart(fig_candle, use_container_width=True)
+                else:
+                    st.warning("Données OHLCV indisponibles pour le graphique.")
                 
             sma_bits = []
             if ind:

@@ -111,7 +111,7 @@ class NewsletterSensor:
 
         deduped = dedupe_articles(articles)
         import re
-        spam_pattern = re.compile(r"(?i)(discount|free|referral|rewards|newsletter|email|sponsor|pitch deck|vc|substack|attio|seo agency|gtm|seed|founder|startup|saas|cap table|récompense|mettre [aà] jour|update your|unsubscribe|cliquez ici|abonnez-vous|subscribe|webinar|masterclass)")
+        spam_pattern = re.compile(r"(?i)(discount|free|referral|rewards|newsletter|email|sponsor|pitch deck|vc|substack|attio|seo agency|gtm|seed|founder|startup|saas|cap table|récompense|mettre [aà] jour|update your|unsubscribe|cliquez ici|abonnez-vous|subscribe|webinar|masterclass|lifestyle|promo|offre|gift|cadeau|bonus|vip|exclusive|limited time|last chance)")
         
         titles = []
         for a in deduped:

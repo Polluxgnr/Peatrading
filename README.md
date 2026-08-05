@@ -772,3 +772,7 @@ streamlit run 05_interfaces/terminal_dashboard.py
  *       * * P i o t r o s k i   S c o r e   &   V a l u e   T r a p   V e t o : * *   I n t é g r a t i o n   d u   s c o r e   P i o t r o s k i   ( v i a   F M P )   d a n s   l e   c a c h e   S Q L i t e   a v e c   u n   v e t o   s t r i c t   ( < 4 )   a u   n i v e a u   d u   c a s c a d e . 
  *       * * P e r f o r m a n c e s   &   S é c u r i t é : * *   O p t i m i s a t i o n   d e   P l o t l y ,   f i x   d u   T h r e a d   l o c k   d e s   c o n n e x i o n s   D B   a v e c   @ s t . c a c h e _ r e s o u r c e ,   e t   v a l i d a t i o n   é t e n d u e   d e   l a   w h i t e l i s t   n e w s l e t t e r .  
  
+## Recent Updates (August 2026)
+- **UI/UX Bloomberg Overhaul**: Upgraded tables to native \st.dataframe\ with link formats and strict color-coding. Migrated Top/Flop to Market & Macro.
+- **Extreme Anti-Spam**: Drastically expanded the spam regex to block lifestyle, promo, and exclusive offer emails from polluting the stream.
+- **Robust IFrames**: Hardened the TradingView iframe rendering with try/except fallbacks to Plotly native charts.

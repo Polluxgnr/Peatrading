@@ -121,7 +121,7 @@ def _fetch_news_from_apis(symbol: str, limit: int=6) ->list[dict]:
             ) or key.startswith('http'):
             return
         spam_pattern = re.compile(
-            '(?i)(discount|free|referral|rewards|newsletter|email|sponsor|pitch deck|vc|substack|attio|seo agency|gtm|seed|founder|startup|saas|cap table|récompense|mettre [aà] jour|update your|unsubscribe|cliquez ici|abonnez-vous|subscribe|webinar|masterclass)'
+            r"(?i)(discount|free|referral|rewards|newsletter|email|sponsor|pitch deck|vc|substack|attio|seo agency|gtm|seed|founder|startup|saas|cap table|récompense|mettre [aà] jour|update your|unsubscribe|cliquez ici|abonnez-vous|subscribe|webinar|masterclass|lifestyle|promo|offre|gift|cadeau|bonus|vip|exclusive|limited time|last chance)"
             )
         if spam_pattern.search(key):
             return

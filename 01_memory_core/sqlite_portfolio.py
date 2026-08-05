@@ -564,11 +564,11 @@ class PortfolioDB:
             logger.exception("Failed to save news history.")
             raise
 
-    def get_news_history(self, ticker: str, limit: int = 50) -> list[dict]:
-        """Return archived news for a ticker, newest first.
+    def get_news_history(self, ticker: str | None = None, limit: int = 100) -> list[dict]:
+        """Return archived news for a ticker (or all), newest first.
 
         Args:
-            ticker: Yahoo symbol (e.g. ``MC.PA``).
+            ticker: Yahoo symbol (e.g. ``MC.PA``). If None, returns global feed.
             limit: Max rows to return.
 
         Returns:
@@ -577,17 +577,29 @@ class PortfolioDB:
         """
         try:
             with self._connect() as conn:
-                rows = conn.execute(
-                    """
-                    SELECT url, ticker, title, date_published, provider,
-                           sentiment_score, inserted_at
-                    FROM news_history
-                    WHERE ticker = ?
-                    ORDER BY date_published DESC, inserted_at DESC
-                    LIMIT ?;
-                    """,
-                    (ticker, int(limit)),
-                ).fetchall()
+                if ticker:
+                    rows = conn.execute(
+                        """
+                        SELECT url, ticker, title, date_published, provider,
+                               sentiment_score, inserted_at
+                        FROM news_history
+                        WHERE ticker = ?
+                        ORDER BY date_published DESC, inserted_at DESC
+                        LIMIT ?;
+                        """,
+                        (ticker, int(limit)),
+                    ).fetchall()
+                else:
+                    rows = conn.execute(
+                        """
+                        SELECT url, ticker, title, date_published, provider,
+                               sentiment_score, inserted_at
+                        FROM news_history
+                        ORDER BY date_published DESC, inserted_at DESC
+                        LIMIT ?;
+                        """,
+                        (int(limit),),
+                    ).fetchall()
             return [
                 {
                     "title": row["title"],
@@ -595,10 +607,12 @@ class PortfolioDB:
                     "date": row["date_published"],
                     "provider": row["provider"],
                     "sentiment_score": row["sentiment_score"],
+                    "ticker": row["ticker"],
                 }
                 for row in rows
             ]
         except sqlite3.Error:
+            logger.exception("Failed to retrieve news history.")
             logger.exception("Failed to read news history for %s.", ticker)
             raise
 
