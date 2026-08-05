@@ -47,6 +47,7 @@ FEATURE_COLS = [
     "ndx_ret1d",
     "eurusd_ret1d",
     "oat_ret1d",
+    "news_sentiment_3d",
 ]
 TARGET_TACTICAL = "target_tactical_30d"
 TARGET_STRUCTURAL = "target_structural_126d"

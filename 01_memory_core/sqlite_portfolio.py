@@ -190,6 +190,21 @@ class PortfolioDB:
                     """
                 )
 
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS news_master (
+                        id               TEXT PRIMARY KEY,
+                        published_at     TEXT NOT NULL,
+                        ticker           TEXT,
+                        source           TEXT NOT NULL,
+                        url              TEXT,
+                        title            TEXT NOT NULL,
+                        content          TEXT,
+                        sentiment_score  REAL,
+                        sentiment_label  TEXT
+                    );
+                    """
+                )
 
             logger.info("SQLite schema initialized at %s", self.db_path)
         except sqlite3.Error:
@@ -785,3 +800,57 @@ class PortfolioDB:
         except Exception:
             logger.exception("Failed to read ticker profile for %s.", tk)
             return None
+
+    def upsert_news_master(self, news_items: list[dict]) -> None:
+        """Upsert alternative data news items into the master database."""
+        if not news_items:
+            return
+            
+        try:
+            with self._connect() as conn:
+                conn.executemany(
+                    """
+                    INSERT OR IGNORE INTO news_master 
+                    (id, published_at, ticker, source, url, title, content)
+                    VALUES (:id, :published_at, :ticker, :source, :url, :title, :content)
+                    """,
+                    news_items
+                )
+            logger.info("Upserted %d items into news_master", len(news_items))
+        except sqlite3.Error:
+            logger.exception("Failed to upsert news_master")
+
+    def get_unprocessed_news(self) -> list[dict]:
+        """Fetch news from news_master that have no sentiment score yet."""
+        try:
+            with self._connect() as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.execute(
+                    "SELECT * FROM news_master WHERE sentiment_score IS NULL"
+                )
+                return [dict(row) for row in cursor.fetchall()]
+        except sqlite3.Error:
+            logger.exception("Failed to fetch unprocessed news")
+            return []
+
+    def update_news_sentiment(self, updates: list[dict]) -> None:
+        """Batch update sentiment scores for news items.
+        Expects a list of dicts with keys: id, sentiment_score, sentiment_label
+        """
+        if not updates:
+            return
+            
+        try:
+            with self._connect() as conn:
+                conn.executemany(
+                    """
+                    UPDATE news_master 
+                    SET sentiment_score = :sentiment_score,
+                        sentiment_label = :sentiment_label
+                    WHERE id = :id
+                    """,
+                    updates
+                )
+            logger.info("Updated sentiment for %d news items", len(updates))
+        except sqlite3.Error:
+            logger.exception("Failed to update news sentiment")

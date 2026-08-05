@@ -1217,6 +1217,326 @@ if __name__ == "__main__":
 
 ```
 
+## File: .\00_data_sensors\news_api_client.py
+
+```python
+import os
+import hashlib
+import requests
+from datetime import datetime
+from dotenv import load_dotenv
+
+import sys
+from pathlib import Path
+_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_ROOT))
+
+from core.logging_setup import get_logger
+from memory_core.sqlite_portfolio import SQLitePortfolioDB
+
+logger = get_logger("news_api_client")
+
+# Load environment variables
+load_dotenv(_ROOT / ".env")
+
+ALPHA_VANTAGE_API_KEY = os.getenv("ALPHA_VANTAGE_API_KEY")
+
+def fetch_alpha_vantage_news() -> list[dict]:
+    """Fetch market news from Alpha Vantage Sentiment API."""
+    if not ALPHA_VANTAGE_API_KEY:
+        logger.warning("ALPHA_VANTAGE_API_KEY not found. Skipping API fetch.")
+        return []
+        
+    url = f"https://www.alphavantage.co/query?function=NEWS_SENTIMENT&limit=50&apikey={ALPHA_VANTAGE_API_KEY}"
+    news_items = []
+    
+    try:
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        
+        if "feed" not in data:
+            logger.warning("Unexpected response from Alpha Vantage: %s", str(data)[:100])
+            return []
+            
+        for item in data["feed"]:
+            link = item.get("url", "")
+            title = item.get("title", "")
+            summary = item.get("summary", "")
+            
+            if not link or not title:
+                continue
+                
+            uid = hashlib.sha256(link.encode("utf-8")).hexdigest()
+            
+            # Alpha vantage format: YYYYMMDDTHHMMSS
+            time_str = item.get("time_published", "")
+            try:
+                dt = datetime.strptime(time_str, "%Y%m%dT%H%M%S")
+                published_at = dt.isoformat()
+            except Exception:
+                published_at = datetime.utcnow().isoformat()
+                
+            # Attempt to extract the most relevant ticker
+            ticker = None
+            ticker_sentiments = item.get("ticker_sentiment", [])
+            if ticker_sentiments:
+                # Get the one with highest relevance
+                best_match = max(ticker_sentiments, key=lambda x: float(x.get("relevance_score", 0)))
+                ticker = best_match.get("ticker")
+                
+            news_items.append({
+                "id": uid,
+                "published_at": published_at,
+                "ticker": ticker,
+                "source": "API_AlphaVantage",
+                "url": link,
+                "title": title,
+                "content": summary
+            })
+            
+    except requests.exceptions.RequestException as e:
+        logger.warning("Network error fetching Alpha Vantage news: %s", e)
+    except Exception as e:
+        logger.warning("Error processing Alpha Vantage news: %s", e)
+        
+    return news_items
+
+def run_api_scraper(db: SQLitePortfolioDB):
+    news = fetch_alpha_vantage_news()
+    if news:
+        db.upsert_news_master(news)
+        logger.info("API Scraper finished: inserted %d items.", len(news))
+    else:
+        logger.info("API Scraper finished: no items found or API not configured.")
+
+if __name__ == "__main__":
+    db = SQLitePortfolioDB()
+    run_api_scraper(db)
+
+```
+
+## File: .\00_data_sensors\news_email_scraper.py
+
+```python
+import os
+import imaplib
+import email
+from email.header import decode_header
+import hashlib
+from datetime import datetime
+from dotenv import load_dotenv
+
+import sys
+from pathlib import Path
+_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_ROOT))
+
+from core.logging_setup import get_logger
+from memory_core.sqlite_portfolio import SQLitePortfolioDB
+
+logger = get_logger("news_email_scraper")
+
+load_dotenv(_ROOT / ".env")
+
+IMAP_SERVER = os.getenv("IMAP_SERVER", "imap.gmail.com")
+IMAP_USER = os.getenv("IMAP_USER")
+IMAP_PASS = os.getenv("IMAP_PASS")
+IMAP_FOLDER = os.getenv("IMAP_FOLDER", "INBOX")
+
+def get_text_from_email(msg):
+    """Extract plain text from an email message."""
+    text_content = ""
+    if msg.is_multipart():
+        for part in msg.walk():
+            content_type = part.get_content_type()
+            content_disposition = str(part.get("Content-Disposition"))
+            if content_type == "text/plain" and "attachment" not in content_disposition:
+                try:
+                    text_content += part.get_payload(decode=True).decode()
+                except Exception:
+                    pass
+    else:
+        if msg.get_content_type() == "text/plain":
+            try:
+                text_content = msg.get_payload(decode=True).decode()
+            except Exception:
+                pass
+    return text_content.strip()
+
+def fetch_email_newsletters() -> list[dict]:
+    """Fetch unread newsletters via IMAP."""
+    if not IMAP_USER or not IMAP_PASS:
+        logger.warning("IMAP_USER or IMAP_PASS not configured. Skipping email scraper.")
+        return []
+        
+    news_items = []
+    
+    try:
+        mail = imaplib.IMAP4_SSL(IMAP_SERVER)
+        mail.login(IMAP_USER, IMAP_PASS)
+        mail.select(IMAP_FOLDER)
+        
+        # Search for unread emails
+        status, messages = mail.search(None, "UNSEEN")
+        if status != "OK":
+            logger.error("Failed to search emails: %s", status)
+            return []
+            
+        email_ids = messages[0].split()
+        for eid in email_ids:
+            res, msg_data = mail.fetch(eid, "(RFC822)")
+            if res != "OK":
+                continue
+                
+            for response_part in msg_data:
+                if isinstance(response_part, tuple):
+                    msg = email.message_from_bytes(response_part[1])
+                    
+                    subject, encoding = decode_header(msg["Subject"])[0]
+                    if isinstance(subject, bytes):
+                        subject = subject.decode(encoding if encoding else "utf-8")
+                        
+                    content = get_text_from_email(msg)
+                    if not content:
+                        continue
+                        
+                    uid = hashlib.sha256((subject + content[:100]).encode("utf-8")).hexdigest()
+                    
+                    news_items.append({
+                        "id": uid,
+                        "published_at": datetime.utcnow().isoformat(),
+                        "ticker": None,
+                        "source": "EMAIL_Newsletter",
+                        "url": "email://internal",
+                        "title": subject,
+                        "content": content[:2000]  # Store up to 2000 chars of email
+                    })
+                    
+            # Mark as read (implicitly done by fetching RFC822 usually, but just in case)
+            mail.store(eid, '+FLAGS', '\Seen')
+            
+        mail.close()
+        mail.logout()
+        
+    except imaplib.IMAP4.error as e:
+        logger.warning("IMAP authentication failed: %s", e)
+    except Exception as e:
+        logger.warning("Error during email scraping: %s", e)
+        
+    return news_items
+
+def run_email_scraper(db: SQLitePortfolioDB):
+    news = fetch_email_newsletters()
+    if news:
+        db.upsert_news_master(news)
+        logger.info("Email Scraper finished: inserted %d items.", len(news))
+    else:
+        logger.info("Email Scraper finished: no items found or IMAP not configured.")
+
+if __name__ == "__main__":
+    db = SQLitePortfolioDB()
+    run_email_scraper(db)
+
+```
+
+## File: .\00_data_sensors\news_rss_scraper.py
+
+```python
+import hashlib
+import re
+from datetime import datetime
+import feedparser
+import bs4
+
+import sys
+from pathlib import Path
+_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_ROOT))
+
+from core.logging_setup import get_logger
+from memory_core.sqlite_portfolio import SQLitePortfolioDB
+
+logger = get_logger("news_rss_scraper")
+
+RSS_FEEDS = [
+    # Fallback to general financial news
+    "https://feeds.a.dj.com/rss/RSSMarketsMain.xml",
+    "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=10000664"
+]
+
+def clean_html(raw_html: str) -> str:
+    """Remove HTML tags from a string."""
+    if not raw_html:
+        return ""
+    try:
+        soup = bs4.BeautifulSoup(raw_html, "html.parser")
+        return soup.get_text(separator=" ", strip=True)
+    except Exception:
+        # Fallback regex
+        cleanr = re.compile('<.*?>')
+        return re.sub(cleanr, '', str(raw_html))
+
+def fetch_rss_news() -> list[dict]:
+    """Fetch and parse RSS feeds into the news_master schema."""
+    news_items = []
+    
+    for url in RSS_FEEDS:
+        try:
+            logger.info("Fetching RSS feed: %s", url)
+            feed = feedparser.parse(url)
+            
+            for entry in feed.entries:
+                title = getattr(entry, "title", "").strip()
+                link = getattr(entry, "link", "")
+                summary = clean_html(getattr(entry, "summary", ""))
+                
+                if not title or not link:
+                    continue
+                    
+                # Create a stable ID hash
+                uid = hashlib.sha256(link.encode("utf-8")).hexdigest()
+                
+                # Parse date if available, else use current time
+                pub_date = getattr(entry, "published", None)
+                if pub_date:
+                    try:
+                        # Feedparser parses standard dates into a time.struct_time
+                        dt = datetime(*entry.published_parsed[:6])
+                        published_at = dt.isoformat()
+                    except Exception:
+                        published_at = datetime.utcnow().isoformat()
+                else:
+                    published_at = datetime.utcnow().isoformat()
+                
+                news_items.append({
+                    "id": uid,
+                    "published_at": published_at,
+                    "ticker": None,  # General market news
+                    "source": "RSS_Feed",
+                    "url": link,
+                    "title": title,
+                    "content": summary
+                })
+        except Exception as exc:
+            logger.warning("Failed to fetch RSS %s: %s", url, exc)
+            
+    return news_items
+
+def run_rss_scraper(db: SQLitePortfolioDB):
+    news = fetch_rss_news()
+    if news:
+        db.upsert_news_master(news)
+        logger.info("RSS Scraper finished: inserted %d items.", len(news))
+    else:
+        logger.info("RSS Scraper finished: no items found.")
+
+if __name__ == "__main__":
+    db = SQLitePortfolioDB()
+    run_rss_scraper(db)
+
+```
+
 ## File: .\00_data_sensors\newsletter_api.py
 
 ```python
@@ -4782,6 +5102,21 @@ class PortfolioDB:
                     """
                 )
 
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS news_master (
+                        id               TEXT PRIMARY KEY,
+                        published_at     TEXT NOT NULL,
+                        ticker           TEXT,
+                        source           TEXT NOT NULL,
+                        url              TEXT,
+                        title            TEXT NOT NULL,
+                        content          TEXT,
+                        sentiment_score  REAL,
+                        sentiment_label  TEXT
+                    );
+                    """
+                )
 
             logger.info("SQLite schema initialized at %s", self.db_path)
         except sqlite3.Error:
@@ -5378,6 +5713,60 @@ class PortfolioDB:
             logger.exception("Failed to read ticker profile for %s.", tk)
             return None
 
+    def upsert_news_master(self, news_items: list[dict]) -> None:
+        """Upsert alternative data news items into the master database."""
+        if not news_items:
+            return
+            
+        try:
+            with self._connect() as conn:
+                conn.executemany(
+                    """
+                    INSERT OR IGNORE INTO news_master 
+                    (id, published_at, ticker, source, url, title, content)
+                    VALUES (:id, :published_at, :ticker, :source, :url, :title, :content)
+                    """,
+                    news_items
+                )
+            logger.info("Upserted %d items into news_master", len(news_items))
+        except sqlite3.Error:
+            logger.exception("Failed to upsert news_master")
+
+    def get_unprocessed_news(self) -> list[dict]:
+        """Fetch news from news_master that have no sentiment score yet."""
+        try:
+            with self._connect() as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.execute(
+                    "SELECT * FROM news_master WHERE sentiment_score IS NULL"
+                )
+                return [dict(row) for row in cursor.fetchall()]
+        except sqlite3.Error:
+            logger.exception("Failed to fetch unprocessed news")
+            return []
+
+    def update_news_sentiment(self, updates: list[dict]) -> None:
+        """Batch update sentiment scores for news items.
+        Expects a list of dicts with keys: id, sentiment_score, sentiment_label
+        """
+        if not updates:
+            return
+            
+        try:
+            with self._connect() as conn:
+                conn.executemany(
+                    """
+                    UPDATE news_master 
+                    SET sentiment_score = :sentiment_score,
+                        sentiment_label = :sentiment_label
+                    WHERE id = :id
+                    """,
+                    updates
+                )
+            logger.info("Updated sentiment for %d news items", len(updates))
+        except sqlite3.Error:
+            logger.exception("Failed to update news sentiment")
+
 ```
 
 ## File: .\02_quant_engine\__init__.py
@@ -5796,6 +6185,34 @@ def _news_sentiment_proxy(ticker: str, pdb: Any) -> float:
         scores.append(float(np.clip(s, -100, 100)))
     return float(np.mean(scores)) if scores else 0.0
 
+def get_daily_sentiment(pdb: Any) -> pd.DataFrame:
+    """Fetch all scored news from master, group by Ticker and Date, and calculate 3-day rolling sentiment."""
+    if not pdb:
+        return pd.DataFrame()
+        
+    try:
+        import pandas as pd
+        with pdb._connect() as conn:
+            df_news = pd.read_sql("SELECT ticker, published_at, sentiment_score FROM news_master WHERE sentiment_score IS NOT NULL AND ticker IS NOT NULL", conn)
+        
+        if df_news.empty:
+            return pd.DataFrame()
+            
+        df_news['Date'] = pd.to_datetime(df_news['published_at']).dt.tz_localize(None).dt.floor('D')
+        
+        # Group by Ticker and Date
+        daily_sent = df_news.groupby(['ticker', 'Date'])['sentiment_score'].mean().reset_index()
+        daily_sent = daily_sent.sort_values(['ticker', 'Date'])
+        
+        # Calculate 3-day rolling average per ticker
+        daily_sent['news_sentiment_3d'] = daily_sent.groupby('ticker')['sentiment_score'].transform(
+            lambda x: x.rolling(window=3, min_periods=1).mean()
+        )
+        return daily_sent[['ticker', 'Date', 'news_sentiment_3d']]
+    except Exception as e:
+        logger.warning("Failed to calculate rolling sentiment: %s", e)
+        return pd.DataFrame()
+
 
 def _fundamentals(ticker: str, pdb: Any, offline_mode: bool = False) -> tuple[float, float, float]:
     """Return (roe, pe, ev_to_ebitda) from SQLite cache or Finnhub/yfinance sensor."""
@@ -6110,6 +6527,19 @@ def build_training_dataset(
         
     df = pd.concat(dfs, ignore_index=True)
 
+    # Merge Daily Sentiment (3-day rolling average)
+    try:
+        df_sent = get_daily_sentiment(pdb)
+        if not df_sent.empty:
+            df['Date'] = pd.to_datetime(df['Date'])
+            df = pd.merge(df, df_sent, on=['ticker', 'Date'], how='left')
+            df['news_sentiment_3d'] = df['news_sentiment_3d'].fillna(0.0)
+        else:
+            df['news_sentiment_3d'] = 0.0
+    except Exception as e:
+        logger.warning("Failed to merge daily sentiment: %s", e)
+        df['news_sentiment_3d'] = 0.0
+
     # 1. Strict sorting and index reset
     df = df.sort_values(['ticker', 'Date']).reset_index(drop=True)
 
@@ -6211,6 +6641,7 @@ FEATURE_COLS = [
     "ndx_ret1d",
     "eurusd_ret1d",
     "oat_ret1d",
+    "news_sentiment_3d",
 ]
 TARGET_TACTICAL = "target_tactical_30d"
 TARGET_STRUCTURAL = "target_structural_126d"
@@ -6521,6 +6952,68 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     m = train_model()
     print(json.dumps(m, indent=2))
+
+```
+
+## File: .\02_quant_engine\nlp_sentiment_engine.py
+
+```python
+import sys
+from pathlib import Path
+_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_ROOT))
+
+from core.logging_setup import get_logger
+from memory_core.sqlite_portfolio import SQLitePortfolioDB
+
+logger = get_logger("nlp_sentiment_engine")
+
+try:
+    from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+except ImportError:
+    logger.error("vaderSentiment not installed. Run: pip install vaderSentiment")
+    sys.exit(1)
+
+def score_news_batch(db: SQLitePortfolioDB):
+    """Fetch unprocessed news, score them using VADER, and update the database."""
+    unprocessed = db.get_unprocessed_news()
+    if not unprocessed:
+        logger.info("No unprocessed news found.")
+        return
+        
+    logger.info("Scoring %d unprocessed news items...", len(unprocessed))
+    
+    analyzer = SentimentIntensityAnalyzer()
+    updates = []
+    
+    for item in unprocessed:
+        # Combine title and content for scoring
+        text = f"{item['title']} {item['content'] or ''}"
+        
+        # VADER returns a dict, we want the 'compound' score [-1.0, 1.0]
+        scores = analyzer.polarity_scores(text)
+        compound = float(scores["compound"])
+        
+        if compound >= 0.05:
+            label = "Bullish"
+        elif compound <= -0.05:
+            label = "Bearish"
+        else:
+            label = "Neutral"
+            
+        updates.append({
+            "id": item["id"],
+            "sentiment_score": compound,
+            "sentiment_label": label
+        })
+        
+    if updates:
+        db.update_news_sentiment(updates)
+        logger.info("Sentiment scoring completed for %d items.", len(updates))
+
+if __name__ == "__main__":
+    db = SQLitePortfolioDB()
+    score_news_batch(db)
 
 ```
 
@@ -19313,6 +19806,83 @@ def _attach_demo(copilot: "DiscordCopilot") -> None:
 
     copilot.on_ready = _combined  # type: ignore[method-assign]
 
+
+if __name__ == "__main__":
+    main()
+
+```
+
+## File: .\run_quant_pipeline.py
+
+```python
+import sys
+import time
+import subprocess
+from pathlib import Path
+from core.logging_setup import get_logger
+
+logger = get_logger("quant_pipeline_orchestrator")
+
+_ROOT = Path(__file__).resolve().parent
+
+def run_step(script_name: str, args: list[str] = None):
+    """Run a Python script as a subprocess and stream its output."""
+    cmd = [sys.executable, str(_ROOT / script_name)]
+    if args:
+        cmd.extend(args)
+        
+    logger.info("=" * 60)
+    logger.info("🚀 STARTING: %s", script_name)
+    logger.info("=" * 60)
+    
+    start_t = time.time()
+    try:
+        result = subprocess.run(cmd, check=True, text=True, capture_output=True)
+        # Log stdout line by line
+        for line in result.stdout.splitlines():
+            if line.strip():
+                logger.info("  [OUT] %s", line)
+        for line in result.stderr.splitlines():
+            if line.strip():
+                logger.warning("  [ERR] %s", line)
+                
+        elapsed = time.time() - start_t
+        logger.info("✅ SUCCESS: %s completed in %.1fs", script_name, elapsed)
+    except subprocess.CalledProcessError as e:
+        logger.error("❌ FAILED: %s returned exit code %d", script_name, e.returncode)
+        for line in e.stderr.splitlines():
+            logger.error("  [ERR] %s", line)
+        raise
+
+def main():
+    logger.info("🌟 Starting Master Quant Pipeline Orchestrator 🌟")
+    total_start = time.time()
+    
+    try:
+        # Phase 1: Fetch Market Data
+        run_step("run_backfill.py", ["--days", "3650"])
+        
+        # Phase 2: Ingest Alternative Data (News / Sentiment)
+        run_step("00_data_sensors/news_rss_scraper.py")
+        run_step("00_data_sensors/news_api_client.py")
+        run_step("00_data_sensors/news_email_scraper.py")
+        
+        # Phase 3: NLP Sentiment Scoring Engine
+        run_step("02_quant_engine/nlp_sentiment_engine.py")
+        
+        # Phase 4: Export Feature Store
+        run_step("02_quant_engine/ml_feature_store.py")
+        
+        # Phase 5: Train ML Models & Generate Metrics
+        run_step("02_quant_engine/ml_trainer.py")
+        
+        total_elapsed = time.time() - total_start
+        logger.info("🎉 Master Pipeline completed successfully in %.1fs!", total_elapsed)
+        logger.info("Dashboard is now ready to serve fresh metrics.")
+        
+    except Exception as e:
+        logger.exception("Pipeline execution aborted due to an error: %s", e)
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()

@@ -95,6 +95,34 @@ def _news_sentiment_proxy(ticker: str, pdb: Any) -> float:
         scores.append(float(np.clip(s, -100, 100)))
     return float(np.mean(scores)) if scores else 0.0
 
+def get_daily_sentiment(pdb: Any) -> pd.DataFrame:
+    """Fetch all scored news from master, group by Ticker and Date, and calculate 3-day rolling sentiment."""
+    if not pdb:
+        return pd.DataFrame()
+        
+    try:
+        import pandas as pd
+        with pdb._connect() as conn:
+            df_news = pd.read_sql("SELECT ticker, published_at, sentiment_score FROM news_master WHERE sentiment_score IS NOT NULL AND ticker IS NOT NULL", conn)
+        
+        if df_news.empty:
+            return pd.DataFrame()
+            
+        df_news['Date'] = pd.to_datetime(df_news['published_at']).dt.tz_localize(None).dt.floor('D')
+        
+        # Group by Ticker and Date
+        daily_sent = df_news.groupby(['ticker', 'Date'])['sentiment_score'].mean().reset_index()
+        daily_sent = daily_sent.sort_values(['ticker', 'Date'])
+        
+        # Calculate 3-day rolling average per ticker
+        daily_sent['news_sentiment_3d'] = daily_sent.groupby('ticker')['sentiment_score'].transform(
+            lambda x: x.rolling(window=3, min_periods=1).mean()
+        )
+        return daily_sent[['ticker', 'Date', 'news_sentiment_3d']]
+    except Exception as e:
+        logger.warning("Failed to calculate rolling sentiment: %s", e)
+        return pd.DataFrame()
+
 
 def _fundamentals(ticker: str, pdb: Any, offline_mode: bool = False) -> tuple[float, float, float]:
     """Return (roe, pe, ev_to_ebitda) from SQLite cache or Finnhub/yfinance sensor."""
@@ -408,6 +436,19 @@ def build_training_dataset(
         return pd.DataFrame()
         
     df = pd.concat(dfs, ignore_index=True)
+
+    # Merge Daily Sentiment (3-day rolling average)
+    try:
+        df_sent = get_daily_sentiment(pdb)
+        if not df_sent.empty:
+            df['Date'] = pd.to_datetime(df['Date'])
+            df = pd.merge(df, df_sent, on=['ticker', 'Date'], how='left')
+            df['news_sentiment_3d'] = df['news_sentiment_3d'].fillna(0.0)
+        else:
+            df['news_sentiment_3d'] = 0.0
+    except Exception as e:
+        logger.warning("Failed to merge daily sentiment: %s", e)
+        df['news_sentiment_3d'] = 0.0
 
     # 1. Strict sorting and index reset
     df = df.sort_values(['ticker', 'Date']).reset_index(drop=True)
