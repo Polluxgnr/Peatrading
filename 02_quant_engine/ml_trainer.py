@@ -77,6 +77,9 @@ def train_model(
     df = _load_dataset(dataset_path)
     logger.info("Loaded ML training dataset with shape: %s", df.shape)
     
+    # Clean infinite values caused by division by zero in financial features
+    df = df.replace([np.inf, -np.inf], np.nan)
+    
     # Convert continuous returns to binary classification targets
     if TARGET_TACTICAL in df.columns:
         df[TARGET_TACTICAL] = (df[TARGET_TACTICAL] > 0).astype(int)
