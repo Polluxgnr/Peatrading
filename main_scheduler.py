@@ -482,9 +482,19 @@ async def run_pipeline_async() -> None:
                 continue
                 
             price = current_prices.get(signal.ticker, 0.0)
-            await copilot.send_signal_alert(
-                signal, portfolio, explainer=explainer, current_price=price
-            )
+            
+            # Direct webhook alert for asynchronous paper trading
+            from logging_setup import send_discord_alert
+            alert_msg = f"🚀 **PAPER TRADE APPROVED**\n**Ticker:** {signal.ticker}\n**Action:** {signal.signal_type.value}\n**Quantity:** {signal.target_qty} shares\n**Price:** {price:.2f} EUR\n**Reason:** {signal.reason}"
+            send_discord_alert(alert_msg)
+            
+            # Also try the rich copilot alert if bot is connected
+            try:
+                await copilot.send_signal_alert(
+                    signal, portfolio, explainer=explainer, current_price=price
+                )
+            except Exception as e:
+                logger.debug("Copilot bot alert skipped (bot might not be connected): %s", e)
         except Exception:  # noqa: BLE001 - a failed alert must not abort the pass.
             logger.exception("Failed to send Discord alert for %s.", signal.ticker)
 
@@ -933,9 +943,26 @@ def main() -> None:
     _schedule_passes()
     logger.info("\U0001F6E1\uFE0F PEA Pollux Daemon started. "
                 "Waiting for scheduled runs...")
+    
+    last_heartbeat = 0
+    start_time = time.time()
+    
     while True:
         try:
             schedule.run_pending()
+            
+            now = time.time()
+            if now - last_heartbeat > 900:  # 15 minutes = 900 seconds
+                last_heartbeat = now
+                hb_path = _LOG_DIR / "health_status.json"
+                import json
+                hb_path.parent.mkdir(parents=True, exist_ok=True)
+                hb_path.write_text(json.dumps({
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "status": "running",
+                    "uptime_seconds": int(now - start_time)
+                }), encoding="utf-8")
+                
             time.sleep(60)
         except KeyboardInterrupt:
             logger.info("Shutdown requested; exiting daemon loop.")

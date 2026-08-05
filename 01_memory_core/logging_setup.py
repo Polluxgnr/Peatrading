@@ -264,3 +264,22 @@ def read_pipeline_status() -> Optional[dict]:
         return json.loads(path.read_text(encoding="utf-8"))
     except Exception:  # noqa: BLE001
         return None
+
+
+def send_discord_alert(message: str) -> None:
+    """Send an alert to the Discord webhook if configured."""
+    import requests
+    from env_loader import load_api_keys
+
+    load_api_keys(Path(__file__).resolve().parent.parent / "config" / "api_keys.env")
+    webhook_url = os.getenv("DISCORD_WEBHOOK_URL")
+    if not webhook_url:
+        logging.getLogger(__name__).debug("DISCORD_WEBHOOK_URL not set; skipping alert.")
+        return
+
+    try:
+        payload = {"content": message}
+        resp = requests.post(webhook_url, json=payload, timeout=5)
+        resp.raise_for_status()
+    except Exception as exc:
+        logging.getLogger(__name__).warning("Failed to send Discord alert: %s", exc)

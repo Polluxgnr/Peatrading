@@ -61,38 +61,51 @@ class MarketDataFetcher:
         if massive_df is not None and not massive_df.empty:
             return self._clean(massive_df)
 
-        try:
-            from logging_setup import update_pipeline_status
-            update_pipeline_status({
-                "data_degraded_mode": True,
-                "degraded_reason": "MASSIVE API failed or unavailable. Falling back to yfinance."
-            })
-            logger.error("DEGRADED MODE: MASSIVE API unavailable. Falling back to yfinance.")
-        except Exception:
-            pass
+        av_df = None
+        core_tickers = [t for t in tickers if t in ("CW8.PA", "PUST.PA", "PSP5.PA")]
+        if core_tickers:
+            av_df = self._fetch_from_alphavantage(core_tickers, lookback_days)
+            
+        remaining_tickers = [t for t in tickers if av_df is None or av_df.empty or t not in av_df["Ticker"].unique()]
+        
+        yf_df = None
+        if remaining_tickers:
+            try:
+                from logging_setup import update_pipeline_status, send_discord_alert
+                update_pipeline_status({
+                    "data_degraded_mode": True,
+                    "degraded_reason": "MASSIVE API failed. Using AlphaVantage for Core, falling back to yfinance for the rest."
+                })
+                send_discord_alert("⚠️ **API Circuit Breaker**: MASSIVE API failed. Falling back to yfinance for OHLCV.")
+                logger.error("DEGRADED MODE: MASSIVE API unavailable. Falling back to yfinance.")
+            except Exception:
+                pass
 
-        try:
-            raw = yf.download(
-                tickers,
-                start=start_date,
-                progress=False,
-                auto_adjust=True,
-                group_by="column",
-                threads=True,
-            )
-        except Exception:  # noqa: BLE001 - never let an API error crash caller.
-            logger.exception("yf.download failed for tickers: %s", tickers)
+            try:
+                raw = yf.download(
+                    remaining_tickers,
+                    start=start_date,
+                    progress=False,
+                    auto_adjust=True,
+                    group_by="column",
+                    threads=True,
+                )
+                if raw is not None and not raw.empty:
+                    yf_df = self._flatten(raw, remaining_tickers)
+            except Exception:  # noqa: BLE001 - never let an API error crash caller.
+                logger.exception("yf.download failed for tickers: %s", remaining_tickers)
+
+        frames = []
+        if av_df is not None and not av_df.empty:
+            frames.append(av_df)
+        if yf_df is not None and not yf_df.empty:
+            frames.append(yf_df)
+            
+        if not frames:
             return pd.DataFrame(columns=_FLAT_COLUMNS)
-
-        if raw is None or raw.empty:
-            logger.warning("yf.download returned no data for: %s", tickers)
-            return pd.DataFrame(columns=_FLAT_COLUMNS)
-
-        flat = self._flatten(raw, tickers)
-        if flat.empty:
-            return flat
-
-        return self._clean(flat)
+            
+        combined = pd.concat(frames, ignore_index=True)
+        return self._clean(combined)
         
     def _fetch_from_massive(self, tickers: List[str], lookback_days: int) -> pd.DataFrame | None:
         """Attempt to fetch data from the institutional MASSIVE API."""
@@ -133,6 +146,64 @@ class MarketDataFetcher:
         except Exception as e:
             logger.error("Failed to parse MASSIVE API response: %s", e)
             return None
+
+    def _fetch_from_alphavantage(self, tickers: List[str], lookback_days: int) -> pd.DataFrame | None:
+        """Fetch high-quality OHLCV from Alpha Vantage for Core tickers only."""
+        api_key = os.getenv("ALPHAVANTAGE_API_KEY")
+        if not api_key:
+            logger.warning("No ALPHAVANTAGE_API_KEY set; skipping AV backup.")
+            return None
+            
+        frames = []
+        start_date = datetime.now() - timedelta(days=lookback_days)
+        
+        for ticker in tickers:
+            try:
+                # Alpha Vantage uses 'CW8.PAR' instead of 'CW8.PA' typically, but we will pass as is and hope it resolves
+                av_ticker = ticker.replace(".PA", ".PAR")
+                url = f"https://www.alphavantage.co/query?function=TIME_SERIES_DAILY_ADJUSTED&symbol={av_ticker}&outputsize=full&apikey={api_key}"
+                resp = requests.get(url, timeout=10.0)
+                
+                # Check for rate limits
+                if "Note" in resp.text and "call frequency" in resp.text:
+                    logger.error("Alpha Vantage rate limit hit on ticker %s", ticker)
+                    try:
+                        from logging_setup import send_discord_alert
+                        send_discord_alert(f"⚠️ **API Circuit Breaker**: Alpha Vantage Rate Limit hit for {ticker}.")
+                    except Exception:
+                        pass
+                    break
+                    
+                resp.raise_for_status()
+                data = resp.json()
+                
+                ts = data.get("Time Series (Daily)", {})
+                if not ts:
+                    continue
+                    
+                rows = []
+                for date_str, metrics in ts.items():
+                    dt = datetime.strptime(date_str, "%Y-%m-%d")
+                    if dt < start_date:
+                        continue
+                    rows.append({
+                        "Ticker": ticker,  # revert to original PA notation
+                        "Date": dt,
+                        "Open": float(metrics["1. open"]),
+                        "High": float(metrics["2. high"]),
+                        "Low": float(metrics["3. low"]),
+                        "Close": float(metrics["5. adjusted close"]),
+                        "Volume": int(metrics["6. volume"])
+                    })
+                if rows:
+                    frames.append(pd.DataFrame(rows))
+            except Exception as e:
+                logger.error("Alpha Vantage failed for %s: %s", ticker, e)
+                
+        if not frames:
+            return None
+        df = pd.concat(frames, ignore_index=True)
+        return df[_FLAT_COLUMNS]
 
     def _flatten(self, raw: pd.DataFrame, tickers: List[str]) -> pd.DataFrame:
         """Restructure a yfinance response into the flat schema.

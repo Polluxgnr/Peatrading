@@ -697,6 +697,21 @@ class SignalGenerator:
             
             if total < float(actual_floor):
                 return None
+                
+            # Meta-Labeling Arbitrator
+            meta_prob = None
+            try:
+                from ml_feature_store import build_ml_feature_row
+                from ml_trainer import predict_meta_probability
+                
+                features = build_ml_feature_row(ticker, df, pdb=self.portfolio_db, offline_mode=self.offline_mode)
+                meta_prob = predict_meta_probability(features)
+                
+                if meta_prob is not None and meta_prob < 0.65:
+                    logger.info("Signal %s vetoed by Meta-Labeler (prob=%.2f < 0.65)", ticker, meta_prob)
+                    return None
+            except Exception as exc:
+                logger.warning("Meta-Labeling failed for %s: %s", ticker, exc)
 
             mr = conv["model_scores"]["mean_reversion_model"]
             mom = conv["model_scores"]["trend_model"]
@@ -713,6 +728,8 @@ class SignalGenerator:
                 reason += f" | News {news:+.0f}"
             if polymarket != 0:
                 reason += f" | Poly {polymarket:+.0f}"
+            if meta_prob is not None:
+                reason += f" | Meta-Label {meta_prob*100:.0f}%"
                 
             return Signal(
                 id=str(uuid.uuid4()),

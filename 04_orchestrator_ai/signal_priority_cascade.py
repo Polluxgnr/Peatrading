@@ -83,10 +83,12 @@ class SignalOrchestrator:
         logger.debug("SignalOrchestrator initialized with config at %s", config_path)
 
     @staticmethod
-    def _reject(signal: Signal, reason: str) -> Signal:
+    def _reject(signal: Signal, reason: str, provenance: dict | None = None) -> Signal:
         """Mark a signal REJECTED and append the reason."""
         signal.status = SignalStatus.REJECTED
         signal.reason = f"{signal.reason} | {reason}".strip(" |")
+        if provenance:
+            signal.lineage.update(provenance)
         return signal
 
     def _historical_volatility(self, ticker: str, days: int = 60) -> float | None:
@@ -156,7 +158,7 @@ class SignalOrchestrator:
         dd_breached, dd_reason = self.drawdown_breaker.check(self.portfolio_db)
         if dd_breached:
             logger.warning("Drawdown breaker activated: %s", dd_reason)
-            return [self._reject(s, dd_reason) for s in raw_signals]
+            return [self._reject(s, dd_reason, {"source": "DrawdownBreaker", "time": datetime.now(timezone.utc).isoformat()}) for s in raw_signals]
 
         # Market-wide panic brake: evaluated once for the whole batch.
         vix_ok = self.firewall.check_vix_panic(vix_level) if vix_level is not None else True
@@ -179,7 +181,7 @@ class SignalOrchestrator:
             # --- Check 0: we need a live price to size anything ---
             price = current_prices.get(ticker)
             if price is None or price <= 0:
-                processed.append(self._reject(signal, "REJECTED: No current price"))
+                processed.append(self._reject(signal, "REJECTED: No current price", {"source": "market_prices"}))
                 continue
 
             # --- Check 0b: VIX panic veto (market-wide emergency brake) ---
@@ -187,8 +189,8 @@ class SignalOrchestrator:
                 processed.append(
                     self._reject(
                         signal,
-                        f"REJECTED: VIX panic (V2TX={vix_level:.1f}) - "
-                        "satellite buys frozen",
+                        f"REJECTED: VIX panic (V2TX={vix_level:.1f}) - satellite buys frozen",
+                        {"source": "CorrelationFirewall(VIX)", "vix_value": vix_level}
                     )
                 )
                 continue
@@ -198,7 +200,7 @@ class SignalOrchestrator:
                 from technical_scorer import SignalGenerator  # noqa: WPS433
                 if not SignalGenerator().is_profitable(ticker):
                     processed.append(
-                        self._reject(signal, "REJECTED: EPS < 0 (quality veto)")
+                        self._reject(signal, "REJECTED: EPS < 0 (quality veto)", {"source": "fundamentals_api(EPS)"})
                     )
                     continue
             except Exception:  # noqa: BLE001 - never block the cascade on EPS outage
@@ -211,7 +213,7 @@ class SignalOrchestrator:
                 f_score = fundamentals.get("piotroski_score")
                 if f_score is not None and f_score < 4:
                     processed.append(
-                        self._reject(signal, f"REJECTED: Value Trap Veto (F-Score {f_score:.0f} < 4)")
+                        self._reject(signal, f"REJECTED: Value Trap Veto (F-Score {f_score:.0f} < 4)", {"source": "fundamentals(Piotroski)", "f_score": f_score})
                     )
                     continue
             except Exception:  # noqa: BLE001
@@ -220,13 +222,13 @@ class SignalOrchestrator:
             # --- Check 1: Macro veto (cheapest - runs first) ---
             vetoed, veto_reason = self.macro_veto.check_veto(today)
             if vetoed:
-                processed.append(self._reject(signal, f"REJECTED: {veto_reason}"))
+                processed.append(self._reject(signal, f"REJECTED: {veto_reason}", {"source": "MacroVetoEngine", "date": str(today)}))
                 continue
 
             # --- Check 1b: Earnings / dividend blackout (per ticker) ---
             earn_veto, earn_reason = self.earnings_blackout.check_veto(ticker, today)
             if earn_veto:
-                processed.append(self._reject(signal, f"REJECTED: {earn_reason}"))
+                processed.append(self._reject(signal, f"REJECTED: {earn_reason}", {"source": "EarningsBlackoutEngine"}))
                 continue
 
             # --- Check 1c: Max simultaneous satellite lines ---
@@ -235,8 +237,8 @@ class SignalOrchestrator:
                 processed.append(
                     self._reject(
                         signal,
-                        f"REJECTED: Max satellite positions "
-                        f"({self.max_positions_total}) reached",
+                        f"REJECTED: Max satellite positions ({self.max_positions_total}) reached",
+                        {"source": "PortfolioState", "satellite_lines": satellite_lines}
                     )
                 )
                 continue
@@ -247,8 +249,8 @@ class SignalOrchestrator:
                 processed.append(
                     self._reject(
                         signal,
-                        f"REJECTED: Illiquid (ADV €{adv:,.0f} < "
-                        f"{self.min_liquidity_adv:,.0f})",
+                        f"REJECTED: Illiquid (ADV €{adv:,.0f} < {self.min_liquidity_adv:,.0f})",
+                        {"source": "TimeSeriesDB(Volume)", "adv_eur": adv}
                     )
                 )
                 continue
@@ -256,7 +258,7 @@ class SignalOrchestrator:
             # --- Check 2a: Sector concentration limit (cheap arithmetic) ---
             if not self.firewall.check_sector_limit(ticker, portfolio):
                 processed.append(
-                    self._reject(signal, "REJECTED: Sector weight limit reached")
+                    self._reject(signal, "REJECTED: Sector weight limit reached", {"source": "CorrelationFirewall(Sector)"})
                 )
                 continue
 
@@ -265,7 +267,7 @@ class SignalOrchestrator:
                 ticker, portfolio, self.timeseries_db
             )
             if not ok:
-                processed.append(self._reject(signal, f"REJECTED: {corr_reason}"))
+                processed.append(self._reject(signal, f"REJECTED: {corr_reason}", {"source": "CorrelationFirewall(Pearson)"}))
                 continue
 
             # --- Check 3: PEA position sizing (volatility-adjusted + HRP) ---
@@ -276,7 +278,7 @@ class SignalOrchestrator:
             )
             if target_qty <= 0:
                 processed.append(
-                    self._reject(signal, "REJECTED: Insufficient cash for 1 share")
+                    self._reject(signal, "REJECTED: Insufficient cash for 1 share", {"source": "PeaSizer", "sizing": sizing})
                 )
                 continue
 
@@ -292,6 +294,7 @@ class SignalOrchestrator:
                 f"poids {sizing.get('weight_pct', 0):.2f}% equity "
                 f"({sizing.get('notional', 0):,.0f} €)"
             ).strip(" |")
+            signal.lineage.update({"source": "PeaSizer", "approved": True, "sizing": sizing})
             logger.info(
                 "APPROVED %s: %d share(s) @ %.2f EUR (score=%.1f, weight=%.2f%%).",
                 ticker,

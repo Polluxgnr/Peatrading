@@ -118,7 +118,8 @@ class PortfolioDB:
                         status       TEXT NOT NULL,
                         score        REAL NOT NULL,
                         reason       TEXT,
-                        created_at   TEXT NOT NULL
+                        created_at   TEXT NOT NULL,
+                        lineage_json TEXT
                     );
                     """
                 )
@@ -172,6 +173,12 @@ class PortfolioDB:
                     conn.execute("ALTER TABLE fundamentals_cache ADD COLUMN piotroski_score REAL;")
                 except sqlite3.OperationalError:
                     pass  # Column likely already exists
+                    
+                # Migration: Add lineage_json if missing
+                try:
+                    conn.execute("ALTER TABLE audit_logs ADD COLUMN lineage_json TEXT;")
+                except sqlite3.OperationalError:
+                    pass
 
                 conn.execute(
                     """
@@ -358,12 +365,13 @@ class PortfolioDB:
                     """
                     INSERT INTO audit_logs
                         (id, ticker, signal_type, status, score, reason,
-                         created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                         created_at, lineage_json)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(id) DO UPDATE SET
                         status = excluded.status,
                         score  = excluded.score,
-                        reason = excluded.reason;
+                        reason = excluded.reason,
+                        lineage_json = excluded.lineage_json;
                     """,
                     (
                         signal.id,
@@ -373,6 +381,7 @@ class PortfolioDB:
                         signal.score,
                         signal.reason,
                         signal.created_at.isoformat(),
+                        __import__("json").dumps(signal.lineage) if signal.lineage else None,
                     ),
                 )
             logger.info(

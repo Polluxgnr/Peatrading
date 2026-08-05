@@ -103,6 +103,31 @@ def train_model(
         y = work[target_col].astype(int).values
         X = work[FEATURE_COLS].values.astype(float)
 
+        # Time-Series Split Cross-Validation to prevent lookahead bias
+        from sklearn.model_selection import TimeSeriesSplit
+        tscv = TimeSeriesSplit(n_splits=5)
+        cv_metrics = []
+        for train_index, test_index in tscv.split(X):
+            embargo = 30
+            tr_end = max(1, len(train_index) - embargo)
+            X_tr, y_tr = X[train_index[:tr_end]], y[train_index[:tr_end]]
+            X_te, y_te = X[test_index], y[test_index]
+            
+            if len(np.unique(y_tr)) < 2:
+                continue
+                
+            cv_model = xgb.XGBClassifier(
+                n_estimators=80, max_depth=4, learning_rate=0.08,
+                subsample=0.8, colsample_bytree=0.8, eval_metric="logloss",
+                random_state=42
+            )
+            cv_model.fit(X_tr, y_tr)
+            cv_metrics.append(cv_model.score(X_te, y_te))
+            
+        if cv_metrics:
+            logger.info("[%s] TimeSeriesSplit CV Mean Accuracy: %.1f%%", key, float(np.mean(cv_metrics)) * 100)
+
+        # Final production model on the traditional 80/20 chronological split
         split = int(len(work) * 0.8)
         embargo = 30
         train_end = max(1, split - embargo)
