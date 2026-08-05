@@ -6241,6 +6241,12 @@ def train_model(
     df = _load_dataset(dataset_path)
     logger.info("Loaded ML training dataset with shape: %s", df.shape)
     
+    # Convert continuous returns to binary classification targets
+    if TARGET_TACTICAL in df.columns:
+        df[TARGET_TACTICAL] = (df[TARGET_TACTICAL] > 0).astype(int)
+    if TARGET_STRUCTURAL in df.columns:
+        df[TARGET_STRUCTURAL] = (df[TARGET_STRUCTURAL] > 0).astype(int)
+    
     targets = [
         (TARGET_TACTICAL, model_path or _MODEL_PATH_TACTICAL, "tactical"),
         (TARGET_STRUCTURAL, _MODEL_PATH_STRUCTURAL, "structural")
@@ -6253,22 +6259,21 @@ def train_model(
             logger.warning("Missing column in dataset: %s", target_col)
             continue
 
-        work = df.dropna(subset=[target_col]).copy()
+        work = df.copy()
         if "created_at" in work.columns:
             work = work.sort_values("created_at")
         elif "Date" in work.columns:
             work = work.sort_values("Date")
+
         for col in FEATURE_COLS:
             work[col] = pd.to_numeric(work[col], errors="coerce")
-        work = work.dropna(subset=FEATURE_COLS)
-        if len(work) < 1000:
-            logger.warning("Insufficient labeled rows for %s (%d < 1000). Need at least 1000 for robust training.", target_col, len(work))
+            
+        valid_rows = work[target_col].notna().sum()
+        if valid_rows < 1000:
+            logger.warning("Insufficient labeled rows for %s (%d < 1000). Need at least 1000 for robust training.", target_col, valid_rows)
             continue
 
-        if target_col == TARGET_TACTICAL:
-            y = (work[target_col] > 0.02).astype(int).values
-        else:
-            y = (work[target_col] > 0.08).astype(int).values
+        y = work[target_col].values
         X = work[FEATURE_COLS].values.astype(float)
 
         # Time-Series Split Cross-Validation to prevent lookahead bias
