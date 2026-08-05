@@ -6026,7 +6026,7 @@ def build_ml_dataset(
             continue
         seen.add(ticker)
         try:
-            hist = tdb.get_historical_prices(ticker, days=400)
+            hist = tdb.get_historical_prices(ticker, days=1825)
         except Exception:  # noqa: BLE001
             hist = pd.DataFrame()
         close = (
@@ -18079,11 +18079,20 @@ def _load_universe_tickers() -> list[str]:
     try:
         with open(_UNIVERSE_PATH, "r", encoding="utf-8") as fh:
             universe = yaml.safe_load(fh) or {}
-        return [
+        raw_tickers = [
             entry["ticker"]
             for members in universe.get("universe", {}).values()
             for entry in members
         ]
+        
+        # Explicitly filter out macroeconomic symbols like IR3TIB01.EZQ.M.EM
+        # We only keep typical equity suffixes for the PEA universe.
+        valid_suffixes = (".PA", ".AS", ".NX", ".MI", ".MC", ".LS")
+        clean_tickers = [
+            t for t in raw_tickers 
+            if any(t.endswith(s) for s in valid_suffixes) or t.isalpha()
+        ]
+        return clean_tickers
     except Exception:  # noqa: BLE001
         logger.exception("Could not read universe file %s", _UNIVERSE_PATH)
         return []
@@ -18971,6 +18980,52 @@ streamlit-autorefresh==1.0.1
 
 
 streamlit-autorefresh==1.0.1
+
+```
+
+## File: .\run_backfill.py
+
+```python
+import os
+import sys
+import logging
+from pathlib import Path
+
+_ROOT = Path(__file__).resolve().parent
+for _sub in ("00_data_sensors", "01_memory_core", "02_quant_engine", "03_risk_portfolio", "04_orchestrator_ai", "05_interfaces"):
+    sys.path.insert(0, str(_ROOT / _sub))
+
+from main_scheduler import _load_universe_tickers
+from market_prices_api import MarketDataFetcher
+from duckdb_manager import TimeSeriesDB
+from logging_setup import setup_app_logging
+
+def main():
+    setup_app_logging(debug=True)
+    logger = logging.getLogger("backfill")
+    logger.info("Starting ML data backfill...")
+
+    tickers = _load_universe_tickers()
+    if not tickers:
+        logger.error("No tickers found in universe.")
+        return
+
+    logger.info(f"Loaded {len(tickers)} tickers. Filtering and starting download...")
+    
+    db_manager = TimeSeriesDB()
+    fetcher = MarketDataFetcher()
+    
+    # Fetch 5-year history directly, bypassing the incremental gap-check in update_database
+    df = fetcher.fetch_daily_ohlcv(tickers, lookback_days=1825)
+    
+    if not df.empty:
+        rows_inserted = db_manager.upsert_ohlcv(df)
+        logger.info(f"Backfill completed successfully: {rows_inserted} rows inserted into DuckDB.")
+    else:
+        logger.error("Backfill fetched no data.")
+
+if __name__ == "__main__":
+    main()
 
 ```
 

@@ -325,7 +325,7 @@ def build_ml_dataset(
             continue
         seen.add(ticker)
         try:
-            hist = tdb.get_historical_prices(ticker, days=400)
+            hist = tdb.get_historical_prices(ticker, days=1825)
         except Exception:  # noqa: BLE001
             hist = pd.DataFrame()
         close = (
