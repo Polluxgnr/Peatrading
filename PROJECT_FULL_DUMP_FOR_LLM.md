@@ -6022,7 +6022,7 @@ def build_training_dataset(
 
     # 3. Pre-fetch exog for speed
     try:
-        cw8_hist = tdb.get_historical_prices("CW8.PA", days=1825)
+        cw8_hist = tdb.get_historical_prices("CW8.PA", days=3650)
     except Exception:
         cw8_hist = pd.DataFrame()
     cw8_close = cw8_hist["Close"] if not cw8_hist.empty and "Close" in cw8_hist.columns else pd.Series(dtype=float)
@@ -6042,7 +6042,7 @@ def build_training_dataset(
 
     for ticker in tickers:
         try:
-            hist = tdb.get_historical_prices(ticker, days=1825)
+            hist = tdb.get_historical_prices(ticker, days=3650)
         except Exception:
             continue
             
@@ -6096,12 +6096,7 @@ def build_training_dataset(
         fwd_ret_30d = (df_ind["Close"].shift(-_FORWARD_DAYS_TACTICAL) / df_ind["Close"]) - 1.0
         fwd_ret_126d = (df_ind["Close"].shift(-_FORWARD_DAYS_STRUCTURAL) / df_ind["Close"]) - 1.0
         
-        # We simulate the triple barrier label by just using > 8% for tactical if we don't do full barrier
-        df_ind["target_tactical_30d"] = (fwd_ret_30d > 0.08).astype(int)
-        # Note: The NaNs in fwd_ret_30d must be preserved so we can drop them. 
-        # The astype(int) will convert NaNs to 0, which is bad! 
-        # So we keep NaNs intact.
-        df_ind["target_tactical_30d"] = np.where(fwd_ret_30d.isna(), np.nan, (fwd_ret_30d > 0.08).astype(int))
+        df_ind["target_tactical_30d"] = np.where(fwd_ret_30d.isna(), np.nan, (fwd_ret_30d > _TARGET_RETURN).astype(int))
         df_ind["target_structural_126d"] = np.where(fwd_ret_126d.isna(), np.nan, (fwd_ret_126d > _TARGET_RETURN * 4.0).astype(int))
         
         # Drop the last N days where target is NaN (Absolute strict requirement)
@@ -14890,10 +14885,11 @@ _render_mission_control()
 # =============================================================================
 # Tabs
 # =============================================================================
-tab_macro, tab_ticker, tab_pf_exec, tab_sys_logs = st.tabs([
+tab_macro, tab_ticker, tab_pf_exec, tab_ml_engine, tab_sys_logs = st.tabs([
     "📈 Market & Macro",
     "🌍 Ticker Deep-Dive",
     "💼 Portfolio & Execution",
+    "🤖 ML Engine & Metrics",
     "🧠 System Logs",
 ])
 
@@ -17180,6 +17176,12 @@ with tab_macro:
                 st.session_state["selected_ticker"] = _ticker_pick
                 st.caption(f"🔍 Analyse rapide prête pour {format_name(_ticker_pick)} (onglet Exploration).")
         st.caption(f"{len(disp)} titre(s) affiché(s) · tags DuckDB lorsque dispo.")
+# --- Tab: ML Engine & Metrics ------------------------------------------------
+with tab_ml_engine:
+    st.markdown("## 🤖 ML Engine & Model Metrics")
+    st.markdown("<div class='eli5'><b>Phase 44: XGBoost Meta-Labeling</b><br>This tab will stream the JSON metrics directly from the training pipeline.</div>", unsafe_allow_html=True)
+    st.info("Awaiting Model Metrics... (Run `python 02_quant_engine/ml_trainer.py` to populate)")
+    st.empty()
 
 # --- Tab: Architecture & Documentation --------------------------------------
 with tab_sys_logs:
@@ -19091,8 +19093,8 @@ def main():
     db_manager = TimeSeriesDB()
     fetcher = MarketDataFetcher()
     
-    # Fetch 5-year history directly, bypassing the incremental gap-check in update_database
-    df = fetcher.fetch_daily_ohlcv(tickers, lookback_days=1825)
+    # Fetch 10-year history directly, bypassing the incremental gap-check in update_database
+    df = fetcher.fetch_daily_ohlcv(tickers, lookback_days=3650)
     
     if not df.empty:
         rows_inserted = db_manager.upsert_ohlcv(df)

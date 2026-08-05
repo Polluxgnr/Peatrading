@@ -3649,10 +3649,11 @@ _render_mission_control()
 # =============================================================================
 # Tabs
 # =============================================================================
-tab_macro, tab_ticker, tab_pf_exec, tab_sys_logs = st.tabs([
+tab_macro, tab_ticker, tab_pf_exec, tab_ml_engine, tab_sys_logs = st.tabs([
     "📈 Market & Macro",
     "🌍 Ticker Deep-Dive",
     "💼 Portfolio & Execution",
+    "🤖 ML Engine & Metrics",
     "🧠 System Logs",
 ])
 
@@ -5939,6 +5940,12 @@ with tab_macro:
                 st.session_state["selected_ticker"] = _ticker_pick
                 st.caption(f"🔍 Analyse rapide prête pour {format_name(_ticker_pick)} (onglet Exploration).")
         st.caption(f"{len(disp)} titre(s) affiché(s) · tags DuckDB lorsque dispo.")
+# --- Tab: ML Engine & Metrics ------------------------------------------------
+with tab_ml_engine:
+    st.markdown("## 🤖 ML Engine & Model Metrics")
+    st.markdown("<div class='eli5'><b>Phase 44: XGBoost Meta-Labeling</b><br>This tab will stream the JSON metrics directly from the training pipeline.</div>", unsafe_allow_html=True)
+    st.info("Awaiting Model Metrics... (Run `python 02_quant_engine/ml_trainer.py` to populate)")
+    st.empty()
 
 # --- Tab: Architecture & Documentation --------------------------------------
 with tab_sys_logs:

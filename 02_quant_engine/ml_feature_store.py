@@ -321,7 +321,7 @@ def build_training_dataset(
 
     # 3. Pre-fetch exog for speed
     try:
-        cw8_hist = tdb.get_historical_prices("CW8.PA", days=1825)
+        cw8_hist = tdb.get_historical_prices("CW8.PA", days=3650)
     except Exception:
         cw8_hist = pd.DataFrame()
     cw8_close = cw8_hist["Close"] if not cw8_hist.empty and "Close" in cw8_hist.columns else pd.Series(dtype=float)
@@ -341,7 +341,7 @@ def build_training_dataset(
 
     for ticker in tickers:
         try:
-            hist = tdb.get_historical_prices(ticker, days=1825)
+            hist = tdb.get_historical_prices(ticker, days=3650)
         except Exception:
             continue
             
@@ -395,12 +395,7 @@ def build_training_dataset(
         fwd_ret_30d = (df_ind["Close"].shift(-_FORWARD_DAYS_TACTICAL) / df_ind["Close"]) - 1.0
         fwd_ret_126d = (df_ind["Close"].shift(-_FORWARD_DAYS_STRUCTURAL) / df_ind["Close"]) - 1.0
         
-        # We simulate the triple barrier label by just using > 8% for tactical if we don't do full barrier
-        df_ind["target_tactical_30d"] = (fwd_ret_30d > 0.08).astype(int)
-        # Note: The NaNs in fwd_ret_30d must be preserved so we can drop them. 
-        # The astype(int) will convert NaNs to 0, which is bad! 
-        # So we keep NaNs intact.
-        df_ind["target_tactical_30d"] = np.where(fwd_ret_30d.isna(), np.nan, (fwd_ret_30d > 0.08).astype(int))
+        df_ind["target_tactical_30d"] = np.where(fwd_ret_30d.isna(), np.nan, (fwd_ret_30d > _TARGET_RETURN).astype(int))
         df_ind["target_structural_126d"] = np.where(fwd_ret_126d.isna(), np.nan, (fwd_ret_126d > _TARGET_RETURN * 4.0).astype(int))
         
         # Drop the last N days where target is NaN (Absolute strict requirement)

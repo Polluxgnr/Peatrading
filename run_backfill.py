@@ -27,8 +27,8 @@ def main():
     db_manager = TimeSeriesDB()
     fetcher = MarketDataFetcher()
     
-    # Fetch 5-year history directly, bypassing the incremental gap-check in update_database
-    df = fetcher.fetch_daily_ohlcv(tickers, lookback_days=1825)
+    # Fetch 10-year history directly, bypassing the incremental gap-check in update_database
+    df = fetcher.fetch_daily_ohlcv(tickers, lookback_days=3650)
     
     if not df.empty:
         rows_inserted = db_manager.upsert_ohlcv(df)
