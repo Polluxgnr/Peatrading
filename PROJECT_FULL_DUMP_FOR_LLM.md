@@ -6093,11 +6093,17 @@ def build_training_dataset(
         df_ind["zscore_50"] = df_ind["Z_SCORE_50"] if "Z_SCORE_50" in df_ind.columns else np.nan
         
         # STRICT TARGET COMPUTATION: .shift(-N) 
+        # Make sure the dataframe is sorted by Date just in case
+        if "Date" in df_ind.columns:
+            df_ind = df_ind.sort_values("Date").reset_index(drop=True)
+        elif df_ind.index.name == "Date":
+            df_ind = df_ind.sort_index()
+
         fwd_ret_30d = (df_ind["Close"].shift(-_FORWARD_DAYS_TACTICAL) / df_ind["Close"]) - 1.0
         fwd_ret_126d = (df_ind["Close"].shift(-_FORWARD_DAYS_STRUCTURAL) / df_ind["Close"]) - 1.0
         
-        df_ind["target_tactical_30d"] = np.where(fwd_ret_30d.isna(), np.nan, (fwd_ret_30d > _TARGET_RETURN).astype(int))
-        df_ind["target_structural_126d"] = np.where(fwd_ret_126d.isna(), np.nan, (fwd_ret_126d > _TARGET_RETURN * 4.0).astype(int))
+        df_ind["target_tactical_30d"] = fwd_ret_30d
+        df_ind["target_structural_126d"] = fwd_ret_126d
         
         # Drop the last N days where target is NaN (Absolute strict requirement)
         df_ind = df_ind.dropna(subset=["target_tactical_30d", "target_structural_126d"])
@@ -6257,7 +6263,10 @@ def train_model(
             logger.warning("Insufficient labeled rows for %s (%d < 1000). Need at least 1000 for robust training.", target_col, len(work))
             continue
 
-        y = work[target_col].astype(int).values
+        if target_col == TARGET_TACTICAL:
+            y = (work[target_col] > 0.02).astype(int).values
+        else:
+            y = (work[target_col] > 0.08).astype(int).values
         X = work[FEATURE_COLS].values.astype(float)
 
         # Time-Series Split Cross-Validation to prevent lookahead bias

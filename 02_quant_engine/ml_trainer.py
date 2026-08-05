@@ -101,7 +101,10 @@ def train_model(
             logger.warning("Insufficient labeled rows for %s (%d < 1000). Need at least 1000 for robust training.", target_col, len(work))
             continue
 
-        y = work[target_col].astype(int).values
+        if target_col == TARGET_TACTICAL:
+            y = (work[target_col] > 0.02).astype(int).values
+        else:
+            y = (work[target_col] > 0.08).astype(int).values
         X = work[FEATURE_COLS].values.astype(float)
 
         # Time-Series Split Cross-Validation to prevent lookahead bias
