@@ -5886,10 +5886,10 @@ def build_ml_feature_row(
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '00_data_sensors')))
     from macro_alpha_api import MacroAlphaSensor
     macro = MacroAlphaSensor()
-    short_interest = macro.get_short_interest(ticker)
-    ecb_euribor = macro.get_ecb_euribor()
+    short_interest = macro.get_short_interest(ticker) if not offline_mode else 0.0
+    ecb_euribor = macro.get_ecb_euribor() if not offline_mode else 0.0
     threshold_cross = macro.get_threshold_crossings(ticker) if not offline_mode else 0
-    gex_proxy = macro.get_gamma_exposure(ticker)
+    gex_proxy = macro.get_gamma_exposure(ticker) if not offline_mode else 0.0
     from quantitative_math import frac_diff_ffd
     
     # Fractional Differentiation feature (d=0.4)
@@ -5984,17 +5984,11 @@ def build_ml_feature_row(
     }
 
 
-def build_ml_dataset(
+def build_training_dataset(
     portfolio_db: Any | None = None,
     timeseries_db: Any | None = None,
-    max_signals: int = 500,
 ) -> pd.DataFrame:
-    """Build a feature matrix from audit_logs + OHLCV (+ news/fundamentals).
-
-    Args:
-        portfolio_db: ``PortfolioDB`` instance (created if None).
-        timeseries_db: ``TimeSeriesDB`` instance (created if None).
-        max_signals: Cap on audit rows scanned.
+    """Build a feature matrix from OHLCV historical sampling (Offline Mode) via Vectorization.
 
     Returns:
         DataFrame ready for XGBoost/NLP training.
@@ -6009,51 +6003,132 @@ def build_ml_dataset(
         pass
     tdb = timeseries_db or TimeSeriesDB(read_only=True)
 
+    # 1. Fetch Universe from DuckDB
     try:
-        rows = pdb.fetch_signals_by_status(
-            ["APPROVED", "EXECUTED", "REJECTED", "PENDING", "REVOKED", "EXPIRED"],
-            limit=max_signals,
-        )
-    except Exception:  # noqa: BLE001
-        logger.exception("Could not load audit_logs for ML dataset.")
-        rows = []
+        with tdb._connect() as conn:
+            raw_tickers = [row[0] for row in conn.execute("SELECT DISTINCT Ticker FROM daily_ohlcv").fetchall()]
+    except Exception:
+        logger.exception("Could not fetch distinct tickers from DuckDB.")
+        raw_tickers = []
 
-    out: list[dict] = []
-    seen: set[str] = set()
-    for row in rows or []:
-        ticker = str(row.get("ticker") or "").strip()
-        if not ticker or ticker in seen:
+    # 2. Filter Macro Tickers explicitly (Strict Hardcoded Rule)
+    valid_suffixes = (".PA", ".AS", ".NX", ".MI", ".MC", ".LS")
+    tickers = []
+    for t in raw_tickers:
+        if "IR3TIB" in t or t.endswith(".EM") or t.endswith(".INDX"):
             continue
-        seen.add(ticker)
+        if any(t.endswith(s) for s in valid_suffixes) or t.isalpha():
+            tickers.append(t)
+
+    # 3. Pre-fetch exog for speed
+    try:
+        cw8_hist = tdb.get_historical_prices("CW8.PA", days=1825)
+    except Exception:
+        cw8_hist = pd.DataFrame()
+    cw8_close = cw8_hist["Close"] if not cw8_hist.empty and "Close" in cw8_hist.columns else pd.Series(dtype=float)
+    cw8_ret1d = cw8_close.pct_change(1) if not cw8_close.empty else pd.Series(dtype=float)
+
+    logger.info("Building historical ML dataset for %d valid equity tickers (Vectorized)...", len(tickers))
+
+    dfs = []
+    
+    # 4. Vectorized DataFrame Generation
+    import sys
+    sys.path.insert(0, str(_ROOT / "02_quant_engine"))
+    from technical_scorer import SignalGenerator
+    from quantitative_math import frac_diff_ffd
+    
+    sg = SignalGenerator(skip_regime=True, offline_mode=True)
+
+    for ticker in tickers:
         try:
             hist = tdb.get_historical_prices(ticker, days=1825)
-        except Exception:  # noqa: BLE001
-            hist = pd.DataFrame()
-        close = (
-            hist["Close"]
-            if hist is not None and not hist.empty and "Close" in hist.columns
-            else pd.Series(dtype=float)
-        )
-        feat = build_ml_feature_row(
-            ticker,
-            close=close,
-            reason=str(row.get("reason") or ""),
-            pdb=pdb,
-        )
-        feat["signal_status"] = str(row.get("status") or "")
-        feat["signal_score"] = _safe_float(row.get("score"), 0.0)
-        feat["created_at"] = str(row.get("created_at") or "")[:19]
-        out.append(feat)
+        except Exception:
+            continue
+            
+        if hist.empty or "Close" not in hist.columns:
+            continue
+            
+        # Need at least 250 days to construct solid SMA200
+        if len(hist) < 250:
+            continue
+            
+        # Compute indicators (vectorized over the whole 5 years for this ticker)
+        df_ind = sg.calculate_indicators(hist.copy())
+        
+        # Volatility 20d ann
+        df_ind["vol_20d_ann"] = df_ind["Close"].pct_change().rolling(20).std(ddof=0) * np.sqrt(252.0)
+        
+        # Fractional Diff
+        try:
+            df_ind["frac_diff_04"] = frac_diff_ffd(df_ind["Close"], d=0.4)
+        except Exception:
+            df_ind["frac_diff_04"] = np.nan
+            
+        # Fundamentals (Static per ticker in offline mode)
+        roe, pe, ev_ebitda = _fundamentals(ticker, pdb, offline_mode=True)
+        df_ind["finnhub_roe"] = roe
+        df_ind["finnhub_pe"] = pe
+        df_ind["ev_to_ebitda"] = ev_ebitda
+        df_ind["news_sentiment"] = _news_sentiment_proxy(ticker, pdb)
+        df_ind["insider_net_score"] = 0.0
+        df_ind["earnings_qa_sentiment"] = 0.0
+        df_ind["amf_short_interest"] = 0.0
+        df_ind["amf_threshold_crossing"] = 0.0
+        df_ind["ecb_euribor_3m"] = 0.0
+        df_ind["gex_proxy"] = 0.0
+        
+        # Match CW8 return by Date
+        if "Date" in df_ind.columns and not cw8_ret1d.empty:
+            df_ind["sp500_ret1d"] = df_ind["Date"].map(cw8_ret1d).fillna(0.0)
+        else:
+            df_ind["sp500_ret1d"] = 0.0
+            
+        df_ind["ndx_ret1d"] = 0.0
+        df_ind["eurusd_ret1d"] = 0.0
+        df_ind["oat_ret1d"] = 0.0
+        
+        # Format mapping names to match expected FEATURES
+        df_ind["rsi14"] = df_ind["RSI_14"] if "RSI_14" in df_ind.columns else np.nan
+        df_ind["zscore_50"] = df_ind["Z_SCORE_50"] if "Z_SCORE_50" in df_ind.columns else np.nan
+        
+        # STRICT TARGET COMPUTATION: .shift(-N) 
+        fwd_ret_30d = (df_ind["Close"].shift(-_FORWARD_DAYS_TACTICAL) / df_ind["Close"]) - 1.0
+        fwd_ret_126d = (df_ind["Close"].shift(-_FORWARD_DAYS_STRUCTURAL) / df_ind["Close"]) - 1.0
+        
+        # We simulate the triple barrier label by just using > 8% for tactical if we don't do full barrier
+        df_ind["target_tactical_30d"] = (fwd_ret_30d > 0.08).astype(int)
+        # Note: The NaNs in fwd_ret_30d must be preserved so we can drop them. 
+        # The astype(int) will convert NaNs to 0, which is bad! 
+        # So we keep NaNs intact.
+        df_ind["target_tactical_30d"] = np.where(fwd_ret_30d.isna(), np.nan, (fwd_ret_30d > 0.08).astype(int))
+        df_ind["target_structural_126d"] = np.where(fwd_ret_126d.isna(), np.nan, (fwd_ret_126d > _TARGET_RETURN * 4.0).astype(int))
+        
+        # Drop the last N days where target is NaN (Absolute strict requirement)
+        df_ind = df_ind.dropna(subset=["target_tactical_30d", "target_structural_126d"])
+        
+        # We sample end-of-week (e.g. step=5) to avoid huge correlation
+        # We also skip the first 200 rows due to SMA200 warm-up
+        if len(df_ind) > 200:
+            df_sampled = df_ind.iloc[200::5].copy()
+            df_sampled["ticker"] = ticker
+            if "Date" in df_sampled.columns:
+                df_sampled["created_at"] = df_sampled["Date"].dt.strftime("%Y-%m-%d %H:%M:%S")
+            else:
+                df_sampled["created_at"] = ""
+            df_sampled["signal_status"] = "HISTORICAL"
+            df_sampled["signal_score"] = 0.0
+            dfs.append(df_sampled)
 
-    if not out:
-        return pd.DataFrame(
-            columns=[
-                "ticker", "rsi14", "zscore_50", "vol_20d_ann", "insider_net_score",
-                "finnhub_roe", "finnhub_pe", "news_sentiment", "fwd_ret_30d",
-                "label_fwd_gt_2pct", "signal_status", "signal_score", "created_at",
-            ]
-        )
-    return pd.DataFrame(out)
+    if not dfs:
+        return pd.DataFrame()
+        
+    final_df = pd.concat(dfs, ignore_index=True)
+    return final_df
+
+def build_ml_dataset(portfolio_db=None, timeseries_db=None, max_signals=500):
+    """Wrapper to maintain backwards compatibility while forcing training dataset gen."""
+    return build_training_dataset(portfolio_db, timeseries_db)
 
 
 def export_ml_dataset_csv(
@@ -6161,6 +6236,7 @@ def train_model(
         ) from exc
 
     df = _load_dataset(dataset_path)
+    logger.info("Loaded ML training dataset with shape: %s", df.shape)
     
     targets = [
         (TARGET_TACTICAL, model_path or _MODEL_PATH_TACTICAL, "tactical"),
@@ -6182,8 +6258,8 @@ def train_model(
         for col in FEATURE_COLS:
             work[col] = pd.to_numeric(work[col], errors="coerce")
         work = work.dropna(subset=FEATURE_COLS)
-        if len(work) < 30:
-            logger.warning("Insufficient labeled rows for %s (%d < 30).", target_col, len(work))
+        if len(work) < 1000:
+            logger.warning("Insufficient labeled rows for %s (%d < 1000). Need at least 1000 for robust training.", target_col, len(work))
             continue
 
         y = work[target_col].astype(int).values
@@ -6203,7 +6279,7 @@ def train_model(
                 continue
                 
             cv_model = xgb.XGBClassifier(
-                n_estimators=80, max_depth=4, learning_rate=0.08,
+                n_estimators=100, max_depth=4, learning_rate=0.05,
                 subsample=0.8, colsample_bytree=0.8, eval_metric="logloss",
                 random_state=42
             )
@@ -6222,9 +6298,9 @@ def train_model(
         y_train, y_test = y[:train_end], y[split:]
 
         model = xgb.XGBClassifier(
-            n_estimators=80,
+            n_estimators=100,
             max_depth=4,
-            learning_rate=0.08,
+            learning_rate=0.05,
             subsample=0.8,
             colsample_bytree=0.8,
             eval_metric="logloss",

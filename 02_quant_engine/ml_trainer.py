@@ -75,6 +75,7 @@ def train_model(
         ) from exc
 
     df = _load_dataset(dataset_path)
+    logger.info("Loaded ML training dataset with shape: %s", df.shape)
     
     targets = [
         (TARGET_TACTICAL, model_path or _MODEL_PATH_TACTICAL, "tactical"),
@@ -96,8 +97,8 @@ def train_model(
         for col in FEATURE_COLS:
             work[col] = pd.to_numeric(work[col], errors="coerce")
         work = work.dropna(subset=FEATURE_COLS)
-        if len(work) < 30:
-            logger.warning("Insufficient labeled rows for %s (%d < 30).", target_col, len(work))
+        if len(work) < 1000:
+            logger.warning("Insufficient labeled rows for %s (%d < 1000). Need at least 1000 for robust training.", target_col, len(work))
             continue
 
         y = work[target_col].astype(int).values
@@ -117,7 +118,7 @@ def train_model(
                 continue
                 
             cv_model = xgb.XGBClassifier(
-                n_estimators=80, max_depth=4, learning_rate=0.08,
+                n_estimators=100, max_depth=4, learning_rate=0.05,
                 subsample=0.8, colsample_bytree=0.8, eval_metric="logloss",
                 random_state=42
             )
@@ -136,9 +137,9 @@ def train_model(
         y_train, y_test = y[:train_end], y[split:]
 
         model = xgb.XGBClassifier(
-            n_estimators=80,
+            n_estimators=100,
             max_depth=4,
-            learning_rate=0.08,
+            learning_rate=0.05,
             subsample=0.8,
             colsample_bytree=0.8,
             eval_metric="logloss",
