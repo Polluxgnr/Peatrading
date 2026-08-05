@@ -5943,9 +5943,75 @@ with tab_macro:
 # --- Tab: ML Engine & Metrics ------------------------------------------------
 with tab_ml_engine:
     st.markdown("## 🤖 ML Engine & Model Metrics")
-    st.markdown("<div class='eli5'><b>Phase 44: XGBoost Meta-Labeling</b><br>This tab will stream the JSON metrics directly from the training pipeline.</div>", unsafe_allow_html=True)
-    st.info("Awaiting Model Metrics... (Run `python 02_quant_engine/ml_trainer.py` to populate)")
-    st.empty()
+    
+    with st.expander("🧠 Quant Explainer (How the Engine Works)", expanded=True):
+        st.markdown("""
+        - **What is XGBoost?** Gradient boosted trees optimized for tabular financial patterns.
+        - **Why RSI and Z-Score dominate:** Price action and mean-reversion indicators carry the strongest short-to-medium-term signal on European equities.
+        - **Meta-Labeling:** Secondary models filter out low-confidence trades to maximize win-rate (targeting >80% accuracy on high-conviction signals).
+        """)
+
+    try:
+        import sys
+        from pathlib import Path
+        _ROOT = Path(__file__).resolve().parent.parent
+        sys.path.insert(0, str(_ROOT / "02_quant_engine"))
+        from ml_trainer import load_metrics, _MODEL_PATH_TACTICAL, _MODEL_PATH_STRUCTURAL
+        import xgboost as xgb
+        
+        metrics = load_metrics()
+        
+        if not metrics:
+            st.warning("⚠️ No metrics found. Please run the training pipeline.")
+        else:
+            tactical = metrics.get("tactical", {})
+            structural = metrics.get("structural", {})
+            meta = metrics.get("meta_tactical", {})
+            
+            c1, c2 = st.columns(2)
+            with c1:
+                st.markdown("### ⚡ Tactical Model (30d)")
+                st.metric("Global Accuracy", f"{tactical.get('accuracy_pct', 'N/A')}%")
+                st.metric("Brier Score", tactical.get("brier_score", "N/A"))
+            with c2:
+                st.markdown("### 🏛️ Structural Model (126d)")
+                st.metric("Global Accuracy", f"{structural.get('accuracy_pct', 'N/A')}%")
+                st.metric("Brier Score", structural.get("brier_score", "N/A"))
+                
+            st.markdown("---")
+            st.markdown("### 🎯 Meta-Labeling (Live Signal Distribution)")
+            st.caption("Signals crossing the 75% confidence threshold historically.")
+            m1, m2 = st.columns(2)
+            m1.metric("Historical High Conviction Signals", meta.get("n_signals_above_75", 0))
+            m2.metric("Accuracy on High Conviction", f"{meta.get('accuracy_signals_above_75_pct', 'N/A')}%")
+            
+            st.markdown("---")
+            st.markdown("### 📊 Feature Importance (Tactical)")
+            
+            try:
+                if _MODEL_PATH_TACTICAL.exists():
+                    bst = xgb.Booster()
+                    bst.load_model(str(_MODEL_PATH_TACTICAL))
+                    scores = bst.get_score(importance_type='weight')
+                    if scores:
+                        import pandas as pd
+                        df_imp = pd.DataFrame(list(scores.items()), columns=["Feature", "Weight"])
+                        df_imp = df_imp.sort_values("Weight", ascending=True)
+                        import plotly.express as px
+                        fig = px.bar(df_imp, x="Weight", y="Feature", orientation='h', 
+                                     title="Top Predictive Features",
+                                     color="Weight", color_continuous_scale="Viridis")
+                        fig.update_layout(template="plotly_dark", plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)")
+                        st.plotly_chart(fig, use_container_width=True)
+                    else:
+                        st.info("Feature importance not available (model may be empty).")
+                else:
+                    st.warning(f"Tactical model file not found at: {_MODEL_PATH_TACTICAL}")
+            except Exception as e:
+                st.error(f"Error loading feature importance from tactical model: {e}")
+
+    except Exception as e:
+        st.error(f"❌ ML Engine Dashboard Failed to Load: {e}")
 
 # --- Tab: Architecture & Documentation --------------------------------------
 with tab_sys_logs:
