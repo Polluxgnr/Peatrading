@@ -305,7 +305,7 @@ def build_training_dataset(
     # 1. Fetch Universe from DuckDB
     try:
         with tdb._connect() as conn:
-            raw_tickers = [row[0] for row in conn.execute("SELECT DISTINCT Ticker FROM daily_ohlcv").fetchall()]
+            raw_tickers = [row[0] for row in conn.execute("SELECT DISTINCT Ticker FROM ohlcv_data").fetchall()]
     except Exception:
         logger.exception("Could not fetch distinct tickers from DuckDB.")
         raw_tickers = []
