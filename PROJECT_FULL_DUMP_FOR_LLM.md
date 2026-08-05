@@ -15166,6 +15166,7 @@ with tab_macro:
 
         # --- Phase 34: Near-Miss radar -------------------------------------
         st.markdown("#### 📡 Radar de Surveillance (Near-Miss)")
+        st.caption("Titres avec un score entre 55 et 64/100. À surveiller de près.")
         pending_tickers = set()
         if pending is not None and not pending.empty and "ticker" in pending.columns:
             try:
@@ -15243,6 +15244,7 @@ with tab_macro:
             )
     with col2:
         st.markdown("##### Historique (20 derniers)")
+        st.caption("Les 20 dernières décisions du moteur quantitatif (Approuvé, Rejeté par la cascade de risques, ou Révoqué).")
         hist = load_signals(("EXECUTED", "REVOKED", "REJECTED", "EXPIRED"), limit=20)
         if hist.empty:
             st.info("Aucun historique disponible.")
@@ -15994,13 +15996,9 @@ with tab_ticker:
         if st.session_state.get("selected_ticker") not in options and options:
             st.session_state["selected_ticker"] = options[default_idx]
 
-        def _on_explore_change():
-            st.session_state["mkt_universal_search"] = st.session_state["selected_ticker"]
-    
         selected = st.selectbox(
             "Actif a analyser", options,
-            format_func=format_name, key="selected_ticker",
-            on_change=_on_explore_change
+            format_func=format_name, key="selected_ticker"
         )
         tv = _tv_symbol(selected)
     
@@ -16102,7 +16100,7 @@ with tab_ticker:
                         st.error(f"Synthèse indisponible: {exc}")
     
             st.markdown("---")
-            st.markdown("#### 🗞️ Actualites Historiques & Flux Unifié")
+            st.markdown("#### 🗞️ Historique Complet des News")
             
             try:
                 c_src, c_time = st.columns([2, 1])
@@ -16111,7 +16109,7 @@ with tab_ticker:
                 with c_time:
                     filter_time = st.radio("Fenêtre", ["7j", "30j", "1 an", "Tout"], horizontal=True)
     
-                db_news = get_portfolio_db().get_news_history(selected, limit=100) or []
+                db_news = get_portfolio_db().get_news_history(selected, limit=1000) or []
                 
                 # Apply time filter
                 if db_news and filter_time != "Tout":
