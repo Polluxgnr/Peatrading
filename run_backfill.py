@@ -13,7 +13,7 @@ from duckdb_manager import TimeSeriesDB
 from logging_setup import setup_app_logging
 
 def main():
-    setup_app_logging(debug=True)
+    setup_app_logging()
     logger = logging.getLogger("backfill")
     logger.info("Starting ML data backfill...")
 
