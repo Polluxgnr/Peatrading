@@ -3725,17 +3725,18 @@ with tab_market_pulse:
     
     try:
         import sqlite3
-        conn = sqlite3.connect("data/portfolio.db")
-        try:
-            news_query = "SELECT ticker, published_at, title, url, sentiment_score, source FROM news_master ORDER BY published_at DESC LIMIT 50"
-            news_df = pd.read_sql(news_query, conn)
-        except sqlite3.OperationalError:
+        import pandas as pd
+        db = get_portfolio_db()
+        with db._connect() as conn:
             try:
-                news_query = "SELECT ticker, published_at, title, url, sentiment_score, source FROM news_history ORDER BY published_at DESC LIMIT 50"
+                news_query = "SELECT ticker, published_at, title, url, sentiment_score, source FROM news_master ORDER BY published_at DESC LIMIT 50"
                 news_df = pd.read_sql(news_query, conn)
             except sqlite3.OperationalError:
-                news_df = pd.DataFrame()
-        conn.close()
+                try:
+                    news_query = "SELECT ticker, published_at, title, url, sentiment_score, source FROM news_history ORDER BY published_at DESC LIMIT 50"
+                    news_df = pd.read_sql(news_query, conn)
+                except sqlite3.OperationalError:
+                    news_df = pd.DataFrame()
         
         if news_df.empty:
             st.info("Data lake is empty. Waiting for daemon to ingest news.")
@@ -3805,24 +3806,26 @@ with tab_market_pulse:
             try:
                 opps = rank_affordable_alternatives(budget, vix_val)
                 if opps:
-                    st.dataframe(pd.DataFrame(opps), use_container_width=True, hide_index=True)
+                    df_opps = pd.DataFrame(opps).head(5)
+                    st.dataframe(df_opps, use_container_width=True, hide_index=True)
                 else:
-                    st.caption("Module unavailable or no data.")
+                    st.info("Data unavailable")
             except Exception as e:
-                st.caption(f"Module unavailable or no data. ({e})")
+                st.info("Data unavailable")
                 
         with col_mom:
             st.markdown("#### 🚀 High Momentum Leaders")
             try:
-                moms = get_momentum_pepites()
+                moms = get_momentum_pepites(limit=5)
                 if moms:
-                    st.dataframe(pd.DataFrame(moms), use_container_width=True, hide_index=True)
+                    df_moms = pd.DataFrame(moms)
+                    st.dataframe(df_moms, use_container_width=True, hide_index=True)
                 else:
-                    st.caption("Module unavailable or no data.")
+                    st.info("Data unavailable")
             except Exception as e:
-                st.caption(f"Module unavailable or no data. ({e})")
+                st.info("Data unavailable")
     except Exception as e:
-        st.caption(f"Module unavailable or no data. ({e})")
+        st.info("Data unavailable")
 
 
 @st.cache_data(ttl=900, show_spinner=False)
@@ -3963,17 +3966,18 @@ with tab_ticker_deep_dive:
                 try:
                     import sqlite3
                     import pandas as pd
-                    conn = sqlite3.connect("data/portfolio.db")
-                    try:
-                        n_query = "SELECT published_at, title, url, sentiment_score, source FROM news_master WHERE ticker = ? ORDER BY published_at DESC LIMIT 5"
-                        n_df = pd.read_sql(n_query, conn, params=(selected_ticker,))
-                    except sqlite3.OperationalError:
+                    import pandas as pd
+                    db = get_portfolio_db()
+                    with db._connect() as conn:
                         try:
-                            n_query = "SELECT published_at, title, url, sentiment_score, source FROM news_history WHERE ticker = ? ORDER BY published_at DESC LIMIT 5"
+                            n_query = "SELECT published_at, title, url, sentiment_score, source FROM news_master WHERE ticker = ? ORDER BY published_at DESC LIMIT 5"
                             n_df = pd.read_sql(n_query, conn, params=(selected_ticker,))
                         except sqlite3.OperationalError:
-                            n_df = pd.DataFrame()
-                    conn.close()
+                            try:
+                                n_query = "SELECT published_at, title, url, sentiment_score, source FROM news_history WHERE ticker = ? ORDER BY published_at DESC LIMIT 5"
+                                n_df = pd.read_sql(n_query, conn, params=(selected_ticker,))
+                            except sqlite3.OperationalError:
+                                n_df = pd.DataFrame()
                     
                     if not n_df.empty:
                         with st.container(height=350):
@@ -4252,12 +4256,13 @@ with tab_portfolio:
     st.markdown("### 📖 The Ledger: Closed Trades & AI Post-Mortems")
     try:
         import sqlite3
-        conn = sqlite3.connect("data/portfolio.db")
-        try:
-            df_closed = pd.read_sql("SELECT id, ticker, action, quantity, price, pnl_pct, hold_days, reason, post_mortem, created_at FROM audit_logs WHERE status='CLOSED' ORDER BY created_at DESC", conn)
-        except sqlite3.OperationalError:
-            df_closed = pd.DataFrame()
-        conn.close()
+        import pandas as pd
+        db = get_portfolio_db()
+        with db._connect() as conn:
+            try:
+                df_closed = pd.read_sql("SELECT id, ticker, action, quantity, price, pnl_pct, hold_days, reason, post_mortem, created_at FROM audit_logs WHERE status='CLOSED' ORDER BY created_at DESC", conn)
+            except sqlite3.OperationalError:
+                df_closed = pd.DataFrame()
         
         if df_closed.empty:
             st.info("No closed trades in history yet. Waiting for next daemon pass.")
