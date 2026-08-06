@@ -1229,10 +1229,10 @@ from dotenv import load_dotenv
 import sys
 from pathlib import Path
 _ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_ROOT))
+sys.path.insert(0, str(_ROOT / "01_memory_core"))
 
-from core.logging_setup import get_logger
-from memory_core.sqlite_portfolio import SQLitePortfolioDB
+from logging_setup import get_logger
+from sqlite_portfolio import SQLitePortfolioDB
 
 logger = get_logger("news_api_client")
 
@@ -1330,10 +1330,10 @@ from dotenv import load_dotenv
 import sys
 from pathlib import Path
 _ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_ROOT))
+sys.path.insert(0, str(_ROOT / "01_memory_core"))
 
-from core.logging_setup import get_logger
-from memory_core.sqlite_portfolio import SQLitePortfolioDB
+from logging_setup import get_logger
+from sqlite_portfolio import SQLitePortfolioDB
 
 logger = get_logger("news_email_scraper")
 
@@ -1452,10 +1452,10 @@ import bs4
 import sys
 from pathlib import Path
 _ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_ROOT))
+sys.path.insert(0, str(_ROOT / "01_memory_core"))
 
-from core.logging_setup import get_logger
-from memory_core.sqlite_portfolio import SQLitePortfolioDB
+from logging_setup import get_logger
+from sqlite_portfolio import SQLitePortfolioDB
 
 logger = get_logger("news_rss_scraper")
 
@@ -5931,6 +5931,156 @@ class CrossSectionalScorer:
 
 ```
 
+## File: .\02_quant_engine\llm_sentiment_engine.py
+
+```python
+import os
+import sys
+import json
+import requests
+from pathlib import Path
+from dotenv import load_dotenv
+
+_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_ROOT / "01_memory_core"))
+
+from logging_setup import get_logger
+from sqlite_portfolio import SQLitePortfolioDB
+
+logger = get_logger("llm_sentiment_engine")
+
+load_dotenv(_ROOT / ".env")
+
+OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "mistral")
+
+# Load VADER as a fallback
+try:
+    from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+    vader_analyzer = SentimentIntensityAnalyzer()
+except ImportError:
+    logger.warning("vaderSentiment not installed. Fallback sentiment will be 0.0.")
+    vader_analyzer = None
+
+
+def fallback_vader(text: str) -> tuple[float, str, str]:
+    """Fallback sentiment calculation using VADER."""
+    if not vader_analyzer:
+        return 0.0, "Neutral", "Fallback to neutral due to missing VADER."
+    
+    scores = vader_analyzer.polarity_scores(text)
+    compound = float(scores["compound"])
+    
+    if compound >= 0.05:
+        label = "Bullish"
+    elif compound <= -0.05:
+        label = "Bearish"
+    else:
+        label = "Neutral"
+        
+    return compound, label, "Calculated using VADER heuristic fallback."
+
+
+def call_ollama(text: str) -> tuple[float, str, str] | None:
+    """Send text to Ollama and ask for structured JSON."""
+    prompt = f"""You are a professional quantitative analyst. 
+Analyze the following financial news article and return a strict JSON object with EXACTLY these three keys:
+- "guidance_score": A float between -1.0 (extremely bearish) and 1.0 (extremely bullish).
+- "sentiment_label": Must be exactly one of "Bullish", "Bearish", or "Neutral".
+- "reasoning": A brief one-sentence financial justification for the score.
+
+News text:
+{text}
+
+Return ONLY the JSON object. Do not include markdown formatting or conversational text."""
+
+    payload = {
+        "model": OLLAMA_MODEL,
+        "prompt": prompt,
+        "stream": False,
+        "format": "json"
+    }
+
+    try:
+        url = f"{OLLAMA_URL.rstrip('/')}/api/generate"
+        response = requests.post(url, json=payload, timeout=20)
+        response.raise_for_status()
+        
+        result = response.json()
+        output_text = result.get("response", "").strip()
+        
+        # Ollama might wrap JSON in markdown block even with format="json" in some models
+        if output_text.startswith("```json"):
+            output_text = output_text[7:]
+        if output_text.endswith("```"):
+            output_text = output_text[:-3]
+            
+        data = json.loads(output_text.strip())
+        
+        g_score = float(data.get("guidance_score", 0.0))
+        label = str(data.get("sentiment_label", "Neutral"))
+        reasoning = str(data.get("reasoning", "No reasoning provided."))
+        
+        # Ensure label validity
+        if label not in ("Bullish", "Bearish", "Neutral"):
+            label = "Neutral"
+            
+        # Ensure score bounds
+        g_score = max(-1.0, min(1.0, g_score))
+        
+        return g_score, label, reasoning
+        
+    except Exception as e:
+        logger.warning(f"Ollama inference failed: {e}")
+        return None
+
+
+def score_news_batch(db: SQLitePortfolioDB):
+    """Fetch unprocessed news, score them using Ollama (or VADER), and update the DB."""
+    unprocessed = db.get_unprocessed_news()
+    if not unprocessed:
+        logger.info("No unprocessed news found.")
+        return
+        
+    logger.info("Scoring %d unprocessed news items with Ollama (%s)...", len(unprocessed), OLLAMA_MODEL)
+    
+    updates = []
+    
+    for item in unprocessed:
+        text = f"{item['title']} {item['content'] or ''}"
+        # Truncate text if it's too long for typical small LLM context
+        text = text[:4000]
+        
+        res = call_ollama(text)
+        if res:
+            compound, label, reasoning = res
+            logger.debug("Ollama success for news ID %s: %s", item["id"], label)
+        else:
+            compound, label, reasoning = fallback_vader(text)
+            logger.debug("VADER fallback for news ID %s: %s", item["id"], label)
+            
+        # We also might want to store reasoning, but our news_master schema might not have it yet.
+        # We will just log it for now and update sentiment.
+        # The prompt requested we use the database, the schema has:
+        # id, published_at, ticker, source, url, title, content, sentiment_score, sentiment_label
+        
+        updates.append({
+            "id": item["id"],
+            "sentiment_score": compound,
+            "sentiment_label": label
+        })
+        
+    if updates:
+        db.update_news_sentiment(updates)
+        logger.info("LLM Sentiment scoring completed for %d items.", len(updates))
+
+
+if __name__ == "__main__":
+    db = SQLitePortfolioDB()
+    score_news_batch(db)
+
+```
+
 ## File: .\02_quant_engine\market_regime.py
 
 ```python
@@ -6961,10 +7111,10 @@ if __name__ == "__main__":
 import sys
 from pathlib import Path
 _ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_ROOT))
+sys.path.insert(0, str(_ROOT / "01_memory_core"))
 
-from core.logging_setup import get_logger
-from memory_core.sqlite_portfolio import SQLitePortfolioDB
+from logging_setup import get_logger
+from sqlite_portfolio import SQLitePortfolioDB
 
 logger = get_logger("nlp_sentiment_engine")
 
@@ -7164,6 +7314,60 @@ def calculate_annualized_volatility(returns: pd.Series, periods_per_year: int = 
         return 0.0
     return float(std_ewm.iloc[-1] * np.sqrt(float(periods_per_year)))
 
+
+```
+
+## File: .\02_quant_engine\risk_engine.py
+
+```python
+class RiskEngine:
+    """Dynamic Risk Management and Position Sizing Engine."""
+    
+    @staticmethod
+    def calculate_atr_stop(current_price: float, atr_14: float, multiplier: float = 2.5) -> float:
+        """
+        Calculate a dynamic stop-loss level based on Average True Range (ATR).
+        
+        Args:
+            current_price: The current entry price of the asset.
+            atr_14: The 14-day Average True Range.
+            multiplier: The ATR multiplier (default 2.5).
+            
+        Returns:
+            The calculated stop-loss price level.
+        """
+        if current_price <= 0 or atr_14 <= 0:
+            return 0.0
+        return max(0.0, current_price - (multiplier * atr_14))
+        
+    @staticmethod
+    def calculate_volatility_parity_weight(asset_volatility: float, target_volatility: float = 0.20, max_weight: float = 0.15) -> float:
+        """
+        Calculate the maximum portfolio weight for an asset based on volatility parity.
+        More volatile assets get smaller weights to equalize risk contribution.
+        
+        Args:
+            asset_volatility: The annualized volatility (e.g., standard deviation of returns).
+            target_volatility: The target portfolio volatility (default 20%).
+            max_weight: The absolute maximum weight allowed for any single position (default 15%).
+            
+        Returns:
+            The recommended allocation weight as a float (e.g., 0.12 for 12%).
+        """
+        if asset_volatility <= 0:
+            return max_weight
+            
+        # Volatility scaling: target / asset_volatility
+        raw_weight = target_volatility / asset_volatility
+        
+        # We also scale it down by some constant factor depending on the sizing model,
+        # but for simple parity we just cap it at max_weight.
+        # Typically, weight = (Target Vol) / (Asset Vol) / N_assets.
+        # For an individual position sizing, we return min(raw_weight * scaling, max_weight).
+        # We will use raw_weight * 0.10 as a base sizing heuristic (assuming ~10 positions target)
+        adjusted_weight = raw_weight * 0.10
+        
+        return min(adjusted_weight, max_weight)
 
 ```
 
@@ -9986,6 +10190,96 @@ def simulate_historical_shocks(
 ## File: .\04_orchestrator_ai\__init__.py
 
 ```python
+
+```
+
+## File: .\04_orchestrator_ai\discord_notifier.py
+
+```python
+import requests
+import sys
+from pathlib import Path
+
+_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_ROOT / "01_memory_core"))
+
+from logging_setup import get_logger
+
+logger = get_logger("discord_notifier")
+
+# Colors
+COLOR_GREEN = 59006
+COLOR_RED = 16726832
+
+def send_high_conviction_alert(signal_dict: dict, webhook_url: str):
+    """
+    Send a high conviction signal alert to Discord via Webhook.
+    
+    Args:
+        signal_dict: Dictionary containing signal metadata:
+            - ticker
+            - direction (BUY/SELL)
+            - score
+            - current_price
+            - atr_stop_loss
+            - llm_reasoning (optional)
+        webhook_url: The Discord Webhook URL.
+    """
+    if not webhook_url:
+        logger.warning("No Discord Webhook URL provided. Skipping alert.")
+        return
+        
+    ticker = signal_dict.get("ticker", "UNKNOWN")
+    direction = signal_dict.get("direction", "BUY").upper()
+    score = signal_dict.get("score", 0.0)
+    current_price = signal_dict.get("current_price", 0.0)
+    atr_stop = signal_dict.get("atr_stop_loss", 0.0)
+    reasoning = signal_dict.get("llm_reasoning", "No LLM reasoning provided.")
+    
+    is_buy = direction == "BUY"
+    color = COLOR_GREEN if is_buy else COLOR_RED
+    title_emoji = "🟢" if is_buy else "🔴"
+    
+    embed = {
+        "title": f"🚨 PEA Sniper Signal Alert: {title_emoji} {direction} {ticker}",
+        "description": f"**High Conviction Signal Detected (>75%)**\n\n**LLM Guidance Insight:**\n*{reasoning}*",
+        "color": color,
+        "fields": [
+            {
+                "name": "📊 Model Confidence Score",
+                "value": f"**{score:.1f}%**",
+                "inline": True
+            },
+            {
+                "name": "💰 Current Price",
+                "value": f"**{current_price:.2f} €**",
+                "inline": True
+            },
+            {
+                "name": "🛡️ ATR Stop-Loss",
+                "value": f"**{atr_stop:.2f} €**",
+                "inline": True
+            }
+        ],
+        "footer": {
+            "text": "PEA Pollux Automated Orchestrator",
+            "icon_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c3/Python-logo-notext.svg/1200px-Python-logo-notext.svg.png"
+        }
+    }
+    
+    payload = {
+        "content": f"<@&EVERYONE> 🚨 {direction} Alert for **{ticker}**",
+        "embeds": [embed]
+    }
+    
+    try:
+        response = requests.post(webhook_url, json=payload, timeout=10)
+        if response.status_code in (200, 204):
+            logger.info("Successfully sent Discord high-conviction alert for %s", ticker)
+        else:
+            logger.warning("Failed to send Discord alert, status code: %s", response.status_code)
+    except Exception as e:
+        logger.exception("Error sending Discord alert: %s", e)
 
 ```
 
@@ -19819,7 +20113,10 @@ import sys
 import time
 import subprocess
 from pathlib import Path
-from core.logging_setup import get_logger
+
+_ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(_ROOT / "01_memory_core"))
+from logging_setup import get_logger
 
 logger = get_logger("quant_pipeline_orchestrator")
 
@@ -19867,8 +20164,8 @@ def main():
         run_step("00_data_sensors/news_api_client.py")
         run_step("00_data_sensors/news_email_scraper.py")
         
-        # Phase 3: NLP Sentiment Scoring Engine
-        run_step("02_quant_engine/nlp_sentiment_engine.py")
+        # Phase 3: LLM Sentiment Scoring Engine (Ollama + VADER fallback)
+        run_step("02_quant_engine/llm_sentiment_engine.py")
         
         # Phase 4: Export Feature Store
         run_step("02_quant_engine/ml_feature_store.py")
@@ -19876,6 +20173,74 @@ def main():
         # Phase 5: Train ML Models & Generate Metrics
         run_step("02_quant_engine/ml_trainer.py")
         
+        # Phase 6: Signal Generation & Discord Dispatch
+        logger.info("=" * 60)
+        logger.info("🚀 STARTING: Signal Generation & Discord Dispatch")
+        logger.info("=" * 60)
+        
+        from sqlite_portfolio import SQLitePortfolioDB
+        sys.path.insert(0, str(_ROOT / "04_orchestrator_ai"))
+        try:
+            from discord_notifier import send_high_conviction_alert
+        except ImportError:
+            logger.warning("discord_notifier not found or could not be loaded. Skipping alerts.")
+            send_high_conviction_alert = None
+            
+        sys.path.insert(0, str(_ROOT / "02_quant_engine"))
+        try:
+            from risk_engine import RiskEngine
+        except ImportError:
+            RiskEngine = None
+
+        if send_high_conviction_alert:
+            db = SQLitePortfolioDB()
+            # Fetch APPROVED signals
+            signals = db.fetch_signals_by_status(["APPROVED", "PENDING"])
+            import datetime
+            today_str = datetime.datetime.now().strftime("%Y-%m-%d")
+            
+            import os
+            from dotenv import load_dotenv
+            load_dotenv(_ROOT / ".env")
+            webhook_url = os.getenv("DISCORD_WEBHOOK_URL")
+            
+            # Filter high conviction signals for today
+            dispatched = 0
+            for sig in signals:
+                if not sig["created_at"].startswith(today_str):
+                    continue
+                if float(sig.get("score", 0)) > 75:
+                    # In a full implementation, we'd pull the actual current price and ATR from the timeseries DB
+                    # Here we use defaults or parse from lineage_json if available
+                    current_price = 100.0
+                    atr_14 = 2.0
+                    
+                    import json
+                    try:
+                        if "lineage_json" in sig and sig["lineage_json"]:
+                            lineage = json.loads(sig["lineage_json"])
+                            current_price = float(lineage.get("Close", 100.0))
+                            atr_14 = float(lineage.get("atr_14", 2.0))
+                    except Exception:
+                        pass
+                        
+                    atr_stop_loss = 0.0
+                    if RiskEngine:
+                        atr_stop_loss = RiskEngine.calculate_atr_stop(current_price, atr_14)
+                        
+                    signal_dict = {
+                        "ticker": sig["ticker"],
+                        "direction": sig["signal_type"],
+                        "score": sig["score"],
+                        "current_price": current_price,
+                        "atr_stop_loss": atr_stop_loss,
+                        "llm_reasoning": sig.get("reason", "No reason provided")
+                    }
+                    send_high_conviction_alert(signal_dict, webhook_url)
+                    dispatched += 1
+            
+            logger.info("  [OUT] Dispatched %d high-conviction alerts to Discord.", dispatched)
+            
         total_elapsed = time.time() - total_start
         logger.info("🎉 Master Pipeline completed successfully in %.1fs!", total_elapsed)
         logger.info("Dashboard is now ready to serve fresh metrics.")

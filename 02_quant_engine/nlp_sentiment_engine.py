@@ -1,10 +1,10 @@
 import sys
 from pathlib import Path
 _ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_ROOT))
+sys.path.insert(0, str(_ROOT / "01_memory_core"))
 
-from core.logging_setup import get_logger
-from memory_core.sqlite_portfolio import SQLitePortfolioDB
+from logging_setup import get_logger
+from sqlite_portfolio import SQLitePortfolioDB
 
 logger = get_logger("nlp_sentiment_engine")
 
