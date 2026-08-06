@@ -84,7 +84,7 @@ class MarketDataFetcher:
             try:
                 import time
                 import pandas as pd
-                chunk_size = 40
+                chunk_size = 20
                 all_yf_dfs = []
                 for i in range(0, len(remaining_tickers), chunk_size):
                     chunk = remaining_tickers[i:i + chunk_size]
