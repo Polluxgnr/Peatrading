@@ -125,7 +125,7 @@ def train_model(
     logger.info("Loaded ML training dataset with shape: %s", df.shape)
     
     # Safely initialize missing feature columns (e.g. NLP/news) to neutral 0.0
-    for f in FEATURES:
+    for f in FEATURE_COLS:
         if f not in df.columns:
             df[f] = 0.0
     
