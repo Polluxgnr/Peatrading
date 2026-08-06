@@ -1,6 +1,6 @@
 # PEA Pollux — Full Project Dump for LLM
 
-> **PEA Pollux** · Generated `2026-08-06 10:33 UTC` · Root `C:\Users\PolluxGronier\Downloads\pea_sniper_terminal`
+> **PEA Pollux** · Generated `2026-08-06 10:40 UTC` · Root `C:\Users\PolluxGronier\Downloads\pea_sniper_terminal`
 
 One-shot context for external LLM agents. Includes source, configs, and docs.
 Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
@@ -26832,7 +26832,7 @@ numpy==2.0
 xgboost==2.0
 scikit-learn>=1.3
 # pandas-ta is used for technical indicators
-pandas-ta==0.3.14b0
+pandas-ta
 hmmlearn==0.3
 torch==2.0.0
 stable-baselines3==2.2.1
