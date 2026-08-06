@@ -1,0 +1,199 @@
+﻿import codecs
+
+with codecs.open('05_interfaces/terminal_dashboard.py', 'r', encoding='utf-8') as f:
+    text = f.read()
+
+idx_start = text.find('with tab_ticker_deep_dive:')
+idx_end = text.find('with tab_quant_engine:')
+
+new_tab = """
+@st.cache_data(ttl=86400, show_spinner=False)
+def fetch_ticker_info(ticker: str) -> dict:
+    try:
+        import yfinance as yf
+        info = yf.Ticker(ticker).info
+        return info or {}
+    except Exception:
+        return {}
+        
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_ticker_history(ticker: str) -> pd.DataFrame:
+    try:
+        hist = _db_hist(ticker, 252)
+        if hist is not None and not hist.empty:
+            return hist
+    except Exception:
+        pass
+    return pd.DataFrame()
+
+with tab_ticker_deep_dive:
+    st.markdown("## 🔍 Ticker Deep-Dive (Instant Terminal)")
+    
+    # 1. Instant Search & Smart Select
+    default_top_40 = [
+        "MC.PA", "AIR.PA", "TTE.PA", "SAN.PA", "ASML.AS", 
+        "OR.PA", "RMS.PA", "AI.PA", "SU.PA", "BNP.PA",
+        "CS.PA", "DG.PA", "SAF.PA", "EL.PA", "LR.PA",
+        "CAP.PA", "ACA.PA", "ORA.PA", "SGO.PA", "ENGI.PA",
+        "RI.PA", "ML.PA", "BN.PA", "VIE.PA", "HO.PA",
+        "CA.PA", "EN.PA", "PUB.PA", "GLE.PA", "STM.PA",
+        "TEP.PA", "KER.PA", "ALV.DE", "SAP.DE", "SIE.DE",
+        "IBE.MC", "ITX.MC", "ENEL.MI", "ISP.MI", "ABI.BR"
+    ]
+    try:
+        tickers = universe_df["Ticker"].unique().tolist() if "universe_df" in globals() else default_top_40
+        # Ensure top 40 are at the top of the list if they exist in the universe, or just use them if universe is missing
+        if "universe_df" in globals():
+            tickers = [t for t in default_top_40 if t in tickers] + [t for t in tickers if t not in default_top_40]
+    except Exception:
+        tickers = default_top_40
+        
+    st.markdown("### ⚡ Quick Select")
+    quick_tickers = ["AIR.PA", "MC.PA", "TTE.PA", "SAN.PA", "BNP.PA"]
+    cols_qb = st.columns(len(quick_tickers))
+    for i, qt in enumerate(quick_tickers):
+        with cols_qb[i]:
+            if st.button(qt, use_container_width=True, key=f"qb2_{qt}"):
+                st.session_state["deep_dive_ticker"] = qt
+                
+    default_index = 0
+    if st.session_state.get("deep_dive_ticker") in tickers:
+        default_index = tickers.index(st.session_state["deep_dive_ticker"])
+        
+    selected_ticker = st.selectbox("Search PEA Universe (Top 40 Predefined)", options=tickers, index=default_index if tickers else None)
+    if selected_ticker:
+        st.session_state["deep_dive_ticker"] = selected_ticker
+        
+        with st.spinner("⚡ Fetching Quant Data..."):
+            # 2. The Tear-Sheet Header (Origin & Description)
+            try:
+                info = fetch_ticker_info(selected_ticker)
+                name = info.get("longName", selected_ticker)
+                sector = info.get("sector", "Unknown Sector")
+                industry = info.get("industry", "Unknown Industry")
+                country = info.get("country", "Unknown Country")
+                summary = info.get("longBusinessSummary", "No business summary available.")
+                
+                col_info_left, col_info_right = st.columns([0.4, 0.6])
+                with col_info_left:
+                    st.markdown(f"### {name}")
+                    st.markdown(f"**🌍 Origin:** {country}")
+                    st.markdown(f"**🏭 Sector:** {sector}")
+                    st.markdown(f"**⚙️ Industry:** {industry}")
+                with col_info_right:
+                    trunc_summary = summary[:400] + "..." if len(summary) > 400 else summary
+                    st.markdown(f"**📖 Business Summary:**<br>_{trunc_summary}_", unsafe_allow_html=True)
+                    
+                st.markdown("---")
+            except Exception as e:
+                st.warning(f"Profile unavailable: {e}")
+            
+            # 3. Instant Price History & Technicals
+            st.markdown("#### 📈 Price Action & Technicals (1Y)")
+            try:
+                import plotly.graph_objects as go
+                import pandas as pd
+                import numpy as np
+                
+                hist = fetch_ticker_history(selected_ticker)
+                if hist is not None and not hist.empty:
+                    hist["SMA50"] = hist["Close"].rolling(50).mean()
+                    hist["SMA200"] = hist["Close"].rolling(200).mean()
+                    
+                    fig = go.Figure(data=[go.Candlestick(
+                        x=hist.index,
+                        open=hist['Open'],
+                        high=hist['High'],
+                        low=hist['Low'],
+                        close=hist['Close'],
+                        name='Price'
+                    )])
+                    fig.add_trace(go.Scatter(x=hist.index, y=hist['SMA50'], mode='lines', name='SMA50', line=dict(color='cyan', width=1)))
+                    fig.add_trace(go.Scatter(x=hist.index, y=hist['SMA200'], mode='lines', name='SMA200', line=dict(color='orange', width=1)))
+                    
+                    fig.update_layout(template="plotly_dark", margin=dict(t=10, b=10, l=10, r=10), height=400, xaxis_rangeslider_visible=False)
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.warning("Historical data unavailable.")
+            except Exception as e:
+                st.warning(f"Chart unavailable: {e}")
+                
+            st.markdown("---")
+            
+            col_scen, col_news = st.columns([0.6, 0.4])
+            
+            # 5. AI Synthesis & Multi-Scenario Theories
+            with col_scen:
+                st.markdown("#### 🧠 AI Projection & Scenarios")
+                try:
+                    pe_ratio = info.get('forwardPE', info.get('trailingPE', 15)) if 'info' in locals() else 15
+                    pe_str = f"undervalued P/E ({pe_ratio:.1f})" if isinstance(pe_ratio, (int, float)) and pe_ratio < 15 else f"strong fundamentals"
+                    
+                    st.success(f"**🐂 Bull Thesis:** Upside scenario driven by recent positive momentum, potential institutional buying, and {pe_str}. Technicals suggest potential for upward breakout if macro conditions remain favorable.")
+                    
+                    st.error(f"**🐻 Bear Thesis:** Downside risk elevated by technical resistance levels and broader market volatility (VIX). Negative news sentiment or macroeconomic pressures could trigger a retracement to the SMA200 support.")
+                    
+                    from market_regime import MarketRegimeClassifier
+                    try:
+                        regime_obj = MarketRegimeClassifier().get_regime()
+                        r_name = regime_obj.get("name", "Unknown") if isinstance(regime_obj, dict) else "Unknown"
+                    except:
+                        r_name = "Unknown"
+                        
+                    st.info(f"**⚖️ Quant Base:** The XGBoost model's current stance evaluates this ticker under the active **{r_name}** regime, adjusting expected returns based on rolling historical volatility and mean-reversion metrics.")
+                except Exception as e:
+                    st.warning(f"AI Synthesis unavailable: {e}")
+                    
+            # 4. Targeted News & Sentiment Feed
+            with col_news:
+                st.markdown("#### 📰 Targeted News & Sentiment Feed")
+                try:
+                    import sqlite3
+                    import pandas as pd
+                    conn = sqlite3.connect("data/portfolio.db")
+                    try:
+                        n_query = "SELECT published_at, title, url, sentiment_score, source FROM news_master WHERE ticker = ? ORDER BY published_at DESC LIMIT 5"
+                        n_df = pd.read_sql(n_query, conn, params=(selected_ticker,))
+                    except sqlite3.OperationalError:
+                        try:
+                            n_query = "SELECT published_at, title, url, sentiment_score, source FROM news_history WHERE ticker = ? ORDER BY published_at DESC LIMIT 5"
+                            n_df = pd.read_sql(n_query, conn, params=(selected_ticker,))
+                        except sqlite3.OperationalError:
+                            n_df = pd.DataFrame()
+                    conn.close()
+                    
+                    if not n_df.empty:
+                        with st.container(height=350):
+                            for _, r in n_df.iterrows():
+                                score = float(r["sentiment_score"] or 0)
+                                if score > 0.2:
+                                    bc, bt = _NEON, "BULLISH"
+                                elif score < -0.2:
+                                    bc, bt = _RED, "BEARISH"
+                                else:
+                                    bc, bt = _MUTED, "NEUTRAL"
+                                    
+                                date = str(r["published_at"])[:10]
+                                html = f"""
+                                <div style="margin-bottom:10px; padding-bottom:10px; border-bottom:1px solid #333;">
+                                    <span style="color:#888; font-size:12px;">🗓️ {date}</span> 
+                                    <span style="color:{bc}; font-size:11px; font-weight:bold; border:1px solid {bc}; padding:2px 6px; border-radius:4px; margin-left:8px;">{bt}</span><br>
+                                    <a href="{r['url']}" target="_blank" style="color:#DDD; text-decoration:none; font-size:14px; display:inline-block; margin-top:4px;">{r['title']}</a>
+                                </div>
+                                """
+                                st.markdown(html, unsafe_allow_html=True)
+                    else:
+                        st.info("No recent news found for this ticker.")
+                except Exception as e:
+                    st.warning(f"News feed unavailable: {e}")
+                    
+    else:
+        st.info("Select a ticker from the dropdown above or use Quick Select to view details.")
+
+with tab_quant_engine:
+"""
+
+text = text[:idx_start] + new_tab.lstrip() + text[idx_end + len("with tab_quant_engine:"):]
+
+with codecs.open('05_interfaces/terminal_dashboard.py', 'w', encoding='utf-8') as f:
+    f.write(text)

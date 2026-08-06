@@ -104,7 +104,7 @@ class MarketDataFetcher:
                         time.sleep(2)
                 
                 if all_yf_dfs:
-                    yf_df = pd.concat(all_yf_dfs, ignore_index=True)
+                    yf_df = pd.concat(all_yf_dfs, axis=0, ignore_index=True)
             except Exception:  # noqa: BLE001 - never let an API error crash caller.
                 logger.exception("yf.download failed for tickers: %s", remaining_tickers)
 
