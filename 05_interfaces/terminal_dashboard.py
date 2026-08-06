@@ -3816,21 +3816,23 @@ with tab_market_pulse:
 
 def get_company_info(ticker: str) -> dict:
     try:
-        import sqlite3
+        import json
         db = get_portfolio_db()
         with db._connect() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT name, sector, industry, country, summary FROM ticker_profiles WHERE ticker = ?", (ticker,))
+            cursor.execute("SELECT profile_json FROM ticker_profiles WHERE ticker = ?", (ticker,))
             row = cursor.fetchone()
-            if row:
+            if row and row[0]:
+                data = json.loads(row[0])
+                # Ensure the keys match the UI expectations
                 return {
-                    "longName": row["name"] if "name" in row.keys() else row[0],
-                    "sector": row["sector"] if "sector" in row.keys() else row[1],
-                    "industry": row["industry"] if "industry" in row.keys() else row[2],
-                    "country": row["country"] if "country" in row.keys() else row[3],
-                    "longBusinessSummary": row["summary"] if "summary" in row.keys() else row[4]
+                    "longName": data.get("longName", ticker),
+                    "sector": data.get("sector", "Inconnu"),
+                    "industry": data.get("industry", "Inconnu"),
+                    "country": data.get("country", "Europe"),
+                    "longBusinessSummary": data.get("longBusinessSummary", "Description statique non renseignée dans le système local.")
                 }
-    except Exception as e:
+    except Exception:
         pass
         
     return {

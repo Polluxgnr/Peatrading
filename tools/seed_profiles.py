@@ -43,23 +43,24 @@ def seed():
                 conn.close()
         connect_func = fallback_connect
 
+    import json
     with connect_func() as conn:
+        # Recreate table with correct schema in case the previous script made a flat one
+        conn.execute('DROP TABLE IF EXISTS ticker_profiles')
         conn.execute('''
             CREATE TABLE IF NOT EXISTS ticker_profiles (
                 ticker TEXT PRIMARY KEY,
-                name TEXT,
-                sector TEXT,
-                industry TEXT,
-                country TEXT,
-                summary TEXT
+                profile_json TEXT,
+                last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
         
         for ticker, data in HARDCODED_PROFILES.items():
+            json_string = json.dumps(data, ensure_ascii=False)
             conn.execute('''
-                INSERT OR REPLACE INTO ticker_profiles (ticker, name, sector, industry, country, summary)
-                VALUES (?, ?, ?, ?, ?, ?)
-            ''', (ticker, data["longName"], data["sector"], data["industry"], data["country"], data["longBusinessSummary"]))
+                INSERT OR REPLACE INTO ticker_profiles (ticker, profile_json, last_updated)
+                VALUES (?, ?, CURRENT_TIMESTAMP)
+            ''', (ticker, json_string))
             
         conn.commit()
         
