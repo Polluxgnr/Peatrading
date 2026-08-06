@@ -49,3 +49,4 @@ streamlit-autorefresh==1.0.1
 
 
 streamlit-autorefresh==1.0.1
+discord.py>=2.3.2

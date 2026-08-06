@@ -56,16 +56,15 @@ services:
       - --server.address=0.0.0.0
       - --server.headless=true
 
-  # Optional: enable the interactive Discord bot (approve/revoke buttons).
-  # discord:
-  #   build: .
-  #   image: pea_pollux:latest
-  #   container_name: pea_discord
-  #   restart: unless-stopped
-  #   env_file:
-  #     - config/api_keys.env
-  #   volumes:
-  #     - ./database:/app/database
-  #     - ./logs:/app/logs
-  #     - ./config:/app/config:ro
-  #   command: ["python", "run_discord.py"]
+  discord_copilot:
+    build: .
+    image: pea_pollux:latest
+    container_name: pea_discord
+    restart: unless-stopped
+    env_file:
+      - config/api_keys.env
+    volumes:
+      - ./database:/app/database
+      - ./logs:/app/logs
+      - ./config:/app/config:ro
+    command: ["python", "04_orchestrator_ai/discord_copilot.py"]

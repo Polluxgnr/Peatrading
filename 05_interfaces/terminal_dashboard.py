@@ -4214,6 +4214,35 @@ with tab_pf_exec:
                     "que le futur backtester."
                 )
 
+            # --- Alpha & Benchmark Tracker (Phase 5) ---
+            st.markdown("#### 🏆 Performance vs Benchmark (Live Alpha & Beta)")
+            try:
+                import sys
+                from pathlib import Path
+                _root = Path(__file__).resolve().parent.parent
+                sys.path.insert(0, str(_root / "03_risk_portfolio"))
+                from alpha_tracker import calculate_alpha_metrics
+                
+                with st.spinner("Calcul des métriques de surperformance..."):
+                    alpha_metrics = calculate_alpha_metrics(eq)
+                
+                b1, b2, b3 = st.columns(3)
+                
+                def _fmt_alpha(x):
+                    return f"{x:+.2f}%" if x else "N/A"
+                def _fmt_beta(x):
+                    return f"{x:.2f}" if x else "N/A"
+                def _fmt_ir(x):
+                    return f"{x:.2f}" if x else "N/A"
+                    
+                b1.metric("Jensen's Alpha (vs MSCI World)", _fmt_alpha(alpha_metrics.get("alpha_msci")), delta="Outperformance" if alpha_metrics.get("alpha_msci", 0) > 0 else "-")
+                b2.metric("Beta (vs MSCI World)", _fmt_beta(alpha_metrics.get("beta_msci")))
+                b3.metric("Information Ratio", _fmt_ir(alpha_metrics.get("ir_msci")))
+                
+                st.caption("Comparaison dynamique des rendements journaliers du portefeuille local avec l'indice CW8.PA. Taux sans risque: 3.0%.")
+            except Exception as e:
+                st.warning(f"Erreur lors du calcul des métriques Alpha: {e}")
+
             # Phase 40 — forward tracking vs MSCI World PEA (CW8.PA)
             st.markdown("#### 📈 Tracking en Direct des Recommandations (Forward Curve)")
             try:

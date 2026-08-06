@@ -9418,6 +9418,143 @@ if __name__ == "__main__":
 
 ```
 
+## File: .\03_risk_portfolio\alpha_tracker.py
+
+```python
+import logging
+import pandas as pd
+import numpy as np
+import yfinance as yf
+from datetime import datetime, timezone
+import sys
+from pathlib import Path
+
+_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_ROOT / "01_memory_core"))
+
+from sqlite_portfolio import PortfolioDB
+
+logger = logging.getLogger(__name__)
+
+# Static Risk-Free Rate (e.g. 3.0% annual)
+RISK_FREE_RATE_ANNUAL = 0.03
+
+def calculate_alpha_metrics(portfolio_curve: pd.DataFrame) -> dict:
+    """
+    Computes Jensen's Alpha, Beta, Information Ratio, and Tracking Error 
+    for the portfolio against CW8.PA (MSCI World) and ^FCHI (CAC 40).
+    
+    Args:
+        portfolio_curve: DataFrame with 'date' and 'equity' columns.
+        
+    Returns:
+        A dictionary with the computed metrics.
+    """
+    if portfolio_curve is None or portfolio_curve.empty or len(portfolio_curve) < 2:
+        return {
+            "beta_cac": 0.0,
+            "beta_msci": 0.0,
+            "alpha_cac": 0.0,
+            "alpha_msci": 0.0,
+            "ir_cac": 0.0,
+            "ir_msci": 0.0,
+            "te_cac": 0.0,
+            "te_msci": 0.0,
+        }
+
+    try:
+        portfolio_curve = portfolio_curve.copy()
+        portfolio_curve['date'] = pd.to_datetime(portfolio_curve['date'])
+        portfolio_curve = portfolio_curve.sort_values('date').set_index('date')
+        
+        # Calculate daily returns of portfolio
+        portfolio_curve['returns'] = portfolio_curve['equity'].pct_change().fillna(0.0)
+        
+        start_date = portfolio_curve.index.min().strftime('%Y-%m-%d')
+        end_date = (portfolio_curve.index.max() + pd.Timedelta(days=1)).strftime('%Y-%m-%d')
+        
+        # Download benchmarks
+        benchmarks = yf.download(["CW8.PA", "^FCHI"], start=start_date, end=end_date, progress=False)["Close"]
+        
+        # Ensure it's a DataFrame
+        if isinstance(benchmarks, pd.Series):
+            benchmarks = benchmarks.to_frame()
+            
+        if benchmarks.empty:
+            logger.warning("No benchmark data found for the given dates.")
+            raise ValueError("No benchmark data.")
+            
+        bench_returns = benchmarks.pct_change().fillna(0.0)
+        bench_returns.index = pd.to_datetime(bench_returns.index)
+        
+        # Merge portfolio returns and benchmark returns
+        merged = portfolio_curve[['returns']].join(bench_returns, how='inner').fillna(0.0)
+        
+        if len(merged) < 2:
+            raise ValueError("Not enough overlapping data points to calculate metrics.")
+            
+        port_ret = merged['returns']
+        rf_daily = RISK_FREE_RATE_ANNUAL / 252.0
+        
+        metrics = {}
+        
+        for bm_ticker, bm_name in [("^FCHI", "cac"), ("CW8.PA", "msci")]:
+            if bm_ticker not in merged.columns:
+                metrics[f"beta_{bm_name}"] = 0.0
+                metrics[f"alpha_{bm_name}"] = 0.0
+                metrics[f"ir_{bm_name}"] = 0.0
+                metrics[f"te_{bm_name}"] = 0.0
+                continue
+                
+            bm_ret = merged[bm_ticker]
+            
+            # 1. Beta = Cov(Rp, Rb) / Var(Rb)
+            cov = np.cov(port_ret, bm_ret)[0, 1]
+            var = np.var(bm_ret, ddof=1)
+            beta = cov / var if var > 0 else 0.0
+            
+            # 2. Jensen's Alpha = (Rp - Rf) - Beta * (Rb - Rf)
+            ann_port_ret = (1 + port_ret.mean()) ** 252 - 1
+            ann_bm_ret = (1 + bm_ret.mean()) ** 252 - 1
+            alpha = (ann_port_ret - RISK_FREE_RATE_ANNUAL) - beta * (ann_bm_ret - RISK_FREE_RATE_ANNUAL)
+            
+            # 3. Tracking Error = StdDev(Rp - Rb)
+            active_returns = port_ret - bm_ret
+            te_daily = np.std(active_returns, ddof=1)
+            te_annual = te_daily * np.sqrt(252)
+            
+            # 4. Information Ratio = (Rp - Rb) / TE
+            ann_active_ret = ann_port_ret - ann_bm_ret
+            ir = ann_active_ret / te_annual if te_annual > 0 else 0.0
+            
+            metrics[f"beta_{bm_name}"] = round(beta, 2)
+            metrics[f"alpha_{bm_name}"] = round(alpha * 100, 2) # in %
+            metrics[f"ir_{bm_name}"] = round(ir, 2)
+            metrics[f"te_{bm_name}"] = round(te_annual * 100, 2) # in %
+            
+        return metrics
+
+    except Exception as e:
+        logger.exception("Error calculating alpha metrics: %s", e)
+        return {
+            "beta_cac": 0.0,
+            "beta_msci": 0.0,
+            "alpha_cac": 0.0,
+            "alpha_msci": 0.0,
+            "ir_cac": 0.0,
+            "ir_msci": 0.0,
+            "te_cac": 0.0,
+            "te_msci": 0.0,
+        }
+
+if __name__ == "__main__":
+    db = PortfolioDB()
+    db.init_db()
+    curve = db.get_equity_curve()
+    print(calculate_alpha_metrics(curve))
+
+```
+
 ## File: .\03_risk_portfolio\correlation_firewall.py
 
 ```python
@@ -10102,6 +10239,53 @@ class HRPSizer:
         # Scale to max_budget
         allocations = {t: w * max_budget for t, w in weights.items()}
         return allocations
+
+```
+
+## File: .\03_risk_portfolio\limit_price_optimizer.py
+
+```python
+import logging
+import math
+
+logger = logging.getLogger(__name__)
+
+def calculate_smart_limit_price(ticker: str, current_price: float, atr_14: float, direction: str = "BUY") -> float:
+    """
+    Calculates a smart limit price maximizing fill probability while avoiding chasing spikes.
+    
+    Args:
+        ticker: The stock ticker.
+        current_price: The latest known closing price or mid price.
+        atr_14: The 14-day Average True Range.
+        direction: "BUY" or "SELL".
+        
+    Returns:
+        The suggested limit price rounded to 2 decimal places (Euronext tick rules proxy).
+    """
+    if current_price <= 0:
+        logger.warning(f"Invalid current_price {current_price} for {ticker}")
+        return current_price
+        
+    if atr_14 < 0:
+        logger.warning(f"Invalid negative ATR {atr_14} for {ticker}, defaulting to 0.")
+        atr_14 = 0.0
+
+    direction = str(direction).strip().upper()
+    
+    if direction == "BUY":
+        # Do not pay more than +0.2% or +15% of ATR, whichever is lower
+        limit_px = min(current_price * 1.002, current_price + 0.15 * atr_14)
+    elif direction == "SELL":
+        # Do not sell for less than -0.2% or -15% of ATR, whichever is lower
+        limit_px = max(current_price * 0.998, current_price - 0.15 * atr_14)
+    else:
+        logger.warning(f"Unknown direction '{direction}' for {ticker}, defaulting to current_price.")
+        limit_px = current_price
+        
+    # Euronext typically rounds to 2 or 3 decimals depending on the asset price.
+    # We round to 2 decimals for general liquidity on PEA stocks.
+    return round(limit_px, 2)
 
 ```
 
@@ -10799,6 +10983,186 @@ def simulate_historical_shocks(
 ## File: .\04_orchestrator_ai\__init__.py
 
 ```python
+
+```
+
+## File: .\04_orchestrator_ai\discord_copilot.py
+
+```python
+import asyncio
+import logging
+import os
+import sys
+from pathlib import Path
+
+import discord
+from discord import app_commands
+
+_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_ROOT / "01_memory_core"))
+sys.path.insert(0, str(_ROOT / "03_risk_portfolio"))
+
+from sqlite_portfolio import PortfolioDB, get_portfolio_db
+from limit_price_optimizer import calculate_smart_limit_price
+
+# Configure basic logging
+logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
+logger = logging.getLogger("discord_copilot")
+
+DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
+if not DISCORD_BOT_TOKEN:
+    logger.warning("DISCORD_BOT_TOKEN not found in env. Discord Copilot will not start.")
+
+class PEAPolluxClient(discord.Client):
+    def __init__(self):
+        intents = discord.Intents.default()
+        intents.message_content = True
+        super().__init__(intents=intents)
+        self.tree = app_commands.CommandTree(self)
+        self.db = get_portfolio_db()
+        self.db.init_db()
+
+    async def setup_hook(self):
+        # Sync the application command with Discord
+        await self.tree.sync()
+        logger.info("Discord commands synced successfully.")
+
+client = PEAPolluxClient()
+
+def get_signal_by_id(signal_id: str):
+    """Fetch a single signal from the database by ID."""
+    try:
+        row = client.db._conn.execute(
+            "SELECT id, ticker, signal_type, score, reason FROM audit_logs WHERE id = ?;",
+            (signal_id,)
+        ).fetchone()
+        return row
+    except Exception as e:
+        logger.error(f"Error fetching signal {signal_id}: {e}")
+        return None
+
+def get_latest_price_and_atr(ticker: str):
+    """Fetch the latest price and ATR for a given ticker."""
+    try:
+        # Fallback to yfinance if local DB doesn't have it easily accessible for a fast query
+        import yfinance as yf
+        df = yf.download(ticker, period="1mo", progress=False)
+        if df.empty:
+            return 0.0, 0.0
+            
+        close = float(df['Close'].iloc[-1])
+        # Simple ATR calculation
+        high_low = df['High'] - df['Low']
+        high_close = (df['High'] - df['Close'].shift()).abs()
+        low_close = (df['Low'] - df['Close'].shift()).abs()
+        ranges = float(max(high_low.iloc[-1], high_close.iloc[-1], low_close.iloc[-1]))
+        atr = ranges # Approximation for demo purposes
+        
+        return close, atr
+    except Exception as e:
+        logger.error(f"Error fetching price for {ticker}: {e}")
+        return 0.0, 0.0
+
+@client.tree.command(name="approve", description="Approve a trading signal and generate an Order Ticket")
+async def approve(interaction: discord.Interaction, signal_id: str):
+    await interaction.response.defer()
+    
+    # Run DB calls in a thread executor if they were heavy, but sqlite is fast enough here
+    signal = get_signal_by_id(signal_id)
+    if not signal:
+        await interaction.followup.send(f"❌ Signal `{signal_id}` not found.")
+        return
+
+    ticker = signal["ticker"]
+    signal_type = signal["signal_type"]
+    
+    client.db.update_signal_status(signal_id, "APPROVED", " | Approved via Discord Copilot")
+    
+    # Calculate smart limit price
+    current_price, atr = get_latest_price_and_atr(ticker)
+    limit_px = calculate_smart_limit_price(ticker, current_price, atr, direction=signal_type)
+    
+    # Mock Quantity logic for the ticket
+    alloc_amt = 1000.0
+    qty = int(alloc_amt // limit_px) if limit_px > 0 else 0
+    estimated_fees = round(qty * limit_px * 0.005, 2) # PEA 0.5% cap
+    
+    ticket_md = f"""
+📋 **BROKER ORDER TICKET** 📋
+**Signal ID:** `{signal_id}`
+
+**ISIN / Ticker:** `{ticker}`
+**Action:** `{signal_type}`
+**Quantity:** `{qty}` shares
+**Suggested Limit Price:** `€{limit_px:.2f}`
+**Estimated Fees (0.5% max PEA cap):** `€{estimated_fees:.2f}`
+
+✅ *Signal has been marked as APPROVED in the orchestrator.*
+"""
+    await interaction.followup.send(ticket_md)
+
+@client.tree.command(name="reject", description="Reject a trading signal")
+async def reject(interaction: discord.Interaction, signal_id: str):
+    await interaction.response.defer()
+    
+    signal = get_signal_by_id(signal_id)
+    if not signal:
+        await interaction.followup.send(f"❌ Signal `{signal_id}` not found.")
+        return
+
+    client.db.update_signal_status(signal_id, "REJECTED", " | Rejected via Discord Copilot")
+    await interaction.followup.send(f"🚫 Signal `{signal_id}` for **{signal['ticker']}** has been rejected.")
+
+@client.tree.command(name="status", description="Get live portfolio status")
+async def status(interaction: discord.Interaction):
+    await interaction.response.defer()
+    
+    portfolio = client.db.get_portfolio_state()
+    
+    # VIX approximation via yf
+    vix = 15.0
+    try:
+        import yfinance as yf
+        vix_df = yf.download("^VIX", period="5d", progress=False)
+        if not vix_df.empty:
+            vix = float(vix_df['Close'].iloc[-1])
+    except:
+        pass
+        
+    msg = f"""
+📊 **PEA Pollux Status**
+**Total Equity:** `€{portfolio.total_equity:,.2f}`
+**Cash Runway:** `€{portfolio.cash_available:,.2f}`
+**Positions:** `{len(portfolio.positions)}` active lines
+**VIX Level:** `{vix:.2f}`
+"""
+    await interaction.followup.send(msg)
+
+@client.tree.command(name="portfolio", description="List active positions and ATR stops")
+async def portfolio(interaction: discord.Interaction):
+    await interaction.response.defer()
+    
+    port = client.db.get_portfolio_state()
+    if not port.positions:
+        await interaction.followup.send("💼 Your portfolio is currently empty.")
+        return
+        
+    lines = ["💼 **Active Positions**"]
+    for p in port.positions:
+        pnl = 0.0
+        if p.avg_entry_price > 0:
+            pnl = ((p.current_price / p.avg_entry_price) - 1.0) * 100
+            
+        lines.append(f"- **{p.ticker}**: {p.qty_shares} shares @ €{p.current_price:.2f} (PnL: {pnl:+.2f}%)")
+        
+    await interaction.followup.send("\n".join(lines))
+
+if __name__ == "__main__":
+    if DISCORD_BOT_TOKEN:
+        logger.info("Starting Discord Copilot Daemon...")
+        client.run(DISCORD_BOT_TOKEN)
+    else:
+        logger.error("No token found, exiting.")
 
 ```
 
@@ -16931,6 +17295,35 @@ with tab_pf_exec:
                     "que le futur backtester."
                 )
 
+            # --- Alpha & Benchmark Tracker (Phase 5) ---
+            st.markdown("#### 🏆 Performance vs Benchmark (Live Alpha & Beta)")
+            try:
+                import sys
+                from pathlib import Path
+                _root = Path(__file__).resolve().parent.parent
+                sys.path.insert(0, str(_root / "03_risk_portfolio"))
+                from alpha_tracker import calculate_alpha_metrics
+                
+                with st.spinner("Calcul des métriques de surperformance..."):
+                    alpha_metrics = calculate_alpha_metrics(eq)
+                
+                b1, b2, b3 = st.columns(3)
+                
+                def _fmt_alpha(x):
+                    return f"{x:+.2f}%" if x else "N/A"
+                def _fmt_beta(x):
+                    return f"{x:.2f}" if x else "N/A"
+                def _fmt_ir(x):
+                    return f"{x:.2f}" if x else "N/A"
+                    
+                b1.metric("Jensen's Alpha (vs MSCI World)", _fmt_alpha(alpha_metrics.get("alpha_msci")), delta="Outperformance" if alpha_metrics.get("alpha_msci", 0) > 0 else "-")
+                b2.metric("Beta (vs MSCI World)", _fmt_beta(alpha_metrics.get("beta_msci")))
+                b3.metric("Information Ratio", _fmt_ir(alpha_metrics.get("ir_msci")))
+                
+                st.caption("Comparaison dynamique des rendements journaliers du portefeuille local avec l'indice CW8.PA. Taux sans risque: 3.0%.")
+            except Exception as e:
+                st.warning(f"Erreur lors du calcul des métriques Alpha: {e}")
+
             # Phase 40 — forward tracking vs MSCI World PEA (CW8.PA)
             st.markdown("#### 📈 Tracking en Direct des Recommandations (Forward Curve)")
             try:
@@ -19605,19 +19998,18 @@ services:
       - --server.address=0.0.0.0
       - --server.headless=true
 
-  # Optional: enable the interactive Discord bot (approve/revoke buttons).
-  # discord:
-  #   build: .
-  #   image: pea_pollux:latest
-  #   container_name: pea_discord
-  #   restart: unless-stopped
-  #   env_file:
-  #     - config/api_keys.env
-  #   volumes:
-  #     - ./database:/app/database
-  #     - ./logs:/app/logs
-  #     - ./config:/app/config:ro
-  #   command: ["python", "run_discord.py"]
+  discord_copilot:
+    build: .
+    image: pea_pollux:latest
+    container_name: pea_discord
+    restart: unless-stopped
+    env_file:
+      - config/api_keys.env
+    volumes:
+      - ./database:/app/database
+      - ./logs:/app/logs
+      - ./config:/app/config:ro
+    command: ["python", "04_orchestrator_ai/discord_copilot.py"]
 
 ```
 
@@ -20735,6 +21127,7 @@ streamlit-autorefresh==1.0.1
 
 
 streamlit-autorefresh==1.0.1
+discord.py>=2.3.2
 
 ```
 
