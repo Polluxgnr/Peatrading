@@ -3724,28 +3724,15 @@ with tab_market_pulse:
     news_filter = st.radio("News Filter", ["All News", "High Impact Only", "Bullish", "Bearish"], horizontal=True)
     
     try:
-        import sqlite3
-        import pandas as pd
         db = get_portfolio_db()
-        with db._connect() as conn:
-            try:
-                news_query = "SELECT ticker, published_at, title, url, sentiment_score, source FROM news_master ORDER BY published_at DESC LIMIT 50"
-                news_df = pd.read_sql(news_query, conn)
-            except sqlite3.OperationalError:
-                try:
-                    news_query = "SELECT ticker, published_at, title, url, sentiment_score, source FROM news_history ORDER BY published_at DESC LIMIT 50"
-                    news_df = pd.read_sql(news_query, conn)
-                except sqlite3.OperationalError:
-                    news_df = pd.DataFrame()
+        news_items = db.get_news_history(limit=100)
         
-        if news_df.empty:
+        if not news_items:
             st.info("Data lake is empty. Waiting for daemon to ingest news.")
-            news_rows = []
         else:
-            news_rows = news_df.to_dict("records")
             filtered_news = []
-            for r in news_rows:
-                score = float(r["sentiment_score"] or 0)
+            for r in news_items:
+                score = float(r.get("sentiment_score") or 0)
                 if news_filter == "High Impact Only" and abs(score) < 0.5:
                     continue
                 if news_filter == "Bullish" and score < 0.2:
@@ -3756,10 +3743,9 @@ with tab_market_pulse:
                 
             st.caption(f"Showing {len(filtered_news)} articles matching filter.")
             
-            # Scrollable container
             with st.container(height=600):
                 for r in filtered_news:
-                    score = float(r["sentiment_score"] or 0)
+                    score = float(r.get("sentiment_score") or 0)
                     if score > 0.2:
                         badge_col = _NEON
                         badge_txt = "BULLISH"
@@ -3770,13 +3756,13 @@ with tab_market_pulse:
                         badge_col = _MUTED
                         badge_txt = "NEUTRAL"
                         
-                    source = r["source"] or "Unknown"
-                    title = r["title"] or "No Title"
-                    ticker = r["ticker"] or "MACRO"
-                    date = str(r["published_at"])[:16]
-                    url = r["url"] or "#"
+                    source = r.get("source", "Unknown")
+                    title = r.get("title", "No Title")
+                    ticker = r.get("ticker", "MACRO")
+                    date = str(r.get("published_at"))[:16]
+                    url = r.get("url", "#")
                     
-                    st.markdown(f"""
+                    st.markdown(f'''
                     <div style="padding:10px; margin-bottom:10px; border:1px solid #333; background:#111; border-left:4px solid {badge_col}">
                         <div style="font-size:12px; color:#888; margin-bottom:4px;">
                             <span>{date}</span> | 
@@ -3789,7 +3775,7 @@ with tab_market_pulse:
                         <div><a href="{url}" target="_blank" style="color:#E0E0E0; text-decoration:none; font-size:15px; font-weight:600;">{title}</a></div>
                         <div style="font-size:12px; color:#00B4D8; margin-top:6px;">🤖 Ollama LLM Insight: Processed</div>
                     </div>
-                    """, unsafe_allow_html=True)
+                    ''', unsafe_allow_html=True)
                     
     except Exception as e:
         st.error(f"Failed to load news: {e}")
@@ -3828,184 +3814,148 @@ with tab_market_pulse:
         st.info("Data unavailable")
 
 
-@st.cache_data(ttl=900, show_spinner=False)
-def fetch_ticker_info(ticker: str) -> dict:
-    try:
-        import yfinance as yf
-        info = yf.Ticker(ticker).info
-        return info or {}
-    except Exception:
-        return {}
+HARDCODED_PROFILES = {
+    "MC.PA": {"longName": "LVMH", "sector": "Consommation Discrétionnaire", "industry": "Luxe", "country": "France", "summary": "LVMH Moët Hennessy Louis Vuitton est le leader mondial du luxe, possédant un portefeuille unique de plus de 75 maisons prestigieuses dans les vins et spiritueux, la mode, les parfums et la joaillerie."},
+    "OR.PA": {"longName": "L'Oréal", "sector": "Consommation de Base", "industry": "Cosmétiques", "country": "France", "summary": "L'Oréal est le leader mondial de la beauté, proposant une large gamme de produits cosmétiques, de soins de la peau et de parfums à travers de multiples marques internationales."},
+    "AI.PA": {"longName": "Air Liquide", "sector": "Matériaux", "industry": "Gaz Industriels", "country": "France", "summary": "Air Liquide est un leader mondial des gaz, technologies et services pour l'industrie et la santé, essentiel à la transition énergétique et à l'innovation industrielle."},
+    "TTE.PA": {"longName": "TotalEnergies", "sector": "Énergie", "industry": "Pétrole & Gaz", "country": "France", "summary": "TotalEnergies est une compagnie multi-énergies mondiale de production et de fourniture d'énergies : pétrole et biocarburants, gaz naturel et gaz verts, renouvelables et électricité."},
+    "SAN.PA": {"longName": "Sanofi", "sector": "Santé", "industry": "Produits Pharmaceutiques", "country": "France", "summary": "Sanofi est une entreprise mondiale de la santé, innovante et guidée par un objectif : poursuivre les miracles de la science pour améliorer la vie des gens."},
+    "ASML.AS": {"longName": "ASML", "sector": "Technologie", "industry": "Équipements Semi-conducteurs", "country": "Pays-Bas", "summary": "ASML est un acteur clé de l'industrie des semi-conducteurs, fournissant aux fabricants de puces le matériel, les logiciels et les services nécessaires à la production en masse de modèles sur silicium."},
+    "SAP.DE": {"longName": "SAP", "sector": "Technologie", "industry": "Logiciels d'Entreprise", "country": "Allemagne", "summary": "SAP est l'un des principaux producteurs mondiaux de logiciels pour la gestion des processus métier, développant des solutions qui facilitent le traitement efficace des données et les flux d'informations."},
+    "RMS.PA": {"longName": "Hermès", "sector": "Consommation Discrétionnaire", "industry": "Luxe", "country": "France", "summary": "Hermès est une maison de luxe française indépendante, familiale et artisanale, célèbre pour ses produits en cuir, ses accessoires de mode, sa parfumerie et ses montres."},
+    "AIR.PA": {"longName": "Airbus", "sector": "Industrie", "industry": "Aérospatial", "country": "France", "summary": "Airbus est un pionnier mondial de l'aéronautique et de l'espace, offrant des solutions innovantes en matière d'avions commerciaux, d'hélicoptères, de défense et d'espace."},
+    "BNP.PA": {"longName": "BNP Paribas", "sector": "Finance", "industry": "Banque", "country": "France", "summary": "BNP Paribas est l'une des principales banques européennes avec une présence internationale, offrant des services bancaires de détail, des solutions d'investissement et de financement de marché."},
+    "SU.PA": {"longName": "Schneider Electric", "sector": "Industrie", "industry": "Équipements Électriques", "country": "France", "summary": "Schneider Electric est un spécialiste mondial de la gestion de l'énergie et des automatismes, fournissant des solutions numériques pour l'efficacité et la durabilité."},
+    "CS.PA": {"longName": "AXA", "sector": "Finance", "industry": "Assurance", "country": "France", "summary": "AXA est un leader mondial de l'assurance et de la gestion d'actifs, accompagnant ses clients dans 51 pays avec des solutions de protection, de santé et d'épargne."},
+    "DG.PA": {"longName": "Vinci", "sector": "Industrie", "industry": "Construction & Concessions", "country": "France", "summary": "Vinci est un acteur mondial des métiers des concessions, de l'énergie et de la construction, contribuant à transformer les villes et les territoires."},
+    "SAF.PA": {"longName": "Safran", "sector": "Industrie", "industry": "Aérospatial", "country": "France", "summary": "Safran est un groupe international de haute technologie opérant dans les domaines de l'aéronautique (propulsion, équipements et intérieurs), de l'espace et de la défense."}
+}
 
-@st.cache_data(ttl=86400, show_spinner=False)
-def fetch_ticker_info(ticker: str) -> dict:
-    try:
-        import yfinance as yf
-        info = yf.Ticker(ticker).info
-        return info or {}
-    except Exception:
-        return {}
-        
-@st.cache_data(ttl=3600, show_spinner=False)
-def fetch_ticker_history(ticker: str) -> pd.DataFrame:
-    try:
-        hist = _db_hist(ticker, 252)
-        if hist is not None and not hist.empty:
-            return hist
-    except Exception:
-        pass
-    return pd.DataFrame()
+def get_static_profile(ticker: str) -> dict:
+    if ticker in HARDCODED_PROFILES:
+        return HARDCODED_PROFILES[ticker]
+    return {
+        "longName": ticker,
+        "sector": "Inconnu",
+        "industry": "Inconnu",
+        "country": "Inconnu",
+        "summary": "Données statiques non renseignées pour cette valeur."
+    }
 
 with tab_ticker_deep_dive:
     st.markdown("## 🔍 Ticker Deep-Dive (Instant Terminal)")
-    
-    # 1. Instant Search & Smart Select
-    default_top_40 = [
-        "MC.PA", "AIR.PA", "TTE.PA", "SAN.PA", "ASML.AS", 
-        "OR.PA", "RMS.PA", "AI.PA", "SU.PA", "BNP.PA",
-        "CS.PA", "DG.PA", "SAF.PA", "EL.PA", "LR.PA",
-        "CAP.PA", "ACA.PA", "ORA.PA", "SGO.PA", "ENGI.PA",
-        "RI.PA", "ML.PA", "BN.PA", "VIE.PA", "HO.PA",
-        "CA.PA", "EN.PA", "PUB.PA", "GLE.PA", "STM.PA",
-        "TEP.PA", "KER.PA", "ALV.DE", "SAP.DE", "SIE.DE",
-        "IBE.MC", "ITX.MC", "ENEL.MI", "ISP.MI", "ABI.BR"
-    ]
     try:
-        tickers = universe_df["Ticker"].unique().tolist() if "universe_df" in globals() else default_top_40
-        if "universe_df" in globals():
-            tickers = [t for t in default_top_40 if t in tickers] + [t for t in tickers if t not in default_top_40]
+        tickers = universe_df["Ticker"].unique().tolist() if "universe_df" in globals() else []
     except Exception:
-        tickers = default_top_40
+        tickers = []
         
-    selected_ticker = st.selectbox("Search PEA Universe (Top 40 Predefined)", options=tickers, index=0 if tickers else None)
+    selected_ticker = st.selectbox("Search PEA Universe", options=tickers, index=0 if tickers else None)
+    
     if selected_ticker:
-        
         with st.spinner("⚡ Fetching Quant Data..."):
-            # 2. The Tear-Sheet Header (Origin & Description)
             try:
-                info = fetch_ticker_info(selected_ticker)
+                info = get_static_profile(selected_ticker)
                 name = info.get("longName", selected_ticker)
-                sector = info.get("sector", "Unknown Sector")
-                industry = info.get("industry", "Unknown Industry")
-                country = info.get("country", "Unknown Country")
-                summary = info.get("longBusinessSummary", "No business summary available.")
+                sector = info.get("sector", "Inconnu")
+                industry = info.get("industry", "Inconnu")
+                country = info.get("country", "Inconnu")
+                summary = info.get("summary", "Données statiques non renseignées pour cette valeur.")
                 
                 col_info_left, col_info_right = st.columns([0.4, 0.6])
                 with col_info_left:
                     st.markdown(f"### {name}")
-                    st.markdown(f"**🌍 Origin:** {country}")
-                    st.markdown(f"**🏭 Sector:** {sector}")
-                    st.markdown(f"**⚙️ Industry:** {industry}")
+                    st.markdown(f"**🌍 Origine:** {country}")
+                    st.markdown(f"**🏭 Secteur:** {sector}")
+                    st.markdown(f"**⚙️ Industrie:** {industry}")
                 with col_info_right:
                     trunc_summary = summary[:400] + "..." if len(summary) > 400 else summary
-                    st.markdown(f"**📖 Business Summary:**<br>_{trunc_summary}_", unsafe_allow_html=True)
-                    
+                    st.markdown(f"**📖 Description:**<br>_{trunc_summary}_", unsafe_allow_html=True)
                 st.markdown("---")
             except Exception as e:
-                st.warning(f"Profile unavailable: {e}")
+                st.warning("Profile temporarily unavailable.")
+
+            col_fun, col_rad = st.columns(2)
+            with col_fun:
+                st.markdown("### 📊 Fundamentals")
+                try:
+                    metrics = get_valuation_metrics(selected_ticker)
+                    if metrics:
+                        val_pe = metrics.get('pe_ratio')
+                        val_pb = metrics.get('pb_ratio')
+                        val_ret = metrics.get('return_1y')
+                        if isinstance(val_pe, float): val_pe = f"{val_pe:.1f}"
+                        if isinstance(val_pb, float): val_pb = f"{val_pb:.2f}"
+                        if isinstance(val_ret, float): val_ret = f"{val_ret:.1f}%"
+                        st.markdown(metric_box("P/E Ratio", str(val_pe)), unsafe_allow_html=True)
+                        st.markdown(metric_box("P/B Ratio", str(val_pb)), unsafe_allow_html=True)
+                        st.markdown(metric_box("Return 1Y", str(val_ret)), unsafe_allow_html=True)
+                    else:
+                        st.info("Metrics unavailable")
+                except Exception:
+                    st.info("Metrics unavailable")
+                    
+            with col_rad:
+                st.markdown("### 🎯 Strategy Fingerprint")
+                try:
+                    fp = get_strategy_fingerprint(selected_ticker)
+                    if fp:
+                        import plotly.graph_objects as go
+                        fig = render_strategy_radar(fp, selected_ticker)
+                        st.plotly_chart(fig, use_container_width=True)
+                    else:
+                        st.info("Fingerprint unavailable")
+                except Exception:
+                    st.info("Fingerprint unavailable")
+                    
+            st.markdown("---")
             
-            # 3. Instant Price History & Technicals
-            st.markdown("#### 📈 Price Action & Technicals (1Y)")
+            st.markdown("### 📈 Price Action & Technicals (1Y)")
             try:
                 import plotly.graph_objects as go
-                import pandas as pd
-                import numpy as np
-                
-                hist = fetch_ticker_history(selected_ticker)
+                hist = _db_hist(selected_ticker, 252)
                 if hist is not None and not hist.empty:
-                    hist["SMA50"] = hist["Close"].rolling(50).mean()
-                    hist["SMA200"] = hist["Close"].rolling(200).mean()
-                    
                     fig = go.Figure(data=[go.Candlestick(
-                        x=hist.index,
-                        open=hist['Open'],
-                        high=hist['High'],
-                        low=hist['Low'],
-                        close=hist['Close'],
-                        name='Price'
+                        x=hist.index, open=hist['Open'], high=hist['High'],
+                        low=hist['Low'], close=hist['Close'], name='Price'
                     )])
-                    fig.add_trace(go.Scatter(x=hist.index, y=hist['SMA50'], mode='lines', name='SMA50', line=dict(color='cyan', width=1)))
-                    fig.add_trace(go.Scatter(x=hist.index, y=hist['SMA200'], mode='lines', name='SMA200', line=dict(color='orange', width=1)))
-                    
                     fig.update_layout(template="plotly_dark", margin=dict(t=10, b=10, l=10, r=10), height=400, xaxis_rangeslider_visible=False)
                     st.plotly_chart(fig, use_container_width=True)
                 else:
-                    st.warning("Historical data unavailable.")
-            except Exception as e:
-                st.warning(f"Chart unavailable: {e}")
+                    st.info("Chart data unavailable")
+            except Exception:
+                st.info("Chart data unavailable")
                 
             st.markdown("---")
             
-            col_scen, col_news = st.columns([0.6, 0.4])
-            
-            # 5. AI Synthesis & Multi-Scenario Theories
-            with col_scen:
-                st.markdown("#### 🧠 AI Projection & Scenarios")
+            col_ins, col_news = st.columns(2)
+            with col_ins:
+                st.markdown("### 👔 AMF Insider Activity")
                 try:
-                    pe_ratio = info.get('forwardPE', info.get('trailingPE', 15)) if 'info' in locals() else 15
-                    pe_str = f"undervalued P/E ({pe_ratio:.1f})" if isinstance(pe_ratio, (int, float)) and pe_ratio < 15 else f"strong fundamentals"
-                    
-                    st.success(f"**🐂 Bull Thesis:** Upside scenario driven by recent positive momentum, potential institutional buying, and {pe_str}. Technicals suggest potential for upward breakout if macro conditions remain favorable.")
-                    
-                    st.error(f"**🐻 Bear Thesis:** Downside risk elevated by technical resistance levels and broader market volatility (VIX). Negative news sentiment or macroeconomic pressures could trigger a retracement to the SMA200 support.")
-                    
-                    from market_regime import MarketRegimeClassifier
-                    try:
-                        regime_obj = MarketRegimeClassifier().get_regime()
-                        r_name = regime_obj.get("name", "Unknown") if isinstance(regime_obj, dict) else "Unknown"
-                    except:
-                        r_name = "Unknown"
-                        
-                    st.info(f"**⚖️ Quant Base:** The XGBoost model's current stance evaluates this ticker under the active **{r_name}** regime, adjusting expected returns based on rolling historical volatility and mean-reversion metrics.")
-                except Exception as e:
-                    st.warning(f"AI Synthesis unavailable: {e}")
-                    
-            # 4. Targeted News & Sentiment Feed
-            with col_news:
-                st.markdown("#### 📰 Targeted News & Sentiment Feed")
-                try:
-                    import sqlite3
-                    import pandas as pd
-                    import pandas as pd
-                    db = get_portfolio_db()
-                    with db._connect() as conn:
-                        try:
-                            n_query = "SELECT published_at, title, url, sentiment_score, source FROM news_master WHERE ticker = ? ORDER BY published_at DESC LIMIT 5"
-                            n_df = pd.read_sql(n_query, conn, params=(selected_ticker,))
-                        except sqlite3.OperationalError:
-                            try:
-                                n_query = "SELECT published_at, title, url, sentiment_score, source FROM news_history WHERE ticker = ? ORDER BY published_at DESC LIMIT 5"
-                                n_df = pd.read_sql(n_query, conn, params=(selected_ticker,))
-                            except sqlite3.OperationalError:
-                                n_df = pd.DataFrame()
-                    
-                    if not n_df.empty:
-                        with st.container(height=350):
-                            for _, r in n_df.iterrows():
-                                score = float(r["sentiment_score"] or 0)
-                                if score > 0.2:
-                                    bc, bt = _NEON, "BULLISH"
-                                elif score < -0.2:
-                                    bc, bt = _RED, "BEARISH"
-                                else:
-                                    bc, bt = _MUTED, "NEUTRAL"
-                                    
-                                date = str(r["published_at"])[:10]
-                                html = f"""
-                                <div style="margin-bottom:10px; padding-bottom:10px; border-bottom:1px solid #333;">
-                                    <span style="color:#888; font-size:12px;">🗓️ {date}</span> 
-                                    <span style="color:{bc}; font-size:11px; font-weight:bold; border:1px solid {bc}; padding:2px 6px; border-radius:4px; margin-left:8px;">{bt}</span><br>
-                                    <a href="{r['url']}" target="_blank" style="color:#DDD; text-decoration:none; font-size:14px; display:inline-block; margin-top:4px;">{r['title']}</a>
-                                </div>
-                                """
-                                st.markdown(html, unsafe_allow_html=True)
+                    df_insider = get_insider_data(selected_ticker)
+                    if not df_insider.empty:
+                        summary = summarize_insider_activity(df_insider)
+                        sig_msg = summary.get("signal", "N/A")
+                        tone = summary.get("tone", "muted")
+                        color = _NEON if tone == "bullish" else (_RED if tone == "bearish" else _MUTED)
+                        st.markdown(f"**Signal AMF:** <span style='color:{color}; font-weight:bold;'>{sig_msg}</span>", unsafe_allow_html=True)
+                        st.dataframe(df_insider, use_container_width=True, hide_index=True)
                     else:
-                        st.info("No recent news found for this ticker.")
-                except Exception as e:
-                    st.warning(f"News feed unavailable: {e}")
+                        st.info("No insider activity recorded")
+                except Exception:
+                    st.info("Insider data unavailable")
                     
-    else:
-        st.info("Select a ticker from the dropdown above to view details.")
+            with col_news:
+                st.markdown("### 📰 Ticker-Specific News")
+                try:
+                    t_news = get_recent_news(selected_ticker, limit=5)
+                    if t_news:
+                        for n in t_news:
+                            render_news_card(selected_ticker, n, n.get('sentiment_score'))
+                    else:
+                        st.info("No specific news available")
+                except Exception:
+                    st.info("News unavailable")
+
 
 with tab_quant_engine:
 

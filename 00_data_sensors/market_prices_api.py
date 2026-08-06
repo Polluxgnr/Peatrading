@@ -82,16 +82,29 @@ class MarketDataFetcher:
                 pass
 
             try:
-                raw = yf.download(
-                    remaining_tickers,
-                    start=start_date,
-                    progress=False,
-                    auto_adjust=True,
-                    group_by="column",
-                    threads=True,
-                )
-                if raw is not None and not raw.empty:
-                    yf_df = self._flatten(raw, remaining_tickers)
+                import time
+                import pandas as pd
+                chunk_size = 40
+                all_yf_dfs = []
+                for i in range(0, len(remaining_tickers), chunk_size):
+                    chunk = remaining_tickers[i:i + chunk_size]
+                    raw = yf.download(
+                        chunk,
+                        start=start_date,
+                        progress=False,
+                        auto_adjust=True,
+                        group_by="column",
+                        threads=True,
+                    )
+                    if raw is not None and not raw.empty:
+                        flat_chunk = self._flatten(raw, chunk)
+                        all_yf_dfs.append(flat_chunk)
+                    
+                    if i + chunk_size < len(remaining_tickers):
+                        time.sleep(2)
+                
+                if all_yf_dfs:
+                    yf_df = pd.concat(all_yf_dfs, ignore_index=True)
             except Exception:  # noqa: BLE001 - never let an API error crash caller.
                 logger.exception("yf.download failed for tickers: %s", remaining_tickers)
 
