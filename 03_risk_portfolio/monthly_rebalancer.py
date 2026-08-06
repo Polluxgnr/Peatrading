@@ -24,11 +24,6 @@ from typing import Any, Iterable, List, Optional, Sequence
 import pandas as pd
 import yaml
 
-try:
-    import pandas_ta as ta  # noqa: F401
-except ImportError:  # pragma: no cover
-    import pandas_ta_classic as ta  # noqa: F401
-
 _CORE_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "01_memory_core"
 )

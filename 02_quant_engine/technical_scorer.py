@@ -30,11 +30,6 @@ try:  # yfinance is only needed for the optional Quality (EPS) filter.
 except Exception:  # noqa: BLE001 - keep the pure-math engine importable offline.
     yf = None  # type: ignore[assignment]
 
-try:  # pragma: no cover - environment-dependent import.
-    import pandas_ta as ta  # noqa: F401
-except ImportError:  # pragma: no cover
-    import pandas_ta_classic as ta  # noqa: F401
-
 _CORE_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "01_memory_core"
 )
@@ -210,13 +205,22 @@ class SignalGenerator:
         """Attach trend/MR/breakout indicators for the ensemble committee."""
         out = df.copy()
         close = out["Close"]
-        out["SMA_5"] = out.ta.sma(close=close, length=5)
-        out["SMA_50"] = out.ta.sma(close=close, length=50)
-        out["SMA_200"] = out.ta.sma(close=close, length=200)
-        out["RSI_14"] = out.ta.rsi(close=close, length=14)
-        out.ta.macd(close=close, append=True)
-        out.ta.bbands(close=close, append=True)
-        out.ta.atr(high=out["High"], low=out["Low"], close=close, length=14, append=True)
+        out["SMA_5"] = _calc_sma(close, 5)
+        out["SMA_50"] = _calc_sma(close, 50)
+        out["SMA_200"] = _calc_sma(close, 200)
+        out["RSI_14"] = _calc_rsi(close, 14)
+        
+        macd_line, macd_hist, macd_sig = _calc_macd(close)
+        out["MACD_12_26_9"] = macd_line
+        out["MACDh_12_26_9"] = macd_hist
+        out["MACDs_12_26_9"] = macd_sig
+        
+        bbl, bbm, bbu = _calc_bbands(close)
+        out["BBL_5_2.0"] = bbl
+        out["BBM_5_2.0"] = bbm
+        out["BBU_5_2.0"] = bbu
+        
+        out["ATRr_14"] = _calc_atr(out["High"], out["Low"], close, 14)
         out["Z_SCORE_50"] = calculate_z_score(close)
         return out
 
