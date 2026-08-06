@@ -1535,16 +1535,16 @@ streamlit run 05_interfaces/terminal_dashboard.py
 *   **Strict News Filtering:** ImplÃ©mentation d'un filtre regex anti-spam universel (`discount|free|referral|newsletter|sponsor...`) qui intercepte et purifie les flux RSS avant leur traitement IA (Morning Briefing).
 
 
- - - - 
- # #   P h a s e   5 5   :   M u l t i - S o u r c e   N e w s   E n g i n e ,   D a t a   L i n e a g e   &   Q u a n t   M L   E v o l u t i o n   ( C u r r e n t ) 
- 
- *       * * M u l t i - S o u r c e   N e w s   E n g i n e : * *   F i l t r e   m u l t i - s o u r c e s   ( S u b s t a c k ,   G o o g l e   N e w s ,   B o u r s o r a m a )   a v e c   h i s t o r i q u e   d e s   n e w s   a r c h i v é e s   d a n s   D u c k D B / S Q L i t e   e t   b a d g e s   I A   ( B u l l i s h / B e a r i s h ) . 
- *       * * D a t a   L i n e a g e   T a b : * *   S e c t i o n   a r c h i t e c t u r e   d u   t a b l e a u   d e   b o r d   a f f i c h a n t   l a   p r o v e n a n c e   d e s   d o n n é e s ,   l ' h e u r e   d e   s y n c h r o n i s a t i o n ,   e t   l e   s t a t u t   v i a   p i p e l i n e _ s t a t u s . j s o n . 
- *       * * X G B o o s t   M u l t i - H o r i z o n : * *   S u p p o r t   i n t é g r é   d e   c i b l e s   M L   d u a l - h o r i z o n   ( 3 0   j o u r s   t a c t i q u e ,   1 2 6   j o u r s   s t r u c t u r e l )   a v e c   i n f é r e n c e   S H A P   X A I . 
- *       * * P i o t r o s k i   S c o r e   &   V a l u e   T r a p   V e t o : * *   I n t é g r a t i o n   d u   s c o r e   P i o t r o s k i   ( v i a   F M P )   d a n s   l e   c a c h e   S Q L i t e   a v e c   u n   v e t o   s t r i c t   ( < 4 )   a u   n i v e a u   d u   c a s c a d e . 
- *       * * P e r f o r m a n c e s   &   S é c u r i t é : * *   O p t i m i s a t i o n   d e   P l o t l y ,   f i x   d u   T h r e a d   l o c k   d e s   c o n n e x i o n s   D B   a v e c   @ s t . c a c h e _ r e s o u r c e ,   e t   v a l i d a t i o n   é t e n d u e   d e   l a   w h i t e l i s t   n e w s l e t t e r . 
- 
- 
+---
+## Phase 55 : Multi-Source News Engine, Data Lineage & Quant ML Evolution (Current)
+
+*   **Multi-Source News Engine:** Filtre multi-sources (Substack, Google News, Boursorama) avec historique des news archivées dans DuckDB/SQLite et badges IA (Bullish/Bearish).
+*   **Data Lineage Tab:** Section architecture du tableau de bord affichant la provenance des données, l'heure de synchronisation, et le statut via pipeline_status.json.
+*   **XGBoost Multi-Horizon:** Support intégré de cibles ML dual-horizon (30 jours tactique, 126 jours structurel) avec inférence SHAP XAI.
+*   **Piotroski Score & Value Trap Veto:** Intégration du score Piotroski (via FMP) dans le cache SQLite avec un veto strict (<4) au niveau du cascade.
+*   **Performances & Sécurité:** Optimisation de Plotly, fix du Thread lock des connexions DB avec @st.cache_resource, et validation étendue de la whitelist newsletter.
+
+
 ## Recent Updates (August 2026)
 - **UI/UX Bloomberg Overhaul**: Upgraded tables to native \st.dataframe\ with link formats and strict color-coding. Migrated Top/Flop to Market & Macro.
 - **Extreme Anti-Spam**: Drastically expanded the spam regex to block lifestyle, promo, and exclusive offer emails from polluting the stream.

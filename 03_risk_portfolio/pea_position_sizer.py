@@ -154,29 +154,18 @@ class PeaSizer:
             max_alloc = portfolio.total_equity * self.max_single_position
             meta["hrp_max_alloc"] = None
         
-        # RL Sizing Path
-        if getattr(self, "rl_model", None) is not None and historical_volatility is not None:
-            import numpy as np
-            obs = np.array([signal.score / 100.0, historical_volatility], dtype=np.float32)
-            action, _ = self.rl_model.predict(obs, deterministic=True)
-            # Action space [-1, 1] mapped to [0, 1]
-            dynamic_kelly = float(np.clip((action[0] + 1.0) / 2.0, 0.0, 1.0))
-            meta["kelly_fraction"] = dynamic_kelly
-            target_cash = max_alloc * dynamic_kelly
-            vol_factor = 1.0  # RL agent learns vol natively
-            meta["vol_factor"] = vol_factor
-            meta["target_cash_pre_cap"] = target_cash
-            meta["max_alloc"] = max_alloc
-        else:
-            # Traditional Deterministic Path
-            target_cash = max_alloc * (signal.score / 100.0) * self.kelly_fraction
-            vol_factor = self._volatility_factor(historical_volatility)
-            target_cash *= vol_factor
-            meta.update({
-                "vol_factor": vol_factor,
-                "max_alloc": max_alloc,
-                "target_cash_pre_cap": target_cash,
-            })
+        # TODO: Re-enable RL Sizer only when SizingEnv is connected to real historical trajectories via walk_forward_backtester.py
+        # RL Sizing Path is completely disabled in production for now.
+        
+        # Traditional Deterministic Path
+        target_cash = max_alloc * (signal.score / 100.0) * self.kelly_fraction
+        vol_factor = self._volatility_factor(historical_volatility)
+        target_cash *= vol_factor
+        meta.update({
+            "vol_factor": vol_factor,
+            "max_alloc": max_alloc,
+            "target_cash_pre_cap": target_cash,
+        })
 
         satellite_room = max(
             0.0,

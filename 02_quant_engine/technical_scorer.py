@@ -681,6 +681,24 @@ class SignalGenerator:
         signals: list[Signal] = []
         macro = self._macro_sensor()
         
+        # --- Active Degraded Mode Risk Enforcement ---
+        try:
+            import json
+            status_path = _PROJECT_ROOT / "database" / "pipeline_status.json"
+            if status_path.exists():
+                with open(status_path, "r", encoding="utf-8") as f:
+                    pipe_status = json.load(f)
+                if pipe_status.get("data_degraded_mode", False):
+                    old_floor = conviction_floor
+                    conviction_floor = max(conviction_floor, 85.0)
+                    logger.warning(
+                        "Data Degraded Mode active! Raising minimum conviction threshold from %.1f to %.1f.", 
+                        old_floor, conviction_floor
+                    )
+        except Exception as exc:
+            logger.debug("Failed to read pipeline_status.json for degraded mode check: %s", exc)
+
+        
         # Precompute cross-sectional momentum ranks for relative rotation
         try:
             from cross_sectional import CrossSectionalScorer

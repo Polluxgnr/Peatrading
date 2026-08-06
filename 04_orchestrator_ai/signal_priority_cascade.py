@@ -212,8 +212,9 @@ class SignalOrchestrator:
                 fundamentals = SignalGenerator()._load_fundamentals_from_sources(ticker)
                 f_score = fundamentals.get("piotroski_score")
                 if f_score is not None and f_score < 4:
+                    logger.info("Failed Piotroski Quality Veto for %s (F-Score: %.0f)", ticker, f_score)
                     processed.append(
-                        self._reject(signal, f"REJECTED: Value Trap Veto (F-Score {f_score:.0f} < 4)", {"source": "fundamentals(Piotroski)", "f_score": f_score})
+                        self._reject(signal, f"REJECTED: Failed Piotroski Quality Veto (F-Score {f_score:.0f} < 4)", {"source": "fundamentals(Piotroski)", "f_score": f_score})
                     )
                     continue
             except Exception:  # noqa: BLE001

@@ -3,50 +3,50 @@
 # PEA Pollux - Python 3.11+
 
 # --- Core / data contracts (Phase 1) ---
-pydantic>=2.6,<3.0
-pyyaml>=6.0
+pydantic==2.6,<3.0
+pyyaml==6.0
 
 # --- Memory core (Phase 2) ---
-duckdb>=0.10
-pyarrow>=14.0
-structlog>=24.1.0
+duckdb==0.10
+pyarrow==14.0
+structlog==24.1.0
 # sqlite3 is part of the Python standard library.
 
 # --- Data sensors (Phase 3) ---
-yfinance>=0.2.40
-requests>=2.31
-beautifulsoup4>=4.12
-feedparser>=6.0
+yfinance==0.2.40
+requests==2.31
+beautifulsoup4==4.12
+feedparser==6.0
 
 # --- Quant engine (Phase 4) ---
-pandas>=2.1
-numpy>=2.0
-xgboost>=2.0
-scikit-learn>=1.3
+pandas==2.1
+numpy==2.0
+xgboost==2.0
+scikit-learn==1.3
 # pandas-ta-classic is the numpy-2.x / numba-free provider of the `.ta`
 # accessor. Upstream `pandas-ta` 0.4.x requires numba (no py3.13/arm64 wheel).
-pandas-ta-classic>=0.6.0
-hmmlearn>=0.3
-torch>=2.0.0
-stable-baselines3>=2.2.1
-scipy>=1.11.0
-shap>=0.44.0
+pandas-ta-classic==0.6.0
+hmmlearn==0.3
+torch==2.0.0
+stable-baselines3==2.2.1
+scipy==1.11.0
+shap==0.44.0
 
 # --- Interfaces (Phases 7-8) ---
-discord.py>=2.3
-plotly>=5.20
-matplotlib>=3.8   # required by pandas Styler.background_gradient in the dashboard
+discord.py==2.3
+plotly==5.20
+matplotlib==3.8   # required by pandas Styler.background_gradient in the dashboard
 # streamlit needs pyarrow, which has NO prebuilt wheel for Python 3.13 / arm64.
 # Use a Python 3.11/3.12 (x64) environment to install and run the dashboard.
-streamlit>=1.37
+streamlit==1.37
 
 # --- Scheduler (Phase 9) ---
-schedule>=1.2
+schedule==1.2
 
 # --- Dev / tests ---
-pytest>=8.0
+pytest==8.0
 streamlit-autorefresh==1.0.1
 
 
 streamlit-autorefresh==1.0.1
-discord.py>=2.3.2
+discord.py==2.3.2
