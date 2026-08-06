@@ -366,9 +366,19 @@ class MacroAlphaSensor:
     def get_institutional_consensus(self, ticker: str) -> bool:
         """Return True if ticker is in the institutional quality proxy set.
 
-        Placeholder for future web scraper targeting Fundsmith/Amundi public
-        13F-equivalent holdings.
+        Dynamically queries the SQLite database for institutional_holdings 
+        fetched from tracking ETFs and major European indices. Falls back
+        to the hardcoded set if the database is empty or unavailable.
         """
+        try:
+            from sqlite_portfolio import PortfolioDB
+            db = PortfolioDB()
+            holdings = db.get_institutional_holdings()
+            if holdings:
+                return ticker in holdings
+        except Exception:
+            pass
+            
         return ticker in self.TOP_INSTITUTIONAL_HOLDINGS
 
     def get_insider_buy_cluster(self, ticker: str) -> int:

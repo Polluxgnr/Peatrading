@@ -5020,8 +5020,8 @@ with tab_ticker:
                         })
                         
                     if clean_news:
-                        st.markdown("<div style='max-height:400px;overflow-y:auto;padding-right:10px;'>", unsafe_allow_html=True)
-                        for item in clean_news:
+                        st.markdown("<div style='max-height:800px;overflow-y:auto;padding-right:10px;'>", unsafe_allow_html=True)
+                        for idx, item in enumerate(clean_news):
                             badge_color = "#333"
                             if "BULLISH" in item['Sentiment']: badge_color = "#1f4a2b"
                             elif "BEARISH" in item['Sentiment']: badge_color = "#4a1f1f"
@@ -5035,6 +5035,20 @@ with tab_ticker:
                                 <a href='{item['URL']}' target='_blank' style='color:#00B4D8; text-decoration:none; font-weight:600; font-size:14px;'>{item['Titre']}</a>
                             </div>
                             """, unsafe_allow_html=True)
+                            
+                            if st.button("🧠 Deep Analysis (Read Full Article)", key=f"deep_news_{selected}_{idx}"):
+                                with st.spinner("Reading full article & extracting RAG insights..."):
+                                    try:
+                                        sys.path.insert(0, str(_ROOT / "00_data_sensors"))
+                                        from deep_news_scraper import fetch_article_body, analyze_article_deep
+                                        body = asyncio.run(fetch_article_body(item['URL']))
+                                        analysis = asyncio.run(analyze_article_deep(item['URL'], body))
+                                        st.info(f"**Key Metrics:**\n{analysis.get('key_metrics', 'N/A')}")
+                                        st.warning(f"**Guidance:**\n{analysis.get('guidance', 'N/A')}")
+                                        st.error(f"**Hidden Risks:**\n{analysis.get('hidden_risks', 'N/A')}")
+                                    except Exception as e:
+                                        st.error(f"Deep Analysis failed: {e}")
+                                        
                         st.markdown("</div>", unsafe_allow_html=True)
                     else:
                         st.info("Aucune actualité pertinente (filtre anti-spam actif).")

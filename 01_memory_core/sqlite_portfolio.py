@@ -189,7 +189,6 @@ class PortfolioDB:
                     );
                     """
                 )
-
                 conn.execute(
                     """
                     CREATE TABLE IF NOT EXISTS news_master (
@@ -202,6 +201,18 @@ class PortfolioDB:
                         content          TEXT,
                         sentiment_score  REAL,
                         sentiment_label  TEXT
+                    );
+                    """
+                )
+
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS institutional_holdings (
+                        ticker TEXT PRIMARY KEY,
+                        company_name TEXT,
+                        fund_source TEXT,
+                        weight_pct REAL,
+                        updated_at TEXT NOT NULL
                     );
                     """
                 )
@@ -854,3 +865,36 @@ class PortfolioDB:
             logger.info("Updated sentiment for %d news items", len(updates))
         except sqlite3.Error:
             logger.exception("Failed to update news sentiment")
+    def save_institutional_holdings(self, holdings: list[dict]) -> None:
+        "\""Save institutional holdings from scraper."\""
+        if not holdings:
+            return
+        
+        try:
+            with self._connect() as conn:
+                conn.executemany(
+                    "\""
+                    INSERT INTO institutional_holdings 
+                        (ticker, company_name, fund_source, weight_pct, updated_at)
+                    VALUES (:ticker, :company_name, :fund_source, :weight_pct, :updated_at)
+                    ON CONFLICT(ticker) DO UPDATE SET
+                        company_name = excluded.company_name,
+                        fund_source = excluded.fund_source,
+                        weight_pct = excluded.weight_pct,
+                        updated_at = excluded.updated_at;
+                    "\"",
+                    holdings
+                )
+            logger.info("Saved %d institutional holdings", len(holdings))
+        except sqlite3.Error:
+            logger.exception("Failed to save institutional holdings")
+
+    def get_institutional_holdings(self) -> set[str]:
+        "\""Get set of institutional holding tickers."\""
+        try:
+            with self._connect() as conn:
+                rows = conn.execute("SELECT ticker FROM institutional_holdings;").fetchall()
+                return {row["ticker"] for row in rows}
+        except sqlite3.Error:
+            logger.exception("Failed to get institutional holdings")
+            return set()
