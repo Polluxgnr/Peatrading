@@ -866,14 +866,14 @@ class PortfolioDB:
         except sqlite3.Error:
             logger.exception("Failed to update news sentiment")
     def save_institutional_holdings(self, holdings: list[dict]) -> None:
-        "\""Save institutional holdings from scraper."\""
+        """Save institutional holdings from scraper."""
         if not holdings:
             return
         
         try:
             with self._connect() as conn:
                 conn.executemany(
-                    "\""
+                    """
                     INSERT INTO institutional_holdings 
                         (ticker, company_name, fund_source, weight_pct, updated_at)
                     VALUES (:ticker, :company_name, :fund_source, :weight_pct, :updated_at)
@@ -882,7 +882,7 @@ class PortfolioDB:
                         fund_source = excluded.fund_source,
                         weight_pct = excluded.weight_pct,
                         updated_at = excluded.updated_at;
-                    "\"",
+                    """,
                     holdings
                 )
             logger.info("Saved %d institutional holdings", len(holdings))
@@ -890,7 +890,7 @@ class PortfolioDB:
             logger.exception("Failed to save institutional holdings")
 
     def get_institutional_holdings(self) -> set[str]:
-        "\""Get set of institutional holding tickers."\""
+        """Get set of institutional holding tickers."""
         try:
             with self._connect() as conn:
                 rows = conn.execute("SELECT ticker FROM institutional_holdings;").fetchall()
