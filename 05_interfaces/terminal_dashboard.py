@@ -4081,7 +4081,7 @@ with tab_portfolio:
     
     # 3. Execution (Pending Signals)
     st.markdown("### ⚡ Pending Discord Execution (with Slippage)")
-    if pending_df.empty:
+    if 'pending_df' not in locals() or pending_df is None or pending_df.empty:
         st.info("Aucun signal en attente.")
     else:
         # Same logic as before but using the updated render_signal_card
