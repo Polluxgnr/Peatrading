@@ -20,7 +20,7 @@ feedparser==6.0
 
 # --- Quant engine (Phase 4) ---
 pandas==2.1
-numpy==2.0
+numpy<2.0.0
 xgboost==2.0
 scikit-learn>=1.3
 # pandas-ta is used for technical indicators
