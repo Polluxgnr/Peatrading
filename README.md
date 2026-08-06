@@ -1558,10 +1558,9 @@ streamlit run 05_interfaces/terminal_dashboard.py
 
 
 ## Recent Updates (August 2026)
-- **UI/UX Bloomberg Overhaul**: Upgraded tables to native \st.dataframe\ with link formats and strict color-coding. Migrated Top/Flop to Market & Macro.
-- **Extreme Anti-Spam**: Drastically expanded the spam regex to block lifestyle, promo, and exclusive offer emails from polluting the stream.
-- **Robust IFrames**: Hardened the TradingView iframe rendering with try/except fallbacks to Plotly native charts.
-
- # #   A W S   D o c k e r   D e p l o y m e n t   F i x e s 
- *   R e s o l v e d   p a n d a s - t a   v e r s i o n   c o n f l i c t   a n d   p i n n e d   s t a r l e t t e < 0 . 3 6 . 0   t o   f i x   S t r e a m l i t   G Z i p R e s p o n d e r   c r a s h   o n   b o o t .  
- 
+- **UI/UX Bloomberg Overhaul**: Streamlit interface restructured into 4 clean Workspaces (Market Pulse, Ticker Deep-Dive, Quant Engine, Portfolio & Ledger). Replaced deprecated width="stretch" with use_container_width=True on buttons.
+- **Dependency & AWS Docker Fixes**: 
+  - Pinned starlette<0.36.0 to resolve GZipResponder Streamlit crash on boot.
+  - Purged pandas-ta library entirely and replaced it with native Pure Pandas indicators (SMA, RSI, MACD, BBands, ATR) to permanently resolve 
+umpy 2.0 / scipy dependency conflicts.
+  - Fixed syntax error in sqlite_portfolio.py caused by invalid docstring formatting.

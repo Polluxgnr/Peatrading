@@ -398,7 +398,7 @@ def render_pending_trade_cards(pending_df: pd.DataFrame, portfolio_obj) -> None:
             font_color_map={"Score": score_colors[: len(disp)]},
             col_widths=[2.2, 0.7, 0.8, 1.2],
         ),
-        width="stretch",
+        use_container_width=True,
         key="gen_pending_score_table",
     )
 
@@ -3553,11 +3553,11 @@ with st.sidebar:
     auto_refresh = st.checkbox("Rafraichissement auto", value=False)
     refresh_secs = st.slider("Intervalle (s)", 30, 600, 120, 30,
                              disabled=not auto_refresh)
-    if st.button("\U0001F504 Vider le cache & recharger", width="stretch"):
+    if st.button("\U0001F504 Vider le cache & recharger", use_container_width=True):
         st.cache_data.clear()
         st.rerun()
     st.markdown("---")
-    if st.button("Ledger signaux", width="stretch"):
+    if st.button("Ledger signaux", use_container_width=True):
         st.session_state["scroll_to_ledger"] = True
     st.caption("Passe : `python main_scheduler.py --now`")
     st.markdown("---")

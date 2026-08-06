@@ -1,6 +1,6 @@
 # PEA Pollux — Full Project Dump for LLM
 
-> **PEA Pollux** · Generated `2026-08-06 10:40 UTC` · Root `C:\Users\PolluxGronier\Downloads\pea_sniper_terminal`
+> **PEA Pollux** · Generated `2026-08-06 11:45 UTC` · Root `C:\Users\PolluxGronier\Downloads\pea_sniper_terminal`
 
 One-shot context for external LLM agents. Includes source, configs, and docs.
 Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
@@ -48,16 +48,18 @@ Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
 - `main_scheduler.py`
 
 ---
-## File index (118 files)
+## File index (120 files)
 ### `(root)/`
 - `.gitignore` (42 lines)
+- `clean_readme.py` (25 lines)
 - `DASHBOARD_FULL_DUMP_FOR_LLM.md` (4189 lines)
 - `docker-compose.yml` (70 lines)
 - `Dockerfile` (30 lines)
 - `generate_dumps.py` (32 lines)
 - `main_scheduler.py` (1016 lines) ⭐
-- `README.md` (1568 lines) ⭐
-- `requirements.txt` (52 lines)
+- `patch_ta.py` (112 lines)
+- `README.md` (1566 lines) ⭐
+- `requirements.txt` (50 lines)
 - `run_backfill.py` (40 lines)
 - `run_dashboard.ps1` (15 lines)
 - `run_discord.py` (100 lines)
@@ -128,7 +130,7 @@ Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
 - `02_quant_engine/risk_engine.py` (48 lines)
 - `02_quant_engine/smart_dca_engine.py` (216 lines)
 - `02_quant_engine/stochastic_models.py` (87 lines) ⭐
-- `02_quant_engine/technical_scorer.py` (839 lines) ⭐
+- `02_quant_engine/technical_scorer.py` (843 lines) ⭐
 - `02_quant_engine/walk_forward_backtester.py` (379 lines)
 
 ### `03_risk_portfolio/`
@@ -139,7 +141,7 @@ Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
 - `03_risk_portfolio/equity_metrics.py` (143 lines)
 - `03_risk_portfolio/hrp_sizer.py` (141 lines)
 - `03_risk_portfolio/limit_price_optimizer.py` (41 lines)
-- `03_risk_portfolio/monthly_rebalancer.py` (232 lines)
+- `03_risk_portfolio/monthly_rebalancer.py` (227 lines)
 - `03_risk_portfolio/pea_position_sizer.py` (285 lines) ⭐
 - `03_risk_portfolio/stress_tester.py` (145 lines) ⭐
 
@@ -6501,14 +6503,14 @@ class PortfolioDB:
         except sqlite3.Error:
             logger.exception("Failed to update news sentiment")
     def save_institutional_holdings(self, holdings: list[dict]) -> None:
-        "\""Save institutional holdings from scraper."\""
+        """Save institutional holdings from scraper."""
         if not holdings:
             return
         
         try:
             with self._connect() as conn:
                 conn.executemany(
-                    "\""
+                    """
                     INSERT INTO institutional_holdings 
                         (ticker, company_name, fund_source, weight_pct, updated_at)
                     VALUES (:ticker, :company_name, :fund_source, :weight_pct, :updated_at)
@@ -6517,7 +6519,7 @@ class PortfolioDB:
                         fund_source = excluded.fund_source,
                         weight_pct = excluded.weight_pct,
                         updated_at = excluded.updated_at;
-                    "\"",
+                    """,
                     holdings
                 )
             logger.info("Saved %d institutional holdings", len(holdings))
@@ -6525,7 +6527,7 @@ class PortfolioDB:
             logger.exception("Failed to save institutional holdings")
 
     def get_institutional_holdings(self) -> set[str]:
-        "\""Get set of institutional holding tickers."\""
+        """Get set of institutional holding tickers."""
         try:
             with self._connect() as conn:
                 rows = conn.execute("SELECT ticker FROM institutional_holdings;").fetchall()
@@ -8525,7 +8527,7 @@ def run_correlated_monte_carlo(
     )
 ```
 
-## FILE: 02_quant_engine/technical_scorer.py (839 lines)
+## FILE: 02_quant_engine/technical_scorer.py (843 lines)
 ```python
 """Quantitative signal engine for PEA Pollux.
 
@@ -8558,11 +8560,6 @@ try:  # yfinance is only needed for the optional Quality (EPS) filter.
     import yfinance as yf
 except Exception:  # noqa: BLE001 - keep the pure-math engine importable offline.
     yf = None  # type: ignore[assignment]
-
-try:  # pragma: no cover - environment-dependent import.
-    import pandas_ta as ta  # noqa: F401
-except ImportError:  # pragma: no cover
-    import pandas_ta_classic as ta  # noqa: F401
 
 _CORE_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "01_memory_core"
@@ -8739,13 +8736,22 @@ class SignalGenerator:
         """Attach trend/MR/breakout indicators for the ensemble committee."""
         out = df.copy()
         close = out["Close"]
-        out["SMA_5"] = out.ta.sma(close=close, length=5)
-        out["SMA_50"] = out.ta.sma(close=close, length=50)
-        out["SMA_200"] = out.ta.sma(close=close, length=200)
-        out["RSI_14"] = out.ta.rsi(close=close, length=14)
-        out.ta.macd(close=close, append=True)
-        out.ta.bbands(close=close, append=True)
-        out.ta.atr(high=out["High"], low=out["Low"], close=close, length=14, append=True)
+        out["SMA_5"] = _calc_sma(close, 5)
+        out["SMA_50"] = _calc_sma(close, 50)
+        out["SMA_200"] = _calc_sma(close, 200)
+        out["RSI_14"] = _calc_rsi(close, 14)
+        
+        macd_line, macd_hist, macd_sig = _calc_macd(close)
+        out["MACD_12_26_9"] = macd_line
+        out["MACDh_12_26_9"] = macd_hist
+        out["MACDs_12_26_9"] = macd_sig
+        
+        bbl, bbm, bbu = _calc_bbands(close)
+        out["BBL_5_2.0"] = bbl
+        out["BBM_5_2.0"] = bbm
+        out["BBU_5_2.0"] = bbu
+        
+        out["ATRr_14"] = _calc_atr(out["High"], out["Low"], close, 14)
         out["Z_SCORE_50"] = calculate_z_score(close)
         return out
 
@@ -10615,7 +10621,7 @@ def calculate_smart_limit_price(ticker: str, current_price: float, atr_14: float
     return round(limit_px, 2)
 ```
 
-## FILE: 03_risk_portfolio/monthly_rebalancer.py (232 lines)
+## FILE: 03_risk_portfolio/monthly_rebalancer.py (227 lines)
 ```python
 """Portfolio rebalancer for PEA Pollux (Phase 12/15/16).
 
@@ -10642,11 +10648,6 @@ from typing import Any, Iterable, List, Optional, Sequence
 
 import pandas as pd
 import yaml
-
-try:
-    import pandas_ta as ta  # noqa: F401
-except ImportError:  # pragma: no cover
-    import pandas_ta_classic as ta  # noqa: F401
 
 _CORE_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "01_memory_core"
@@ -13839,7 +13840,7 @@ def render_pending_trade_cards(pending_df: pd.DataFrame, portfolio_obj) -> None:
             font_color_map={"Score": score_colors[: len(disp)]},
             col_widths=[2.2, 0.7, 0.8, 1.2],
         ),
-        width="stretch",
+        use_container_width=True,
         key="gen_pending_score_table",
     )
 
@@ -16994,11 +16995,11 @@ with st.sidebar:
     auto_refresh = st.checkbox("Rafraichissement auto", value=False)
     refresh_secs = st.slider("Intervalle (s)", 30, 600, 120, 30,
                              disabled=not auto_refresh)
-    if st.button("\U0001F504 Vider le cache & recharger", width="stretch"):
+    if st.button("\U0001F504 Vider le cache & recharger", use_container_width=True):
         st.cache_data.clear()
         st.rerun()
     st.markdown("---")
-    if st.button("Ledger signaux", width="stretch"):
+    if st.button("Ledger signaux", use_container_width=True):
         st.session_state["scroll_to_ledger"] = True
     st.caption("Passe : `python main_scheduler.py --now`")
     st.markdown("---")
@@ -17811,6 +17812,35 @@ def render_signal_card(
   <div style="margin-top:8px;">{when}</div>
 </div>
 """
+```
+
+## FILE: clean_readme.py (25 lines)
+```python
+﻿import codecs
+import re
+
+path = 'README.md'
+with codecs.open(path, 'r', encoding='utf-8', errors='ignore') as f:
+    text = f.read()
+
+idx = text.find('## Recent Updates (August 2026)')
+if idx != -1:
+    text = text[:idx]
+
+new_text = '''
+## Recent Updates (August 2026)
+- **UI/UX Bloomberg Overhaul**: Streamlit interface restructured into 4 clean Workspaces (Market Pulse, Ticker Deep-Dive, Quant Engine, Portfolio & Ledger). Replaced deprecated width="stretch" with use_container_width=True on buttons.
+- **Dependency & AWS Docker Fixes**: 
+  - Pinned starlette<0.36.0 to resolve GZipResponder Streamlit crash on boot.
+  - Purged pandas-ta library entirely and replaced it with native Pure Pandas indicators (SMA, RSI, MACD, BBands, ATR) to permanently resolve 
+umpy 2.0 / scipy dependency conflicts.
+  - Fixed syntax error in sqlite_portfolio.py caused by invalid docstring formatting.
+'''
+
+text += new_text.strip() + '\n'
+
+with codecs.open(path, 'w', encoding='utf-8') as f:
+    f.write(text)
 ```
 
 ## FILE: config/api_keys.env.example (54 lines)
@@ -20278,7 +20308,7 @@ def render_pending_trade_cards(pending_df: pd.DataFrame, portfolio_obj) -> None:
             font_color_map={"Score": score_colors[: len(disp)]},
             col_widths=[2.2, 0.7, 0.8, 1.2],
         ),
-        width="stretch",
+        use_container_width=True,
         key="gen_pending_score_table",
     )
 
@@ -23433,11 +23463,11 @@ with st.sidebar:
     auto_refresh = st.checkbox("Rafraichissement auto", value=False)
     refresh_secs = st.slider("Intervalle (s)", 30, 600, 120, 30,
                              disabled=not auto_refresh)
-    if st.button("\U0001F504 Vider le cache & recharger", width="stretch"):
+    if st.button("\U0001F504 Vider le cache & recharger", use_container_width=True):
         st.cache_data.clear()
         st.rerun()
     st.markdown("---")
-    if st.button("Ledger signaux", width="stretch"):
+    if st.button("Ledger signaux", use_container_width=True):
         st.session_state["scroll_to_ledger"] = True
     st.caption("Passe : `python main_scheduler.py --now`")
     st.markdown("---")
@@ -25232,7 +25262,123 @@ if __name__ == "__main__":
     main()
 ```
 
-## FILE: README.md (1568 lines)
+## FILE: patch_ta.py (112 lines)
+```python
+﻿import pandas as pd
+import re
+
+# file 1: technical_scorer.py
+path1 = r'02_quant_engine\technical_scorer.py'
+with open(path1, 'r', encoding='utf-8') as f:
+    code1 = f.read()
+
+# Remove imports
+code1 = re.sub(r'(\n\s*import pandas_ta(?!_)[^\n]*\n)', '\n', code1)
+code1 = re.sub(r'(\n\s*import pandas_ta_classic[^\n]*\n)', '\n', code1)
+
+helpers = '''
+def _calc_sma(s: pd.Series, length: int) -> pd.Series:
+    return s.rolling(window=length, min_periods=1).mean()
+
+def _calc_rsi(s: pd.Series, length: int = 14) -> pd.Series:
+    delta = s.diff()
+    gain = delta.clip(lower=0)
+    loss = -delta.clip(upper=0)
+    avg_gain = gain.ewm(com=length - 1, adjust=False).mean()
+    avg_loss = loss.ewm(com=length - 1, adjust=False).mean()
+    rs = avg_gain / avg_loss
+    return 100 - (100 / (1 + rs))
+
+def _calc_macd(s: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9):
+    ema_fast = s.ewm(span=fast, adjust=False).mean()
+    ema_slow = s.ewm(span=slow, adjust=False).mean()
+    macd_line = ema_fast - ema_slow
+    signal_line = macd_line.ewm(span=signal, adjust=False).mean()
+    histogram = macd_line - signal_line
+    return macd_line, histogram, signal_line
+
+def _calc_bbands(s: pd.Series, length: int = 5, std: float = 2.0):
+    sma_line = s.rolling(window=length, min_periods=1).mean()
+    std_line = s.rolling(window=length, min_periods=1).std(ddof=0)
+    lower = sma_line - (std * std_line)
+    upper = sma_line + (std * std_line)
+    return lower, sma_line, upper
+
+def _calc_atr(high: pd.Series, low: pd.Series, close: pd.Series, length: int = 14) -> pd.Series:
+    tr1 = high - low
+    tr2 = (high - close.shift(1)).abs()
+    tr3 = (low - close.shift(1)).abs()
+    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+    return tr.ewm(alpha=1/length, adjust=False).mean()
+'''
+
+if '_calc_sma' not in code1:
+    code1 = code1.replace('class TechnicalScorer:', helpers + '\nclass TechnicalScorer:')
+
+old_calc = '''        out["SMA_5"] = out.ta.sma(close=close, length=5)
+        out["SMA_50"] = out.ta.sma(close=close, length=50)
+        out["SMA_200"] = out.ta.sma(close=close, length=200)
+        out["RSI_14"] = out.ta.rsi(close=close, length=14)
+        out.ta.macd(close=close, append=True)
+        out.ta.bbands(close=close, append=True)
+        out.ta.atr(high=out["High"], low=out["Low"], close=close, length=14, append=True)'''
+
+new_calc = '''        out["SMA_5"] = _calc_sma(close, 5)
+        out["SMA_50"] = _calc_sma(close, 50)
+        out["SMA_200"] = _calc_sma(close, 200)
+        out["RSI_14"] = _calc_rsi(close, 14)
+        
+        macd_line, macd_hist, macd_sig = _calc_macd(close)
+        out["MACD_12_26_9"] = macd_line
+        out["MACDh_12_26_9"] = macd_hist
+        out["MACDs_12_26_9"] = macd_sig
+        
+        bbl, bbm, bbu = _calc_bbands(close)
+        out["BBL_5_2.0"] = bbl
+        out["BBM_5_2.0"] = bbm
+        out["BBU_5_2.0"] = bbu
+        
+        out["ATRr_14"] = _calc_atr(out["High"], out["Low"], close, 14)'''
+
+code1 = code1.replace(old_calc, new_calc)
+
+with open(path1, 'w', encoding='utf-8') as f:
+    f.write(code1)
+
+# file 2: monthly_rebalancer.py
+path2 = r'03_risk_portfolio\monthly_rebalancer.py'
+with open(path2, 'r', encoding='utf-8') as f:
+    code2 = f.read()
+
+# Remove imports
+code2 = re.sub(r'(\n\s*import pandas_ta(?!_)[^\n]*\n)', '\n', code2)
+code2 = re.sub(r'(\n\s*import pandas_ta_classic[^\n]*\n)', '\n', code2)
+
+old_atr = '''            atr = work.ta.atr(
+                high=work["High"],
+                low=work["Low"],
+                close=work["Close"],
+                length=14
+            )
+            if atr is not None and not atr.empty:'''
+
+new_atr = '''            tr1 = work["High"] - work["Low"]
+            tr2 = (work["High"] - work["Close"].shift(1)).abs()
+            tr3 = (work["Low"] - work["Close"].shift(1)).abs()
+            tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+            atr = tr.ewm(alpha=1/14, adjust=False).mean()
+            
+            if atr is not None and not atr.empty:'''
+
+code2 = code2.replace(old_atr, new_atr)
+
+with open(path2, 'w', encoding='utf-8') as f:
+    f.write(code2)
+
+print("Patch completed!")
+```
+
+## FILE: README.md (1566 lines)
 ```markdown
 # PEA Pollux â€” Terminal quantitatif personnel
 
@@ -26794,17 +26940,15 @@ streamlit run 05_interfaces/terminal_dashboard.py
 
 
 ## Recent Updates (August 2026)
-- **UI/UX Bloomberg Overhaul**: Upgraded tables to native \st.dataframe\ with link formats and strict color-coding. Migrated Top/Flop to Market & Macro.
-- **Extreme Anti-Spam**: Drastically expanded the spam regex to block lifestyle, promo, and exclusive offer emails from polluting the stream.
-- **Robust IFrames**: Hardened the TradingView iframe rendering with try/except fallbacks to Plotly native charts.
-
- # #   A W S   D o c k e r   D e p l o y m e n t   F i x e s 
- *   R e s o l v e d   p a n d a s - t a   v e r s i o n   c o n f l i c t   a n d   p i n n e d   s t a r l e t t e < 0 . 3 6 . 0   t o   f i x   S t r e a m l i t   G Z i p R e s p o n d e r   c r a s h   o n   b o o t . 
- 
- 
+- **UI/UX Bloomberg Overhaul**: Streamlit interface restructured into 4 clean Workspaces (Market Pulse, Ticker Deep-Dive, Quant Engine, Portfolio & Ledger). Replaced deprecated width="stretch" with use_container_width=True on buttons.
+- **Dependency & AWS Docker Fixes**: 
+  - Pinned starlette<0.36.0 to resolve GZipResponder Streamlit crash on boot.
+  - Purged pandas-ta library entirely and replaced it with native Pure Pandas indicators (SMA, RSI, MACD, BBands, ATR) to permanently resolve 
+umpy 2.0 / scipy dependency conflicts.
+  - Fixed syntax error in sqlite_portfolio.py caused by invalid docstring formatting.
 ```
 
-## FILE: requirements.txt (52 lines)
+## FILE: requirements.txt (50 lines)
 ```text
 --extra-index-url https://download.pytorch.org/whl/cpu
 
@@ -26828,11 +26972,9 @@ feedparser==6.0
 
 # --- Quant engine (Phase 4) ---
 pandas==2.1
-numpy==2.0
+numpy<2.0.0
 xgboost==2.0
 scikit-learn>=1.3
-# pandas-ta is used for technical indicators
-pandas-ta
 hmmlearn==0.3
 torch==2.0.0
 stable-baselines3==2.2.1
