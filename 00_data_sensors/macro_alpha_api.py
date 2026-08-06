@@ -573,6 +573,31 @@ class MacroAlphaSensor:
         # Disabled due to option chain unavailability for EU small caps.
         return 0.0
 
+    def get_oat_bund_spread(self) -> float:
+        """Fetch the 10-year French OAT vs German Bund yield spread.
+        
+        Uses OAT.PA and ^DE10Y.
+        Returns the spread in percentage points (e.g. 0.50 means 50 bps).
+        Returns a neutral 0.50 if unable to fetch.
+        """
+        try:
+            import yfinance as yf
+            # French 10Y OAT (sometimes under other tickers on YF, using ^TNX proxy or OAT.PA)
+            # YF uses generic tickers for bonds, let's try to fetch them. If they fail, fallback.
+            # FR10YT=RR is French, DE10YT=RR is German (YF tickers vary)
+            fr = yf.Ticker("OAT.PA").history(period="5d")
+            de = yf.Ticker("^DE10Y").history(period="5d")
+            
+            if not fr.empty and not de.empty and "Close" in fr.columns and "Close" in de.columns:
+                fr_yield = float(fr["Close"].iloc[-1])
+                de_yield = float(de["Close"].iloc[-1])
+                return fr_yield - de_yield
+                
+            # If OAT.PA fails, try to use a static proxy or macro API
+            return 0.50
+        except Exception as exc:
+            logger.debug("Failed to fetch OAT vs Bund spread: %s", exc)
+            return 0.50
 
 if __name__ == "__main__":
     logging.basicConfig(

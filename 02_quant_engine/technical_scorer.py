@@ -561,12 +561,13 @@ class SignalGenerator:
             factors.append(f"NEWS-15 Bearish sentiment ({news_score:.0f})")
         news_component = max(0.0, min(100.0, 50.0 + news_mod))
 
-        # ML modifier (Phase 44): XGBoost probability as 5th context factor.
+        # ML modifier (Phase 60): XGBoost probability as 5th context factor (Regime-conditional + Conformal).
         ml_component = 50.0
         ml_prob: float | None = None
+        ml_interval_str = ""
         try:
             from ml_feature_store import build_ml_feature_row  # noqa: WPS433
-            from ml_trainer import predict_probability  # noqa: WPS433
+            from ml_trainer import predict_probability_with_shap  # noqa: WPS433
 
             feat_row = build_ml_feature_row(
                 ticker,
@@ -575,13 +576,16 @@ class SignalGenerator:
                 pdb=None,
                 offline_mode=is_historical,
             )
-            ml_prob = predict_probability(feat_row)
+            ml_prob, _, ml_interval = predict_probability_with_shap(feat_row, horizon="tactical", regime=self.regime)
             if ml_prob is not None:
                 ml_component = float(ml_prob) * 100.0
+                if ml_interval:
+                    ml_interval_str = f" ±{abs((ml_interval[1] - ml_prob)*100):.1f}%"
+                    
                 if ml_prob >= 0.65:
-                    factors.append(f"ML+5 prob={ml_prob:.2f}")
+                    factors.append(f"ML+5 prob={ml_prob:.2f}{ml_interval_str}")
                 elif ml_prob <= 0.35:
-                    factors.append(f"ML-5 prob={ml_prob:.2f}")
+                    factors.append(f"ML-5 prob={ml_prob:.2f}{ml_interval_str}")
         except Exception as exc:  # noqa: BLE001
             logger.debug("ML modifier skipped for %s: %s", ticker, exc)
 

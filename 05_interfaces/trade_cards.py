@@ -76,6 +76,34 @@ def atr_risk_line(
     )
 
 
+def market_impact_line(
+    qty: int,
+    price: float,
+    adv: float,
+    atr: float,
+) -> str:
+    """Estimate slippage based on ADV and ATR."""
+    if not qty or price <= 0 or not adv or adv <= 0:
+        return "Market Impact: n/a (illiquide)"
+        
+    # Standard square root model for market impact: slippage = ATR * sqrt(qty / ADV) * constant
+    # Constant can be ~0.1 for typical European mid/large caps
+    participation_rate = float(qty) / float(adv)
+    slippage_bps = 0.0
+    
+    if atr > 0 and price > 0:
+        atr_pct = atr / price
+        slippage_pct = atr_pct * (participation_rate ** 0.5) * 0.1
+        slippage_bps = slippage_pct * 10000.0
+        
+    cost_eur = slippage_bps / 10000.0 * (float(qty) * price)
+    
+    return (
+        f"Est. Market Impact: {slippage_bps:.1f} bps "
+        f"({participation_rate*100:.2f}% ADV) ≈ -{cost_eur:.1f} €"
+    )
+
+
 def render_signal_card(
     *,
     ticker: str,
@@ -87,25 +115,10 @@ def render_signal_card(
     sizing: Optional[dict] = None,
     sector_line: str = "",
     risk_line: str = "",
+    impact_line: str = "",
     created_at: str = "",
 ) -> str:
-    """Build one approved/pending trade card as HTML.
-
-    Args:
-        ticker: Raw symbol.
-        title: Display name (``Full Name (TICKER)``).
-        signal_type: BUY / SELL.
-        score: 0–100.
-        qty: Target shares (may be None).
-        reason: Pipeline explanation.
-        sizing: Optional dict from ``PeaSizer.size_with_explanation``.
-        sector_line: Precomputed sector impact sentence.
-        risk_line: Precomputed ATR risk sentence.
-        created_at: Timestamp string.
-
-    Returns:
-        str: HTML snippet safe for ``st.markdown(..., unsafe_allow_html=True)``.
-    """
+    """Build one approved/pending trade card as HTML."""
     tier, tier_color = conviction_tier(float(score or 0))
     is_buy = str(signal_type).upper() == "BUY"
     border = _NEON if is_buy and score >= 75 else (_AMBER if is_buy else _RED)
@@ -134,6 +147,11 @@ def render_signal_card(
         extras += (
             f"<div style='margin-top:4px;color:{_MUTED};font-size:12px;'>"
             f"▣ {sector_line}</div>"
+        )
+    if impact_line:
+        extras += (
+            f"<div style='margin-top:4px;color:{_CYAN};font-size:12px;'>"
+            f"⚡ {impact_line}</div>"
         )
 
     qty_s = "—" if qty is None else str(qty)

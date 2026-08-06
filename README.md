@@ -283,12 +283,23 @@ Implemented in `signal_priority_cascade.py`:
 2c. **Max satellite positions** â€” `MAX_POSITIONS_TOTAL`  
 
 2d. **Min liquidity** â€” average daily â‚¬ volume â‰¥ `MIN_LIQUIDITY_ADV`  
+1. **VIX panic** — if V2TX/VIX > `VIX_PANIC_THRESHOLD`, freeze **new satellite buys** (Core DCA still runs)  
+
+1b. **EPS < 0** — quality veto (Orchestrator)  
+
+2. **Macro veto** — blackout window before ECB/CPI/NFP (`macro_calendar.yaml`)  
+
+2b. **Earnings / dividend blackout** — per ticker (`earnings_calendar.yaml` + `EARNINGS_BLACKOUT_DAYS`)  
+
+2c. **Max satellite positions** — `MAX_POSITIONS_TOTAL`  
+
+2d. **Min liquidity** — average daily € volume ≥ `MIN_LIQUIDITY_ADV`  
 
 3. Sector weight cap  
 
 4. Pearson correlation vs holdings (`CORRELATION_LOOKBACK_DAYS`)  
 
-5. **Sizing** â€” Half-Kelly Ã— score Ã— inverse-vol parity â†’ whole shares, clamped by cash + satellite room  
+5. **Sizing** — Hierarchical Risk Parity (HRP) / Half-Kelly × score × inverse-vol parity = whole shares, clamped by cash + satellite room  
 
 
 
@@ -1525,14 +1536,15 @@ streamlit run 05_interfaces/terminal_dashboard.py
 
 
 *   **10-Year Data Lake Uncapping:** L'historique stockÃ© dans DuckDB par `market_prices_api.py` monte jusqu'Ã  10 ans, offrant un set de donnÃ©es massif pour les modÃ¨les ML tout en limitant les appels d'API.
+*   **10-Year Data Lake Uncapping:** L'historique stocké dans DuckDB par `market_prices_api.py` monte jusqu'à 10 ans, offrant un set de données massif pour les modèles ML tout en limitant les appels d'API.
 
-*   **Loud Fallback Mechanism:** En cas de panne d'une API tierce (Boursorama, OpenRouter, etc.), le systÃ¨me maintient une fluiditÃ© totale en tombant sur des valeurs neutres (`0.0`), tout en dÃ©clarant un Ã©tat `data_degraded_mode=True` dans `pipeline_status.json` pour avertir l'utilisateur.
+*   **Loud Fallback Mechanism:** En cas de panne d'une API tierce (Boursorama, OpenRouter, etc.), le système maintient une fluidité totale en tombant sur des valeurs neutres (`0.0`), tout en déclarant un état `data_degraded_mode=True` dans `pipeline_status.json` pour avertir l'utilisateur.
 
-*   **FluiditÃ© & Ticker Sync:** RÃ©solution d'un bug majeur de dÃ©synchronisation de l'UI grÃ¢ce Ã  l'utilisation d'Ã©vÃ©nements `on_change` asynchrones dans Streamlit, couplÃ© Ã  une limitation des graphiques Plotly aux 500 derniÃ¨res bougies pour maintenir 60 FPS.
+*   **Fluidité & Ticker Sync:** Résolution d'un bug majeur de désynchronisation de l'UI grâce à l'utilisation d'événements `on_change` asynchrones dans Streamlit, couplé à une limitation des graphiques Plotly aux 500 dernières bougies pour maintenir 60 FPS.
 
-*   **UI Reorganization & Sub-Tabs:** Restructuration totale du Dashboard pour Ã©liminer le bruit visuel avec 4 onglets principaux (`Market & Macro`, `Ticker Deep-Dive`, `Portfolio & Execution`, `System Logs`) et 3 sous-onglets encapsulÃ©s pour les fiches actions.
+*   **UI Reorganization & Sub-Tabs:** Restructuration totale du Dashboard pour éliminer le bruit visuel avec 4 Workspaces principaux (Market Pulse & News Feed, Ticker Deep-Dive, Quant Engine & Models Center, Portfolio, Execution & Full History) à la Bloomberg.
 
-*   **Strict News Filtering:** ImplÃ©mentation d'un filtre regex anti-spam universel (`discount|free|referral|newsletter|sponsor...`) qui intercepte et purifie les flux RSS avant leur traitement IA (Morning Briefing).
+*   **Strict News Filtering:** Implémentation d'un filtre regex anti-spam universel (`discount|free|referral|newsletter|sponsor...`) qui intercepte et purifie les flux RSS avant leur traitement IA (Morning Briefing).
 
 
 ---

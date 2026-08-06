@@ -326,7 +326,23 @@ class MarketDataFetcher:
             df = df.sort_values(["Ticker", "Date"])
             # Calculate pct_change per ticker
             df["_pct_chg"] = df.groupby("Ticker")["Close"].pct_change()
-            abnormal_mask = (df["_pct_chg"] > 0.50) | (df["_pct_chg"] < -0.40)
+            
+            # Phase 60: Dynamic Tick Anomaly Detection using IsolationForest
+            abnormal_mask = pd.Series(False, index=df.index)
+            if not df["_pct_chg"].isna().all():
+                try:
+                    from sklearn.ensemble import IsolationForest
+                    valid_idx = df["_pct_chg"].dropna().index
+                    if len(valid_idx) > 50:
+                        iso = IsolationForest(contamination=0.005, random_state=42)
+                        preds = iso.fit_predict(df.loc[valid_idx, ["_pct_chg"]])
+                        abnormal_mask.loc[valid_idx] = (preds == -1)
+                    else:
+                        # Fallback if too few rows for IsolationForest
+                        abnormal_mask = (df["_pct_chg"] > 0.50) | (df["_pct_chg"] < -0.40)
+                except Exception as exc:
+                    logger.debug("IsolationForest failed, falling back to static anomaly threshold: %s", exc)
+                    abnormal_mask = (df["_pct_chg"] > 0.50) | (df["_pct_chg"] < -0.40)
             
             if abnormal_mask.any():
                 abnormal_tickers = df[abnormal_mask]["Ticker"].unique()
