@@ -70,3 +70,44 @@ def safe_get(
     except Exception as exc:  # noqa: BLE001
         log("Scraper GET failed for %s: %s", url, exc)
         return None
+
+import asyncio
+import aiohttp
+
+async def async_safe_get(
+    url: str,
+    session: aiohttp.ClientSession,
+    semaphore: asyncio.Semaphore,
+    *,
+    headers: dict[str, str] | None = None,
+    params: dict[str, Any] | None = None,
+    timeout: float = DEFAULT_TIMEOUT,
+    expect_json: bool = False,
+    quiet: bool = False,
+) -> str | None:
+    """Async GET with stealth headers and semaphore concurrency limit."""
+    log = logger.debug if quiet else logger.warning
+    try:
+        async with semaphore:
+            await asyncio.sleep(random.uniform(0.6, 1.8))
+            hdrs = {**stealth_headers(), **(headers or {})}
+            async with session.get(url, headers=hdrs, params=params, timeout=timeout) as resp:
+                if resp.status in (403, 429):
+                    log("Async Scraper blocked (%s) for %s", resp.status, url)
+                    return None
+                if resp.status >= 400:
+                    log("Async Scraper HTTP %s for %s", resp.status, url)
+                    return None
+                text = await resp.text()
+                if expect_json:
+                    ct = (resp.headers.get("content-type") or "").lower()
+                    if "json" not in ct and not text.lstrip().startswith(("{", "[")):
+                        log("Async Scraper expected JSON, got non-JSON from %s", url)
+                        return None
+                return text
+    except asyncio.TimeoutError:
+        log("Async Scraper Timeout for %s", url)
+        return None
+    except Exception as exc:
+        log("Async Scraper GET failed for %s: %s", url, exc)
+        return None

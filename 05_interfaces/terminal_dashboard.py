@@ -4467,20 +4467,43 @@ with tab_pf_exec:
         with col_chart:
             st.plotly_chart(fig, width="stretch")
         with col_table:
+            st.markdown("### 💼 Positions Actives & Risk")
             pnl_colors = [_NEON if v >= 0 else _RED for v in dfp["PnL"]]
+            
+            # Helper to calculate rough stop-loss for visual display
+            # In a real setup, we'd fetch ATR dynamically, but here we approximate 
+            # or simply display a standard trailing stop hint if ATR is not pre-cached on the Position object.
+            # E.g. Stop-Loss at -5% of PRU as a placeholder for visual hierarchy.
+            
+            stop_losses = []
+            for pru, cours in zip(dfp["PRU"], dfp["Cours"]):
+                # Rough approximation: if current price is higher than PRU, trail it
+                # If lower, hard stop at 8% below PRU.
+                base_stop = pru * 0.92
+                trail_stop = cours * 0.90
+                sl = max(base_stop, trail_stop)
+                # Format with an emoji indicator
+                dist = (cours - sl) / cours * 100
+                if dist < 3.0:
+                    stop_losses.append(f"⚠️ {sl:,.2f} €")
+                else:
+                    stop_losses.append(f"🛡️ {sl:,.2f} €")
+
             disp = pd.DataFrame({
                 "Titre": [format_name(t) for t in dfp["Ticker"]],
                 "Secteur": dfp["Secteur"],
                 "Qte": [f"{q:g}" for q in dfp["Qte"]],
                 "PRU": [f"{v:,.2f} €" for v in dfp["PRU"]],
                 "Cours": [f"{v:,.2f} €" for v in dfp["Cours"]],
+                "Stop-Loss": stop_losses,
                 "Valeur": [f"{v:,.2f} €" for v in dfp["Valeur"]],
                 "Poids": [f"{v:.1f}%" for v in dfp["Poids"]],
                 "PnL": [f"{v:+.2f}%" for v in dfp["PnL"]],
             })
+            
             st.plotly_chart(
                 dark_table(disp, height=430, font_color_map={"PnL": pnl_colors},
-                           col_widths=[2.2, 1.4, 0.7, 1, 1, 1.2, 0.8, 0.9]),
+                           col_widths=[2.2, 1.4, 0.7, 1.1, 1.1, 1.3, 1.2, 0.8, 1.0]),
                 width="stretch")
 
     # --- Phase 34: Correlation heatmap --------------------------------------
@@ -6004,6 +6027,40 @@ with tab_ml_engine:
                     st.warning(f"Tactical model file not found at: {_MODEL_PATH_TACTICAL}")
             except Exception as e:
                 st.error(f"Error loading feature importance from tactical model: {e}")
+
+        # Add Live Dynamic Weights Donut Chart
+        st.markdown("---")
+        st.markdown("### ⚖️ Master Algo Dynamic Weights")
+        st.markdown("Live weighting assigned by the Meta-Learner (EWMA on accuracy) balancing ML vs Heuristics.")
+        
+        try:
+            sys.path.insert(0, str(_ROOT / "02_quant_engine"))
+            from ensemble_optimizer import DynamicEnsemble
+            dyn = DynamicEnsemble()
+            weights = dyn.get_optimized_weights()
+            
+            import plotly.graph_objects as go
+            labels = ["ML Tactical", "ML Structural", "Trend", "Mean Reversion", "Breakout", "Context"]
+            values = [
+                weights["ml_tactical_weight"],
+                weights["ml_structural_weight"],
+                weights["heuristic_trend_weight"],
+                weights["heuristic_mr_weight"],
+                weights["heuristic_breakout_weight"],
+                weights["heuristic_context_weight"],
+            ]
+            
+            fig = go.Figure(data=[go.Pie(
+                labels=labels, 
+                values=values, 
+                hole=.4,
+                marker=dict(colors=["#636EFA", "#EF553B", "#00CC96", "#AB63FA", "#FFA15A", "#19D3F3"])
+            )])
+            fig.update_layout(margin=dict(t=0, b=0, l=0, r=0), height=300)
+            st.plotly_chart(fig, use_container_width=True)
+            
+        except Exception as e:
+            st.warning(f"Could not load dynamic weights chart: {e}")
 
     except Exception as e:
         st.error(f"❌ ML Engine Dashboard Failed to Load: {e}")

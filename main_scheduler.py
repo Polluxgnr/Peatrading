@@ -836,6 +836,35 @@ def run_nightly_profile_batch() -> None:
         write_pipeline_status({"night_run_status": f"Failed: {exc}"})
 
 
+def run_weekend_retraining() -> None:
+    """Run model retraining on weekends, checked by drift monitor."""
+    logger.info("Starting weekend retraining job...")
+    
+    import sys
+    sys.path.insert(0, str(_ROOT / "04_orchestrator_ai"))
+    try:
+        from model_drift_monitor import check_model_drift
+        has_drift = check_model_drift()
+        if not has_drift:
+            # We can force retrain anyway, but for now we log that we're retraining to stay fresh
+            logger.info("No critical drift detected, but retraining to keep models fresh on new data.")
+    except Exception as e:
+        logger.warning(f"Drift monitor failed: {e}. Retraining anyway.")
+
+    try:
+        import subprocess
+        cmd = [sys.executable, str(_ROOT / "02_quant_engine" / "ml_trainer.py")]
+        result = subprocess.run(cmd, check=True, text=True, capture_output=True)
+        for line in result.stdout.splitlines():
+            logger.info("[ML_TRAINER] %s", line)
+        logger.info("Weekend retraining completed successfully.")
+    except subprocess.CalledProcessError as e:
+        logger.error("Weekend retraining failed with code %d", e.returncode)
+        for line in e.stderr.splitlines():
+            logger.error("[ML_TRAINER ERR] %s", line)
+    except Exception as e:
+        logger.exception("Unexpected error during weekend retraining: %s", e)
+
 def _schedule_passes() -> None:
     """Register all periodic jobs in Europe/Paris time."""
     for pass_time in _PASS_TIMES:
@@ -850,6 +879,8 @@ def _schedule_passes() -> None:
     schedule.every().day.at(_ATR_STOP_CHECK_TIME, _TIMEZONE).do(run_daily_atr_stops)
     # Night Run: Mass profile pre-calculation
     schedule.every().day.at("04:00", _TIMEZONE).do(run_nightly_profile_batch)
+    # Weekend Auto-Retraining
+    schedule.every().saturday.at("02:00", _TIMEZONE).do(run_weekend_retraining)
     logger.info(
         "Scheduled: passes at %s; weekly report Fri %s; morning briefing %s; "
         "monthly probe %s; ATR stops %s; Night Run 04:00 (%s).",

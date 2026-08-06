@@ -598,25 +598,33 @@ class SignalGenerator:
         context_score = max(0.0, min(100.0, context_score))
 
         try:
-            from contextual_bandit import UCBBandit
-            from macro_alpha_api import MacroAlphaSensor
-            bandit = UCBBandit()
-            regime = MacroAlphaSensor().get_market_regime()
-            weights = bandit.get_weights(regime)
-            w_trend = weights["trend"]
-            w_mr = weights["mean_reversion"]
-            w_brk = weights["breakout"]
-            w_ctx = weights["context"]
-        except Exception:
+            from ensemble_optimizer import DynamicEnsemble
+            dyn = DynamicEnsemble()
+            weights = dyn.get_optimized_weights()
+            w_trend = weights["heuristic_trend_weight"]
+            w_mr = weights["heuristic_mr_weight"]
+            w_brk = weights["heuristic_breakout_weight"]
+            w_ctx = weights["heuristic_context_weight"]
+            w_ml_total = weights["ml_total_weight"]
+        except Exception as e:
             w_trend, w_mr, w_brk, w_ctx = 0.30, 0.25, 0.20, 0.25
+            w_ml_total = 0.0
 
         # Final ensemble as weighted average of model committee.
-        total = (
+        # If w_ml_total > 0, we blend the heuristic total and the ML tactical/structural scores.
+        heuristic_total = (
             w_trend * trend_score
             + w_mr * mr_score
             + w_brk * breakout_score
             + w_ctx * context_score
         )
+        
+        if w_ml_total > 0.0:
+            # We already computed ml_component which is (ml_tactical + ml_structural)/2
+            total = heuristic_total + (ml_component * w_ml_total)
+        else:
+            total = heuristic_total
+            
         total = float(max(0.0, min(100.0, total)))
 
         # Phase 55: Boost Achats d'Insidés & PEA-PME

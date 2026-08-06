@@ -138,6 +138,36 @@ class AmfInsiderScraper:
                 )
                 return pd.DataFrame()
 
+    async def get_recent_declarations_async(self, tickers: list[str]) -> dict[str, pd.DataFrame]:
+        """Fetch declarations for multiple tickers concurrently."""
+        from scrapers._http import async_safe_get
+        import asyncio
+        import aiohttp
+        
+        results = {}
+        sem = asyncio.Semaphore(3)
+        
+        async def fetch_one(session, ticker: str):
+            # Wrapper logic to async fetch from ODS API or BDIF
+            # To avoid complete rewrite, we'll wrap the sync fallback logic with run_in_executor
+            # but for true async, we'd hit the ODS API asynchronously here.
+            loop = asyncio.get_event_loop()
+            try:
+                # Limit concurrency with semaphore even for threads
+                async with sem:
+                    df = await loop.run_in_executor(None, self.get_recent_declarations, ticker)
+                return ticker, df
+            except Exception:
+                return ticker, pd.DataFrame()
+                
+        async with aiohttp.ClientSession() as session:
+            tasks = [fetch_one(session, t) for t in tickers]
+            for coro in asyncio.as_completed(tasks):
+                t, df = await coro
+                results[t] = df
+                
+        return results
+
             # Reclassify generic "Declaration" using title keywords.
             for r in rows:
                 tx = str(r.get("Transaction") or "")

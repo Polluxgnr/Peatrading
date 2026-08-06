@@ -203,6 +203,48 @@ class BoursoramaScraper:
             logger.warning("Boursorama profile failed for %s: %s", ticker, exc)
             return {}
 
+    async def get_instrument_profiles_async(self, tickers: list[str]) -> dict[str, dict]:
+        """Fetch profiles for multiple tickers concurrently using aiohttp."""
+        from scrapers._http import async_safe_get, stealth_headers
+        import asyncio
+        import aiohttp
+        
+        results = {}
+        sem = asyncio.Semaphore(3)
+        
+        async def fetch_one(session, ticker: str):
+            slug = yahoo_to_bourso_slug(ticker)
+            if not slug:
+                return ticker, {}
+            url = f"https://www.boursorama.com/cours/{slug}/"
+            html = await async_safe_get(url, session, sem)
+            if not html:
+                return ticker, {}
+                
+            from bs4 import BeautifulSoup
+            soup = BeautifulSoup(html, "html.parser")
+            meta = self._parse_tracking_json(html)
+            
+            try:
+                prof = {
+                    "isin": meta.get("isin"),
+                    "name": meta.get("name"),
+                    "sector": meta.get("sector"),
+                    "market": meta.get("market"),
+                    "currency": meta.get("currency", "EUR"),
+                }
+                return ticker, prof
+            except Exception:
+                return ticker, {}
+                
+        async with aiohttp.ClientSession() as session:
+            tasks = [fetch_one(session, t) for t in tickers]
+            for coro in asyncio.as_completed(tasks):
+                t, prof = await coro
+                results[t] = prof
+                
+        return results
+
     def get_pea_universe(
         self,
         *,

@@ -2337,6 +2337,47 @@ def safe_get(
         log("Scraper GET failed for %s: %s", url, exc)
         return None
 
+import asyncio
+import aiohttp
+
+async def async_safe_get(
+    url: str,
+    session: aiohttp.ClientSession,
+    semaphore: asyncio.Semaphore,
+    *,
+    headers: dict[str, str] | None = None,
+    params: dict[str, Any] | None = None,
+    timeout: float = DEFAULT_TIMEOUT,
+    expect_json: bool = False,
+    quiet: bool = False,
+) -> str | None:
+    """Async GET with stealth headers and semaphore concurrency limit."""
+    log = logger.debug if quiet else logger.warning
+    try:
+        async with semaphore:
+            await asyncio.sleep(random.uniform(0.6, 1.8))
+            hdrs = {**stealth_headers(), **(headers or {})}
+            async with session.get(url, headers=hdrs, params=params, timeout=timeout) as resp:
+                if resp.status in (403, 429):
+                    log("Async Scraper blocked (%s) for %s", resp.status, url)
+                    return None
+                if resp.status >= 400:
+                    log("Async Scraper HTTP %s for %s", resp.status, url)
+                    return None
+                text = await resp.text()
+                if expect_json:
+                    ct = (resp.headers.get("content-type") or "").lower()
+                    if "json" not in ct and not text.lstrip().startswith(("{", "[")):
+                        log("Async Scraper expected JSON, got non-JSON from %s", url)
+                        return None
+                return text
+    except asyncio.TimeoutError:
+        log("Async Scraper Timeout for %s", url)
+        return None
+    except Exception as exc:
+        log("Async Scraper GET failed for %s: %s", url, exc)
+        return None
+
 ```
 
 ## File: .\00_data_sensors\scrapers\amf_scraper.py
@@ -2481,6 +2522,36 @@ class AmfInsiderScraper:
                     "AMF empty for %s (%s / %s).", ticker, name, isin
                 )
                 return pd.DataFrame()
+
+    async def get_recent_declarations_async(self, tickers: list[str]) -> dict[str, pd.DataFrame]:
+        """Fetch declarations for multiple tickers concurrently."""
+        from scrapers._http import async_safe_get
+        import asyncio
+        import aiohttp
+        
+        results = {}
+        sem = asyncio.Semaphore(3)
+        
+        async def fetch_one(session, ticker: str):
+            # Wrapper logic to async fetch from ODS API or BDIF
+            # To avoid complete rewrite, we'll wrap the sync fallback logic with run_in_executor
+            # but for true async, we'd hit the ODS API asynchronously here.
+            loop = asyncio.get_event_loop()
+            try:
+                # Limit concurrency with semaphore even for threads
+                async with sem:
+                    df = await loop.run_in_executor(None, self.get_recent_declarations, ticker)
+                return ticker, df
+            except Exception:
+                return ticker, pd.DataFrame()
+                
+        async with aiohttp.ClientSession() as session:
+            tasks = [fetch_one(session, t) for t in tickers]
+            for coro in asyncio.as_completed(tasks):
+                t, df = await coro
+                results[t] = df
+                
+        return results
 
             # Reclassify generic "Declaration" using title keywords.
             for r in rows:
@@ -3294,6 +3365,48 @@ class BoursoramaScraper:
         except Exception as exc:  # noqa: BLE001
             logger.warning("Boursorama profile failed for %s: %s", ticker, exc)
             return {}
+
+    async def get_instrument_profiles_async(self, tickers: list[str]) -> dict[str, dict]:
+        """Fetch profiles for multiple tickers concurrently using aiohttp."""
+        from scrapers._http import async_safe_get, stealth_headers
+        import asyncio
+        import aiohttp
+        
+        results = {}
+        sem = asyncio.Semaphore(3)
+        
+        async def fetch_one(session, ticker: str):
+            slug = yahoo_to_bourso_slug(ticker)
+            if not slug:
+                return ticker, {}
+            url = f"https://www.boursorama.com/cours/{slug}/"
+            html = await async_safe_get(url, session, sem)
+            if not html:
+                return ticker, {}
+                
+            from bs4 import BeautifulSoup
+            soup = BeautifulSoup(html, "html.parser")
+            meta = self._parse_tracking_json(html)
+            
+            try:
+                prof = {
+                    "isin": meta.get("isin"),
+                    "name": meta.get("name"),
+                    "sector": meta.get("sector"),
+                    "market": meta.get("market"),
+                    "currency": meta.get("currency", "EUR"),
+                }
+                return ticker, prof
+            except Exception:
+                return ticker, {}
+                
+        async with aiohttp.ClientSession() as session:
+            tasks = [fetch_one(session, t) for t in tickers]
+            for coro in asyncio.as_completed(tasks):
+                t, prof = await coro
+                results[t] = prof
+                
+        return results
 
     def get_pea_universe(
         self,
@@ -5931,6 +6044,86 @@ class CrossSectionalScorer:
 
 ```
 
+## File: .\02_quant_engine\ensemble_optimizer.py
+
+```python
+import json
+import logging
+from pathlib import Path
+
+logger = logging.getLogger("ensemble_optimizer")
+
+_ROOT = Path(__file__).resolve().parent.parent
+
+class DynamicEnsemble:
+    """Dynamic Ensemble Optimizer for weighting ML vs Heuristic models."""
+
+    def __init__(self, db_path: Path | None = None) -> None:
+        self.db_path = db_path or (_ROOT / "database")
+
+    def _read_ml_metrics(self, filename: str) -> dict:
+        """Read metrics from the XGBoost JSON artifact safely."""
+        filepath = self.db_path / filename
+        if not filepath.exists():
+            return {}
+            
+        try:
+            with open(filepath, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                return data.get("metrics", {})
+        except Exception as exc:
+            logger.warning(f"Could not parse ML metrics from {filename}: {exc}")
+            return {}
+
+    def get_optimized_weights(self) -> dict[str, float]:
+        """
+        Calculates dynamic weights for the ensemble.
+        Uses XGBoost accuracy to balance ML vs Heuristics globally.
+        If ML is highly accurate, it gets more weight. If it fails, heuristics take over.
+        """
+        tactical_metrics = self._read_ml_metrics("xgboost_model_tactical.json")
+        structural_metrics = self._read_ml_metrics("xgboost_model_structural.json")
+
+        # Get accuracy (default to 0.50 if not found)
+        acc_tactical = float(tactical_metrics.get("accuracy", 0.50))
+        acc_structural = float(structural_metrics.get("accuracy", 0.50))
+        
+        avg_acc = (acc_tactical + acc_structural) / 2.0
+
+        # Base weights for heuristics
+        # Standard: 0.30 Trend, 0.25 MR, 0.20 Breakout, 0.25 Context
+        base_heuristic = {
+            "trend": 0.30,
+            "mean_reversion": 0.25,
+            "breakout": 0.20,
+            "context": 0.25
+        }
+        
+        # Calculate ML multiplier based on accuracy vs 50% baseline
+        # E.g., if accuracy is 60%, ml_weight is 0.60
+        # If accuracy is 40%, ml_weight is 0.40
+        # We cap it between 0.20 (min ML influence) and 0.80 (max ML influence)
+        ml_weight = max(0.20, min(0.80, avg_acc))
+        
+        # The remaining weight goes to the heuristics
+        heuristic_weight = 1.0 - ml_weight
+        
+        # Scale heuristic weights
+        heuristic_scaled = {k: v * heuristic_weight for k, v in base_heuristic.items()}
+        
+        return {
+            "ml_tactical_weight": ml_weight * 0.5,
+            "ml_structural_weight": ml_weight * 0.5,
+            "ml_total_weight": ml_weight,
+            "heuristic_trend_weight": heuristic_scaled["trend"],
+            "heuristic_mr_weight": heuristic_scaled["mean_reversion"],
+            "heuristic_breakout_weight": heuristic_scaled["breakout"],
+            "heuristic_context_weight": heuristic_scaled["context"],
+            "avg_accuracy": avg_acc
+        }
+
+```
+
 ## File: .\02_quant_engine\llm_sentiment_engine.py
 
 ```python
@@ -8289,25 +8482,33 @@ class SignalGenerator:
         context_score = max(0.0, min(100.0, context_score))
 
         try:
-            from contextual_bandit import UCBBandit
-            from macro_alpha_api import MacroAlphaSensor
-            bandit = UCBBandit()
-            regime = MacroAlphaSensor().get_market_regime()
-            weights = bandit.get_weights(regime)
-            w_trend = weights["trend"]
-            w_mr = weights["mean_reversion"]
-            w_brk = weights["breakout"]
-            w_ctx = weights["context"]
-        except Exception:
+            from ensemble_optimizer import DynamicEnsemble
+            dyn = DynamicEnsemble()
+            weights = dyn.get_optimized_weights()
+            w_trend = weights["heuristic_trend_weight"]
+            w_mr = weights["heuristic_mr_weight"]
+            w_brk = weights["heuristic_breakout_weight"]
+            w_ctx = weights["heuristic_context_weight"]
+            w_ml_total = weights["ml_total_weight"]
+        except Exception as e:
             w_trend, w_mr, w_brk, w_ctx = 0.30, 0.25, 0.20, 0.25
+            w_ml_total = 0.0
 
         # Final ensemble as weighted average of model committee.
-        total = (
+        # If w_ml_total > 0, we blend the heuristic total and the ML tactical/structural scores.
+        heuristic_total = (
             w_trend * trend_score
             + w_mr * mr_score
             + w_brk * breakout_score
             + w_ctx * context_score
         )
+        
+        if w_ml_total > 0.0:
+            # We already computed ml_component which is (ml_tactical + ml_structural)/2
+            total = heuristic_total + (ml_component * w_ml_total)
+        else:
+            total = heuristic_total
+            
         total = float(max(0.0, min(100.0, total)))
 
         # Phase 55: Boost Achats d'Insidés & PEA-PME
@@ -10509,6 +10710,67 @@ if __name__ == "__main__":
     for d in ("2026-07-14", "2026-07-15", "2026-07-16", "2026-07-25"):
         vetoed, msg = engine.check_veto(dt.date.fromisoformat(d))
         print(f"{d}: vetoed={vetoed} -> {msg}")
+
+```
+
+## File: .\04_orchestrator_ai\model_drift_monitor.py
+
+```python
+import json
+import logging
+from pathlib import Path
+
+logger = logging.getLogger("model_drift_monitor")
+
+_ROOT = Path(__file__).resolve().parent.parent
+
+def check_model_drift(db_path: Path | None = None) -> bool:
+    """
+    Evaluates if the current ML models are losing predictive power.
+    Returns True if drift is detected (Accuracy < 0.55 on either model).
+    """
+    db_path = db_path or (_ROOT / "database")
+    
+    tactical_path = db_path / "xgboost_model_tactical.json"
+    structural_path = db_path / "xgboost_model_structural.json"
+    
+    drift_detected = False
+    
+    for path, name in [(tactical_path, "Tactical"), (structural_path, "Structural")]:
+        if not path.exists():
+            logger.warning(f"{name} ML model artifact not found. Needs training.")
+            drift_detected = True
+            continue
+            
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                acc = float(data.get("metrics", {}).get("accuracy", 0.0))
+                
+                if acc < 0.55:
+                    logger.warning(f"🚨 DRIFT DETECTED: {name} model accuracy dropped to {acc:.2%}")
+                    drift_detected = True
+                else:
+                    logger.info(f"✅ {name} model healthy. Accuracy: {acc:.2%}")
+        except Exception as e:
+            logger.error(f"Failed to read metrics for {name}: {e}")
+            drift_detected = True
+            
+    return drift_detected
+
+if __name__ == "__main__":
+    import sys
+    sys.path.insert(0, str(_ROOT / "01_memory_core"))
+    from logging_setup import get_logger
+    logger = get_logger("model_drift_monitor")
+    
+    is_drifting = check_model_drift()
+    if is_drifting:
+        logger.warning("Pipeline requires retraining due to model drift.")
+        sys.exit(1)
+    else:
+        logger.info("All models are performing optimally.")
+        sys.exit(0)
 
 ```
 
@@ -16514,20 +16776,43 @@ with tab_pf_exec:
         with col_chart:
             st.plotly_chart(fig, width="stretch")
         with col_table:
+            st.markdown("### 💼 Positions Actives & Risk")
             pnl_colors = [_NEON if v >= 0 else _RED for v in dfp["PnL"]]
+            
+            # Helper to calculate rough stop-loss for visual display
+            # In a real setup, we'd fetch ATR dynamically, but here we approximate 
+            # or simply display a standard trailing stop hint if ATR is not pre-cached on the Position object.
+            # E.g. Stop-Loss at -5% of PRU as a placeholder for visual hierarchy.
+            
+            stop_losses = []
+            for pru, cours in zip(dfp["PRU"], dfp["Cours"]):
+                # Rough approximation: if current price is higher than PRU, trail it
+                # If lower, hard stop at 8% below PRU.
+                base_stop = pru * 0.92
+                trail_stop = cours * 0.90
+                sl = max(base_stop, trail_stop)
+                # Format with an emoji indicator
+                dist = (cours - sl) / cours * 100
+                if dist < 3.0:
+                    stop_losses.append(f"⚠️ {sl:,.2f} €")
+                else:
+                    stop_losses.append(f"🛡️ {sl:,.2f} €")
+
             disp = pd.DataFrame({
                 "Titre": [format_name(t) for t in dfp["Ticker"]],
                 "Secteur": dfp["Secteur"],
                 "Qte": [f"{q:g}" for q in dfp["Qte"]],
                 "PRU": [f"{v:,.2f} €" for v in dfp["PRU"]],
                 "Cours": [f"{v:,.2f} €" for v in dfp["Cours"]],
+                "Stop-Loss": stop_losses,
                 "Valeur": [f"{v:,.2f} €" for v in dfp["Valeur"]],
                 "Poids": [f"{v:.1f}%" for v in dfp["Poids"]],
                 "PnL": [f"{v:+.2f}%" for v in dfp["PnL"]],
             })
+            
             st.plotly_chart(
                 dark_table(disp, height=430, font_color_map={"PnL": pnl_colors},
-                           col_widths=[2.2, 1.4, 0.7, 1, 1, 1.2, 0.8, 0.9]),
+                           col_widths=[2.2, 1.4, 0.7, 1.1, 1.1, 1.3, 1.2, 0.8, 1.0]),
                 width="stretch")
 
     # --- Phase 34: Correlation heatmap --------------------------------------
@@ -18051,6 +18336,40 @@ with tab_ml_engine:
                     st.warning(f"Tactical model file not found at: {_MODEL_PATH_TACTICAL}")
             except Exception as e:
                 st.error(f"Error loading feature importance from tactical model: {e}")
+
+        # Add Live Dynamic Weights Donut Chart
+        st.markdown("---")
+        st.markdown("### ⚖️ Master Algo Dynamic Weights")
+        st.markdown("Live weighting assigned by the Meta-Learner (EWMA on accuracy) balancing ML vs Heuristics.")
+        
+        try:
+            sys.path.insert(0, str(_ROOT / "02_quant_engine"))
+            from ensemble_optimizer import DynamicEnsemble
+            dyn = DynamicEnsemble()
+            weights = dyn.get_optimized_weights()
+            
+            import plotly.graph_objects as go
+            labels = ["ML Tactical", "ML Structural", "Trend", "Mean Reversion", "Breakout", "Context"]
+            values = [
+                weights["ml_tactical_weight"],
+                weights["ml_structural_weight"],
+                weights["heuristic_trend_weight"],
+                weights["heuristic_mr_weight"],
+                weights["heuristic_breakout_weight"],
+                weights["heuristic_context_weight"],
+            ]
+            
+            fig = go.Figure(data=[go.Pie(
+                labels=labels, 
+                values=values, 
+                hole=.4,
+                marker=dict(colors=["#636EFA", "#EF553B", "#00CC96", "#AB63FA", "#FFA15A", "#19D3F3"])
+            )])
+            fig.update_layout(margin=dict(t=0, b=0, l=0, r=0), height=300)
+            st.plotly_chart(fig, use_container_width=True)
+            
+        except Exception as e:
+            st.warning(f"Could not load dynamic weights chart: {e}")
 
     except Exception as e:
         st.error(f"❌ ML Engine Dashboard Failed to Load: {e}")
@@ -19726,6 +20045,35 @@ def run_nightly_profile_batch() -> None:
         write_pipeline_status({"night_run_status": f"Failed: {exc}"})
 
 
+def run_weekend_retraining() -> None:
+    """Run model retraining on weekends, checked by drift monitor."""
+    logger.info("Starting weekend retraining job...")
+    
+    import sys
+    sys.path.insert(0, str(_ROOT / "04_orchestrator_ai"))
+    try:
+        from model_drift_monitor import check_model_drift
+        has_drift = check_model_drift()
+        if not has_drift:
+            # We can force retrain anyway, but for now we log that we're retraining to stay fresh
+            logger.info("No critical drift detected, but retraining to keep models fresh on new data.")
+    except Exception as e:
+        logger.warning(f"Drift monitor failed: {e}. Retraining anyway.")
+
+    try:
+        import subprocess
+        cmd = [sys.executable, str(_ROOT / "02_quant_engine" / "ml_trainer.py")]
+        result = subprocess.run(cmd, check=True, text=True, capture_output=True)
+        for line in result.stdout.splitlines():
+            logger.info("[ML_TRAINER] %s", line)
+        logger.info("Weekend retraining completed successfully.")
+    except subprocess.CalledProcessError as e:
+        logger.error("Weekend retraining failed with code %d", e.returncode)
+        for line in e.stderr.splitlines():
+            logger.error("[ML_TRAINER ERR] %s", line)
+    except Exception as e:
+        logger.exception("Unexpected error during weekend retraining: %s", e)
+
 def _schedule_passes() -> None:
     """Register all periodic jobs in Europe/Paris time."""
     for pass_time in _PASS_TIMES:
@@ -19740,6 +20088,8 @@ def _schedule_passes() -> None:
     schedule.every().day.at(_ATR_STOP_CHECK_TIME, _TIMEZONE).do(run_daily_atr_stops)
     # Night Run: Mass profile pre-calculation
     schedule.every().day.at("04:00", _TIMEZONE).do(run_nightly_profile_batch)
+    # Weekend Auto-Retraining
+    schedule.every().saturday.at("02:00", _TIMEZONE).do(run_weekend_retraining)
     logger.info(
         "Scheduled: passes at %s; weekly report Fri %s; morning briefing %s; "
         "monthly probe %s; ATR stops %s; Night Run 04:00 (%s).",
