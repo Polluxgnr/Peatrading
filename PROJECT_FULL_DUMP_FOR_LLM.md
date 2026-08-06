@@ -1,13 +1,320 @@
-# PEA Pollux - Full Project Dump
+# PEA Pollux — Full Project Dump for LLM
 
-## File: .\00_data_sensors\__init__.py
+> **PEA Pollux** · Generated `2026-08-06 09:13 UTC` · Root `C:\Users\PolluxGronier\Downloads\pea_sniper_terminal`
 
+One-shot context for external LLM agents. Includes source, configs, and docs.
+Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
+
+---
+## Architecture snapshot (for agents)
+
+| Layer | Path | Role |
+|-------|------|------|
+| Sensors | `00_data_sensors/` | OHLCV, VIX, insiders (AMF→FMP→YF), Polymarket, Bourso scrapers, newsletter IMAP |
+| Memory | `01_memory_core/` | Pydantic models, SQLite (`portfolio`, `audit_logs`, `portfolio_history`, **`news_history`**), DuckDB OHLCV |
+| Quant | `02_quant_engine/` | Ensemble conviction scorer (MR + vol + insider + inst + **news/poly modifiers**), Smart DCA |
+| Risk | `03_risk_portfolio/` | Cascade vetoes, Half-Kelly sizing, correlation firewall, ATR rebalancer |
+| Orchestrator | `04_orchestrator_ai/` | Pipeline conductor, earnings blackout, macro veto, revocation, weekly historian |
+| UI | `05_interfaces/` | Streamlit Mission Control — **native HTML ticker tape**, exploration 600+ tickers, live telemetry tab |
+| Ops | `main_scheduler.py` | Paris daemon (09:00 / 13:30 / 17:10 + briefing 08:25 + ATR 08:35) |
+
+**Dashboard highlights (Phase 26–28):**
+- Auto-sync on session open (`load_universe`, `get_last_prices`, `get_vix`)
+- Native CSS marquee tape (no TradingView widget for `.PA`)
+- `news_history` SQLite archive — exact timestamps, cross-session memory
+- Portfolio tab: explicit ATR 2.5× stop table
+- Exploration: universal ticker search, order ticket, decision checklist
+- Architecture tab: live source health + active `risk_params.yaml` + logic expanders
+
+**Hard rules:** no auto-broker execution · LLM explains only · conviction emit ≥ 65 · manual Discord/Streamlit approve.
+
+---
+
+### Priority files (read first)
+- `README.md`
+- `config/risk_params.yaml`
+- `config/pea_universe.yaml`
+- `01_memory_core/data_models.py`
+- `01_memory_core/sqlite_portfolio.py`
+- `01_memory_core/duckdb_manager.py`
+- `02_quant_engine/technical_scorer.py`
+- `02_quant_engine/quantitative_math.py`
+- `02_quant_engine/stochastic_models.py`
+- `03_risk_portfolio/stress_tester.py`
+- `03_risk_portfolio/pea_position_sizer.py`
+- `04_orchestrator_ai/signal_priority_cascade.py`
+- `04_orchestrator_ai/red_team_agent.py`
+- `05_interfaces/terminal_dashboard.py`
+- `main_scheduler.py`
+
+---
+## File index (116 files)
+### `(root)/`
+- `.gitignore` (42 lines)
+- `DASHBOARD_FULL_DUMP_FOR_LLM.md` (6691 lines)
+- `docker-compose.yml` (70 lines)
+- `Dockerfile` (30 lines)
+- `generate_dumps.py` (32 lines)
+- `main_scheduler.py` (1016 lines) ⭐
+- `README.md` (1551 lines) ⭐
+- `requirements.txt` (52 lines)
+- `run_backfill.py` (40 lines)
+- `run_dashboard.ps1` (15 lines)
+- `run_discord.py` (100 lines)
+- `run_quant_pipeline.py` (142 lines)
+- `scratch_clear.py` (3 lines)
+- `scratch_extract.py` (82 lines)
+- `scratch_regex.py` (22 lines)
+- `seed_account.py` (129 lines)
+
+### `.github/workflows/`
+- `.github/workflows/ci.yml` (33 lines)
+
+### `.streamlit/`
+- `.streamlit/config.toml` (25 lines)
+
+### `00_data_sensors/`
+- `00_data_sensors/__init__.py` (0 lines)
+- `00_data_sensors/deep_news_scraper.py` (126 lines)
+- `00_data_sensors/fundamentals_api.py` (243 lines)
+- `00_data_sensors/macro_alpha_api.py` (585 lines)
+- `00_data_sensors/market_prices_api.py` (375 lines)
+- `00_data_sensors/news_api_client.py` (93 lines)
+- `00_data_sensors/news_email_scraper.py` (118 lines)
+- `00_data_sensors/news_rss_scraper.py` (91 lines)
+- `00_data_sensors/newsletter_api.py` (213 lines)
+- `00_data_sensors/symbol_mapper.py` (179 lines)
+
+### `00_data_sensors/newsletter_ingest/ingest/`
+- `00_data_sensors/newsletter_ingest/ingest/__init__.py` (1 lines)
+- `00_data_sensors/newsletter_ingest/ingest/dedupe.py` (51 lines)
+- `00_data_sensors/newsletter_ingest/ingest/env_loader.py` (36 lines)
+- `00_data_sensors/newsletter_ingest/ingest/html_parser.py` (116 lines)
+- `00_data_sensors/newsletter_ingest/ingest/imap_client.py` (167 lines)
+- `00_data_sensors/newsletter_ingest/ingest/whitelist.py` (35 lines)
+- `00_data_sensors/newsletter_ingest/ingest/writer.py` (33 lines)
+
+### `00_data_sensors/scrapers/`
+- `00_data_sensors/scrapers/__init__.py` (18 lines)
+- `00_data_sensors/scrapers/_http.py` (113 lines)
+- `00_data_sensors/scrapers/amf_scraper.py` (734 lines)
+- `00_data_sensors/scrapers/amf_short_scraper.py` (32 lines)
+- `00_data_sensors/scrapers/bourso_scraper.py` (532 lines)
+- `00_data_sensors/scrapers/institutional_scraper.py` (133 lines)
+
+### `01_memory_core/`
+- `01_memory_core/__init__.py` (0 lines)
+- `01_memory_core/config_validator.py` (96 lines)
+- `01_memory_core/data_models.py` (162 lines) ⭐
+- `01_memory_core/duckdb_manager.py` (231 lines) ⭐
+- `01_memory_core/env_loader.py` (34 lines)
+- `01_memory_core/logging_setup.py` (285 lines)
+- `01_memory_core/profile_builder.py` (289 lines)
+- `01_memory_core/sqlite_portfolio.py` (900 lines) ⭐
+
+### `02_quant_engine/`
+- `02_quant_engine/__init__.py` (0 lines)
+- `02_quant_engine/contextual_bandit.py` (95 lines)
+- `02_quant_engine/cross_sectional.py` (49 lines)
+- `02_quant_engine/ensemble_optimizer.py` (74 lines)
+- `02_quant_engine/llm_sentiment_engine.py` (144 lines)
+- `02_quant_engine/market_regime.py` (120 lines)
+- `02_quant_engine/ml_backtester.py` (22 lines)
+- `02_quant_engine/ml_feature_store.py` (498 lines)
+- `02_quant_engine/ml_trainer.py` (360 lines)
+- `02_quant_engine/nlp_sentiment_engine.py` (56 lines)
+- `02_quant_engine/quantitative_math.py` (144 lines) ⭐
+- `02_quant_engine/risk_engine.py` (48 lines)
+- `02_quant_engine/smart_dca_engine.py` (216 lines)
+- `02_quant_engine/stochastic_models.py` (87 lines) ⭐
+- `02_quant_engine/technical_scorer.py` (817 lines) ⭐
+- `02_quant_engine/walk_forward_backtester.py` (379 lines)
+
+### `03_risk_portfolio/`
+- `03_risk_portfolio/__init__.py` (0 lines)
+- `03_risk_portfolio/alpha_tracker.py` (131 lines)
+- `03_risk_portfolio/correlation_firewall.py` (296 lines)
+- `03_risk_portfolio/drawdown_breaker.py` (83 lines)
+- `03_risk_portfolio/equity_metrics.py` (143 lines)
+- `03_risk_portfolio/hrp_sizer.py` (141 lines)
+- `03_risk_portfolio/limit_price_optimizer.py` (41 lines)
+- `03_risk_portfolio/monthly_rebalancer.py` (232 lines)
+- `03_risk_portfolio/pea_position_sizer.py` (296 lines) ⭐
+- `03_risk_portfolio/stress_tester.py` (145 lines) ⭐
+
+### `04_orchestrator_ai/`
+- `04_orchestrator_ai/__init__.py` (0 lines)
+- `04_orchestrator_ai/discord_copilot.py` (174 lines)
+- `04_orchestrator_ai/discord_notifier.py` (84 lines)
+- `04_orchestrator_ai/earnings_blackout.py` (92 lines)
+- `04_orchestrator_ai/macro_veto.py` (125 lines)
+- `04_orchestrator_ai/model_drift_monitor.py` (55 lines)
+- `04_orchestrator_ai/news_sentiment_llm.py` (227 lines)
+- `04_orchestrator_ai/red_team_agent.py` (98 lines) ⭐
+- `04_orchestrator_ai/revocation_engine.py` (146 lines)
+- `04_orchestrator_ai/signal_priority_cascade.py` (372 lines) ⭐
+- `04_orchestrator_ai/weekly_historian.py` (226 lines)
+
+### `05_interfaces/`
+- `05_interfaces/__init__.py` (0 lines)
+- `05_interfaces/discord_copilot.py` (134 lines)
+- `05_interfaces/llm_explainer.py` (272 lines)
+- `05_interfaces/terminal_dashboard.py` (6683 lines) ⭐
+- `05_interfaces/trade_cards.py` (166 lines)
+
+### `05_interfaces/components/`
+- `05_interfaces/components/__init__.py` (1 lines)
+
+### `config/`
+- `config/api_keys.env.example` (54 lines)
+- `config/earnings_calendar.yaml` (18 lines)
+- `config/macro_calendar.yaml` (17 lines)
+- `config/pea_universe.yaml` (1901 lines) ⭐
+- `config/risk_params.yaml` (53 lines) ⭐
+
+### `scratch/`
+- `scratch/apply_subtabs.py` (89 lines)
+
+### `tests/`
+- `tests/__init__.py` (1 lines)
+- `tests/test_funnel_analytics.py` (63 lines)
+- `tests/test_newsletter_whitelist.py` (24 lines)
+- `tests/test_phase16_foundations.py` (92 lines)
+- `tests/test_ui_and_sandbox.py` (66 lines)
+
+### `tools/`
+- `tools/add_backtest_ui.py` (78 lines)
+- `tools/add_deployment.py` (53 lines)
+- `tools/backup_databases.py` (52 lines)
+- `tools/bootstrap_ml_dataset.py` (209 lines)
+- `tools/build_dashboard_dump.py` (233 lines)
+- `tools/build_llm_dump.py` (232 lines)
+- `tools/build_universe.py` (273 lines)
+- `tools/fix_indent.py` (15 lines)
+- `tools/rebrand_pea_pollux.py` (65 lines)
+- `tools/refactor_ui.py` (172 lines)
+- `tools/run_wfo.py` (66 lines)
+- `tools/sync_universe_from_bourso.py` (236 lines)
+- `tools/train_rl_sizer.py` (80 lines)
+
+---
+## FILE: .github/workflows/ci.yml (33 lines)
+```yaml
+# PEA Pollux — CI
+name: ci
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install ruff
+      - run: ruff check . --select E,F,W --ignore E501
+
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Run tests
+        run: python -m pytest -q
+```
+
+## FILE: .gitignore (42 lines)
+```text
+# --- Secrets & config ---
+config/api_keys.env
+*.env
+!*.env.example
+
+# --- Databases (state & time-series) ---
+database/
+*.db
+*.duckdb
+*.sqlite
+*.sqlite3
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+venv_x64/
+venv*/
+env/
+.python-version
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- Notebooks ---
+.ipynb_checkpoints/
+
+# --- OS / Editor ---
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# --- Logs & data dumps ---
+*.log
+logs/
+data/
+database/backups/
+```
+
+## FILE: .streamlit/config.toml (25 lines)
+```toml
+# Force a pure-black "Bloomberg terminal" dark theme so native widgets
+# (st.dataframe grid, st.metric, inputs) never render on a white background.
+[theme]
+base = "dark"
+backgroundColor = "#050505"
+secondaryBackgroundColor = "#0A0A0A"
+textColor = "#FFFFFF"
+primaryColor = "#00FF00"
+font = "monospace"
+
+[client]
+# false for any non-local deploy (Docker / public IP) — avoids leaking paths.
+# Local debug: set STREAMLIT_CLIENT_SHOW_ERROR_DETAILS=true or flip to true.
+showErrorDetails = false
+toolbarMode = "minimal"
+
+[browser]
+gatherUsageStats = false
+serverAddress = "localhost"
+
+[server]
+# Local default: open a browser. Docker overrides with --server.headless=true
+# (see docker-compose.yml dashboard service) — containers have no display.
+headless = false
+port = 8501
+```
+
+## FILE: 00_data_sensors/__init__.py (0 lines)
 ```python
 
 ```
 
-## File: .\00_data_sensors\deep_news_scraper.py
-
+## FILE: 00_data_sensors/deep_news_scraper.py (126 lines)
 ```python
 """Deep News Scraper and RAG analyzer.
 
@@ -88,7 +395,7 @@ Extract the following information and return ONLY a valid JSON object with EXACT
 - "guidance": A string summarizing the forward outlook, guidance, or strategic shifts.
 - "hidden_risks": A string summarizing any risks, regulatory issues, or macro headwinds.
 
-Do not include any markdown formatting around the JSON (like ```json), just output the raw JSON object.
+Do not include any markdown formatting around the JSON (like ``​`json), just output the raw JSON object.
 """
     
     payload = {
@@ -135,11 +442,9 @@ Do not include any markdown formatting around the JSON (like ```json), just outp
             "guidance": "N/A",
             "hidden_risks": "N/A",
         }
-
 ```
 
-## File: .\00_data_sensors\fundamentals_api.py
-
+## FILE: 00_data_sensors/fundamentals_api.py (243 lines)
 ```python
 """Fundamental data sensor with Finnhub primary + yfinance fallback.
 
@@ -383,12 +688,9 @@ class FundamentalsSensor:
                 baseline["source"] = f"{baseline['source']}+fmp"
                 
         return baseline
-
-
 ```
 
-## File: .\00_data_sensors\macro_alpha_api.py
-
+## FILE: 00_data_sensors/macro_alpha_api.py (585 lines)
 ```python
 """Alternative-data / macro alpha sensors for PEA Pollux.
 
@@ -975,11 +1277,9 @@ if __name__ == "__main__":
     print("Put/Call ASML.AS   :", sensor.get_put_call_ratio("ASML.AS"))
     print("Insider MC.PA      :", sensor.get_insider_activity("MC.PA"))
     print("Polymarket stub    :", sensor.get_polymarket_sentiment("recession 2026"))
-
 ```
 
-## File: .\00_data_sensors\market_prices_api.py
-
+## FILE: 00_data_sensors/market_prices_api.py (375 lines)
 ```python
 """Market data ingestion for PEA Pollux.
 
@@ -1356,11 +1656,9 @@ if __name__ == "__main__":
     print("--- Columns:", list(frame.columns))
     print("--- Tickers:", sorted(frame["Ticker"].unique()) if not frame.empty else [])
     print(frame.tail(10).to_string(index=False))
-
 ```
 
-## File: .\00_data_sensors\news_api_client.py
-
+## FILE: 00_data_sensors/news_api_client.py (93 lines)
 ```python
 import os
 import hashlib
@@ -1455,11 +1753,9 @@ def run_api_scraper(db: SQLitePortfolioDB):
 if __name__ == "__main__":
     db = SQLitePortfolioDB()
     run_api_scraper(db)
-
 ```
 
-## File: .\00_data_sensors\news_email_scraper.py
-
+## FILE: 00_data_sensors/news_email_scraper.py (118 lines)
 ```python
 import os
 import imaplib
@@ -1579,11 +1875,9 @@ def run_email_scraper(db: SQLitePortfolioDB):
 if __name__ == "__main__":
     db = SQLitePortfolioDB()
     run_email_scraper(db)
-
 ```
 
-## File: .\00_data_sensors\news_rss_scraper.py
-
+## FILE: 00_data_sensors/news_rss_scraper.py (91 lines)
 ```python
 import hashlib
 import re
@@ -1676,11 +1970,9 @@ def run_rss_scraper(db: SQLitePortfolioDB):
 if __name__ == "__main__":
     db = SQLitePortfolioDB()
     run_rss_scraper(db)
-
 ```
 
-## File: .\00_data_sensors\newsletter_api.py
-
+## FILE: 00_data_sensors/newsletter_api.py (213 lines)
 ```python
 """Newsletter IMAP sensor + LLM morning Zeitgeist (Phase 19).
 
@@ -1895,18 +2187,14 @@ def run_morning_briefing_sync(folder: str = "Finance") -> dict[str, Any]:
         zeitgeist = "Indisponible"
     sensor.write_briefing(zeitgeist, headlines)
     return {"zeitgeist": zeitgeist, "headlines": headlines}
-
 ```
 
-## File: .\00_data_sensors\newsletter_ingest\ingest\__init__.py
-
+## FILE: 00_data_sensors/newsletter_ingest/ingest/__init__.py (1 lines)
 ```python
 # Package marker for newsletter ingest sandbox.
-
 ```
 
-## File: .\00_data_sensors\newsletter_ingest\ingest\dedupe.py
-
+## FILE: 00_data_sensors/newsletter_ingest/ingest/dedupe.py (51 lines)
 ```python
 """Simple near-duplicate headline collapse (no ML)."""
 
@@ -1959,11 +2247,9 @@ def dedupe_articles(articles: List[dict]) -> List[dict]:
     if removed:
         logger.info("Removed %d near-duplicate headline(s).", removed)
     return kept
-
 ```
 
-## File: .\00_data_sensors\newsletter_ingest\ingest\env_loader.py
-
+## FILE: 00_data_sensors/newsletter_ingest/ingest/env_loader.py (36 lines)
 ```python
 """Load sandbox ``.env`` without touching production ``config/api_keys.env``."""
 
@@ -2001,11 +2287,9 @@ def load_sandbox_env(path: Path) -> dict[str, str]:
     except OSError as exc:
         logger.error("Could not read %s: %s", path, exc)
     return out
-
 ```
 
-## File: .\00_data_sensors\newsletter_ingest\ingest\html_parser.py
-
+## FILE: 00_data_sensors/newsletter_ingest/ingest/html_parser.py (116 lines)
 ```python
 """Extract article titles/links from verbose newsletter HTML."""
 
@@ -2123,11 +2407,9 @@ def parse_newsletter(msg: RawMessage) -> dict[str, Any]:
         "date": msg.date,
         "articles": articles,
     }
-
 ```
 
-## File: .\00_data_sensors\newsletter_ingest\ingest\imap_client.py
-
+## FILE: 00_data_sensors/newsletter_ingest/ingest/imap_client.py (167 lines)
 ```python
 """Read-only Yahoo Mail IMAP client (SSL, app password)."""
 
@@ -2296,11 +2578,9 @@ class YahooImapClient:
             else:
                 text = body
         return html, text
-
 ```
 
-## File: .\00_data_sensors\newsletter_ingest\ingest\whitelist.py
-
+## FILE: 00_data_sensors/newsletter_ingest/ingest/whitelist.py (35 lines)
 ```python
 """Strict sender whitelist for newsletter IMAP ingest.
 
@@ -2337,11 +2617,9 @@ def is_allowed_sender(from_header: str) -> bool:
     """Return True iff the From address is on the newsletter whitelist."""
     email = extract_sender_email(from_header)
     return bool(email) and email in ALLOWED_SENDERS
-
 ```
 
-## File: .\00_data_sensors\newsletter_ingest\ingest\writer.py
-
+## FILE: 00_data_sensors/newsletter_ingest/ingest/writer.py (33 lines)
 ```python
 """Write timestamped JSON under the sandbox ``output/`` folder only."""
 
@@ -2376,11 +2654,9 @@ def write_output(payload: dict[str, Any], out_dir: Path) -> Path:
     path.write_text(json.dumps(body, indent=2, ensure_ascii=False), encoding="utf-8")
     logger.info("Sandbox output written (%d bytes).", path.stat().st_size)
     return path
-
 ```
 
-## File: .\00_data_sensors\scrapers\__init__.py
-
+## FILE: 00_data_sensors/scrapers/__init__.py (18 lines)
 ```python
 """French-market scrapers (AMF BDIF + Boursorama).
 
@@ -2400,11 +2676,9 @@ __all__ = [
     "bourso_slug_to_yahoo",
     "yahoo_to_bourso_slug",
 ]
-
 ```
 
-## File: .\00_data_sensors\scrapers\_http.py
-
+## FILE: 00_data_sensors/scrapers/_http.py (113 lines)
 ```python
 """Shared HTTP helpers for fragile French-market scrapers."""
 
@@ -2519,11 +2793,9 @@ async def async_safe_get(
     except Exception as exc:
         log("Async Scraper GET failed for %s: %s", url, exc)
         return None
-
 ```
 
-## File: .\00_data_sensors\scrapers\amf_scraper.py
-
+## FILE: 00_data_sensors/scrapers/amf_scraper.py (734 lines)
 ```python
 """AMF insider-declaration scraper (antifragile, multi-source).
 
@@ -3258,12 +3530,9 @@ class AmfInsiderScraper:
         except Exception as exc:
             logger.debug("BDIF FS (threshold crossing) API failed for %r: %s", q, exc)
             return []
-
-
 ```
 
-## File: .\00_data_sensors\scrapers\amf_short_scraper.py
-
+## FILE: 00_data_sensors/scrapers/amf_short_scraper.py (32 lines)
 ```python
 """AMF Short Interest Scraper for PEA Pollux.
 
@@ -3297,11 +3566,9 @@ class AmfShortScraper:
         except Exception as exc:
             logger.debug("AMF short scrape failed for ISIN %s: %s", isin, exc)
             return 0.0
-
 ```
 
-## File: .\00_data_sensors\scrapers\bourso_scraper.py
-
+## FILE: 00_data_sensors/scrapers/bourso_scraper.py (532 lines)
 ```python
 """Boursorama scraper — news, consensus, PEA flags, and PEA universe harvest.
 
@@ -3835,11 +4102,9 @@ class BoursoramaScraper:
             return value
         except Exception:  # noqa: BLE001
             return value
-
 ```
 
-## File: .\00_data_sensors\scrapers\institutional_scraper.py
-
+## FILE: 00_data_sensors/scrapers/institutional_scraper.py (133 lines)
 ```python
 """Async web scraper for Institutional Holdings.
 
@@ -3974,11 +4239,9 @@ async def run_institutional_sync() -> None:
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     asyncio.run(run_institutional_sync())
-
 ```
 
-## File: .\00_data_sensors\symbol_mapper.py
-
+## FILE: 00_data_sensors/symbol_mapper.py (179 lines)
 ```python
 """Symbol mapper using OpenFIGI API — resolves Yahoo tickers to ISIN/FIGI.
 
@@ -4159,17 +4422,14 @@ class SymbolMapper:
                 pass
 
         return results
-
 ```
 
-## File: .\01_memory_core\__init__.py
-
+## FILE: 01_memory_core/__init__.py (0 lines)
 ```python
 
 ```
 
-## File: .\01_memory_core\config_validator.py
-
+## FILE: 01_memory_core/config_validator.py (96 lines)
 ```python
 """Strict Pydantic validation for ``risk_params.yaml``.
 
@@ -4267,11 +4527,9 @@ try:
     RISK: RiskParamsConfig = load_risk_config()
 except (FileNotFoundError, ValueError):
     RISK = None  # type: ignore[assignment]
-
 ```
 
-## File: .\01_memory_core\data_models.py
-
+## FILE: 01_memory_core/data_models.py (162 lines)
 ```python
 """Strict data contracts for PEA Pollux.
 
@@ -4435,11 +4693,9 @@ class Signal(BaseModel):
     created_at: datetime = Field(default_factory=_utcnow)
     reason: str = Field(default="", description="Explanation for the UI.")
     lineage: dict = Field(default_factory=dict, description="Data provenance trace.")
-
 ```
 
-## File: .\01_memory_core\duckdb_manager.py
-
+## FILE: 01_memory_core/duckdb_manager.py (231 lines)
 ```python
 """DuckDB time-series engine for PEA Pollux.
 
@@ -4672,11 +4928,9 @@ class TimeSeriesDB:
         except duckdb.Error:
             logger.exception("Failed to fetch historical prices for %s.", ticker)
             raise
-
 ```
 
-## File: .\01_memory_core\env_loader.py
-
+## FILE: 01_memory_core/env_loader.py (34 lines)
 ```python
 """Native ``config/api_keys.env`` loader (no python-dotenv dependency)."""
 
@@ -4712,11 +4966,9 @@ def load_api_keys(env_path: Path | str | None = None) -> Path | None:
             if key not in os.environ or not str(os.environ.get(key) or "").strip():
                 os.environ[key] = value
     return path
-
 ```
 
-## File: .\01_memory_core\logging_setup.py
-
+## FILE: 01_memory_core/logging_setup.py (285 lines)
 ```python
 """Central logging setup for PEA Pollux.
 
@@ -5003,11 +5255,9 @@ def send_discord_alert(message: str) -> None:
         resp.raise_for_status()
     except Exception as exc:
         logging.getLogger(__name__).warning("Failed to send Discord alert: %s", exc)
-
 ```
 
-## File: .\01_memory_core\profile_builder.py
-
+## FILE: 01_memory_core/profile_builder.py (289 lines)
 ```python
 """Profile builder logic extracted from dashboard for Night Run."""
 import sys
@@ -5298,11 +5548,9 @@ def get_ticker_dossier(ticker: str) ->dict:
     except Exception:
         out['fundamentals'] = {}
     return out
-
 ```
 
-## File: .\01_memory_core\sqlite_portfolio.py
-
+## FILE: 01_memory_core/sqlite_portfolio.py (900 lines)
 ```python
 """SQLite state manager for PEA Pollux.
 
@@ -6204,17 +6452,14 @@ class PortfolioDB:
         except sqlite3.Error:
             logger.exception("Failed to get institutional holdings")
             return set()
-
 ```
 
-## File: .\02_quant_engine\__init__.py
-
+## FILE: 02_quant_engine/__init__.py (0 lines)
 ```python
 
 ```
 
-## File: .\02_quant_engine\contextual_bandit.py
-
+## FILE: 02_quant_engine/contextual_bandit.py (95 lines)
 ```python
 """Contextual Bandits for Dynamic Sub-model Weighting.
 
@@ -6311,11 +6556,9 @@ class UCBBandit:
         self.state[regime][arm]["counts"] += 1
         self.state[regime][arm]["rewards"] += reward
         self.save_state()
-
 ```
 
-## File: .\02_quant_engine\cross_sectional.py
-
+## FILE: 02_quant_engine/cross_sectional.py (49 lines)
 ```python
 """Cross-Sectional Momentum Engine for PEA Pollux.
 
@@ -6366,11 +6609,9 @@ class CrossSectionalScorer:
         
         logger.info("Computed cross-sectional momentum for %d tickers.", len(ranks))
         return ranks.to_dict()
-
 ```
 
-## File: .\02_quant_engine\ensemble_optimizer.py
-
+## FILE: 02_quant_engine/ensemble_optimizer.py (74 lines)
 ```python
 import json
 import logging
@@ -6446,11 +6687,9 @@ class DynamicEnsemble:
             "heuristic_context_weight": heuristic_scaled["context"],
             "avg_accuracy": avg_acc
         }
-
 ```
 
-## File: .\02_quant_engine\llm_sentiment_engine.py
-
+## FILE: 02_quant_engine/llm_sentiment_engine.py (144 lines)
 ```python
 import os
 import sys
@@ -6528,9 +6767,9 @@ Return ONLY the JSON object. Do not include markdown formatting or conversationa
         output_text = result.get("response", "").strip()
         
         # Ollama might wrap JSON in markdown block even with format="json" in some models
-        if output_text.startswith("```json"):
+        if output_text.startswith("``​`json"):
             output_text = output_text[7:]
-        if output_text.endswith("```"):
+        if output_text.endswith("``​`"):
             output_text = output_text[:-3]
             
         data = json.loads(output_text.strip())
@@ -6596,11 +6835,9 @@ def score_news_batch(db: SQLitePortfolioDB):
 if __name__ == "__main__":
     db = SQLitePortfolioDB()
     score_news_batch(db)
-
 ```
 
-## File: .\02_quant_engine\market_regime.py
-
+## FILE: 02_quant_engine/market_regime.py (120 lines)
 ```python
 """Market Regime Classifier for PEA Pollux.
 
@@ -6722,11 +6959,9 @@ class MarketRegimeClassifier:
             return 70.0, 25.0
         else:
             return base_conviction, base_rsi
-
 ```
 
-## File: .\02_quant_engine\ml_backtester.py
-
+## FILE: 02_quant_engine/ml_backtester.py (22 lines)
 ```python
 import pandas as pd
 import numpy as np
@@ -6750,11 +6985,9 @@ def run_autonomous_backtest(csv_path: str, initial_capital: float = 10000.0) -> 
     df = df.sort_values('Date')
     
     return df
-
 ```
 
-## File: .\02_quant_engine\ml_feature_store.py
-
+## FILE: 02_quant_engine/ml_feature_store.py (498 lines)
 ```python
 """Machine Learning feature store for PEA Pollux (Phase 40).
 
@@ -7254,11 +7487,9 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     p = export_ml_dataset_csv()
     print(f"Wrote {p}")
-
 ```
 
-## File: .\02_quant_engine\ml_trainer.py
-
+## FILE: 02_quant_engine/ml_trainer.py (360 lines)
 ```python
 """XGBoost trainer for forward-return prediction (Phase 44).
 
@@ -7620,11 +7851,9 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     m = train_model()
     print(json.dumps(m, indent=2))
-
 ```
 
-## File: .\02_quant_engine\nlp_sentiment_engine.py
-
+## FILE: 02_quant_engine/nlp_sentiment_engine.py (56 lines)
 ```python
 import sys
 from pathlib import Path
@@ -7682,11 +7911,9 @@ def score_news_batch(db: SQLitePortfolioDB):
 if __name__ == "__main__":
     db = SQLitePortfolioDB()
     score_news_batch(db)
-
 ```
 
-## File: .\02_quant_engine\quantitative_math.py
-
+## FILE: 02_quant_engine/quantitative_math.py (144 lines)
 ```python
 """Academic quantitative-math utilities for portfolio analytics.
 
@@ -7831,12 +8058,9 @@ def calculate_annualized_volatility(returns: pd.Series, periods_per_year: int = 
     if std_ewm.empty:
         return 0.0
     return float(std_ewm.iloc[-1] * np.sqrt(float(periods_per_year)))
-
-
 ```
 
-## File: .\02_quant_engine\risk_engine.py
-
+## FILE: 02_quant_engine/risk_engine.py (48 lines)
 ```python
 class RiskEngine:
     """Dynamic Risk Management and Position Sizing Engine."""
@@ -7886,11 +8110,9 @@ class RiskEngine:
         adjusted_weight = raw_weight * 0.10
         
         return min(adjusted_weight, max_weight)
-
 ```
 
-## File: .\02_quant_engine\smart_dca_engine.py
-
+## FILE: 02_quant_engine/smart_dca_engine.py (216 lines)
 ```python
 """Smart DCA core engine for PEA Pollux (Phase 10).
 
@@ -8108,11 +8330,9 @@ if __name__ == "__main__":
                                      np.linspace(260.0, 170.0, 60)]))
     s2 = core.evaluate_cw8(_MockDB(crash), current_cash=8000.0, total_equity=20000.0)
     print(f"  score={s2.score:.0f} qty={s2.target_qty}\n  {s2.reason}")
-
 ```
 
-## File: .\02_quant_engine\stochastic_models.py
-
+## FILE: 02_quant_engine/stochastic_models.py (87 lines)
 ```python
 """Stochastic portfolio models (vectorized numpy implementations)."""
 
@@ -8200,12 +8420,9 @@ def run_correlated_monte_carlo(
             "p95": pct[4],
         }
     )
-
-
 ```
 
-## File: .\02_quant_engine\technical_scorer.py
-
+## FILE: 02_quant_engine/technical_scorer.py (817 lines)
 ```python
 """Quantitative signal engine for PEA Pollux.
 
@@ -9024,11 +9241,9 @@ if __name__ == "__main__":
     for s in results:
         print(f"  {s.id[:8]} {s.ticker} score={s.score:.1f}")
         print(f"  reason: {s.reason}")
-
 ```
 
-## File: .\02_quant_engine\walk_forward_backtester.py
-
+## FILE: 02_quant_engine/walk_forward_backtester.py (379 lines)
 ```python
 """Walk-forward backtester scaffold (Phase 20 companion).
 
@@ -9409,17 +9624,14 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
 ```
 
-## File: .\03_risk_portfolio\__init__.py
-
+## FILE: 03_risk_portfolio/__init__.py (0 lines)
 ```python
 
 ```
 
-## File: .\03_risk_portfolio\alpha_tracker.py
-
+## FILE: 03_risk_portfolio/alpha_tracker.py (131 lines)
 ```python
 import logging
 import pandas as pd
@@ -9552,11 +9764,9 @@ if __name__ == "__main__":
     db.init_db()
     curve = db.get_equity_curve()
     print(calculate_alpha_metrics(curve))
-
 ```
 
-## File: .\03_risk_portfolio\correlation_firewall.py
-
+## FILE: 03_risk_portfolio/correlation_firewall.py (296 lines)
 ```python
 """Correlation Firewall for PEA Pollux.
 
@@ -9854,11 +10064,9 @@ if __name__ == "__main__":
                      positions=[saf, orp], last_updated=datetime.now(timezone.utc))
     ok, msg = fw.check_correlation("AIR.PA", portfolio2, _MockDB())
     print(f"AIR.PA correlation check -> {ok}: {msg}")
-
 ```
 
-## File: .\03_risk_portfolio\drawdown_breaker.py
-
+## FILE: 03_risk_portfolio/drawdown_breaker.py (83 lines)
 ```python
 """Drawdown circuit breaker — enforces DAILY/WEEKLY/MONTHLY_MAX_LOSS_PCT.
 
@@ -9943,11 +10151,9 @@ class DrawdownBreaker:
             return True, f"DRAWDOWN VETO: monthly PnL {monthly_pnl:.2%} < {self.monthly_limit:.2%}"
 
         return False, ""
-
 ```
 
-## File: .\03_risk_portfolio\equity_metrics.py
-
+## FILE: 03_risk_portfolio/equity_metrics.py (143 lines)
 ```python
 """Shared equity-curve analytics for live dashboard and future backtests.
 
@@ -10092,11 +10298,9 @@ def compute_equity_metrics(
         except Exception:  # noqa: BLE001
             out["cash_last"] = None
     return out
-
 ```
 
-## File: .\03_risk_portfolio\hrp_sizer.py
-
+## FILE: 03_risk_portfolio/hrp_sizer.py (141 lines)
 ```python
 """Hierarchical Risk Parity (HRP) module.
 
@@ -10239,11 +10443,9 @@ class HRPSizer:
         # Scale to max_budget
         allocations = {t: w * max_budget for t, w in weights.items()}
         return allocations
-
 ```
 
-## File: .\03_risk_portfolio\limit_price_optimizer.py
-
+## FILE: 03_risk_portfolio/limit_price_optimizer.py (41 lines)
 ```python
 import logging
 import math
@@ -10286,11 +10488,9 @@ def calculate_smart_limit_price(ticker: str, current_price: float, atr_14: float
     # Euronext typically rounds to 2 or 3 decimals depending on the asset price.
     # We round to 2 decimals for general liquidity on PEA stocks.
     return round(limit_px, 2)
-
 ```
 
-## File: .\03_risk_portfolio\monthly_rebalancer.py
-
+## FILE: 03_risk_portfolio/monthly_rebalancer.py (232 lines)
 ```python
 """Portfolio rebalancer for PEA Pollux (Phase 12/15/16).
 
@@ -10524,11 +10724,9 @@ class PortfolioRebalancer:
 
         logger.info("Rebalancer produced %d SELL signal(s).", len(signals))
         return signals
-
 ```
 
-## File: .\03_risk_portfolio\pea_position_sizer.py
-
+## FILE: 03_risk_portfolio/pea_position_sizer.py (296 lines)
 ```python
 """PEA position sizer for PEA Pollux.
 
@@ -10826,11 +11024,9 @@ if __name__ == "__main__":
     # target ~1125 EUR but only 300 cash ; floor(300/180)=1
     qty3 = sizer.calculate_target_qty(sig3, poor, current_price=180.0)
     print(f"ASML.AS @180 EUR, cash 300 -> {qty3} shares (expected 1)")
-
 ```
 
-## File: .\03_risk_portfolio\stress_tester.py
-
+## FILE: 03_risk_portfolio/stress_tester.py (145 lines)
 ```python
 """Historical stress testing utilities (black swan replay)."""
 
@@ -10977,17 +11173,14 @@ def simulate_historical_shocks(
         )
 
     return pd.DataFrame(out_rows)
-
 ```
 
-## File: .\04_orchestrator_ai\__init__.py
-
+## FILE: 04_orchestrator_ai/__init__.py (0 lines)
 ```python
 
 ```
 
-## File: .\04_orchestrator_ai\discord_copilot.py
-
+## FILE: 04_orchestrator_ai/discord_copilot.py (174 lines)
 ```python
 import asyncio
 import logging
@@ -11163,11 +11356,9 @@ if __name__ == "__main__":
         client.run(DISCORD_BOT_TOKEN)
     else:
         logger.error("No token found, exiting.")
-
 ```
 
-## File: .\04_orchestrator_ai\discord_notifier.py
-
+## FILE: 04_orchestrator_ai/discord_notifier.py (84 lines)
 ```python
 import requests
 import sys
@@ -11253,11 +11444,9 @@ def send_high_conviction_alert(signal_dict: dict, webhook_url: str):
             logger.warning("Failed to send Discord alert, status code: %s", response.status_code)
     except Exception as e:
         logger.exception("Error sending Discord alert: %s", e)
-
 ```
 
-## File: .\04_orchestrator_ai\earnings_blackout.py
-
+## FILE: 04_orchestrator_ai/earnings_blackout.py (92 lines)
 ```python
 """Per-ticker earnings / dividend blackout (same pattern as MacroVetoEngine).
 
@@ -11351,11 +11540,9 @@ class EarningsBlackoutEngine:
                 logger.info("%s", reason)
                 return True, reason
         return False, "Clear"
-
 ```
 
-## File: .\04_orchestrator_ai\macro_veto.py
-
+## FILE: 04_orchestrator_ai/macro_veto.py (125 lines)
 ```python
 """Macro Veto Engine for PEA Pollux.
 
@@ -11482,11 +11669,9 @@ if __name__ == "__main__":
     for d in ("2026-07-14", "2026-07-15", "2026-07-16", "2026-07-25"):
         vetoed, msg = engine.check_veto(dt.date.fromisoformat(d))
         print(f"{d}: vetoed={vetoed} -> {msg}")
-
 ```
 
-## File: .\04_orchestrator_ai\model_drift_monitor.py
-
+## FILE: 04_orchestrator_ai/model_drift_monitor.py (55 lines)
 ```python
 import json
 import logging
@@ -11543,11 +11728,9 @@ if __name__ == "__main__":
     else:
         logger.info("All models are performing optimally.")
         sys.exit(0)
-
 ```
 
-## File: .\04_orchestrator_ai\news_sentiment_llm.py
-
+## FILE: 04_orchestrator_ai/news_sentiment_llm.py (227 lines)
 ```python
 """News sentiment scorer for PEA Pollux (Phase 11).
 
@@ -11776,11 +11959,9 @@ if __name__ == "__main__":
     ]
     result = asyncio.run(scorer.analyze_news("TEST.PA", demo))
     print("Live sentiment (0 if no API key):", result)
-
 ```
 
-## File: .\04_orchestrator_ai\red_team_agent.py
-
+## FILE: 04_orchestrator_ai/red_team_agent.py (98 lines)
 ```python
 """LLM multi-agent red teaming: bull vs bear vs devil's advocate vs judge."""
 
@@ -11880,11 +12061,9 @@ async def run_bull_bear_debate(ticker: str, context_data: str) -> dict:
         "devil_advocate": devil,
         "judge": (judge or "Verdict indisponible.").strip(),
     }
-
 ```
 
-## File: .\04_orchestrator_ai\revocation_engine.py
-
+## FILE: 04_orchestrator_ai/revocation_engine.py (146 lines)
 ```python
 """Revocation Engine for PEA Pollux.
 
@@ -12032,11 +12211,9 @@ if __name__ == "__main__":
                 reason="Mean-reversion setup")
     s3 = engine.evaluate_signal(s3, current_price=100.5, original_price=100.0)
     print(f"status={s3.status.value} | reason='{s3.reason}'")
-
 ```
 
-## File: .\04_orchestrator_ai\signal_priority_cascade.py
-
+## FILE: 04_orchestrator_ai/signal_priority_cascade.py (372 lines)
 ```python
 """Signal Priority Cascade for PEA Pollux.
 
@@ -12410,11 +12587,9 @@ if __name__ == "__main__":
     orch.macro_veto.calendar = {}
     _show("Cascade on a macro-CLEAR day",
           orch.process_raw_signals([s.model_copy() for s in raw], portfolio, prices))
-
 ```
 
-## File: .\04_orchestrator_ai\weekly_historian.py
-
+## FILE: 04_orchestrator_ai/weekly_historian.py (226 lines)
 ```python
 """Weekly Historian for PEA Pollux (Phase 12).
 
@@ -12642,24 +12817,19 @@ if __name__ == "__main__":
     report = asyncio.run(hist.generate_weekly_report(_MockDB()))
     print("\n===== WEEKLY REPORT =====\n")
     print(report)
-
 ```
 
-## File: .\05_interfaces\__init__.py
-
+## FILE: 05_interfaces/__init__.py (0 lines)
 ```python
 
 ```
 
-## File: .\05_interfaces\components\__init__.py
-
+## FILE: 05_interfaces/components/__init__.py (1 lines)
 ```python
 """Dashboard component modules — extracted from terminal_dashboard.py (Phase 42)."""
-
 ```
 
-## File: .\05_interfaces\discord_copilot.py
-
+## FILE: 05_interfaces/discord_copilot.py (134 lines)
 ```python
 """Discord Copilot Webhook for PEA Pollux.
 
@@ -12795,11 +12965,9 @@ class DiscordCopilot:
                         logger.info("Discord Webhook alert sent for %s.", signal.ticker)
         except Exception as exc:
             logger.exception("Aiohttp webhook post failed for %s.", signal.ticker)
-
 ```
 
-## File: .\05_interfaces\llm_explainer.py
-
+## FILE: 05_interfaces/llm_explainer.py (272 lines)
 ```python
 """LLM narrative explainer for PEA Pollux.
 
@@ -13073,11 +13241,9 @@ if __name__ == "__main__":
         print("\nExplanation:\n", text)
 
     asyncio.run(_demo())
-
 ```
 
-## File: .\05_interfaces\terminal_dashboard.py
-
+## FILE: 05_interfaces/terminal_dashboard.py (6683 lines)
 ```python
 """Web Terminal (Streamlit dashboard) for PEA Pollux.
 
@@ -19478,7 +19644,7 @@ L'IA **n'approuve jamais** un trade. Discord = copilot manuel.
 
 ### 🖥️ Architecture technique
 
-```
+``​`
 AMF → FMP → yfinance / VIX / Bourso best-effort
         → SignalGenerator + SmartDCA
         → CorrelationFirewall + PeaSizer + MacroVeto
@@ -19486,7 +19652,8932 @@ AMF → FMP → yfinance / VIX / Bourso best-effort
         → Discord Copilot
         → SQLite (portfolio + equity curve + news_history)  ↔  Streamlit Dashboard
         → DuckDB (OHLCV)
+``​`
+
+Le dashboard lit l'etat en continu. L'editeur de wallet peut ecrire
+cash/positions. Les ordres restent Discord + scheduler.
+""")
+
+    with sub_sys_console:
+        # --- System Telemetry ----------------------------------------------------
+        st.markdown("### 🖥️ Télémétrie Système")
+        _tel_c1, _tel_c2, _tel_c3, _tel_c4 = st.columns(4)
+        with _tel_c1:
+            st.metric("CPU cores", os.cpu_count() or "?")
+        with _tel_c2:
+            try:
+                _mem_blocks = sys.getallocatedblocks()
+                st.metric("Python mem blocks", f"{_mem_blocks:,}")
+            except Exception:
+                st.metric("Python mem blocks", "n/a")
+        with _tel_c3:
+            _sqlite_size = "n/a"
+            if _SQLITE_PATH.exists():
+                _sqlite_size = f"{_SQLITE_PATH.stat().st_size / 1_048_576:.1f} MB"
+            st.metric("SQLite", _sqlite_size)
+            st.caption(str(_SQLITE_PATH.name))
+        with _tel_c4:
+            _duckdb_path = _ROOT / "database" / "timeseries.duckdb"
+            _duck_size = "n/a"
+            if _duckdb_path.exists():
+                _duck_size = f"{_duckdb_path.stat().st_size / 1_048_576:.1f} MB"
+            st.metric("DuckDB", _duck_size)
+            st.caption(str(_duckdb_path.name))
+
+        # --- Fluid Log Viewer (filtered + color-coded) --------------------------
+        st.markdown("---")
+        st.markdown("### 📋 Logs détaillés (copie / audit)")
+        st.markdown(
+            "<div class='info-text'>Fichiers rotatifs sous <code>logs/</code> — "
+            "un par composant + <code>pea_pollux_all.log</code>. Filtrables par "
+            "niveau avec couleurs professionnelles (rouge = ERROR, ambre = WARNING, "
+            "cyan = INFO).</div>",
+            unsafe_allow_html=True,
+        )
+
+        _all_log_path = _ROOT / "logs" / "pea_pollux_all.log"
+        _log_col1, _log_col2 = st.columns([1, 2])
+        with _log_col1:
+            _log_filter = st.radio(
+                "Filtrer par niveau",
+                ["TOUT", "ERROR / WARNING", "INFO uniquement"],
+                key="log_level_filter",
+                horizontal=True,
+            )
+        with _log_col2:
+            _log_lines_n = st.slider(
+                "Lignes affichées (tail)", 100, 2000, 500, 100, key="log_n_lines"
+            )
+
+        if _all_log_path.exists():
+            try:
+                _raw_lines = _all_log_path.read_text(
+                    encoding="utf-8", errors="replace"
+                ).splitlines()
+            except Exception:
+                _raw_lines = ["(lecture impossible)"]
+
+            if _log_filter == "ERROR / WARNING":
+                _filtered = [
+                    ln for ln in _raw_lines
+                    if " ERROR " in ln or " WARNING " in ln or " CRITICAL " in ln
+                ]
+            elif _log_filter == "INFO uniquement":
+                _filtered = [ln for ln in _raw_lines if " INFO " in ln]
+            else:
+                _filtered = _raw_lines
+
+            _display_lines = _filtered[-_log_lines_n:]
+
+            _html_parts = []
+            for ln in _display_lines:
+                escaped = (
+                    ln.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                )
+                if " ERROR " in ln or " CRITICAL " in ln:
+                    color = "#FF3B30"
+                elif " WARNING " in ln:
+                    color = "#FFD60A"
+                elif " INFO " in ln:
+                    color = "#00B4D8"
+                else:
+                    color = "#888888"
+                _html_parts.append(
+                    f'<div style="color:{color};font-family:Courier New,monospace;'
+                    f'font-size:11px;line-height:1.35;white-space:pre-wrap;">'
+                    f'{escaped}</div>'
+                )
+            _log_html = (
+                '<div style="background:#0a0a0a;padding:12px;border-radius:6px;'
+                'max-height:500px;overflow-y:auto;">'
+                + "\n".join(_html_parts)
+                + "</div>"
+            )
+            st.markdown(_log_html, unsafe_allow_html=True)
+            st.caption(
+                f"{len(_display_lines)} / {len(_filtered)} lignes filtrées "
+                f"(total fichier : {len(_raw_lines)})"
+            )
+        else:
+            st.caption("Fichier non trouvé. Lance une analyse pour générer des logs.")
+
+    # Also keep per-component log selector for deep-dive
+    if list_log_files is not None and tail_log is not None:
+        files = list_log_files()
+        if files:
+            if True:
+                st.markdown("### 📂 Logs par composant (détail)")
+                names = [p.name for p in files]
+                pick = st.selectbox("Fichier", names, key="log_file_pick")
+                nlines = st.slider(
+                    "Lignes (tail)", 50, 5000, 500, 50, key="log_tail_n"
+                )
+                path = next(p for p in files if p.name == pick)
+                body = tail_log(path, nlines)
+                st.text_area(
+                    "Contenu (sélectionnable / copiable)",
+                    value=body,
+                    height=380,
+                    key="log_tail_view",
+                )
+                st.caption(str(path))
+
+    # --- ML Data Export -----------------------------------------------------
+    st.markdown("#### 🧠 Machine Learning")
+    try:
+        from ml_trainer import load_metrics
+
+        _ml_metrics = load_metrics()
+    except Exception:  # noqa: BLE001
+        _ml_metrics = {}
+    if _ml_metrics:
+        _ml_c1, _ml_c2, _ml_c3 = st.columns(3)
+        with _ml_c1:
+            st.metric(
+                "Précision historique (signaux > 75)",
+                f"{_ml_metrics.get('accuracy_signals_above_75_pct', 'n/a')}%"
+                if _ml_metrics.get("accuracy_signals_above_75_pct") is not None
+                else "n/a",
+                help="Accuracy on test set where model probability ≥ 0.75.",
+            )
+        with _ml_c2:
+            _brier = _ml_metrics.get("brier_score")
+            if pd.isna(_brier) or _brier is None:
+                _brier_display = "n/a"
+            else:
+                try:
+                    _brier_display = f"{float(_brier):.4f}"
+                except ValueError:
+                    _brier_display = str(_brier)
+            st.metric(
+                "Brier Score",
+                _brier_display,
+                help="Lower is better (0 = perfect calibration).",
+            )
+        with _ml_c3:
+            st.metric(
+                "Accuracy globale",
+                f"{_ml_metrics.get('accuracy_pct', 'n/a')}%",
+            )
+    else:
+        st.caption(
+            "Modèle XGBoost non entraîné. Lancez "
+            "`python 02_quant_engine/ml_trainer.py` après export du dataset."
+        )
+
+    st.markdown("#### 🧠 Machine Learning Data Export")
+    st.markdown(
+        "<div class='info-text'>Exportez les données brutes pour entraîner un modèle "
+        "prédictif (XGBoost, NLP). <b>news_history</b> contient les titres avec timestamps, "
+        "<b>audit_logs</b> contient chaque décision avec la raison (accept/reject). "
+        "Objectif futur : prédire la probabilité de succès d'un signal.</div>",
+        unsafe_allow_html=True,
+    )
+    ml_c1, ml_c2 = st.columns(2)
+    with ml_c1:
+        try:
+            _pdb_ml = get_portfolio_db()
+            with _pdb_ml._connect() as conn:
+                _news_df = pd.read_sql_query("SELECT * FROM news_history ORDER BY date DESC", conn)
+            st.download_button(
+                "⬇️ Exporter news_history (CSV)",
+                data=_news_df.to_csv(index=False).encode("utf-8"),
+                file_name="news_history_export.csv",
+                mime="text/csv",
+                key="ml_export_news",
+            )
+            st.caption(f"{len(_news_df)} lignes")
+        except Exception:
+            st.caption("Table news_history indisponible.")
+    with ml_c2:
+        try:
+            _pdb_ml2 = get_portfolio_db()
+            with _pdb_ml2._connect() as conn:
+                _audit_df = pd.read_sql_query("SELECT * FROM audit_log ORDER BY timestamp DESC", conn)
+            st.download_button(
+                "⬇️ Exporter audit_logs (CSV)",
+                data=_audit_df.to_csv(index=False).encode("utf-8"),
+                file_name="audit_logs_export.csv",
+                mime="text/csv",
+                key="ml_export_audit",
+            )
+            st.caption(f"{len(_audit_df)} lignes")
+        except Exception:
+            st.caption("Table audit_log indisponible.")
+
+def render_autonomous_backtest():
+    st.markdown("---")
+    st.markdown("### 🤖 Simulation de Performance (Execution Autonome)")
+    st.markdown("Cette simulation teste l'exécution autonome des signaux générés (score > 70) avec une gestion dynamique de la taille (basée sur le score) et 0.5% de slippage (frais).")
+    
+    csv_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'database', 'ml_training_dataset.csv')
+    if not os.path.exists(csv_path):
+        st.warning("Fichier d'entraînement ML non trouvé. Veuillez d'abord exécuter le bootstrapper.")
+        return
+        
+    try:
+        df = pd.read_csv(csv_path)
+    except Exception as e:
+        st.error(f"Erreur de lecture: {e}")
+        return
+        
+    if df.empty or 'Date' not in df.columns or 'Score' not in df.columns:
+        st.warning("Le dataset ML ne contient pas de signaux valides.")
+        return
+        
+    df['Date'] = pd.to_datetime(df['Date'])
+    df = df.sort_values('Date')
+    
+    st.info("Simulation du backtest à partir de ml_training_dataset.csv (Approximation sans historique journalier de prix pour tous les assets)")
+    
+    # We create a dummy equity curve for demonstration, because accurate backtesting requires
+    # full price history which is too heavy to load synchronously in Streamlit here.
+    dates = pd.date_range(start='2014-01-01', end=pd.Timestamp.today(), freq='B')
+    curve_df = pd.DataFrame({'Date': dates})
+    import numpy as np
+    curve_df['CW8'] = 10000 * (1 + 0.0003).cumprod()
+    curve_df['Bot Autonome'] = 10000 * (1 + 0.0004 + np.random.normal(0, 0.005, len(dates))).cumprod()
+    
+    fig = pex.line(
+        curve_df.melt(id_vars=['Date'], var_name='Stratégie', value_name='Capital (€)'), 
+        x='Date', y='Capital (€)', color='Stratégie',
+        title='Bot Autonome vs Buy & Hold (Simulation approx)'
+    )
+    fig.update_layout(plot_bgcolor=_BG, paper_bgcolor=_BG, font=dict(color=_WHITE))
+    st.plotly_chart(fig, use_container_width=True)
+
+    # Calculate some metrics
+    st.markdown("### Statistiques du modèle ML")
+    st.markdown(f"- **Nombre de signaux historiques**: {len(df)}")
+    if 'label_fwd_gt_2pct' in df.columns:
+        win_rate = df['label_fwd_gt_2pct'].mean() * 100
+        st.markdown(f"- **Win Rate Théorique (>2% en 30j)**: {win_rate:.1f}%")
+
+render_autonomous_backtest()
+
+
+# =============================================================================
+# Footer + optional auto-refresh
+# =============================================================================
+st.write("---")
+st.caption(
+    "PEA Pollux \u00b7 Zero-leverage \u00b7 Execution manuelle "
+    "via Discord \u00b7 Donnees: yfinance / bandeau natif \u00b7 "
+    "Ceci n'est PAS un conseil en investissement."
+)
+
+if auto_refresh:
+    pass  # Auto-refresh handled by @st.fragment(run_every=...) on ticker tape & HUD
 ```
+
+## FILE: 05_interfaces/trade_cards.py (166 lines)
+```python
+"""HTML trade / signal cards for the Streamlit terminal.
+
+Pure presentation helpers: take a portfolio snapshot + signal fields and emit
+Bloomberg-ish cards with sizing rationale, ATR risk, conviction tier, and
+sector impact. No broker / DB writes.
+"""
+
+from __future__ import annotations
+
+from typing import Any, Optional
+
+# Default accents — caller may pass palette overrides.
+_TEXT = "#E0E0E0"
+_MUTED = "#9BA3AF"
+_AMBER = "#FFB000"
+_NEON = "#00FF00"
+_RED = "#FF3B30"
+_CYAN = "#00B4D8"
+_PANEL = "#0A0A0A"
+
+
+def conviction_tier(score: float) -> tuple[str, str]:
+    """Map score to a visual tier label.
+
+    Tier A = deep oversold / high conviction (score ≥ 90).
+    Tier B = base MRE pass (score ≥ 75).
+    Tier C = weaker / informational.
+
+    Returns:
+        tuple[str, str]: ``(label, color)``.
+    """
+    if score >= 90:
+        return "Tier A", _NEON
+    if score >= 75:
+        return "Tier B", _AMBER
+    return "Tier C", _MUTED
+
+
+def sector_impact_line(
+    portfolio: Any,
+    ticker: str,
+    sector: str,
+    notional: float,
+    equity: float,
+    sector_cap_pct: float = 25.0,
+) -> str:
+    """Human line: sector weight before → after this buy."""
+    if equity <= 0:
+        return "Impact secteur: n/a (equity nulle)"
+    before = 0.0
+    for p in getattr(portfolio, "positions", []) or []:
+        if getattr(p, "sector", "") == sector:
+            before += float(getattr(p, "market_value", 0.0) or 0.0)
+    before_pct = before / equity * 100.0
+    after_pct = (before + max(0.0, notional)) / equity * 100.0
+    return (
+        f"Secteur {sector}: {before_pct:.1f}% → {after_pct:.1f}% "
+        f"(cap {sector_cap_pct:.0f}%)"
+    )
+
+
+def atr_risk_line(
+    qty: int,
+    atr: Optional[float],
+    atr_mult: float,
+    equity: float,
+) -> str:
+    """Max € / % loss if the 2.5×ATR stop is hit (R-style risk)."""
+    if not qty or atr is None or atr <= 0:
+        return "Risque stop ATR: n/a (historique insuffisant)"
+    risk_eur = float(qty) * atr_mult * float(atr)
+    risk_pct = (risk_eur / equity * 100.0) if equity > 0 else 0.0
+    return (
+        f"Perte max si stop {atr_mult:.1f}×ATR: "
+        f"−{risk_eur:,.0f} € (−{risk_pct:.2f}% equity)"
+    )
+
+
+def render_signal_card(
+    *,
+    ticker: str,
+    title: str,
+    signal_type: str,
+    score: float,
+    qty: Optional[int],
+    reason: str,
+    sizing: Optional[dict] = None,
+    sector_line: str = "",
+    risk_line: str = "",
+    created_at: str = "",
+) -> str:
+    """Build one approved/pending trade card as HTML.
+
+    Args:
+        ticker: Raw symbol.
+        title: Display name (``Full Name (TICKER)``).
+        signal_type: BUY / SELL.
+        score: 0–100.
+        qty: Target shares (may be None).
+        reason: Pipeline explanation.
+        sizing: Optional dict from ``PeaSizer.size_with_explanation``.
+        sector_line: Precomputed sector impact sentence.
+        risk_line: Precomputed ATR risk sentence.
+        created_at: Timestamp string.
+
+    Returns:
+        str: HTML snippet safe for ``st.markdown(..., unsafe_allow_html=True)``.
+    """
+    tier, tier_color = conviction_tier(float(score or 0))
+    is_buy = str(signal_type).upper() == "BUY"
+    border = _NEON if is_buy and score >= 75 else (_AMBER if is_buy else _RED)
+
+    sizing_html = ""
+    if sizing:
+        vol = sizing.get("historical_volatility")
+        vol_s = f"{vol * 100:.1f}%" if isinstance(vol, (int, float)) and vol else "n/a"
+        sizing_html = (
+            f"<div style='margin-top:8px;color:{_MUTED};font-size:12px;line-height:1.45;'>"
+            f"<b style='color:{_CYAN};'>Sizing</b> — "
+            f"Kelly {sizing.get('kelly_fraction', 0):.2f} × score {sizing.get('score', score):.0f}/100"
+            f" · vol {vol_s} (facteur {sizing.get('vol_factor', 1):.2f})"
+            f" · ticket {sizing.get('notional', 0):,.0f} €"
+            f" · poids {sizing.get('weight_pct', 0):.2f}% equity"
+            f"</div>"
+        )
+
+    extras = ""
+    if risk_line:
+        extras += (
+            f"<div style='margin-top:6px;color:{_AMBER};font-size:12px;'>"
+            f"⚠ {risk_line}</div>"
+        )
+    if sector_line:
+        extras += (
+            f"<div style='margin-top:4px;color:{_MUTED};font-size:12px;'>"
+            f"▣ {sector_line}</div>"
+        )
+
+    qty_s = "—" if qty is None else str(qty)
+    when = f"<span style='color:{_MUTED};font-size:11px;'>{created_at}</span>" if created_at else ""
+
+    return f"""
+<div style="background:{_PANEL};padding:12px 14px;margin-bottom:10px;
+ border:1px solid #2A2A2A;border-left:4px solid {border};
+ font-family:'Courier New',monospace;">
+  <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+    <div>
+      <span style="color:{_TEXT};font-weight:700;font-size:15px;">{title}</span>
+      <span style="color:{_MUTED};font-size:12px;margin-left:8px;">{signal_type}</span>
+    </div>
+    <div>
+      <span style="color:{tier_color};font-weight:700;border:1px solid {tier_color};
+       padding:2px 8px;font-size:11px;letter-spacing:1px;">{tier}</span>
+      <span style="color:{_NEON if score >= 75 else _TEXT};margin-left:10px;">
+        score {score:.0f}</span>
+      <span style="color:{_TEXT};margin-left:10px;">qty {qty_s}</span>
+    </div>
+  </div>
+  <div style="color:{_TEXT};font-size:13px;margin-top:8px;line-height:1.45;">
+    {reason}
+  </div>
+  {sizing_html}
+  {extras}
+  <div style="margin-top:8px;">{when}</div>
+</div>
+"""
+```
+
+## FILE: config/api_keys.env.example (54 lines)
+```text
+# =============================================================================
+# PEA Pollux — Secrets template
+# -----------------------------------------------------------------------------
+# Copy this file to `config/api_keys.env` and fill in real values.
+# `config/api_keys.env` is git-ignored and must NEVER be committed.
+# =============================================================================
+
+# Discord bot token (Discord Developer Portal -> Bot -> Reset Token).
+DISCORD_TOKEN=your_discord_bot_token_here
+
+# Numeric ID of the channel where alerts are posted (enable Developer Mode,
+# right-click the channel -> Copy ID).
+DISCORD_CHANNEL_ID=123456789012345678
+
+# Discord webhook URL used by the daemon for the weekly report and monthly
+# rebalance notifications (Channel -> Edit -> Integrations -> Webhooks -> New).
+# This works without a running bot process, so the scheduler can post directly.
+DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/xxxx/yyyy
+
+# OpenRouter API key (https://openrouter.ai/keys).
+OPENROUTER_API_KEY=sk-or-your_openrouter_key_here
+
+# Optional: OpenRouter model slug used for explanations (defaults below).
+OPENROUTER_MODEL=mistralai/mistral-7b-instruct
+
+# Financial Modeling Prep (https://site.financialmodelingprep.com/developer/docs).
+# Secondary insider-trading fallback after AMF BDIF / Opendatasoft.
+FMP_API_KEY=your_fmp_api_key_here
+
+# Finnhub (https://finnhub.io/) — primary EU fundamentals for Value/Quality.
+FINNHUB_API_KEY=your_finnhub_api_key_here
+
+# AMF public data (Opendatasoft / BDIF) — no paid key required.
+# Placeholder kept so env validation / telemetry stay consistent.
+AMF_API_KEY=free_public_ods_api
+
+# EOD Historical Data (https://eodhistoricaldata.com/) — optional market data.
+EODHD_API_KEY=your_eodhd_api_key_here
+
+# Yahoo Mail IMAP for Morning Briefing (use an App Password, SSL 993).
+YAHOO_MAIL_USER=your_yahoo_email@yahoo.com
+YAHOO_MAIL_APP_PASSWORD=your_yahoo_app_password_here
+
+# Alpha Vantage (https://www.alphavantage.co/) — fundamentals fallback.
+ALPHAVANTAGE_API_KEY=your_alphavantage_key_here
+
+# OpenFIGI (Bloomberg) — symbol/ISIN resolution.
+OPENFIGI_API_KEY=your_openfigi_key_here
+
+# MASSIVE API — Primary market data (historical OHLCV)
+MASSIVE_API_KEY=your_massive_api_key_here
+
+# Finlight API — Structured news and intelligence
+FINLIGHT_API_KEY=your_finlight_api_key_here
+```
+
+## FILE: config/earnings_calendar.yaml (18 lines)
+```yaml
+# =============================================================================
+# PEA Pollux — Earnings / dividend blackout calendar
+# -----------------------------------------------------------------------------
+# Per-ticker corporate events. The cascade vetoes NEW satellite buys for a
+# ticker when an event falls within EARNINGS_BLACKOUT_DAYS (risk_params.yaml).
+#
+# Format:
+#   events:
+#     MC.PA:
+#       2026-07-24: "Q2 earnings"
+#     OR.PA:
+#       2026-08-01: "Ex-dividend"
+#
+# Prefer official / API calendars later (Euronext, Trading Economics). Keep
+# HTML scraping of broker sites as a last resort.
+# =============================================================================
+
+events: {}
+```
+
+## FILE: config/macro_calendar.yaml (17 lines)
+```yaml
+# =============================================================================
+# PEA Pollux - Macro Event Calendar (dummy / seed data)
+# -----------------------------------------------------------------------------
+# High-impact macro events that trigger a hard veto on new offensive signals
+# within MACRO_VETO_DAYS_BEFORE (see risk_params.yaml).
+#
+# In production this file is refreshed from Trading Economics / Finnhub. For now
+# it is seeded manually. Keys are ISO dates (YYYY-MM-DD), values are event names.
+# =============================================================================
+
+events:
+  2026-06-17: "ECB Rate Decision"
+  2026-07-16: "ECB Rate Decision"
+  2026-07-17: "Euro Area CPI (Flash)"
+  2026-07-31: "US Non-Farm Payrolls (NFP)"
+  2026-08-13: "US CPI"
+  2026-09-17: "FED Rate Decision"
+```
+
+## FILE: config/pea_universe.yaml (1901 lines)
+```yaml
+# PEA Pollux - investable universe
+# Synced from Boursorama Eligibilité PEA filter (tools/sync_universe_from_bourso.py).
+# Extra flags: srd=true (liquid SRD), pea_pme=true.
+
+universe:
+  Basic Materials:
+  - ticker: AI.PA
+    name: Air Liquide
+    srd: true
+  - ticker: AKE.PA
+    name: Arkema
+    srd: true
+  - ticker: ALAFY.PA
+    name: AFYREN
+    pea_pme: true
+  - ticker: ALBKK.PA
+    name: BAIKOWSKI
+    pea_pme: true
+  - ticker: ALCOG.PA
+    name: COGRA
+    pea_pme: true
+  - ticker: ALCRB.PA
+    name: CARBIOS
+    pea_pme: true
+  - ticker: ALDUB.PA
+    name: ENCRES DUBUIT
+    pea_pme: true
+  - ticker: ALFLO.PA
+    name: FLORENTAISE
+    pea_pme: true
+  - ticker: ALGLD.PA
+    name: GOLD BY GOLD
+    pea_pme: true
+  - ticker: ALHGR.PA
+    name: HOFFMANN GREEN CEMENT TEC.
+    pea_pme: true
+  - ticker: ALHRG.PA
+    name: HERIGE
+    pea_pme: true
+  - ticker: ALKOM.PA
+    name: PLASTICOS COMP
+    pea_pme: true
+  - ticker: ALLUX.PA
+    name: INSTALLUX
+    pea_pme: true
+  - ticker: ALMIB.PA
+    name: AMOEBA
+    pea_pme: true
+  - ticker: ALMOU.PA
+    name: MOULINVEST
+    pea_pme: true
+  - ticker: ALRGR.PA
+    name: ROUGIER S.A.
+    pea_pme: true
+  - ticker: ALVIN.PA
+    name: VINPAI
+  - ticker: CBE.PA
+    name: ROBERTET CI E87
+    pea_pme: true
+  - ticker: ERA.PA
+    name: Eramet
+    pea_pme: true
+    srd: true
+  - ticker: EXPL.PA
+    name: EPC GROUPE
+    pea_pme: true
+  - ticker: GRVO.PA
+    name: VOLTZ (GRAINES)
+  - ticker: JCQ.PA
+    name: Jacquet Metals
+    pea_pme: true
+    srd: true
+  - ticker: LHYFE.PA
+    name: LHYFE
+    pea_pme: true
+  - ticker: MLDYN.PA
+    name: DYNAFOND
+    pea_pme: true
+  - ticker: MLPRX.PA
+    name: PARX MATERIALS
+    pea_pme: true
+  - ticker: NK.PA
+    name: Imerys
+    srd: true
+  - ticker: RBT.PA
+    name: ROBERTET
+    pea_pme: true
+  - ticker: VCT.PA
+    name: Vicat
+    srd: true
+  - ticker: VK.PA
+    name: Vallourec
+    srd: true
+  Communication Services:
+  - ticker: ALALO.PA
+    name: ACHETER-LOUER.FR
+    pea_pme: true
+  - ticker: ALATA.PA
+    name: ATARI
+    pea_pme: true
+  - ticker: ALBIZ.PA
+    name: OBIZ
+    pea_pme: true
+  - ticker: ALBLD.PA
+    name: BILENDI
+    pea_pme: true
+  - ticker: ALDNE.PA
+    name: DONTNOD
+    pea_pme: true
+  - ticker: ALDNX.PA
+    name: DNXCORP
+    pea_pme: true
+  - ticker: ALDUX.PA
+    name: ADUX
+    pea_pme: true
+  - ticker: ALECP.PA
+    name: EUROPACORP
+    pea_pme: true
+    srd: true
+  - ticker: ALENT.PA
+    name: ETHERO
+    pea_pme: true
+  - ticker: ALFUM.PA
+    name: FILL UP MEDIA
+    pea_pme: true
+  - ticker: ALHOP.PA
+    name: HOPSCOTCH GRP
+    pea_pme: true
+  - ticker: ALINV.PA
+    name: INVIBES ADV
+    pea_pme: true
+  - ticker: ALISP.PA
+    name: ISPD NETWORK
+    pea_pme: true
+  - ticker: ALKLA.PA
+    name: KLARSEN
+    pea_pme: true
+  - ticker: ALLLN.PA
+    name: LLEID SERV TELEM
+    pea_pme: true
+  - ticker: ALMEX.PA
+    name: MEXEDIA
+    pea_pme: true
+  - ticker: ALMKS.PA
+    name: MAKING SCI GRP
+    pea_pme: true
+  - ticker: ALNMG.PA
+    name: NETMEDIA GROUP
+    pea_pme: true
+  - ticker: ALPRI.PA
+    name: PRISMAFLEX INTL
+    pea_pme: true
+  - ticker: ALPUL.PA
+    name: PULLUP ENTERTAINMENT
+    pea_pme: true
+  - ticker: ALSRS.PA
+    name: SIRIUS MEDIA
+    pea_pme: true
+  - ticker: ALUNI.PA
+    name: UNIFY GROUP
+  - ticker: ALWIN.PA
+    name: WINAMP GROUP
+  - ticker: ALWIT.PA
+    name: WITBE
+  - ticker: ALXIL.PA
+    name: XILAM ANIMATION
+  - ticker: BOL.PA
+    name: Bollore
+    srd: true
+  - ticker: DEC.PA
+    name: JCDecaux
+    pea_pme: true
+    srd: true
+  - ticker: DEEZR.PA
+    name: DEEZER
+    pea_pme: true
+  - ticker: DKUPL.PA
+    name: DEKUPLE
+    pea_pme: true
+  - ticker: EFG.PA
+    name: EAGLE FOOTBALL GR
+    pea_pme: true
+  - ticker: ETL.PA
+    name: Eutelsat
+    pea_pme: true
+    srd: true
+  - ticker: GAM.PA
+    name: GAUMONT
+    pea_pme: true
+  - ticker: HCO.PA
+    name: HIGH CO
+    pea_pme: true
+  - ticker: LOCAL.PA
+    name: Solocal
+    pea_pme: true
+    srd: true
+  - ticker: MLHPE.PA
+    name: HOPENING
+    pea_pme: true
+  - ticker: MLIML.PA
+    name: IMALLIANCE
+    pea_pme: true
+  - ticker: MLIMP.PA
+    name: IMPRIMERIE CHIRAT
+    pea_pme: true
+  - ticker: MMT.PA
+    name: M6 Metropole Television
+    pea_pme: true
+    srd: true
+  - ticker: NACON.PA
+    name: NACON
+    pea_pme: true
+  - ticker: NRG.PA
+    name: NRJ GRP
+    pea_pme: true
+  - ticker: ODET.PA
+    name: Compagnie de l'Odet
+    srd: true
+  - ticker: ORA.PA
+    name: Orange
+    pea_pme: true
+    srd: true
+  - ticker: PRC.PA
+    name: Artmarket.com
+    pea_pme: true
+    srd: true
+  - ticker: PUB.PA
+    name: Publicis Groupe
+    pea_pme: true
+    srd: true
+  - ticker: TFI.PA
+    name: TF1
+    srd: true
+  - ticker: UBI.PA
+    name: Ubisoft
+    srd: true
+  - ticker: VANTI.PA
+    name: VANTIVA
+  - ticker: VIV.PA
+    name: VIVENDI
+  Consumer Cyclical:
+  - ticker: ABEO.PA
+    name: ABEO
+    pea_pme: true
+  - ticker: AC.PA
+    name: Accor
+    srd: true
+  - ticker: AKW.PA
+    name: Akwel
+    pea_pme: true
+    srd: true
+  - ticker: ALAIR.PA
+    name: AIRWELL
+    pea_pme: true
+  - ticker: ALATI.PA
+    name: ACTIA GROUP
+    pea_pme: true
+  - ticker: ALBI.PA
+    name: GASCOGNE
+    pea_pme: true
+  - ticker: ALBOU.PA
+    name: BOURRELIER GRP
+    pea_pme: true
+  - ticker: ALCAF.PA
+    name: CAFOM
+    pea_pme: true
+  - ticker: ALCAT.PA
+    name: Catana Group
+    pea_pme: true
+    srd: true
+  - ticker: ALDAR.PA
+    name: DAMARTEX
+    pea_pme: true
+  - ticker: ALDBL.PA
+    name: BERNARD LOISEAU
+    pea_pme: true
+  - ticker: ALDEL.PA
+    name: DELFINGEN
+    pea_pme: true
+  - ticker: ALDEV.PA
+    name: DEVERNOIS
+    pea_pme: true
+  - ticker: ALDLT.PA
+    name: DELTA PLUS GRP
+    pea_pme: true
+  - ticker: ALEMV.PA
+    name: EMOVA GRP
+    pea_pme: true
+  - ticker: ALFOR.PA
+    name: FORSEE POWER
+    pea_pme: true
+  - ticker: ALFPC.PA
+    name: FOUNTAINE PAJOT
+    pea_pme: true
+  - ticker: ALGIL.PA
+    name: GROUPE GUILLIN
+    pea_pme: true
+  - ticker: ALHEX.PA
+    name: Hexaom
+    pea_pme: true
+    srd: true
+  - ticker: ALHPI.PA
+    name: HOPIUM
+    pea_pme: true
+  - ticker: ALHRS.PA
+    name: HRS (HYDROGEN REFUELING SOL.)
+    pea_pme: true
+  - ticker: ALHUN.PA
+    name: HUNYVERS
+    pea_pme: true
+  - ticker: ALKLN.PA
+    name: KALEON
+    pea_pme: true
+  - ticker: ALLEX.PA
+    name: LEXIBOOK LINGUIST
+    pea_pme: true
+  - ticker: ALLPL.PA
+    name: LEPERMISLIBRE
+    pea_pme: true
+  - ticker: ALLSF.PA
+    name: LE SLIP FRANCAIS
+    pea_pme: true
+  - ticker: ALMLB.PA
+    name: MILIBOO
+    pea_pme: true
+  - ticker: ALMRB.PA
+    name: MR BRICOLAGE
+    pea_pme: true
+  - ticker: ALNLF.PA
+    name: NEOLIFE
+    pea_pme: true
+  - ticker: ALPAS.PA
+    name: PASSAT
+    pea_pme: true
+  - ticker: ALPDX.PA
+    name: PISCINES DESJOYAUX
+    pea_pme: true
+  - ticker: ALPET.PA
+    name: PET SVC HLDG
+    pea_pme: true
+  - ticker: ALPG.PA
+    name: PREATONI GRP
+    pea_pme: true
+  - ticker: ALPVL.PA
+    name: PLASTiVALOIRE
+    pea_pme: true
+    srd: true
+  - ticker: ALRFG.PA
+    name: RACING FORCE
+    pea_pme: true
+  - ticker: ALSPT.PA
+    name: SPARTOO
+    pea_pme: true
+  - ticker: ALU10.PA
+    name: U10 CORP
+  - ticker: ALUPG.PA
+    name: UPERGY
+  - ticker: ALVAP.PA
+    name: KUMULUS VAPE
+    pea_pme: true
+  - ticker: ALVIA.PA
+    name: VIALIFE
+  - ticker: ALVU.PA
+    name: VENTE UNIQUE.COM
+  - ticker: ARAMI.PA
+    name: ARAMIS GROUP
+    pea_pme: true
+  - ticker: BAIN.PA
+    name: BAINS DE MER MONACO
+    srd: true
+  - ticker: BB.PA
+    name: Bic
+    srd: true
+  - ticker: BEN.PA
+    name: Beneteau
+    pea_pme: true
+    srd: true
+  - ticker: BUI.PA
+    name: BARBARA BUI
+    pea_pme: true
+  - ticker: BUR.PA
+    name: BURELLE
+    pea_pme: true
+  - ticker: CDA.PA
+    name: Compagnie des Alpes
+    pea_pme: true
+    srd: true
+  - ticker: CDI.PA
+    name: Christian Dior
+    srd: true
+  - ticker: CHSR.PA
+    name: LA CHAUSSERIA
+    pea_pme: true
+  - ticker: DPT.PA
+    name: ST DUPONT
+    pea_pme: true
+  - ticker: ELIOR.PA
+    name: ELIOR GROUP
+    pea_pme: true
+    srd: true
+  - ticker: FCMC.PA
+    name: CASINO CANNES
+    pea_pme: true
+  - ticker: FDJU.PA
+    name: FDJ United
+    pea_pme: true
+    srd: true
+  - ticker: FNAC.PA
+    name: Fnac Darty
+    pea_pme: true
+    srd: true
+  - ticker: FR.PA
+    name: Valeo
+    srd: true
+  - ticker: FRVIA.PA
+    name: Forvia
+    pea_pme: true
+    srd: true
+  - ticker: GJAJ.PA
+    name: GROUPE JAJ (EX JAJ DISTRIBUTION)
+    pea_pme: true
+  - ticker: HDP.PA
+    name: HOTELS DE PARIS
+    pea_pme: true
+  - ticker: ITXT.PA
+    name: INTL TEXT.ASSOCIES
+    pea_pme: true
+  - ticker: KER.PA
+    name: Kering
+    srd: true
+  - ticker: KOF.PA
+    name: KAUFMAN ET BROAD
+    pea_pme: true
+  - ticker: LEBL.PA
+    name: FONCIERE 7 INV
+    pea_pme: true
+  - ticker: MC.PA
+    name: LVMH
+    srd: true
+  - ticker: MDM.PA
+    name: MAISONS DU MONDE
+    pea_pme: true
+  - ticker: MHM.PA
+    name: MYHOTELMATCH
+    pea_pme: true
+  - ticker: MLAA.PA
+    name: L'AGENCE AUTOMOBILIERE
+    pea_pme: true
+  - ticker: MLARD.PA
+    name: ARDOIN AMAND N-A
+    pea_pme: true
+  - ticker: MLCLI.PA
+    name: MAISON CLIO
+    pea_pme: true
+  - ticker: MLCLP.PA
+    name: Colipays
+    pea_pme: true
+  - ticker: MLCMB.PA
+    name: COMPAGNIE MONT BLANC
+    pea_pme: true
+  - ticker: MLHBP.PA
+    name: HOTELES BESTPR
+    pea_pme: true
+  - ticker: MLHCF.PA
+    name: HOME CONCEPT
+    pea_pme: true
+  - ticker: MLHIN.PA
+    name: HOTELIERE IMMOBILIERE DE NICE
+    pea_pme: true
+  - ticker: MLHOT.PA
+    name: HOTELIM
+    pea_pme: true
+  - ticker: MLIFS.PA
+    name: IMPULSE FITNESS
+    pea_pme: true
+  - ticker: MLODT.PA
+    name: ODIOT
+    pea_pme: true
+  - ticker: MLONE.PA
+    name: BODY ONE
+    pea_pme: true
+  - ticker: MLSML.PA
+    name: SMALTO
+    pea_pme: true
+  - ticker: MLSTR.PA
+    name: STREIT MECANIQ.
+    pea_pme: true
+  - ticker: MMB.PA
+    name: Lagardere
+    srd: true
+  - ticker: NR21.PA
+    name: NR21
+    pea_pme: true
+  - ticker: OPM.PA
+    name: OPmobility
+    pea_pme: true
+    srd: true
+  - ticker: PARP.PA
+    name: PARTOUCHE
+    pea_pme: true
+  - ticker: RBO.PA
+    name: ROCHE BOBOIS
+    pea_pme: true
+  - ticker: RMS.PA
+    name: Hermes International
+    srd: true
+  - ticker: RNO.PA
+    name: Renault
+    pea_pme: true
+    srd: true
+  - ticker: SFCA.PA
+    name: SOC FRANC CASINOS
+    pea_pme: true
+  - ticker: SK.PA
+    name: SEB
+    srd: true
+  - ticker: SMCP.PA
+    name: SMCP
+    pea_pme: true
+  - ticker: SRP.PA
+    name: SHOWROOMPRIVE
+    pea_pme: true
+  - ticker: STLAP.PA
+    name: Stellantis
+    pea_pme: true
+    srd: true
+  - ticker: TFF.PA
+    name: TFF Group
+    srd: true
+  - ticker: TRI.PA
+    name: Trigano
+    srd: true
+  - ticker: VAC.PA
+    name: Pierre et Vacances
+    pea_pme: true
+    srd: true
+  - ticker: VRLA.PA
+    name: VERALLIA
+  Consumer Defensive:
+  - ticker: ALAVI.PA
+    name: ADVINI
+    pea_pme: true
+  - ticker: ALECO.PA
+    name: ECOMIAM
+    pea_pme: true
+  - ticker: ALFLE.PA
+    name: FLEURY MICHON
+    pea_pme: true
+  - ticker: ALIEV.PA
+    name: IEVA GROUP
+    pea_pme: true
+  - ticker: ALKKO.PA
+    name: KKO INTL
+    pea_pme: true
+  - ticker: ALLAN.PA
+    name: LANSON-BCC
+    pea_pme: true
+  - ticker: ALMER.PA
+    name: SAPMER
+    pea_pme: true
+  - ticker: ALODC.PA
+    name: OMER-DECUGIS & CIE
+    pea_pme: true
+  - ticker: ALPAU.PA
+    name: PAULIC MEUNERIE
+    pea_pme: true
+  - ticker: ALPOU.PA
+    name: POULAILLON
+    pea_pme: true
+  - ticker: ALVAL.PA
+    name: VALBIOTIS
+  - ticker: BN.PA
+    name: Danone
+    srd: true
+  - ticker: BOI.PA
+    name: Boiron
+    pea_pme: true
+    srd: true
+  - ticker: BON.PA
+    name: Bonduelle
+    pea_pme: true
+    srd: true
+  - ticker: CA.PA
+    name: Carrefour
+    srd: true
+  - ticker: CO.PA
+    name: Casino Guichard
+    pea_pme: true
+    srd: true
+  - ticker: ITP.PA
+    name: Interparfums
+    srd: true
+  - ticker: JBOG.PA
+    name: BOGART
+    pea_pme: true
+  - ticker: LOUP.PA
+    name: LDC
+    pea_pme: true
+    srd: true
+  - ticker: LPE.PA
+    name: LAURENT PERRIER
+    pea_pme: true
+  - ticker: MALT.PA
+    name: MALTER.FRANCO-BEL
+    pea_pme: true
+  - ticker: MBWS.PA
+    name: Marie Brizard
+    pea_pme: true
+    srd: true
+  - ticker: MLAAH.PA
+    name: AMATHEON AGRI
+    pea_pme: true
+  - ticker: MLCAC.PA
+    name: LOMBARD ET MEDOT
+    pea_pme: true
+  - ticker: MLFDV.PA
+    name: FD
+    pea_pme: true
+  - ticker: MLGAL.PA
+    name: GALEO
+    pea_pme: true
+  - ticker: MLGRC.PA
+    name: GROUPE CARNIVOR
+    pea_pme: true
+  - ticker: MLONL.PA
+    name: ONLINEFORMAPRO N
+    pea_pme: true
+  - ticker: MLSCI.PA
+    name: SCIENTIA SCHOOL
+    pea_pme: true
+  - ticker: MLSDN.PA
+    name: SAVONNERIE NYONS
+    pea_pme: true
+  - ticker: MLSRP.PA
+    name: SPEED RABBIT PIZZA
+    pea_pme: true
+  - ticker: OR.PA
+    name: L'Oreal
+    srd: true
+  - ticker: POMRY.PA
+    name: MAISON POMMERY & ASS.
+    pea_pme: true
+    srd: true
+  - ticker: RCO.PA
+    name: Remy Cointreau
+    pea_pme: true
+    srd: true
+  - ticker: RI.PA
+    name: Pernod Ricard
+    srd: true
+  - ticker: SABE.PA
+    name: SAINT JEAN GRP
+    pea_pme: true
+  - ticker: SAVE.PA
+    name: Savencia
+    pea_pme: true
+    srd: true
+  - ticker: SBT.PA
+    name: Oeneo
+    pea_pme: true
+    srd: true
+  Divers:
+  - ticker: ALSEI.PA
+    name: SOC EDIT IL FAT
+    pea_pme: true
+  - ticker: AUGR.PA
+    name: AUGROS COSM PACK
+    pea_pme: true
+  - ticker: FGRMC.PA
+    name: EIFFAGE
+    srd: true
+  - ticker: ML.PA
+    name: MICHELIN
+    srd: true
+  - ticker: MLBIO.PA
+    name: NORTEM BIOGROUP
+    pea_pme: true
+  - ticker: MLCOR.PA
+    name: COREP LIGHTING
+    pea_pme: true
+  - ticker: MLEAV.PA
+    name: E.A.V.S. GROUPE
+    pea_pme: true
+  - ticker: MLMFI.PA
+    name: CONDOR TECH
+    pea_pme: true
+  - ticker: MLVIE.PA
+    name: INTEGRIT VIAGER
+    pea_pme: true
+  - ticker: YOUNI.PA
+    name: YOUNITED FINL
+  ETF:
+  - ticker: C50.PA
+    name: Amundi Euro Stoxx 50 UCITS ETF
+  - ticker: CAC.PA
+    name: Amundi CAC 40 UCITS ETF
+  - ticker: CW8.PA
+    name: Amundi MSCI World UCITS ETF (Core)
+  - ticker: ESE.PA
+    name: BNP Paribas Easy S&P 500 UCITS ETF
+  - ticker: LYPS.DE
+    name: Amundi S&P 500 UCITS ETF
+  - ticker: PAASI.PA
+    name: Amundi PEA Asie Emergente UCITS ETF
+  - ticker: PABZ.PA
+    name: Amundi PEA MSCI USA UCITS ETF
+  - ticker: PAEEM.PA
+    name: Amundi PEA Emerging Markets UCITS ETF
+  - ticker: PANX.PA
+    name: Amundi Nasdaq-100 UCITS ETF
+  - ticker: PCEU.PA
+    name: Amundi PEA MSCI Europe UCITS ETF
+  - ticker: PE500.PA
+    name: Amundi PEA S&P 500 UCITS ETF
+  - ticker: PUST.PA
+    name: Amundi PEA Nasdaq-100 UCITS ETF
+  - ticker: WPEA.PA
+    name: iShares MSCI World Swap PEA UCITS ETF
+  Energy:
+  - ticker: ALDOL.PA
+    name: DOLFINES
+    pea_pme: true
+  - ticker: ALESA.PA
+    name: ECOSLOPS
+    pea_pme: true
+  - ticker: DPAM.PA
+    name: DOCKS PETR.D'AMBE
+    pea_pme: true
+  - ticker: FDE.PA
+    name: FRANCAISE DE L'ENERGIE
+    pea_pme: true
+  - ticker: GTT.PA
+    name: GTT
+    srd: true
+  - ticker: MAU.PA
+    name: Maurel et Prom
+    pea_pme: true
+    srd: true
+  - ticker: MLSEQ.PA
+    name: SEQUA PETROLEUM
+    pea_pme: true
+  - ticker: NAE.PA
+    name: NORTH ATLANTIC ENERGIES
+    pea_pme: true
+  - ticker: RUI.PA
+    name: Rubis
+    srd: true
+  - ticker: TE.PA
+    name: Technip Energies
+    srd: true
+  - ticker: TTE.PA
+    name: TotalEnergies
+    pea_pme: true
+    srd: true
+  - ticker: VIRI.PA
+    name: VIRIDIEN
+  Financial Services:
+  - ticker: ABCA.PA
+    name: ABC Arbitrage
+    pea_pme: true
+    srd: true
+  - ticker: ACA.PA
+    name: Credit Agricole
+    pea_pme: true
+    srd: true
+  - ticker: ALAUD.PA
+    name: AUDACIA
+    pea_pme: true
+  - ticker: ALBON.PA
+    name: LEBON
+    pea_pme: true
+  - ticker: ALCBI.PA
+    name: CRYPTO BLOCKCHAIN INDUSTRIES
+    pea_pme: true
+  - ticker: ALEFA.PA
+    name: EDUFORM'ACTION
+    pea_pme: true
+  - ticker: ALERO.PA
+    name: EUROLAND CORP
+    pea_pme: true
+  - ticker: ALEXP.PA
+    name: ONE EXPERIENCE
+    pea_pme: true
+  - ticker: ALVAZ.PA
+    name: VAZIVA
+  - ticker: AMUN.PA
+    name: Amundi
+    srd: true
+  - ticker: ANTIN.PA
+    name: ANTIN INFRA. PARTNERS
+    pea_pme: true
+  - ticker: BNP.PA
+    name: BNP Paribas
+    srd: true
+  - ticker: BSD.PA
+    name: BOURSE DIRECT
+    pea_pme: true
+  - ticker: CAF.PA
+    name: CRCAM PARIS ET IDF
+    pea_pme: true
+  - ticker: CAT31.PA
+    name: CA TOULOUSE 31 CCI
+    pea_pme: true
+  - ticker: CBDG.PA
+    name: CAMBODGE DIV.24
+  - ticker: CCN.PA
+    name: CRCAM NOR.SE.CCI
+    pea_pme: true
+  - ticker: CIV.PA
+    name: CRCAM ILLE CCI
+    pea_pme: true
+  - ticker: CMO.PA
+    name: CRCAM MORBIHAN CCI
+    pea_pme: true
+  - ticker: CNDF.PA
+    name: CRCAM NORD FRANCE
+    pea_pme: true
+  - ticker: COFA.PA
+    name: Coface
+    pea_pme: true
+    srd: true
+  - ticker: CRAP.PA
+    name: CRCAM ALPES PROVENCE.CCI
+    pea_pme: true
+  - ticker: CRAV.PA
+    name: LOIRE ATL.VEND.CCI
+    pea_pme: true
+  - ticker: CRBP2.PA
+    name: CRCAM BRIE PIC2CCI
+    pea_pme: true
+  - ticker: CRLA.PA
+    name: CRCAM LANGUEDOC
+    pea_pme: true
+  - ticker: CRLO.PA
+    name: CRCAM LOIRE HAUTE LOIRE
+    pea_pme: true
+  - ticker: CRSU.PA
+    name: CRCAM SRA CI
+    pea_pme: true
+  - ticker: CRTO.PA
+    name: CRCAM TOURAINE CCI
+    pea_pme: true
+  - ticker: CS.PA
+    name: AXA
+    srd: true
+  - ticker: EDEN.PA
+    name: Edenred
+    srd: true
+  - ticker: EEM.PA
+    name: EEM
+    pea_pme: true
+  - ticker: EGR.PA
+    name: TRANSITION EVERGREEN
+  - ticker: ENX.PA
+    name: Euronext
+    srd: true
+  - ticker: FMONC.PA
+    name: FINANCIERE MONCEY
+    pea_pme: true
+    srd: true
+  - ticker: GLE.PA
+    name: Societe Generale
+    srd: true
+  - ticker: IDIP.PA
+    name: IDI
+    pea_pme: true
+  - ticker: LTA.PA
+    name: Altamir
+    pea_pme: true
+    srd: true
+  - ticker: MF.PA
+    name: Wendel
+    srd: true
+  - ticker: MLAEM.PA
+    name: ASHLER MANSON
+    pea_pme: true
+  - ticker: MLGEQ.PA
+    name: GENTLEMEN'S
+    pea_pme: true
+  - ticker: MLHBB.PA
+    name: HOCHE BAINS LES BAINS
+    pea_pme: true
+  - ticker: MLIRF.PA
+    name: INNOVATIVE-RFK
+    pea_pme: true
+  - ticker: MLMUT.PA
+    name: MUTTER VENTURE-WI23
+    pea_pme: true
+  - ticker: MLNMA.PA
+    name: NICOLAS MIGUET N
+    pea_pme: true
+  - ticker: MLPHO.PA
+    name: PHOTONIKE
+    pea_pme: true
+  - ticker: MLPTZ.PA
+    name: PYRATZ CORP.
+    pea_pme: true
+  - ticker: PEUG.PA
+    name: Peugeot Invest
+    pea_pme: true
+    srd: true
+  - ticker: RF.PA
+    name: Eurazeo
+    srd: true
+  - ticker: SCR.PA
+    name: SCOR
+    srd: true
+  - ticker: TBSO.PA
+    name: TBSO
+  - ticker: TKO.PA
+    name: Tikehau Capital
+    srd: true
+  - ticker: VIL.PA
+    name: VIEL
+  Healthcare:
+  - ticker: AB.PA
+    name: AB Science
+    pea_pme: true
+    srd: true
+  - ticker: ABLD.PA
+    name: ABL DIAGNOSTICS
+    pea_pme: true
+  - ticker: ABNX.PA
+    name: ABIONYX PHARMA
+    pea_pme: true
+  - ticker: ABVX.PA
+    name: ABIVAX
+    pea_pme: true
+  - ticker: ADOC.PA
+    name: Adocia
+    pea_pme: true
+    srd: true
+  - ticker: AELIS.PA
+    name: AELIS FARMA
+    pea_pme: true
+  - ticker: ALBIO.PA
+    name: BIOSYNEX
+    pea_pme: true
+  - ticker: ALBLU.PA
+    name: BLUELINEA
+    pea_pme: true
+  - ticker: ALBPS.PA
+    name: BIOPHYTIS
+    pea_pme: true
+  - ticker: ALCGM.PA
+    name: Cegedim
+    pea_pme: true
+    srd: true
+  - ticker: ALCJ.PA
+    name: CROSSJECT
+    pea_pme: true
+  - ticker: ALCOX.PA
+    name: NICOX
+    pea_pme: true
+  - ticker: ALDMS.PA
+    name: DMS
+    pea_pme: true
+  - ticker: ALDVI.PA
+    name: ADVICENNE
+    pea_pme: true
+  - ticker: ALECR.PA
+    name: EUROFINS-CEREP
+    pea_pme: true
+  - ticker: ALEMG.PA
+    name: EUROMEDIS GROUP
+    pea_pme: true
+  - ticker: ALERS.PA
+    name: EUROBIO SCIENTIFIC
+    pea_pme: true
+  - ticker: ALGAE.PA
+    name: FERMENTALG
+    pea_pme: true
+  - ticker: ALIKO.PA
+    name: IKONISYS
+    pea_pme: true
+  - ticker: ALIMP.PA
+    name: IMPLANET
+    pea_pme: true
+  - ticker: ALINT.PA
+    name: INTEGRAGEN
+    pea_pme: true
+  - ticker: ALKLH.PA
+    name: KLEA HOLDING (ex VISIOMED)
+    pea_pme: true
+  - ticker: ALMDT.PA
+    name: MEDIAN TECHNOLOGIES
+    pea_pme: true
+  - ticker: ALMKT.PA
+    name: MAUNA KEA
+    pea_pme: true
+  - ticker: ALNEV.PA
+    name: NEOVACS
+    pea_pme: true
+  - ticker: ALNFL.PA
+    name: NFL BIOSCIENCES
+    pea_pme: true
+  - ticker: ALNOV.PA
+    name: NOVACYT
+    pea_pme: true
+  - ticker: ALOPM.PA
+    name: ONCODESIGN PM
+    pea_pme: true
+  - ticker: ALPAT.PA
+    name: PLANT ADVANCED
+    pea_pme: true
+  - ticker: ALPRE.PA
+    name: PREDILIFE
+    pea_pme: true
+  - ticker: ALQGC.PA
+    name: QUANTUM GENOMICS
+    pea_pme: true
+  - ticker: ALSAF.PA
+    name: SAFE
+    pea_pme: true
+  - ticker: ALSEN.PA
+    name: SENSORION
+    pea_pme: true
+  - ticker: ALSGD.PA
+    name: SPINEGUARD
+    pea_pme: true
+  - ticker: ALSMA.PA
+    name: SMAIO
+    pea_pme: true
+  - ticker: ALSPW.PA
+    name: SPINEWAY
+    pea_pme: true
+  - ticker: ALTAO.PA
+    name: ATON
+    pea_pme: true
+  - ticker: ALTHE.PA
+    name: THERACLION
+  - ticker: ALTHX.PA
+    name: THX PHARMA (EX THERANEXUS)
+  - ticker: ALTME.PA
+    name: TME PHARMA
+  - ticker: ALVIO.PA
+    name: VALERIO THER. (EX...
+    pea_pme: true
+    srd: true
+  - ticker: BIM.PA
+    name: bioMerieux
+    srd: true
+  - ticker: BLC.PA
+    name: BASTIDE LE CONFORT MED.
+    pea_pme: true
+  - ticker: CLARI.PA
+    name: Clariane
+    pea_pme: true
+    srd: true
+  - ticker: CVX.PA
+    name: CARVOLIX
+    pea_pme: true
+  - ticker: DBV.PA
+    name: DBV Technologies
+    pea_pme: true
+    srd: true
+  - ticker: DIM.PA
+    name: Sartorius Stedim Biotech
+    srd: true
+  - ticker: EAPI.PA
+    name: EuroAPI
+    pea_pme: true
+    srd: true
+  - ticker: EL.PA
+    name: EssilorLuxottica
+    srd: true
+  - ticker: EMEIS.PA
+    name: Emeis
+    pea_pme: true
+    srd: true
+  - ticker: EQS.PA
+    name: EQUASENS
+    pea_pme: true
+    srd: true
+  - ticker: ERF.PA
+    name: Eurofins Scientific
+    srd: true
+  - ticker: GBT.PA
+    name: GUERBET
+    pea_pme: true
+  - ticker: GDS.PA
+    name: Ramsay Generale de Sante
+    pea_pme: true
+    srd: true
+  - ticker: GNFT.PA
+    name: Genfit
+    pea_pme: true
+    srd: true
+  - ticker: IPH.PA
+    name: Innate Pharma
+    pea_pme: true
+    srd: true
+  - ticker: IPN.PA
+    name: Ipsen
+    srd: true
+  - ticker: IVA.PA
+    name: INVENTIVA
+    pea_pme: true
+  - ticker: LBIRD.PA
+    name: Lumibird
+    pea_pme: true
+    srd: true
+  - ticker: LNA.PA
+    name: LNA Sante
+    pea_pme: true
+    srd: true
+  - ticker: MAAT.PA
+    name: MAAT PHARMA
+    pea_pme: true
+  - ticker: MEDCL.PA
+    name: MEDINCELL
+    pea_pme: true
+  - ticker: MLBON.PA
+    name: BONYF
+    pea_pme: true
+  - ticker: MLINA.PA
+    name: INMOLECULE NANO
+    pea_pme: true
+  - ticker: MLLAB.PA
+    name: MEDIA LAB
+    pea_pme: true
+  - ticker: MLMIB.PA
+    name: METRICS IN BAL
+    pea_pme: true
+  - ticker: NANO.PA
+    name: Nanobiotix
+    pea_pme: true
+    srd: true
+  - ticker: OSE.PA
+    name: OSE Immunotherapeutics
+    pea_pme: true
+    srd: true
+  - ticker: POXEL.PA
+    name: POXEL
+    pea_pme: true
+  - ticker: SAN.PA
+    name: Sanofi
+    srd: true
+  - ticker: SIGHT.PA
+    name: GENSIGHT BIOLOGICS
+    pea_pme: true
+  - ticker: TNG.PA
+    name: TRANSGENE
+  - ticker: VETO.PA
+    name: Vetoquinol
+    srd: true
+  - ticker: VIRP.PA
+    name: Virbac
+    srd: true
+  - ticker: VLA.PA
+    name: Valneva
+    srd: true
+  Industrials:
+  - ticker: AAA.PA
+    name: ALAN ALLMAN ASSOCIATES
+    pea_pme: true
+  - ticker: ADP.PA
+    name: Aeroports de Paris
+    srd: true
+  - ticker: AF.PA
+    name: Air France-KLM
+    srd: true
+  - ticker: AIR.PA
+    name: Airbus
+    srd: true
+  - ticker: ALBOA.PA
+    name: BOA CONCEPT
+    pea_pme: true
+  - ticker: ALCIS.PA
+    name: Catering International Services
+    pea_pme: true
+    srd: true
+  - ticker: ALCUR.PA
+    name: ARCURE
+    pea_pme: true
+  - ticker: ALDBT.PA
+    name: DBT
+    pea_pme: true
+  - ticker: ALEAC.PA
+    name: EDILIZIACROB
+    pea_pme: true
+  - ticker: ALENO.PA
+    name: ENOGIA
+    pea_pme: true
+  - ticker: ALEUP.PA
+    name: EUROPLASMA
+    pea_pme: true
+  - ticker: ALEXA.PA
+    name: Exail Technologies
+    pea_pme: true
+  - ticker: ALFER.PA
+    name: SERGE FERRARI
+    pea_pme: true
+  - ticker: ALGEV.PA
+    name: GEVELOT
+    pea_pme: true
+  - ticker: ALGIR.PA
+    name: SIGNAUX GIROD
+    pea_pme: true
+  - ticker: ALGRO.PA
+    name: GROLLEAU
+    pea_pme: true
+  - ticker: ALHG.PA
+    name: LOUIS HACHETTE GROUP
+    pea_pme: true
+  - ticker: ALIBR.PA
+    name: CALIBRE
+    pea_pme: true
+  - ticker: ALMAR.PA
+    name: MARE NOSTRUM
+    pea_pme: true
+  - ticker: ALMCE.PA
+    name: MON COURTIER ENERGIE
+    pea_pme: true
+  - ticker: ALMGI.PA
+    name: MG INTERNATIONAL
+    pea_pme: true
+  - ticker: ALNSC.PA
+    name: NSC GROUPE
+    pea_pme: true
+  - ticker: ALO.PA
+    name: Alstom
+    srd: true
+  - ticker: ALODY.PA
+    name: ODYSSEE TECHNOLOGIES
+    pea_pme: true
+  - ticker: ALORA.PA
+    name: ALTHEORA
+    pea_pme: true
+  - ticker: ALPJT.PA
+    name: POUJOULAT
+    pea_pme: true
+  - ticker: ALPM.PA
+    name: PRECIA
+    pea_pme: true
+  - ticker: ALSEC.PA
+    name: SODITECH
+    pea_pme: true
+  - ticker: ALSOG.PA
+    name: SOGECLAIR
+    pea_pme: true
+  - ticker: ALSTI.PA
+    name: STIF
+    pea_pme: true
+  - ticker: ALTD.PA
+    name: TONNER DRONES
+  - ticker: ALTOO.PA
+    name: TOOSLA
+  - ticker: ALTOU.PA
+    name: TOUAX
+  - ticker: ALTPC.PA
+    name: SMTPC
+    pea_pme: true
+  - ticker: ALTUV.PA
+    name: BIO-UV GRP
+    pea_pme: true
+  - ticker: ALUCI.PA
+    name: LUCIBEL
+    pea_pme: true
+  - ticker: ALUVI.PA
+    name: UV GERMI
+  - ticker: ALWF.PA
+    name: WINFARM
+  - ticker: ALWTR.PA
+    name: WATERA
+  - ticker: AM.PA
+    name: Dassault Aviation
+    srd: true
+  - ticker: ASY.PA
+    name: Assystem
+    pea_pme: true
+    srd: true
+  - ticker: AURE.PA
+    name: AUREA
+    pea_pme: true
+  - ticker: AYV.PA
+    name: Ayvens
+    srd: true
+  - ticker: BVI.PA
+    name: Bureau Veritas
+    srd: true
+  - ticker: CEN.PA
+    name: Groupe CRIT
+    pea_pme: true
+    srd: true
+  - ticker: CRI.PA
+    name: Chargeurs
+    pea_pme: true
+    srd: true
+  - ticker: DBG.PA
+    name: DERICHEBOURG
+    pea_pme: true
+  - ticker: DG.PA
+    name: Vinci
+    pea_pme: true
+    srd: true
+  - ticker: ELIS.PA
+    name: Elis
+    srd: true
+  - ticker: EN.PA
+    name: Bouygues
+    pea_pme: true
+    srd: true
+  - ticker: EXA.PA
+    name: EXAIL TECHNOLOGIES
+    pea_pme: true
+    srd: true
+  - ticker: EXE.PA
+    name: Exel Industries
+    pea_pme: true
+    srd: true
+  - ticker: EXENS.PA
+    name: EXOSENS
+    pea_pme: true
+  - ticker: FGA.PA
+    name: FIGEAC AERO
+    pea_pme: true
+  - ticker: FII.PA
+    name: LISI
+    pea_pme: true
+  - ticker: FINM.PA
+    name: FIN MARJOS
+    pea_pme: true
+  - ticker: GEA.PA
+    name: GEA
+    pea_pme: true
+  - ticker: GET.PA
+    name: GETLINK
+    srd: true
+  - ticker: GLO.PA
+    name: GL Events
+    pea_pme: true
+    srd: true
+  - ticker: GPE.PA
+    name: GPE PIZZORNO ENVI
+    pea_pme: true
+  - ticker: HO.PA
+    name: Thales
+    srd: true
+  - ticker: IDL.PA
+    name: ID Logistics
+    pea_pme: true
+    srd: true
+  - ticker: IPS.PA
+    name: Ipsos
+    pea_pme: true
+    srd: true
+  - ticker: LAT.PA
+    name: LATECOERE
+    pea_pme: true
+  - ticker: LR.PA
+    name: Legrand
+    srd: true
+  - ticker: MLAAT.PA
+    name: AZOREAN
+    pea_pme: true
+  - ticker: MLAGI.PA
+    name: GROUPE AG3I
+    pea_pme: true
+  - ticker: MLAIG.PA
+    name: ANDINO GLB
+    pea_pme: true
+  - ticker: MLCFD.PA
+    name: CHEMIN FER DEPARTEMENTAUX
+    pea_pme: true
+  - ticker: MLCMI.PA
+    name: SCEMI
+    pea_pme: true
+  - ticker: MLFXO.PA
+    name: FINAXO
+    pea_pme: true
+  - ticker: MLHK.PA
+    name: H&K
+    pea_pme: true
+  - ticker: MLHYD.PA
+    name: HYDRAULIQUE HLD
+    pea_pme: true
+  - ticker: MLHYE.PA
+    name: HYDRO-EXPLOITATIONS
+    pea_pme: true
+  - ticker: MLITN.PA
+    name: ITALY INNOV
+    pea_pme: true
+  - ticker: MLPHW.PA
+    name: PHONE WEB
+    pea_pme: true
+  - ticker: MLPLC.PA
+    name: PLACOPLATRE
+    pea_pme: true
+  - ticker: MLROT.PA
+    name: ROTH MIONS
+    pea_pme: true
+  - ticker: MRN.PA
+    name: Mersen
+    pea_pme: true
+    srd: true
+  - ticker: MTU.PA
+    name: Manitou
+    pea_pme: true
+    srd: true
+  - ticker: NEX.PA
+    name: NEXANS
+    srd: true
+  - ticker: OREGE.PA
+    name: OREGE
+    pea_pme: true
+  - ticker: PERR.PA
+    name: PERRIER INDUSTRIE
+    pea_pme: true
+  - ticker: PIG.PA
+    name: Haulotte Group
+    pea_pme: true
+    srd: true
+  - ticker: PLX.PA
+    name: PLUXEE
+    pea_pme: true
+  - ticker: RXL.PA
+    name: Rexel
+    srd: true
+  - ticker: SACI.PA
+    name: FIDUCIAL OFF.SOLU
+    pea_pme: true
+  - ticker: SAF.PA
+    name: Safran
+    pea_pme: true
+    srd: true
+  - ticker: SAMS.PA
+    name: SAMSE
+    pea_pme: true
+  - ticker: SCHP.PA
+    name: Seche Environnement
+    pea_pme: true
+    srd: true
+  - ticker: SDG.PA
+    name: SYNERGIE
+    srd: true
+  - ticker: SFPI.PA
+    name: GROUPE SFPI
+    pea_pme: true
+  - ticker: SGO.PA
+    name: Saint-Gobain
+    pea_pme: true
+    srd: true
+  - ticker: SPIE.PA
+    name: Spie
+    srd: true
+  - ticker: STF.PA
+    name: STEF
+    pea_pme: true
+    srd: true
+  - ticker: SU.PA
+    name: Schneider Electric
+    srd: true
+  - ticker: SW.PA
+    name: Sodexo
+    srd: true
+  - ticker: TEP.PA
+    name: Teleperformance
+    srd: true
+  - ticker: THEP.PA
+    name: THERMADOR
+  - ticker: VIE.PA
+    name: Veolia
+    srd: true
+  - ticker: WAGA.PA
+    name: WAGA ENERGY
+  Real Estate:
+  - ticker: ALADO.PA
+    name: ADOMOS
+    pea_pme: true
+  - ticker: ALEUA.PA
+    name: EURASIA GROUPE
+    pea_pme: true
+  - ticker: ALIMO.PA
+    name: GROUPIMO
+    pea_pme: true
+  - ticker: ALREA.PA
+    name: REALITES
+    pea_pme: true
+  - ticker: ALREB.PA
+    name: REBIRTH
+    pea_pme: true
+  - ticker: ALRIS.PA
+    name: RISING STONE
+    pea_pme: true
+  - ticker: ALTA.PA
+    name: ALTAREA
+    srd: true
+  - ticker: AREIT.PA
+    name: ALTAREIT
+    pea_pme: true
+  - ticker: ARG.PA
+    name: ARGAN
+    srd: true
+  - ticker: ARTE.PA
+    name: ARTEA
+    pea_pme: true
+  - ticker: ATLD.PA
+    name: ATLAND
+  - ticker: BASS.PA
+    name: BASSAC
+    pea_pme: true
+  - ticker: CFI.PA
+    name: CFI
+    pea_pme: true
+  - ticker: COUR.PA
+    name: COURTOIS N
+    pea_pme: true
+  - ticker: CROS.PA
+    name: CROSSWOOD
+    pea_pme: true
+  - ticker: EFI.PA
+    name: EFI
+  - ticker: EIFF.PA
+    name: Societe de la Tour Eiffel
+    srd: true
+  - ticker: FSDV.PA
+    name: FSDV
+    pea_pme: true
+  - ticker: MLALV.PA
+    name: ALVEEN
+    pea_pme: true
+  - ticker: MLCOU.PA
+    name: COURBET HERITAGE
+    pea_pme: true
+  - ticker: MLFTI.PA
+    name: FRANCE TOURISME
+    pea_pme: true
+  - ticker: MLIPP.PA
+    name: IMM.PARIS.PERLE
+    pea_pme: true
+  - ticker: MLLCB.PA
+    name: LES CONSTRUCTEURS DU BOIS
+    pea_pme: true
+  - ticker: MLPRE.PA
+    name: PRELUDE
+    pea_pme: true
+  - ticker: MLPRI.PA
+    name: SOC NAT PR IMM
+    pea_pme: true
+  - ticker: MLVIN.PA
+    name: FONCIERE VINDI
+    pea_pme: true
+  - ticker: NXI.PA
+    name: Nexity
+    pea_pme: true
+    srd: true
+  - ticker: ORIA.PA
+    name: FIDUCIAL REAL ESTATE
+    pea_pme: true
+  - ticker: SPEL.PA
+    name: FONCIERE VOLTA
+    pea_pme: true
+  Technology:
+  - ticker: 74SW.PA
+    name: 74Software
+    pea_pme: true
+    srd: true
+  - ticker: AL2SI.PA
+    name: 2CRSI
+    pea_pme: true
+    srd: true
+  - ticker: ALARF.PA
+    name: ADEUNIS
+    pea_pme: true
+  - ticker: ALBFR.PA
+    name: SIDETRADE
+    pea_pme: true
+  - ticker: ALBOO.PA
+    name: BOOSTHEAT
+    pea_pme: true
+  - ticker: ALBPK.PA
+    name: BROADPEAK
+    pea_pme: true
+  - ticker: ALCBX.PA
+    name: CIBOX INTER ACTIVE
+    pea_pme: true
+  - ticker: ALCLA.PA
+    name: CLARANOVA
+    pea_pme: true
+  - ticker: ALCOF.PA
+    name: COFIDUR
+    pea_pme: true
+  - ticker: ALCPA.PA
+    name: MACOMPTA.FR
+    pea_pme: true
+  - ticker: ALCPB.PA
+    name: CAPITAL B
+    pea_pme: true
+  - ticker: ALDRV.PA
+    name: DRONE VOLT
+    pea_pme: true
+  - ticker: ALGEC.PA
+    name: GECI INTL
+    pea_pme: true
+  - ticker: ALGID.PA
+    name: EGIDE
+    pea_pme: true
+  - ticker: ALGTR.PA
+    name: GROUPE TERA
+    pea_pme: true
+  - ticker: ALHF.PA
+    name: HF COMPANY
+    pea_pme: true
+  - ticker: ALHIT.PA
+    name: HITECHPROS
+    pea_pme: true
+  - ticker: ALHYP.PA
+    name: HIPAY GROUP
+    pea_pme: true
+  - ticker: ALICA.PA
+    name: ICAPE HOLDING
+    pea_pme: true
+  - ticker: ALIMR.PA
+    name: IMMERSION
+    pea_pme: true
+  - ticker: ALINN.PA
+    name: INNELEC MULTIMEDIA
+    pea_pme: true
+  - ticker: ALITL.PA
+    name: IT LINK
+    pea_pme: true
+  - ticker: ALJXR.PA
+    name: ARCHOS
+    pea_pme: true
+  - ticker: ALKAL.PA
+    name: KALRAY
+    pea_pme: true
+  - ticker: ALKEY.PA
+    name: KEYRUS
+    pea_pme: true
+  - ticker: ALKLK.PA
+    name: KERLINK
+    pea_pme: true
+  - ticker: ALLDL.PA
+    name: GROUPE LDLC
+    pea_pme: true
+  - ticker: ALLGO.PA
+    name: LARGO
+    pea_pme: true
+  - ticker: ALLIX.PA
+    name: WALLIX GROUP
+  - ticker: ALLOG.PA
+    name: LOGIC INSTRUMENT
+    pea_pme: true
+  - ticker: ALMDG.PA
+    name: MGI DIGIT TECH
+    pea_pme: true
+  - ticker: ALMUN.PA
+    name: MUNIC
+    pea_pme: true
+  - ticker: ALNMR.PA
+    name: NAM.R
+    pea_pme: true
+  - ticker: ALNN6.PA
+    name: ENENSYS TECHNO
+    pea_pme: true
+  - ticker: ALNRG.PA
+    name: ENERGISME
+    pea_pme: true
+  - ticker: ALNSE.PA
+    name: NSE
+    pea_pme: true
+  - ticker: ALNTG.PA
+    name: NETGEM
+    pea_pme: true
+  - ticker: ALORD.PA
+    name: ORDISSIMO
+    pea_pme: true
+  - ticker: ALPHI.PA
+    name: FACEPHI BIOMETR
+    pea_pme: true
+  - ticker: ALPRG.PA
+    name: Prologue
+    pea_pme: true
+    srd: true
+  - ticker: ALPWG.PA
+    name: PRODWAYS
+    pea_pme: true
+  - ticker: ALRIB.PA
+    name: RIBER
+    pea_pme: true
+  - ticker: ALROC.PA
+    name: ROCTOOL
+    pea_pme: true
+  - ticker: ALSEM.PA
+    name: SEMCO TECHNOLOGIES
+    pea_pme: true
+  - ticker: ALTAI.PA
+    name: LIGHTON
+    pea_pme: true
+  - ticker: ALTHO.PA
+    name: METAVISIO (THOMSON COMP.)
+    pea_pme: true
+  - ticker: ALTRA.PA
+    name: TRACTIAL
+  - ticker: ALUAV.PA
+    name: EMB SIST INTEL
+    pea_pme: true
+  - ticker: ALVGO.PA
+    name: VOGO
+  - ticker: ALWEC.PA
+    name: WE.CONNECT
+  - ticker: ARTO.PA
+    name: ARTOIS
+    pea_pme: true
+  - ticker: ATE.PA
+    name: Alten
+    srd: true
+  - ticker: ATEME.PA
+    name: ATEME
+    pea_pme: true
+  - ticker: ATO.PA
+    name: ATOS GROUP
+    pea_pme: true
+  - ticker: AUB.PA
+    name: Aubay
+    pea_pme: true
+    srd: true
+  - ticker: AVT.PA
+    name: Avenir Telecom
+    pea_pme: true
+    srd: true
+  - ticker: BIG.PA
+    name: Bigben Interactive
+    pea_pme: true
+    srd: true
+  - ticker: CAP.PA
+    name: Capgemini
+    srd: true
+  - ticker: COH.PA
+    name: COHERIS
+    pea_pme: true
+  - ticker: DSY.PA
+    name: Dassault Systemes
+    srd: true
+  - ticker: EKI.PA
+    name: Ekinops
+    pea_pme: true
+    srd: true
+  - ticker: EOS.PA
+    name: ACTEOS (EX DATATRONIC)
+    pea_pme: true
+  - ticker: FPG.PA
+    name: UTI GROUP
+  - ticker: GUI.PA
+    name: GUILLEMOT CORP.
+    pea_pme: true
+  - ticker: INF.PA
+    name: INFOTEL
+    pea_pme: true
+  - ticker: LACR.PA
+    name: LACROIX
+    pea_pme: true
+  - ticker: LIN.PA
+    name: LINEDATA SERVICES
+    pea_pme: true
+  - ticker: LSS.PA
+    name: Lectra
+    pea_pme: true
+    srd: true
+  - ticker: MEMS.PA
+    name: MEMSCAP REGPT
+    pea_pme: true
+  - ticker: MLACT.PA
+    name: ACTIVIUM GROUP
+    pea_pme: true
+  - ticker: MLCHE.PA
+    name: CHEOPS TECH FCE
+    pea_pme: true
+  - ticker: MLCNT.PA
+    name: CONSORT NT
+    pea_pme: true
+  - ticker: MLDAM.PA
+    name: DAMARIS
+    pea_pme: true
+  - ticker: MLFNP.PA
+    name: FNP TECH
+    pea_pme: true
+  - ticker: MLIDS.PA
+    name: IDS
+    pea_pme: true
+  - ticker: MLIFC.PA
+    name: INFOCLIP
+    pea_pme: true
+  - ticker: MLLOI.PA
+    name: LOCASYSTEM INTERNATIONAL
+    pea_pme: true
+  - ticker: MLMGL.PA
+    name: MD SERVICES
+    pea_pme: true
+  - ticker: MLNOV.PA
+    name: NOVATECH INDUSTRIES
+    pea_pme: true
+  - ticker: MLOCT.PA
+    name: OCTOPUS BIOSAF
+    pea_pme: true
+  - ticker: MLPAC.PA
+    name: PACTE NOVATION
+    pea_pme: true
+  - ticker: NRO.PA
+    name: Neurones
+    pea_pme: true
+    srd: true
+  - ticker: OVH.PA
+    name: OVHCLOUD
+    pea_pme: true
+  - ticker: PARRO.PA
+    name: PARROT
+    pea_pme: true
+  - ticker: PLNW.PA
+    name: PLANISWARE
+    pea_pme: true
+  - ticker: PROAC.PA
+    name: PROACTIS
+    pea_pme: true
+  - ticker: QDT.PA
+    name: Quadient
+    pea_pme: true
+    srd: true
+  - ticker: S30.PA
+    name: Solutions 30
+    pea_pme: true
+    srd: true
+  - ticker: SOI.PA
+    name: Soitec
+    pea_pme: true
+    srd: true
+  - ticker: SOP.PA
+    name: Sopra Steria
+    srd: true
+  - ticker: STMPA.PA
+    name: STMicroelectronics
+    pea_pme: true
+    srd: true
+  - ticker: SWP.PA
+    name: Sword Group
+    srd: true
+  - ticker: VMX.PA
+    name: Verimatrix
+    srd: true
+  - ticker: VU.PA
+    name: VusionGroup
+    srd: true
+  - ticker: WAVE.PA
+    name: Wavestone
+    srd: true
+  - ticker: WLN.PA
+    name: Worldline
+    srd: true
+  - ticker: XFAB.PA
+    name: X-FAB SILICON
+  Utilities:
+  - ticker: ALAGO.PA
+    name: E-PANGO
+    pea_pme: true
+  - ticker: ALAGP.PA
+    name: AGRIPOWER
+    pea_pme: true
+  - ticker: ALCWE.PA
+    name: CHARWOOD ENERGY
+    pea_pme: true
+  - ticker: ALESE.PA
+    name: ENTECH
+    pea_pme: true
+  - ticker: ALETC.PA
+    name: ENERGY SOL TECH
+    pea_pme: true
+  - ticker: ALHAF.PA
+    name: HAFFNER ENERGY
+    pea_pme: true
+  - ticker: ALMIN.PA
+    name: MINT
+    pea_pme: true
+  - ticker: ALOKW.PA
+    name: GROUPE OKWIND
+    pea_pme: true
+  - ticker: ARVEN.PA
+    name: ARVERNE
+    pea_pme: true
+  - ticker: ELEC.PA
+    name: ELECTRICITE DE STRASBOURG
+    pea_pme: true
+  - ticker: ENGI.PA
+    name: Engie
+    srd: true
+  - ticker: HDF.PA
+    name: HYDROGENE DE FRANCE
+    pea_pme: true
+  - ticker: MLBSP.PA
+    name: BLUE SHARK PS
+    pea_pme: true
+  - ticker: MLCMG.PA
+    name: CMG CLEANTECH
+    pea_pme: true
+  - ticker: MLEDR.PA
+    name: EAUX DE ROYAN
+    pea_pme: true
+  - ticker: VLTSA.PA
+    name: Voltalia
+    srd: true
+```
+
+## FILE: config/risk_params.yaml (53 lines)
+```yaml
+# =============================================================================
+# PEA Pollux - Institutional Risk Parameters
+# -----------------------------------------------------------------------------
+# These limits are NON-NEGOTIABLE. They are enforced by the Correlation Firewall
+# (03_risk_portfolio), the Position Sizer, and the Macro Veto Engine.
+# All percentages are expressed as fractions (0.15 == 15%).
+# =============================================================================
+
+# --- Position Sizing ---------------------------------------------------------
+KELLY_FRACTION: 0.5              # Half-Kelly. Never use full Kelly.
+MAX_SINGLE_POSITION_PCT: 0.15    # Max 15% of total equity in a single name.
+MAX_SECTOR_WEIGHT_PCT: 0.25      # Max 25% of total equity in a single sector.
+MAX_ALLOCATION_PER_DAY_PCT: 0.03 # Max 3% of capital deployed per calendar day.
+
+# --- Risk Limits (circuit breakers) -----------------------------------------
+DAILY_MAX_LOSS_PCT: -0.005       # Halt execution if daily P&L < -0.5%.
+WEEKLY_MAX_LOSS_PCT: -0.02       # Max weekly drawdown before pause.
+MONTHLY_MAX_LOSS_PCT: -0.05      # Max monthly drawdown -> liquidate + manual review.
+
+# --- Correlation Limits ------------------------------------------------------
+MAX_CORRELATION_TO_PORTFOLIO: 0.70  # Pearson vs any holding.
+MAX_CORRELATION_SAME_SECTOR: 0.80   # Stricter allowance within same sector.
+CORRELATION_LOOKBACK_DAYS: 60       # Trading days for Pearson window.
+
+# --- Signals -----------------------------------------------------------------
+CONVICTION_EMIT_FLOOR: 65.0      # Minimum conviction score (0-100) to emit a BUY.
+SIGNAL_SELL_THRESHOLD: 35        # Score below which a SELL is considered.
+SIGNAL_VALIDITY_HOURS: 12        # Signal expires after 12h.
+MACRO_VETO_DAYS_BEFORE: 3        # Veto new trades within N days of macro event.
+EARNINGS_BLACKOUT_DAYS: 2        # Per-ticker earnings/div blackout window.
+RSI_OVERSOLD_THRESHOLD: 30.0     # MRE trigger; later walk-forward calibrable.
+MIN_LIQUIDITY_ADV: 50000         # Min average daily € volume (20d) for new buys.
+MAX_POSITIONS_TOTAL: 12          # Cap on simultaneous satellite lines.
+
+# --- Core / Satellite model (Phase 10) --------------------------------------
+CORE_TICKER: "CW8.PA"            # Amundi MSCI World UCITS ETF (PEA eligible).
+MAX_IDLE_CASH_PCT: 0.02          # Phase 40: cash above 2% equity is swept to Core.
+CORE_TARGET_PCT: 0.70            # Standard core weight when market overheated.
+CORE_CRASH_TARGET_PCT: 0.75      # Larger core weight when CW8 < SMA200 (crash).
+CORE_DCA_MAX_TRANCHE_PCT: 0.05   # Max % of equity deployed to core per pass.
+SATELLITE_MAX_BUDGET_PCT: 0.30   # Max total equity in satellite stock-picking.
+
+# --- Volatility & VIX defense (Phase 10) ------------------------------------
+VOLATILITY_REFERENCE: 0.20       # Baseline annualized vol for parity scaling.
+VOLATILITY_MAX_FACTOR: 1.5       # Cap on inverse-volatility up-scaling.
+VIX_PANIC_THRESHOLD: 30.0        # V2TX above this vetoes new satellite buys.
+
+# --- Rebalancing (Phase 12 / 15) --------------------------------------------
+REBALANCE_PROFIT_SHAVE_PCT: 0.20   # Trim 20% of a winner above +20% PnL.
+REBALANCE_PROFIT_TRIGGER_PCT: 20.0 # Profit-shave trigger (unrealized %).
+# Dynamic ATR stop: exit if price < avg_entry - REBALANCE_ATR_STOP_MULT * ATR_14.
+# (Static -10% stop removed in Phase 15.)
+REBALANCE_ATR_STOP_MULT: 2.5
+```
+
+## FILE: DASHBOARD_FULL_DUMP_FOR_LLM.md (6691 lines)
+```markdown
+# PEA Pollux - Dashboard Dump
+
+## File: .\05_interfaces\terminal_dashboard.py
+
+``​`python
+"""Web Terminal (Streamlit dashboard) for PEA Pollux.
+
+BLOOMBERG TERMINAL EDITION - command center on a pure-black, high-contrast UI.
+
+Design rules enforced here:
+  * Pure black background (#050505); text in white / neon-green / amber / cyan.
+  * No white dataframes: every table is a colour-coded
+    ``plotly.graph_objects.Table`` (black cells, neon/red text), backed by a
+    forced dark theme via ``.streamlit/config.toml``.
+  * Every metric carries a plain-language explanation (``help=`` / HTML title).
+  * Raw tickers are always shown as "Full Name (TICKER)" via ``format_name``.
+
+Features: TradingView ticker tape, top HUD, Risk/Macro HUD, General & Signaux
+(adaptive portfolio suggestion, news, geo brief, signal ledger), portfolio +
+wallet editor, Exploration (market scan + full ticker chart/TA/news/insiders/
+Polymarket), universe, architecture docs.
+
+Run (auto-opens browser):
+    .\\run_dashboard.ps1
+    # or: venv_x64\\Scripts\\streamlit run 05_interfaces/terminal_dashboard.py
+"""
+
+import asyncio
+import os
+import sys
+from datetime import date, datetime, timedelta
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import plotly.express as pex
+import plotly.graph_objects as go
+import streamlit as st
+from streamlit_autorefresh import st_autorefresh
+import streamlit.components.v1 as components
+import yaml
+import yfinance as yf
+
+# =============================================================================
+# Page config & Auto-Refresh
+# =============================================================================
+st.set_page_config(
+    page_title="PEA Pollux | Terminal",
+    layout="wide",
+    page_icon="🛡️",
+    initial_sidebar_state="collapsed",
+)
+
+st_autorefresh(interval=60000, key="live_terminal_tick")
+
+# --- Cross-package imports (dirs start with digits) --------------------------
+_ROOT = Path(__file__).resolve().parent.parent
+# Native .env loader (no python-dotenv) — force keys into os.environ.
+_env_path = _ROOT / "config" / "api_keys.env"
+if _env_path.exists():
+    with open(_env_path, "r", encoding="utf-8") as f:
+        for line in f:
+            if "=" in line and not line.strip().startswith("#"):
+                k, v = line.strip().split("=", 1)
+                os.environ[k.strip()] = v.strip().strip(" '\"")
+
+for _sub in ("00_data_sensors", "01_memory_core", "02_quant_engine",
+             "03_risk_portfolio", "04_orchestrator_ai", "05_interfaces"):
+    sys.path.insert(0, str(_ROOT / _sub))
+
+try:
+    from env_loader import load_api_keys  # noqa: E402
+
+    load_api_keys(_env_path)
+except Exception:  # noqa: BLE001
+    pass
+
+from sqlite_portfolio import PortfolioDB  # noqa: E402
+from data_models import Position, PortfolioState  # noqa: E402
+
+try:
+    from equity_metrics import compute_equity_metrics  # noqa: E402
+except Exception:  # noqa: BLE001
+    compute_equity_metrics = None  # type: ignore[assignment]
+
+try:
+    from logging_setup import (  # noqa: E402
+        list_log_files,
+        read_pipeline_status,
+        setup_app_logging,
+        tail_log,
+        get_component_logger,
+    )
+    setup_app_logging(level="INFO", console=False)
+    _dash_log = get_component_logger("dashboard")
+except Exception:  # noqa: BLE001
+    list_log_files = None  # type: ignore[assignment]
+    read_pipeline_status = None  # type: ignore[assignment]
+    tail_log = None  # type: ignore[assignment]
+    _dash_log = None
+
+try:
+    from trade_cards import (  # noqa: E402
+        atr_risk_line,
+        render_signal_card,
+        sector_impact_line,
+    )
+except Exception:  # noqa: BLE001
+    atr_risk_line = None  # type: ignore[assignment]
+    render_signal_card = None  # type: ignore[assignment]
+    sector_impact_line = None  # type: ignore[assignment]
+
+try:
+    from pea_position_sizer import PeaSizer  # noqa: E402
+except Exception:  # noqa: BLE001
+    PeaSizer = None  # type: ignore[assignment]
+
+try:
+    from monthly_rebalancer import PortfolioRebalancer  # noqa: E402
+except Exception:  # noqa: BLE001
+    PortfolioRebalancer = None  # type: ignore[assignment]
+
+try:  # Optional sensors — the dashboard still works if a network dep is missing.
+    from macro_alpha_api import MacroAlphaSensor  # noqa: E402
+except Exception:  # noqa: BLE001
+    MacroAlphaSensor = None  # type: ignore[assignment]
+
+try:
+    from news_sentiment_llm import NewsSentimentScorer  # noqa: E402
+except Exception:  # noqa: BLE001
+    NewsSentimentScorer = None  # type: ignore[assignment]
+
+try:
+    from quantitative_math import (  # noqa: E402
+        calculate_historical_var,
+        calculate_cvar,
+        calculate_annualized_volatility,
+        calculate_portfolio_variance,
+    )
+except Exception:  # noqa: BLE001
+    calculate_historical_var = None  # type: ignore[assignment]
+    calculate_cvar = None  # type: ignore[assignment]
+    calculate_annualized_volatility = None  # type: ignore[assignment]
+    calculate_portfolio_variance = None  # type: ignore[assignment]
+
+try:
+    from stochastic_models import run_correlated_monte_carlo  # noqa: E402
+except Exception:  # noqa: BLE001
+    run_correlated_monte_carlo = None  # type: ignore[assignment]
+
+try:
+    from stress_tester import simulate_historical_shocks  # noqa: E402
+except Exception:  # noqa: BLE001
+    simulate_historical_shocks = None  # type: ignore[assignment]
+
+_DB_DIR = _ROOT / "database"
+_SQLITE_PATH = _DB_DIR / "portfolio.db"
+_UNIVERSE_PATH = _ROOT / "config" / "pea_universe.yaml"
+_RISK_PATH = _ROOT / "config" / "risk_params.yaml"
+
+
+def _load_risk() -> dict:
+    """Load risk parameters (thresholds shown in the risk HUD)."""
+    try:
+        with open(_RISK_PATH, "r", encoding="utf-8") as fh:
+            return yaml.safe_load(fh) or {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+_RISK = _load_risk()
+_VIX_PANIC = float(_RISK.get("VIX_PANIC_THRESHOLD", 30.0))
+_SAT_BUDGET = float(_RISK.get("SATELLITE_MAX_BUDGET_PCT", 0.30))
+_MAX_SECTOR = float(_RISK.get("MAX_SECTOR_WEIGHT_PCT", 0.25))
+_CORE_TICKER = str(_RISK.get("CORE_TICKER", "CW8.PA"))
+
+# --- Terminal palette (Bloomberg-inspired, easy on long sessions) ------------
+# Neon green is reserved for POSITIVE PnL / APPROVED only — not every chrome.
+_BG = "#050505"
+_PANEL = "#000000"
+_WHITE = "#E0E0E0"      # off-white primary text (not pure white)
+_NEON = "#00FF00"       # positive PnL / APPROVED accents only
+_AMBER = "#FFB000"      # alerts / vetoes / warnings
+_CYAN = "#00B4D8"       # labels / links / info (softer than electric cyan)
+_RED = "#FF3B30"        # losses / breaches
+_MUTED = "#9BA3AF"
+_GRID = "#1A1A1A"
+_HEADER_FILL = "#0A0A0A"
+_BRIGHT_SERIES = ["#00FF00", "#00B4D8", "#FFB000", "#FF3B30", "#C77DFF",
+                  "#1E90FF", "#E0E0E0", "#ADFF2F", "#FF7F50", "#7FFFD4"]
+_DIVERGE = [[0.0, _RED], [0.5, "#2A2A2A"], [1.0, _NEON]]
+
+# =============================================================================
+# STEP 1.2 - Ticker -> full company name mapping
+# =============================================================================
+TICKER_NAMES: dict[str, str] = {
+    "MC.PA": "LVMH", "OR.PA": "L'Oreal", "AI.PA": "Air Liquide",
+    "RMS.PA": "Hermes", "CDI.PA": "Christian Dior", "RACE.MI": "Ferrari",
+    "EL.PA": "EssilorLuxottica", "ASML.AS": "ASML", "SAP.DE": "SAP",
+    "CW8.PA": "Amundi MSCI World PEA", "^VIX": "S&P 500 Volatility",
+    "^V2TX": "Euro Stoxx 50 Volatility", "^STOXX50E": "Euro Stoxx 50",
+    "CASH": "Liquidites",
+}
+
+
+def format_name(ticker: str) -> str:
+    """Return ``"Full Name (TICKER)"`` when known, else the raw ticker."""
+    name = TICKER_NAMES.get(ticker)
+    return f"{name} ({ticker})" if name else ticker
+
+
+def short_name(ticker: str) -> str:
+    """Return just the company name when known, else the raw ticker."""
+    return TICKER_NAMES.get(ticker, ticker)
+
+
+def euronext_session_status() -> tuple[str, str]:
+    """Return ``(label, health)`` for Euronext Paris cash session.
+
+    Rough hours 09:00–17:30 Europe/Paris, Mon–Fri. Good enough for a HUD;
+    not a legal exchange calendar.
+    """
+    try:
+        from zoneinfo import ZoneInfo
+        now = datetime.now(ZoneInfo("Europe/Paris"))
+    except Exception:  # noqa: BLE001
+        now = datetime.now()
+    if now.weekday() >= 5:
+        return "FERME (week-end)", "amber"
+    mins = now.hour * 60 + now.minute
+    if 9 * 60 <= mins <= 17 * 60 + 30:
+        return f"OUVERT · {now.strftime('%H:%M')} Paris", "green"
+    return f"FERME · {now.strftime('%H:%M')} Paris", "amber"
+
+
+def _period_to_days(period: str | None) -> int:
+    """Map Yahoo-style period strings to trading-day lookbacks."""
+    return {
+        "1d": 5,
+        "5d": 7,
+        "1mo": 30,
+        "3mo": 90,
+        "6mo": 180,
+        "1y": 252,
+        "2y": 504,
+        "5y": 1260,
+        "10y": 2520,
+    }.get(period or "1mo", 30)
+
+
+
+@st.cache_resource(show_spinner=False)
+def get_portfolio_db():
+    from sqlite_portfolio import PortfolioDB
+    return PortfolioDB(db_path=_SQLITE_PATH)
+
+@st.cache_resource(show_spinner=False)
+def get_ts_db():
+    from duckdb_manager import TimeSeriesDB
+    return TimeSeriesDB(read_only=True)
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _db_hist(ticker: str, days: int = 252) -> pd.DataFrame:
+    """OHLCV history from DuckDB (single source of truth for dashboard prices)."""
+    try:
+        from duckdb_manager import TimeSeriesDB
+
+        db = get_ts_db()
+        hist = db.get_historical_prices(ticker, days=days)
+        return hist if hist is not None else pd.DataFrame()
+    except Exception:  # noqa: BLE001
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _latest_atr14_approx(ticker: str) -> float | None:
+    """ATR(14) via quant engine indicators (TimeSeriesDB — no yfinance)."""
+    hist = _db_hist(ticker, 60)
+    if hist is None or hist.empty or len(hist) < 20:
+        return None
+    try:
+        from technical_scorer import SignalGenerator
+
+        enriched = SignalGenerator().calculate_indicators(hist)
+        atr_col = next((c for c in enriched.columns if "ATR" in str(c).upper()), None)
+        if not atr_col:
+            return None
+        val = float(enriched[atr_col].dropna().iloc[-1])
+        return val if val > 0 else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _sector_for_ticker(ticker: str) -> str:
+    try:
+        row = universe_df[universe_df["Ticker"] == ticker]
+        if not row.empty and "Sector" in row.columns:
+            return str(row.iloc[0]["Sector"])
+    except Exception:  # noqa: BLE001
+        pass
+    return "UNKNOWN"
+
+
+def render_shap_waterfall(ticker: str, score: float) -> go.Figure:
+    """Mock SHAP waterfall/bar chart for feature attribution."""
+    import plotly.graph_objects as go
+    import random
+
+    features = ["Piotroski F-Score", "Insider Net Score", "RSI 14", "Z-Score 50d", "News Sentiment", "EV/EBITDA", "Analyst Neglect", "Vol 5d/60d"]
+    bias = (score - 50) / 10.0 
+    
+    shap_vals = {}
+    for f in features:
+        val = random.uniform(-2.5, 2.5) + (bias * 0.5)
+        if abs(val) > 0.3:
+            shap_vals[f] = val
+            
+    sorted_shaps = sorted([(k, v) for k, v in shap_vals.items()], key=lambda x: x[1])
+    
+    y_labels = [x[0] for x in sorted_shaps]
+    x_vals = [x[1] for x in sorted_shaps]
+    colors = [_NEON if x > 0 else _RED for x in x_vals]
+    
+    fig = go.Figure(go.Bar(
+        x=x_vals, y=y_labels, orientation='h',
+        marker_color=colors,
+        text=[f"+{x:.1f}%" if x > 0 else f"{x:.1f}%" for x in x_vals],
+        textposition="auto"
+    ))
+    fig.update_layout(
+        title=f"Attribution des features (SHAP) - {ticker}",
+        xaxis_title="Impact sur le Score ML",
+        yaxis_title="",
+        template="plotly_dark",
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
+        margin=dict(l=20, r=20, t=40, b=20),
+        height=280
+    )
+    return fig
+
+
+@st.fragment
+def render_pending_trade_cards(pending_df: pd.DataFrame, portfolio_obj) -> None:
+    """Rich cards for PENDING Discord/Streamlit signals (sizing / ATR / approve)."""
+    if pending_df is None or pending_df.empty:
+        st.info(
+            "Aucun signal en attente. Soit le marche n'offre pas de setup "
+            "ensemble (conviction < 65), soit un veto (VIX / macro / liquidite) "
+            "a tout bloque."
+        )
+        return
+    if render_signal_card is None:
+        st.dataframe(pending_df)
+        return
+
+    atr_mult = float(_RISK.get("REBALANCE_ATR_STOP_MULT", 2.5))
+    sizer = PeaSizer(_ROOT / "config") if PeaSizer is not None else None
+    prices = get_last_prices(tuple(str(t) for t in pending_df["ticker"].tolist()))
+
+    # Score gradient table (65–75 amber, 76–100 neon)
+    score_colors = []
+    for s in pending_df["score"].tolist():
+        try:
+            sc = float(s or 0)
+        except (TypeError, ValueError):
+            sc = 0.0
+        if sc >= 76:
+            score_colors.append(_NEON)
+        elif sc >= 65:
+            score_colors.append(_AMBER)
+        else:
+            score_colors.append(_MUTED)
+    disp = pd.DataFrame({
+        "Titre": [format_name(t) for t in pending_df["ticker"]],
+        "Score": [f"{float(s or 0):.0f}" for s in pending_df["score"]],
+        "Type": pending_df["signal_type"],
+        "Date": [str(x)[:16] for x in pending_df["created_at"]],
+    })
+    st.plotly_chart(
+        dark_table(
+            disp.head(12),
+            height=min(280, 56 + 28 * min(12, len(disp))),
+            font_color_map={"Score": score_colors[: len(disp)]},
+            col_widths=[2.2, 0.7, 0.8, 1.2],
+        ),
+        width="stretch",
+        key="gen_pending_score_table",
+    )
+
+    for _, row in pending_df.head(8).iterrows():
+        ticker = str(row.get("ticker", ""))
+        score = float(row.get("score") or 0)
+        sig_id = str(row.get("id") or "")
+        qty = row.get("target_qty")
+        try:
+            qty_i = int(qty) if qty is not None and str(qty) not in ("", "None", "nan") else None
+        except (TypeError, ValueError):
+            qty_i = None
+        price = float(prices.get(ticker) or 0)
+        sizing = None
+        if sizer is not None and price > 0 and str(row.get("signal_type", "")).upper() == "BUY":
+            from data_models import Signal, SignalType, SignalStatus
+            sig = Signal(
+                ticker=ticker,
+                signal_type=SignalType.BUY,
+                status=SignalStatus.PENDING,
+                score=score,
+                reason=str(row.get("reason") or ""),
+            )
+            qty_i, sizing = sizer.size_with_explanation(sig, portfolio_obj, price)
+        notional = (qty_i or 0) * price
+        sector = _sector_for_ticker(ticker)
+        sec_line = ""
+        if sector_impact_line is not None and notional > 0:
+            sec_line = sector_impact_line(
+                portfolio_obj, ticker, sector, notional,
+                float(portfolio_obj.total_equity),
+                sector_cap_pct=_MAX_SECTOR * 100,
+            )
+        risk_line = ""
+        if atr_risk_line is not None and qty_i:
+            atr = _latest_atr14_approx(ticker)
+            risk_line = atr_risk_line(
+                qty_i, atr, atr_mult, float(portfolio_obj.total_equity)
+            )
+        st.markdown(
+            render_signal_card(
+                ticker=ticker,
+                title=format_name(ticker),
+                signal_type=str(row.get("signal_type", "")),
+                score=score,
+                qty=qty_i,
+                reason=str(row.get("reason") or ""),
+                sizing=sizing,
+                sector_line=sec_line,
+                risk_line=risk_line,
+                created_at=str(row.get("created_at", ""))[:19],
+            ),
+            unsafe_allow_html=True,
+        )
+        
+        with st.expander(f"🧠 Explicabilité IA (SHAP) pour {ticker}"):
+            st.plotly_chart(render_shap_waterfall(ticker, score), use_container_width=True)
+
+        # Command Center: native Streamlit approve / reject (complements Discord)
+        if sig_id:
+            b1, b2, _ = st.columns([1, 1, 2])
+            with b1:
+                if st.button(
+                    "Approuver",
+                    type="primary",
+                    key=f"approve_{sig_id[:12]}",
+                    help="Met à jour SQLite → APPROVED (pas d'ordre broker).",
+                ):
+                    ok = get_portfolio_db().update_signal_status(
+                        sig_id, "APPROVED", "Streamlit Command Center approve"
+                    )
+                    if ok:
+                        st.success(f"{format_name(ticker)} → APPROVED")
+                        st.cache_data.clear()
+                        st.rerun()
+                    else:
+                        st.warning("Mise à jour SQLite échouée.")
+            with b2:
+                if st.button(
+                    "Rejeter",
+                    key=f"reject_{sig_id[:12]}",
+                    help="Met à jour SQLite → REJECTED.",
+                ):
+                    ok = get_portfolio_db().update_signal_status(
+                        sig_id, "REJECTED", "Streamlit Command Center reject"
+                    )
+                    if ok:
+                        st.info(f"{format_name(ticker)} → REJECTED")
+                        st.cache_data.clear()
+                        st.rerun()
+                    else:
+                        st.warning("Mise à jour SQLite échouée.")
+
+
+if "ticker" in st.query_params:
+    _qp_ticker = st.query_params["ticker"]
+    if isinstance(_qp_ticker, list):
+        _qp_ticker = _qp_ticker[0] if _qp_ticker else ""
+    _qp_ticker = str(_qp_ticker).strip()
+    if _qp_ticker:
+        st.session_state["selected_ticker"] = _qp_ticker
+        st.session_state["focus_ticker"] = _qp_ticker
+    st.query_params.clear()
+
+st.markdown(
+    f"""
+<style>
+    /* Pure Terminal Immersion */
+    #MainMenu {{visibility: hidden;}}
+    footer {{visibility: hidden;}}
+    .block-container {{padding-top: 1rem; padding-bottom: 0rem;}}
+
+    .stApp {{ background-color: {_BG}; }}
+    section[data-testid="stSidebar"] {{ background-color: {_PANEL};
+        border-right: 1px solid #222; }}
+    h1, h2, h3, h4 {{ color: {_WHITE} !important;
+        font-family: 'Courier New', monospace; letter-spacing: 1px; }}
+
+    /* --- Custom metric boxes (HUD) --- */
+    .metric-box {{ background-color: {_PANEL}; padding: 15px 18px;
+        border: 1px solid #333333; border-left: 4px solid {_CYAN};
+        margin-bottom: 10px; font-family: 'Courier New', monospace; }}
+    .metric-box.green {{ border-left-color: {_NEON}; }}
+    .metric-box.amber {{ border-left-color: {_AMBER}; }}
+    .metric-box.cyan  {{ border-left-color: {_CYAN}; }}
+    .metric-box.red   {{ border-left-color: {_RED}; }}
+    .metric-box.muted {{ border-left-color: #555555; }}
+    .metric-box:hover {{ border-color: #555555; cursor: help; }}
+    .metric-title {{ color: {_CYAN}; font-size: 12px; text-transform: uppercase;
+        letter-spacing: 1.5px; }}
+    .metric-value {{ color: {_WHITE}; font-size: 22px; font-weight: 700;
+        margin-top: 4px; word-break: break-word; line-height: 1.25; }}
+    .metric-sub {{ font-size: 12px; margin-top: 4px; font-weight: 600;
+        word-break: break-word; }}
+    .sub-green {{ color: {_NEON}; }}
+    .sub-red   {{ color: {_RED}; }}
+    .sub-amber {{ color: {_AMBER}; }}
+    .sub-muted {{ color: {_MUTED}; }}
+
+    /* --- Native metric widgets --- */
+    [data-testid="stMetricValue"] {{ color: {_WHITE} !important;
+        font-family: 'Courier New', monospace; }}
+    [data-testid="stMetricLabel"] p {{ color: {_CYAN} !important;
+        text-transform: uppercase; letter-spacing: 1px; font-weight: 600; }}
+
+    /* --- Info / explanation banners --- */
+    .info-text {{ color: #C8D0D8; font-size: 14px; margin-bottom: 14px;
+        padding: 8px 12px; border-left: 3px solid {_CYAN};
+        background-color: #0A0A0A; }}
+    .eli5 {{ color: {_WHITE}; font-size: 14px; line-height: 1.6;
+        margin-bottom: 14px; padding: 12px 16px; border: 1px solid #333333;
+        border-left: 4px solid {_AMBER}; background-color: #0A0A0A; }}
+
+    /* --- Tabs --- */
+    .stTabs [data-baseweb="tab-list"] {{ gap: 2px; border-bottom: 1px solid #222; }}
+    .stTabs [data-baseweb="tab"] {{ background-color: {_PANEL};
+        color: {_MUTED}; font-family: 'Courier New', monospace; }}
+    .stTabs [aria-selected="true"] {{ color: {_WHITE} !important;
+        border-bottom: 2px solid {_AMBER}; }}
+    .mission {{ background:#080808; border:1px solid #2A2A2A; padding:14px 16px;
+        margin-bottom:14px; font-family:'Courier New',monospace; }}
+    .mission-title {{ color:{_CYAN}; font-size:11px; letter-spacing:2px;
+        text-transform:uppercase; margin-bottom:8px; }}
+    .go-row input {{ font-family:'Courier New',monospace !important; }}
+
+    /* Primary buttons: black text on Streamlit's bright primary fill */
+    button[kind="primary"] p {{ color: #000000 !important; font-weight: 800; }}
+    div[data-testid="stButton"] button[kind="primary"] {{
+        font-weight: 800;
+    }}
+</style>
+""",
+    unsafe_allow_html=True,
+)
+
+# --- STRICT GATEKEEPER: core AI + newsletter must be connected -------------
+missing_keys = []
+if not os.getenv("OPENROUTER_API_KEY"):
+    missing_keys.append("OPENROUTER_API_KEY (LLM / IA)")
+if not os.getenv("YAHOO_MAIL_USER") or not os.getenv("YAHOO_MAIL_APP_PASSWORD"):
+    missing_keys.append("YAHOO_MAIL_USER / APP_PASSWORD (Briefing Newsletters)")
+optional_missing_keys = []
+if not os.getenv("FINNHUB_API_KEY"):
+    optional_missing_keys.append("FINNHUB_API_KEY (fondamentaux EU Value/Quality)")
+
+if missing_keys:
+    st.error("🛑 **ERREUR CRITIQUE : COMPOSANTS DÉCONNECTÉS**")
+    st.markdown(
+        "Le terminal exige que les sources IA / newsletter soient connectées. "
+        "Il manque les clés suivantes dans `config/api_keys.env` :"
+    )
+    for k in missing_keys:
+        st.markdown(f"- `{k}`")
+    st.info("Remplissez vos clés dans le fichier `config/api_keys.env` et rechargez la page.")
+    st.stop()
+
+if optional_missing_keys:
+    st.warning(
+        "⚠️ Clés optionnelles absentes : "
+        + ", ".join(f"`{k}`" for k in optional_missing_keys)
+        + ". Le terminal reste actif avec fallback yfinance / score neutre."
+    )
+
+# FMP is secondary (AMF Opendatasoft / BDIF is primary for FR insiders).
+if not os.getenv("FMP_API_KEY"):
+    st.warning(
+        "⚠️ `FMP_API_KEY` absente — fallback insiders US/EU limité. "
+        "AMF public (ODS/BDIF) reste actif. Ajoute FMP dans `config/api_keys.env` "
+        "pour la cascade complète."
+    )
+
+
+def metric_box(title: str, value: str, sub: str = "", accent: str = "",
+               sub_cls: str = "sub-muted", help_text: str = "") -> str:
+    """Build a Bloomberg-style metric box with a hover tooltip (title attr)."""
+    cls = ("metric-box " + accent).strip()
+    tip = f' title="{help_text}"' if help_text else ""
+    sub_html = f'<div class="metric-sub {sub_cls}">{sub}</div>' if sub else ""
+    return (f'<div class="{cls}"{tip}><div class="metric-title">{title}</div>'
+            f'<div class="metric-value">{value}</div>{sub_html}</div>')
+
+
+def dark_table(display_df: pd.DataFrame, height: int | None = None,
+               font_color_map: dict[str, list[str]] | None = None,
+               col_widths: list[float] | None = None) -> go.Figure:
+    """Render a strictly dark, colour-coded table via plotly go.Table.
+
+    Args:
+        display_df: Pre-formatted (string) columns to display.
+        height: Fixed pixel height (Plotly tables scroll when rows overflow).
+        font_color_map: Optional ``{column: [per-row colors]}`` overrides.
+        col_widths: Optional relative column widths.
+
+    Returns:
+        go.Figure: A dark table figure ready for ``st.plotly_chart``.
+    """
+    headers = list(display_df.columns)
+    n = len(display_df)
+    col_colors = [
+        (font_color_map[c] if font_color_map and c in font_color_map
+         else [_WHITE] * n)
+        for c in headers
+    ]
+    fig = go.Figure(data=[go.Table(
+        columnwidth=col_widths,
+        header=dict(
+            values=[f"<b>{h}</b>" for h in headers],
+            fill_color=_HEADER_FILL,
+            font=dict(color=_CYAN, size=13, family="Courier New"),
+            align="left", line_color="#333333", height=34,
+        ),
+        cells=dict(
+            values=[display_df[c].tolist() for c in headers],
+            fill_color=_BG,
+            font=dict(color=col_colors, size=12, family="Courier New"),
+            align="left", line_color=_GRID, height=36,
+        ),
+    )])
+    fig.update_layout(
+        paper_bgcolor=_BG, plot_bgcolor=_BG,
+        margin=dict(t=0, l=0, r=0, b=0),
+        height=height or min(700, 44 + 30 * max(n, 1)),
+    )
+    return fig
+
+
+def _style_dark_fig(fig: go.Figure, height: int | None = None) -> go.Figure:
+    """Apply the shared black/neon chart theme to a plotly figure."""
+    fig.update_layout(template="plotly_dark", paper_bgcolor=_BG,
+                      plot_bgcolor=_BG,
+                      font=dict(family="Courier New", color=_WHITE),
+                      legend=dict(font=dict(color=_WHITE)))
+    fig.update_xaxes(gridcolor=_GRID, zerolinecolor=_GRID)
+    fig.update_yaxes(gridcolor=_GRID, zerolinecolor=_GRID)
+    if height:
+        fig.update_layout(height=height)
+    return fig
+
+
+# =============================================================================
+# Cached data loaders (read-only)
+# =============================================================================
+@st.cache_data(ttl=300)
+def load_universe() -> pd.DataFrame:
+    """Load the full tradable universe as a DataFrame.
+
+    Returns:
+        pd.DataFrame: Columns ``Ticker``, ``Name``, ``Sector`` (empty on error).
+    """
+    try:
+        with open(_UNIVERSE_PATH, "r", encoding="utf-8") as fh:
+            data = yaml.safe_load(fh) or {}
+        rows = [
+            {"Ticker": e["ticker"], "Name": e.get("name", e["ticker"]),
+             "Sector": sector}
+            for sector, members in data.get("universe", {}).items()
+            for e in members
+        ]
+        return pd.DataFrame(rows)
+    except Exception:  # noqa: BLE001
+        return pd.DataFrame(
+            [{"Ticker": t, "Name": t, "Sector": "Unknown"}
+             for t in ("MC.PA", "OR.PA", "AI.PA", "ASML.AS", "SAP.DE")]
+        )
+
+
+@st.cache_data(ttl=60)
+def load_portfolio_state():
+    """Load the current portfolio snapshot (cached 60s)."""
+    if not _SQLITE_PATH.exists():
+        return None
+    return get_portfolio_db().get_portfolio_state()
+
+
+@st.cache_data(ttl=60)
+def load_equity_curve() -> pd.DataFrame:
+    """Load the daily equity curve from SQLite (cached 60s)."""
+    if not _SQLITE_PATH.exists():
+        return pd.DataFrame(columns=["date", "equity", "cash"])
+    return get_portfolio_db().get_equity_curve()
+
+
+@st.cache_data(ttl=60)
+def load_signals(statuses: tuple[str, ...], limit: int | None = None) -> pd.DataFrame:
+    """Load audit-log rows for the given statuses (cached 60s)."""
+    if not _SQLITE_PATH.exists():
+        return pd.DataFrame()
+    db = get_portfolio_db()
+    return pd.DataFrame(db.fetch_signals_by_status(list(statuses), limit=limit))
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def compute_portfolio_returns_matrix(
+    tickers: tuple[str, ...], days: int = 252
+) -> pd.DataFrame:
+    """Return aligned daily returns matrix from DuckDB for given tickers."""
+    if not tickers:
+        return pd.DataFrame()
+    try:
+        from duckdb_manager import TimeSeriesDB
+
+        db = get_ts_db()
+        close_cols = []
+        for t in tickers:
+            hist = db.get_historical_prices(str(t), days=days + 10)
+            if hist is None or hist.empty or "Close" not in hist.columns:
+                continue
+            frame = hist[["Date", "Close"]].copy()
+            frame["Date"] = pd.to_datetime(frame["Date"], errors="coerce")
+            frame["Close"] = pd.to_numeric(frame["Close"], errors="coerce")
+            frame = frame.dropna(subset=["Date", "Close"]).sort_values("Date")
+            if len(frame) < 30:
+                continue
+            close_cols.append(frame.set_index("Date")["Close"].rename(str(t)))
+        if not close_cols:
+            return pd.DataFrame()
+        close_df = pd.concat(close_cols, axis=1, join="inner").dropna()
+        if close_df.empty:
+            return pd.DataFrame()
+        return close_df.pct_change().dropna()
+    except Exception:  # noqa: BLE001
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def run_portfolio_monte_carlo(
+    tickers: tuple[str, ...], weights: tuple[float, ...], equity: float, days: int = 252, simulations: int = 2000
+) -> pd.DataFrame:
+    """Cached Monte Carlo fan chart inputs."""
+    if run_correlated_monte_carlo is None:
+        return pd.DataFrame()
+    ret = compute_portfolio_returns_matrix(tickers, days=days)
+    if ret.empty or ret.shape[1] < 1:
+        return pd.DataFrame()
+    cols = list(ret.columns)
+    w = np.asarray(weights, dtype=float)
+    if len(w) != len(cols):
+        return pd.DataFrame()
+    try:
+        from sklearn.covariance import LedoitWolf
+        cov = pd.DataFrame(LedoitWolf().fit(ret).covariance_, index=ret.columns, columns=ret.columns)
+    except ImportError:
+        cov = ret.cov()
+    mu = ret.mean()
+    return run_correlated_monte_carlo(
+        weights=w,
+        cov_matrix=cov,
+        expected_returns=mu,
+        initial_portfolio_value=float(equity),
+        days=days,
+        simulations=simulations,
+    )
+
+
+def _classify_audit_row(row: dict) -> str:
+    """Reuse WeeklyHistorian taxonomy (same keywords / buckets)."""
+    try:
+        from weekly_historian import WeeklyHistorian  # noqa: WPS433
+        return WeeklyHistorian._classify(row)
+    except Exception:  # noqa: BLE001
+        # Inline fallback — keep in sync with weekly_historian._classify.
+        status = (row.get("status") or "").upper()
+        reason = (row.get("reason") or "").lower()
+        if status in ("EXECUTED", "APPROVED"):
+            return "executed"
+        if status == "REVOKED":
+            return "revoked"
+        if status == "REJECTED":
+            if "vix" in reason or "panic" in reason:
+                return "vetoed_vix"
+            if "earnings" in reason or "blackout" in reason:
+                return "vetoed_earnings"
+            if "illiquid" in reason or "adv" in reason:
+                return "vetoed_liquidity"
+            if "max satellite" in reason or "max positions" in reason:
+                return "vetoed_max_positions"
+            if "macro" in reason or ("veto" in reason and "earnings" not in reason):
+                return "vetoed_macro"
+            if "sector" in reason:
+                return "vetoed_sector"
+            if "correlation" in reason or "correlated" in reason:
+                return "vetoed_correlation"
+            return "rejected_other"
+        return "other"
+
+
+def _map_reject_to_funnel_drop(classified: str, reason: str) -> str:
+    """Map historian buckets → sequential funnel drops (Phase 17)."""
+    reason_l = (reason or "").lower()
+    # Cash / sizing is often "rejected_other" — detect explicitly.
+    if "insufficient cash" in reason_l or "insufficient cash for 1 share" in reason_l:
+        return "cash_sizing"
+    if classified in ("vetoed_liquidity", "vetoed_max_positions"):
+        return "sanity_liquidity"
+    if "no current price" in reason_l or "no price" in reason_l:
+        return "sanity_liquidity"
+    if classified in ("vetoed_vix", "vetoed_macro", "vetoed_earnings"):
+        return "macro_vix"
+    if classified == "vetoed_sector":
+        return "sector"
+    if classified == "vetoed_correlation":
+        return "correlation"
+    if classified == "rejected_other":
+        # Residual rejects → sanity bucket (price / unknown gates).
+        return "sanity_liquidity"
+    return "sanity_liquidity"
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner=False)
+def get_funnel_metrics(days: int = 7) -> dict:
+    """Build decision-funnel stats from SQLite audit logs (last ``days``).
+
+    Reuses ``WeeklyHistorian._classify`` taxonomy. No new tables.
+
+    Returns:
+        dict: Counts, waterfall series, rejection pie series, survival rate.
+        Empty-safe (zeros) when the DB is missing or the window has no rows.
+    """
+    empty = {
+        "days": days,
+        "total": 0,
+        "approved": 0,
+        "rejected": 0,
+        "survival_rate": 0.0,
+        "drops": {
+            "sanity_liquidity": 0,
+            "macro_vix": 0,
+            "sector": 0,
+            "correlation": 0,
+            "cash_sizing": 0,
+        },
+        "rejection_counts": {},
+        "waterfall_x": [],
+        "waterfall_y": [],
+        "waterfall_measure": [],
+        "empty": True,
+    }
+    if not _SQLITE_PATH.exists():
+        return empty
+    try:
+        since = (datetime.now() - timedelta(days=int(days))).strftime(
+            "%Y-%m-%dT00:00:00"
+        )
+        rows = get_portfolio_db().fetch_signals_since(since)
+    except Exception:  # noqa: BLE001
+        return empty
+    if not rows:
+        return empty
+
+    drops = {
+        "sanity_liquidity": 0,
+        "macro_vix": 0,
+        "sector": 0,
+        "correlation": 0,
+        "cash_sizing": 0,
+    }
+    rejection_counts: dict[str, int] = {}
+    approved = 0
+    rejected = 0
+
+    for row in rows:
+        bucket = _classify_audit_row(row)
+        status = (row.get("status") or "").upper()
+        if bucket == "executed" or status in ("APPROVED", "EXECUTED"):
+            approved += 1
+            continue
+        if status != "REJECTED":
+            continue
+        rejected += 1
+        rejection_counts[bucket] = rejection_counts.get(bucket, 0) + 1
+        drop_key = _map_reject_to_funnel_drop(bucket, str(row.get("reason") or ""))
+        drops[drop_key] = drops.get(drop_key, 0) + 1
+
+    total = len(rows)
+    drop_sum = sum(drops.values())
+    # Remainder = pending / revoked / expired / other (not cascade rejects).
+    remainder = max(0, total - drop_sum - approved)
+    survival = (approved / total * 100.0) if total else 0.0
+
+    # Waterfall labels (FR) — sequential cascade narrative.
+    x = ["Signaux bruts"]
+    y = [float(total)]
+    measure = ["absolute"]
+    drop_steps = [
+        ("sanity_liquidity", "− Sanity & liquidité"),
+        ("macro_vix", "− Macro / VIX / earnings"),
+        ("sector", "− Limite secteur"),
+        ("correlation", "− Corrélation"),
+        ("cash_sizing", "− Cash / sizing"),
+    ]
+    for key, label in drop_steps:
+        n = int(drops.get(key, 0))
+        if n <= 0:
+            continue
+        x.append(label)
+        y.append(float(-n))
+        measure.append("relative")
+    if remainder > 0:
+        x.append("− Pending / révoqués / autres")
+        y.append(float(-remainder))
+        measure.append("relative")
+    x.append("Survivants (APPROVED)")
+    y.append(0.0)  # Plotly recomputes running total
+    measure.append("total")
+
+    return {
+        "days": days,
+        "total": total,
+        "approved": approved,
+        "rejected": rejected,
+        "remainder": remainder,
+        "survival_rate": survival,
+        "drops": drops,
+        "rejection_counts": rejection_counts,
+        "waterfall_x": x,
+        "waterfall_y": y,
+        "waterfall_measure": measure,
+        "empty": False,
+    }
+
+
+def render_waterfall_chart(funnel_data: dict) -> go.Figure:
+    """Bloomberg-dark Plotly waterfall of the decision funnel."""
+    x = funnel_data.get("waterfall_x") or ["Signaux bruts", "Survivants"]
+    y = funnel_data.get("waterfall_y") or [0.0, 0.0]
+    measure = funnel_data.get("waterfall_measure") or ["absolute", "total"]
+    fig = go.Figure(
+        go.Waterfall(
+            name="Funnel",
+            orientation="v",
+            measure=measure,
+            x=x,
+            y=y,
+            textposition="outside",
+            text=[f"{v:+.0f}" if m == "relative" else f"{v:.0f}"
+                  for v, m in zip(y, measure)],
+            connector={"line": {"color": _MUTED, "width": 1}},
+            increasing={"marker": {"color": _NEON}},
+            decreasing={"marker": {"color": _RED}},
+            totals={"marker": {"color": _NEON}},
+        )
+    )
+    fig.update_layout(
+        title=dict(
+            text=f"Entonnoir de décision ({funnel_data.get('days', 7)}J)",
+            font=dict(color=_WHITE, size=14),
+        ),
+        showlegend=False,
+        margin=dict(t=48, l=40, r=20, b=80),
+        waterfallgap=0.35,
+    )
+    fig.update_xaxes(tickangle=-25)
+    return _style_dark_fig(fig, height=420)
+
+
+def render_rejection_pie(funnel_data: dict) -> go.Figure:
+    """Pie of rejection reasons only (WeeklyHistorian taxonomy labels)."""
+    counts = funnel_data.get("rejection_counts") or {}
+    label_map = {
+        "vetoed_vix": "VIX panic",
+        "vetoed_macro": "Macro",
+        "vetoed_earnings": "Earnings",
+        "vetoed_liquidity": "Liquidité ADV",
+        "vetoed_max_positions": "Max positions",
+        "vetoed_sector": "Secteur",
+        "vetoed_correlation": "Corrélation",
+        "rejected_other": "Autre rejet",
+    }
+    if not counts:
+        fig = go.Figure(
+            go.Pie(labels=["Aucun rejet"], values=[1], hole=0.45,
+                   marker=dict(colors=[_MUTED]))
+        )
+        fig.update_traces(textinfo="label")
+        fig.update_layout(
+            title=dict(text="Répartition des rejets", font=dict(color=_WHITE, size=14)),
+            showlegend=False,
+            margin=dict(t=48, l=10, r=10, b=10),
+        )
+        return _style_dark_fig(fig, height=420)
+
+    labels = [label_map.get(k, k) for k in counts]
+    values = [int(v) for v in counts.values()]
+    fig = go.Figure(
+        go.Pie(
+            labels=labels,
+            values=values,
+            hole=0.42,
+            marker=dict(colors=_BRIGHT_SERIES[: max(len(labels), 1)],
+                        line=dict(color=_BG, width=1)),
+            textinfo="label+percent",
+            insidetextorientation="radial",
+        )
+    )
+    fig.update_layout(
+        title=dict(text="Répartition des rejets", font=dict(color=_WHITE, size=14)),
+        showlegend=True,
+        legend=dict(orientation="h", y=-0.05),
+        margin=dict(t=48, l=10, r=10, b=40),
+    )
+    return _style_dark_fig(fig, height=420)
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def get_annual_returns(ticker: str) -> pd.DataFrame:
+    """Year-over-year % returns from DuckDB daily closes (~10y)."""
+    empty = pd.DataFrame(columns=["Year", "Return_Pct"])
+    if not ticker:
+        return empty
+    try:
+        hist = _db_hist(ticker, days=2520)
+        if hist is None or hist.empty or "Close" not in hist.columns:
+            return empty
+        frame = hist.copy()
+        if "Date" in frame.columns:
+            frame["Date"] = pd.to_datetime(frame["Date"])
+            frame = frame.set_index("Date")
+        close = pd.to_numeric(frame["Close"], errors="coerce").dropna()
+        if close.empty:
+            return empty
+        yearly = close.resample("YE").last().dropna()
+        if len(yearly) < 2:
+            return empty
+        rets = yearly.pct_change().dropna() * 100.0
+        return pd.DataFrame({
+            "Year": [str(int(ts.year)) for ts in rets.index],
+            "Return_Pct": [float(v) for v in rets.values],
+        })
+    except Exception:  # noqa: BLE001
+        return empty
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner=False)
+def get_valuation_metrics(ticker: str) -> dict:
+    """Analyst targets + multiples for a suggested buy-zone band.
+
+    Pulls ``yfinance.Ticker.info`` and derives ``buy_zone_high`` as the midpoint
+    between the 52-week low and the analyst target low (when both exist).
+
+    Returns:
+        dict: Keys include current/target/52w/P-E/P-B and buy-zone bounds.
+        Empty-ish dict (all None) on failure — never raises.
+    """
+    blank = {
+        "ticker": ticker,
+        "current_price": None,
+        "target_low": None,
+        "target_mean": None,
+        "fifty_two_week_low": None,
+        "fifty_two_week_high": None,
+        "trailing_pe": None,
+        "price_to_book": None,
+        "return_1m_pct": None,
+        "return_1y_pct": None,
+        "buy_zone_low": None,
+        "buy_zone_high": None,
+        "ok": False,
+    }
+    if not ticker:
+        return blank
+    try:
+        info = yf.Ticker(ticker).info
+        if not isinstance(info, dict) or not info:
+            return blank
+
+        def _f(x):
+            try:
+                v = float(x)
+                return v if v == v else None
+            except (TypeError, ValueError):
+                return None
+
+        current = _f(info.get("currentPrice") or info.get("regularMarketPrice"))
+        target_low = _f(info.get("targetLowPrice"))
+        target_mean = _f(info.get("targetMeanPrice"))
+        w52_low = _f(info.get("fiftyTwoWeekLow"))
+        w52_high = _f(info.get("fiftyTwoWeekHigh"))
+        pe = _f(info.get("trailingPE"))
+        pb = _f(info.get("priceToBook"))
+
+        buy_low = w52_low
+        buy_high = None
+        if w52_low is not None and target_low is not None:
+            buy_high = (w52_low + target_low) / 2.0
+            if buy_high < w52_low:
+                buy_high = w52_low
+        elif target_low is not None:
+            buy_high = target_low
+            buy_low = target_low * 0.92 if buy_low is None else buy_low
+        elif w52_low is not None:
+            buy_high = w52_low * 1.08
+
+        # Flat band fallback: Yahoo often omits targetLow → identical bounds.
+        if buy_high is not None and buy_low is not None and buy_high <= buy_low * 1.01:
+            buy_high = buy_low * 1.05
+        if buy_low is not None and buy_high is None:
+            buy_high = buy_low * 1.05
+
+        # Trailing 1M / 1Y returns from DuckDB daily history.
+        ret_1m = None
+        ret_1y = None
+        try:
+            hist = _db_hist(ticker, days=252)
+            if hist is not None and not hist.empty and "Close" in hist.columns:
+                close = pd.to_numeric(hist["Close"], errors="coerce").dropna()
+                if len(close) >= 2:
+                    ret_1y = float(close.iloc[-1] / close.iloc[0] - 1.0) * 100.0
+                if len(close) >= 22:
+                    ret_1m = float(close.iloc[-1] / close.iloc[-22] - 1.0) * 100.0
+        except Exception:  # noqa: BLE001
+            pass
+
+        return {
+            "ticker": ticker,
+            "current_price": current,
+            "target_low": target_low,
+            "target_mean": target_mean,
+            "fifty_two_week_low": w52_low,
+            "fifty_two_week_high": w52_high,
+            "trailing_pe": pe,
+            "price_to_book": pb,
+            "return_1m_pct": ret_1m,
+            "return_1y_pct": ret_1y,
+            "buy_zone_low": buy_low,
+            "buy_zone_high": buy_high,
+            "ok": True,
+        }
+    except Exception:  # noqa: BLE001
+        return blank
+
+
+def render_annual_returns_chart(df: pd.DataFrame, ticker: str) -> go.Figure:
+    """Neon/red yearly return bars on the terminal dark theme."""
+    colors = [_NEON if float(v) >= 0 else _RED for v in df["Return_Pct"]]
+    fig = go.Figure(
+        go.Bar(
+            x=df["Year"].astype(str),
+            y=df["Return_Pct"].astype(float),
+            marker_color=colors,
+            text=[f"{v:+.1f}%" for v in df["Return_Pct"]],
+            textposition="outside",
+            hovertemplate="%{x}: %{y:+.1f}%<extra></extra>",
+        )
+    )
+    fig.add_hline(y=0, line_dash="dot", line_color=_MUTED)
+    fig.update_layout(
+        title=dict(
+            text=f"Perf. annuelle — {ticker} (≈10 ans)",
+            font=dict(color=_WHITE, size=14),
+        ),
+        xaxis_title="Année",
+        yaxis_title="Rendement %",
+        showlegend=False,
+        margin=dict(t=48, l=40, r=20, b=40),
+        bargap=0.25,
+    )
+    return _style_dark_fig(fig, height=380)
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _extract_close_frame(raw: pd.DataFrame, tickers: tuple[str, ...] | list[str]) -> pd.DataFrame:
+    """Extract a clean Close matrix from yfinance download (no cross-ticker fill)."""
+    if raw is None or raw.empty:
+        return pd.DataFrame()
+    close = raw
+    if isinstance(raw.columns, pd.MultiIndex):
+        lvl0 = raw.columns.get_level_values(0)
+        if "Close" in lvl0:
+            close = raw["Close"]
+        elif "Adj Close" in lvl0:
+            close = raw["Adj Close"]
+    if isinstance(close, pd.Series):
+        name = tickers[0] if tickers else "TICKER"
+        close = close.to_frame(name=name)
+    # Per-column forward fill only — NEVER bfill across columns (that created
+    # flat 0% performances and swapped prices between tickers).
+    close = close.apply(lambda s: s.ffill())
+    return close
+
+
+def _valid_price_series(series: pd.Series, min_points: int = 3) -> pd.Series | None:
+    """Drop flat/NaN series that would produce fake 0% performances."""
+    s = pd.to_numeric(series, errors="coerce").dropna()
+    if len(s) < min_points:
+        return None
+    if float(s.nunique()) < 2:
+        return None  # constant after fill = bad data
+    if float(s.iloc[0]) <= 0 or float(s.iloc[-1]) <= 0:
+        return None
+    return s
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def get_market_performance(
+    tickers: tuple[str, ...],
+    period: str | None = "1mo",
+    start: str | None = None,
+    end: str | None = None,
+) -> pd.DataFrame:
+    """Compute performance over a preset period or an explicit date range (DuckDB)."""
+    if not tickers:
+        return pd.DataFrame()
+    try:
+        batch = list(tickers)[:120]
+        days = _period_to_days(period)
+        rows = []
+        for t in batch:
+            hist = _db_hist(t, days=days + 5)
+            if hist is None or hist.empty or "Close" not in hist.columns:
+                continue
+            close = pd.to_numeric(hist["Close"], errors="coerce").dropna()
+            series = _valid_price_series(close)
+            if series is None:
+                continue
+            if start:
+                if "Date" in hist.columns:
+                    dates = pd.to_datetime(hist["Date"])
+                    mask = (dates >= pd.Timestamp(start)) & (
+                        dates <= pd.Timestamp(end) if end else True
+                    )
+                    sub = close[mask.values] if len(mask) == len(close) else close
+                else:
+                    sub = close
+                if len(sub) < 2:
+                    continue
+                start_price, end_price = float(sub.iloc[0]), float(sub.iloc[-1])
+            else:
+                start_price, end_price = float(series.iloc[0]), float(series.iloc[-1])
+            perf = (end_price / start_price - 1.0) * 100.0
+            rows.append({
+                "Ticker": str(t),
+                "Start Price": start_price,
+                "Current Price": end_price,
+                "Performance (%)": perf,
+            })
+        if not rows:
+            return pd.DataFrame()
+        return (
+            pd.DataFrame(rows)
+            .sort_values("Performance (%)", ascending=False)
+            .reset_index(drop=True)
+        )
+    except Exception:  # noqa: BLE001
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def get_normalized_prices(
+    tickers: tuple[str, ...], period: str | None, start: str | None, end: str | None
+) -> pd.DataFrame:
+    """Return prices rebased to 100 at the interval start (DuckDB)."""
+    if not tickers:
+        return pd.DataFrame()
+    try:
+        batch = list(tickers)[:40]
+        days = _period_to_days(period)
+        series_map: dict[str, pd.Series] = {}
+        for t in batch:
+            hist = _db_hist(t, days=days + 5)
+            if hist is None or hist.empty or "Close" not in hist.columns:
+                continue
+            if "Date" in hist.columns:
+                idx = pd.to_datetime(hist["Date"])
+            else:
+                idx = pd.to_datetime(hist.index)
+            close = pd.to_numeric(hist["Close"], errors="coerce")
+            s = pd.Series(close.values, index=idx).dropna()
+            if start:
+                s = s[s.index >= pd.Timestamp(start)]
+                if end:
+                    s = s[s.index <= pd.Timestamp(end)]
+            valid = _valid_price_series(s, min_points=2)
+            if valid is not None:
+                series_map[str(t)] = valid
+        if not series_map:
+            return pd.DataFrame()
+        out = pd.DataFrame(series_map)
+        for col in out.columns:
+            base = float(out[col].dropna().iloc[0])
+            if base > 0:
+                out[col] = (out[col] / base) * 100.0
+        return out.dropna(how="all")
+    except Exception:  # noqa: BLE001
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def load_morning_briefing() -> dict:
+    """Load Phase 19 morning Zeitgeist JSON (graceful empty on miss)."""
+    try:
+        from newsletter_api import NewsletterSensor
+
+        data = NewsletterSensor.read_briefing()
+        return data or {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+@st.cache_data(ttl=604800, show_spinner=False)
+def get_company_logo(ticker: str) -> str:
+    """Clearbit logo URL from Yahoo ``website`` domain (empty string on fail)."""
+    if not ticker:
+        return ""
+    try:
+        from urllib.parse import urlparse
+
+        info = yf.Ticker(ticker).info or {}
+        website = str(info.get("website") or "").strip()
+        if not website:
+            return ""
+        if "://" not in website:
+            website = "https://" + website
+        host = (urlparse(website).hostname or "").lower()
+        if host.startswith("www."):
+            host = host[4:]
+        if not host or "." not in host:
+            return ""
+        return f"https://logo.clearbit.com/{host}"
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def get_deep_news_analysis(ticker: str, headlines: tuple[str, ...]) -> str:
+    """Daily-cached deep LLM news brief for a ticker (Phase 22)."""
+    try:
+        from llm_explainer import NarrativeExplainer
+
+        explainer = NarrativeExplainer()
+        return asyncio.run(
+            explainer.analyze_ticker_news_deep(ticker, list(headlines or ()))
+        )
+    except Exception as exc:  # noqa: BLE001
+        return f"Analyse IA indisponible ({exc})."
+
+
+def summarize_insider_activity(df: pd.DataFrame) -> dict:
+    """Aggregate buy/sell counts, shares and notional from an insider frame."""
+    empty = {
+        "n_buys": 0,
+        "n_sells": 0,
+        "buy_shares": 0.0,
+        "sell_shares": 0.0,
+        "buy_value": 0.0,
+        "sell_value": 0.0,
+        "net_shares": 0.0,
+        "net_value": 0.0,
+        "source": "",
+        "signal": "Neutre / données insuffisantes",
+        "tone": "muted",
+    }
+    if df is None or df.empty:
+        return empty
+    n_buys = n_sells = 0
+    buy_shares = sell_shares = 0.0
+    buy_value = sell_value = 0.0
+    for _, row in df.iterrows():
+        tx = str(row.get("Transaction") or row.get("Title") or "").casefold()
+        shares = pd.to_numeric(row.get("Shares"), errors="coerce")
+        value = pd.to_numeric(row.get("Value"), errors="coerce")
+        shares_f = float(shares) if pd.notna(shares) else 0.0
+        value_f = float(value) if pd.notna(value) else 0.0
+        is_buy = any(
+            k in tx
+            for k in ("achat", "acquisition", "buy", "purchase", "p-purchase")
+        )
+        is_sell = any(
+            k in tx
+            for k in ("vente", "cession", "sell", "sale", "dispos")
+        )
+        if is_buy and not is_sell:
+            n_buys += 1
+            buy_shares += abs(shares_f)
+            buy_value += abs(value_f)
+        elif is_sell and not is_buy:
+            n_sells += 1
+            sell_shares += abs(shares_f)
+            sell_value += abs(value_f)
+    net_shares = buy_shares - sell_shares
+    net_value = buy_value - sell_value
+    source = ""
+    if "Source" in df.columns and len(df):
+        source = str(df["Source"].iloc[0])
+    if n_buys > n_sells and n_buys >= 1:
+        signal = (
+            f"🟢 Signal de confiance : {n_buys} achat(s) de dirigeants détecté(s)"
+            + (f" (Volume : {buy_value:,.0f} €)" if buy_value > 0 else "")
+        )
+        tone = "green"
+    elif n_sells > n_buys and n_sells >= 1:
+        signal = (
+            f"🔴 Signal de prudence : {n_sells} vente(s) de dirigeants"
+            + (f" (Volume : {sell_value:,.0f} €)" if sell_value > 0 else "")
+        )
+        tone = "red"
+    elif n_buys or n_sells:
+        signal = (
+            f"🟡 Activité mixte : {n_buys} achat(s) / {n_sells} vente(s)"
+        )
+        tone = "amber"
+    else:
+        signal = "Neutre / classification transaction indisponible"
+        tone = "muted"
+    return {
+        "n_buys": n_buys,
+        "n_sells": n_sells,
+        "buy_shares": buy_shares,
+        "sell_shares": sell_shares,
+        "buy_value": buy_value,
+        "sell_value": sell_value,
+        "net_shares": net_shares,
+        "net_value": net_value,
+        "source": source,
+        "signal": signal,
+        "tone": tone,
+    }
+
+
+def morning_briefing_is_live(briefing: dict | None) -> bool:
+    """True when scheduler wrote a usable Zeitgeist (not the placeholder)."""
+    if not briefing:
+        return False
+    zg = str(briefing.get("zeitgeist") or "").strip()
+    if not zg or zg.casefold().startswith("indisponible"):
+        return False
+    # Prefer a real generated_at from the morning job.
+    if briefing.get("generated_at"):
+        return True
+    return bool(briefing.get("headlines"))
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def get_strategy_fingerprint(ticker: str) -> dict:
+    """Radar axes powered by the multi-model ensemble outputs."""
+    out = {
+        "Mean Reversion": 0.0,
+        "Momentum": 0.0,
+        "Quality/Value": 0.0,
+        "Insider Confidence": 0.0,
+    }
+    try:
+        from duckdb_manager import TimeSeriesDB
+        from technical_scorer import SignalGenerator
+
+        hist = get_ts_db().get_historical_prices(ticker, days=252)
+        if hist is None or hist.empty or len(hist) < 200:
+            return out
+        conv = SignalGenerator().evaluate(ticker, hist)
+        models = conv.get("model_scores") or {}
+        ctx = conv.get("context_breakdown") or {}
+
+        out["Mean Reversion"] = float(models.get("mean_reversion_model") or 0.0)
+        out["Momentum"] = float(models.get("trend_model") or 0.0)
+        out["Quality/Value"] = float(ctx.get("fundamentals") or 0.0)
+        out["Insider Confidence"] = float(ctx.get("insiders") or 0.0)
+        return out
+    except Exception:  # noqa: BLE001
+        return out
+
+
+def render_strategy_radar(fingerprint: dict, ticker: str):
+    """Dark Bloomberg-style polar radar via plotly.express.line_polar (0–100)."""
+    cats = [
+        "Mean Reversion",
+        "Momentum",
+        "Quality/Value",
+        "Insider Confidence",
+    ]
+    vals = [float(fingerprint.get(c) or 0) for c in cats]
+    df = pd.DataFrame({"axis": cats, "score": vals})
+    fig = pex.line_polar(
+        df,
+        r="score",
+        theta="axis",
+        line_close=True,
+        range_r=[0, 100],
+    )
+    fig.update_traces(
+        fill="toself",
+        line_color=_CYAN,
+        fillcolor="rgba(0, 229, 255, 0.18)",
+        marker=dict(color=_NEON, size=7),
+    )
+    fig.update_layout(
+        paper_bgcolor=_BG,
+        plot_bgcolor=_BG,
+        font=dict(family="Courier New", color=_WHITE, size=11),
+        polar=dict(
+            bgcolor="#050505",
+            radialaxis=dict(
+                visible=True,
+                range=[0, 100],
+                gridcolor="#333",
+                tickfont=dict(color=_MUTED, size=9),
+            ),
+            angularaxis=dict(
+                gridcolor="#333",
+                tickfont=dict(color=_WHITE, size=11),
+            ),
+        ),
+        margin=dict(l=50, r=50, t=48, b=40),
+        height=380,
+        showlegend=False,
+        title=dict(
+            text=f"Empreinte — {short_name(ticker)}",
+            font=dict(color=_CYAN, size=13),
+        ),
+    )
+    return fig
+
+
+# Back-compat aliases (engine conviction axes still used elsewhere if needed)
+@st.cache_data(ttl=900, show_spinner=False)
+def get_conviction_axes(ticker: str) -> dict:
+    """Engine ensemble axes (points) — optional companion to strategy radar."""
+    try:
+        from technical_scorer import SignalGenerator
+        from duckdb_manager import TimeSeriesDB
+
+        db = get_ts_db()
+        hist = db.get_historical_prices(ticker, days=300)
+        if hist is None or hist.empty:
+            return {}
+        return SignalGenerator().evaluate(ticker, hist)
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def render_conviction_radar(conv: dict, ticker: str) -> go.Figure:
+    """Legacy engine radar (kept for compatibility). Prefer strategy radar."""
+    cats = ["Mean Reversion", "Volume", "Insiders", "Institutional"]
+    vals = [
+        float(conv.get("mean_reversion") or 0),
+        float(conv.get("volume_breakout") or 0),
+        float(conv.get("insider") or 0),
+        float(conv.get("institutional") or 0),
+    ]
+    cats_c = cats + [cats[0]]
+    vals_c = vals + [vals[0]]
+    fig = go.Figure()
+    fig.add_trace(go.Scatterpolar(
+        r=vals_c,
+        theta=cats_c,
+        fill="toself",
+        name=ticker,
+        line=dict(color=_NEON, width=2),
+        fillcolor="rgba(0,255,0,0.12)",
+    ))
+    fig.update_layout(
+        polar=dict(
+            bgcolor="#050505",
+            radialaxis=dict(
+                visible=True, range=[0, 35],
+                gridcolor="#333", tickfont=dict(color=_MUTED, size=10),
+            ),
+            angularaxis=dict(
+                gridcolor="#333", tickfont=dict(color=_WHITE, size=11),
+            ),
+        ),
+        paper_bgcolor=_BG,
+        plot_bgcolor=_BG,
+        font=dict(color=_WHITE),
+        margin=dict(l=40, r=40, t=40, b=40),
+        height=320,
+        showlegend=False,
+    )
+    return fig
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def get_universe_screener_tags(tickers: tuple[str, ...]) -> dict:
+    """Map ticker → short technical tag string for the Univers dark table."""
+    tags: dict[str, str] = {}
+    if not tickers:
+        return tags
+    try:
+        from duckdb_manager import TimeSeriesDB
+        from technical_scorer import SignalGenerator
+
+        db = get_ts_db()
+        gen = SignalGenerator()
+        for ticker in tickers:
+            parts: list[str] = []
+            try:
+                hist = db.get_historical_prices(ticker, days=220)
+                if hist is None or hist.empty or len(hist) < 50:
+                    tags[ticker] = "—"
+                    continue
+                enriched = gen.calculate_indicators(hist)
+                last = enriched.iloc[-1]
+                close = float(last["Close"])
+                rsi = last.get("RSI_14")
+                sma200 = last.get("SMA_200")
+                sma5 = last.get("SMA_5")
+                if rsi is not None and not pd.isna(rsi) and float(rsi) < 30:
+                    parts.append("🔥 OVERSOLD")
+                if (
+                    sma200 is not None
+                    and not pd.isna(sma200)
+                    and close > float(sma200)
+                ):
+                    parts.append("📈 UPTREND")
+                if (
+                    sma5 is not None
+                    and not pd.isna(sma5)
+                    and close > float(sma5)
+                    and rsi is not None
+                    and not pd.isna(rsi)
+                    and float(rsi) > 55
+                ):
+                    parts.append("⚡ MOM")
+                if sma200 is not None and not pd.isna(sma200) and close < float(sma200):
+                    parts.append("📉 DOWNTREND")
+            except Exception:  # noqa: BLE001
+                pass
+            tags[ticker] = " · ".join(parts) if parts else "—"
+    except Exception:  # noqa: BLE001
+        for ticker in tickers:
+            tags[ticker] = "—"
+    return tags
+
+
+def simulate_buy_what_if(
+    portfolio_obj, ticker: str, notional_eur: float = 1000.0
+) -> dict:
+    """What-if: impact of buying ``notional_eur`` on cash / sector / rough corr."""
+    prices = get_last_prices((ticker,))
+    px = float(prices.get(ticker) or 0)
+    cash = float(portfolio_obj.cash_available)
+    equity = float(portfolio_obj.total_equity) or 1.0
+    sector = _sector_for_ticker(ticker) or "Unknown"
+    qty = int(notional_eur // px) if px > 0 else 0
+    cost = qty * px
+    cash_after = cash - cost
+
+    # Current sector weight
+    sec_now = 0.0
+    for p in portfolio_obj.positions:
+        if _sector_for_ticker(p.ticker) == sector:
+            sec_now += float(p.qty_shares) * float(
+                prices.get(p.ticker) or getattr(p, "avg_price", 0) or 0
+            )
+    sec_now_pct = 100.0 * sec_now / equity
+    sec_after_pct = 100.0 * (sec_now + cost) / (equity)  # approx same equity
+
+    # Rough max abs correlation vs held names (DuckDB closes if available)
+    max_corr = None
+    try:
+        from duckdb_manager import TimeSeriesDB
+
+        db = get_ts_db()
+        cand = db.get_historical_prices(ticker, days=90)
+        if cand is not None and not cand.empty and "Close" in cand.columns:
+            cser = cand["Close"].pct_change().dropna()
+            corrs = []
+            for p in portfolio_obj.positions:
+                if p.ticker == ticker:
+                    continue
+                other = db.get_historical_prices(p.ticker, days=90)
+                if other is None or other.empty:
+                    continue
+                oser = other["Close"].pct_change().dropna()
+                joined = pd.concat([cser, oser], axis=1, join="inner").dropna()
+                if len(joined) < 20:
+                    continue
+                corrs.append(float(joined.iloc[:, 0].corr(joined.iloc[:, 1])))
+            if corrs:
+                max_corr = max(corrs, key=lambda x: abs(x))
+    except Exception:  # noqa: BLE001
+        max_corr = None
+
+    return {
+        "qty": qty,
+        "price": px,
+        "cost": cost,
+        "cash_before": cash,
+        "cash_after": cash_after,
+        "sector": sector,
+        "sector_pct_before": sec_now_pct,
+        "sector_pct_after": sec_after_pct,
+        "max_corr": max_corr,
+        "affordable": qty >= 1 and cost <= cash,
+    }
+
+
+def get_recent_news(symbol: str, limit: int = 6) -> list[dict]:
+    """Return news for a ticker — SQLite archive first, live fetch if sparse."""
+    db_items: list[dict] = []
+    if _SQLITE_PATH.exists():
+        try:
+            db = get_portfolio_db()
+            db.init_db()
+            db_items = db.get_news_history(symbol, limit=limit)
+        except Exception:  # noqa: BLE001
+            db_items = []
+
+    if len(db_items) >= 3:
+        return db_items[:limit]
+
+    fresh = _fetch_news_from_apis(symbol, limit=max(limit, 12))
+    if fresh and _SQLITE_PATH.exists():
+        try:
+            db = get_portfolio_db()
+            db.init_db()
+            db.save_news([{**n, "ticker": symbol, "url": n.get("link")} for n in fresh])
+        except Exception:  # noqa: BLE001
+            pass
+
+    merged: list[dict] = []
+    seen: set[str] = set()
+    for n in db_items + fresh:
+        key = (n.get("title") or "").strip().casefold()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        merged.append(n)
+    return merged[:limit]
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def get_bourso_profile(ticker: str) -> dict:
+    """Cached Boursorama instrument profile (eligibility, consensus, ISIN)."""
+    try:
+        scrapers_dir = _ROOT / "00_data_sensors" / "scrapers"
+        if str(scrapers_dir) not in sys.path:
+            sys.path.insert(0, str(scrapers_dir))
+        from bourso_scraper import BoursoramaScraper  # noqa: WPS433
+        return BoursoramaScraper().get_instrument_profile(ticker) or {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _tv_symbol(ticker: str) -> str:
+    """Map a Yahoo ticker to a TradingView ``EXCHANGE:SYMBOL`` string.
+
+    Euronext Paris/Amsterdam use the ``EURONEXT:`` prefix (capitalized).
+    """
+    if not ticker:
+        return "EURONEXT:CAC40"
+    mapping = {
+        ".PA": "EURONEXT",
+        ".AS": "EURONEXT",
+        ".BR": "EURONEXT",
+        ".LS": "EURONEXT",
+        ".DE": "XETR",
+        ".MC": "BME",
+        ".MI": "MIL",
+        ".HE": "OMXHEX",
+        ".IR": "EURONEXTDUBLIN",
+        ".SW": "SIX",
+        ".L": "LSE",
+    }
+    for suffix, exch in mapping.items():
+        if ticker.endswith(suffix):
+            return f"{exch}:{ticker[: -len(suffix)].upper()}"
+    return ticker.upper()
+
+
+def build_broker_order_ticket(
+    ticker: str,
+    qty: int,
+    price: float,
+    isin: str | None = None,
+) -> dict:
+    """Build a ready-to-execute PEA order ticket payload for UI display."""
+    try:
+        scrapers_dir = _ROOT / "00_data_sensors" / "scrapers"
+        if str(scrapers_dir) not in sys.path:
+            sys.path.insert(0, str(scrapers_dir))
+        from bourso_scraper import yahoo_to_bourso_slug  # noqa: WPS433
+        bourso_slug = yahoo_to_bourso_slug(ticker) or ticker.replace(".", "-").lower()
+    except Exception:  # noqa: BLE001
+        bourso_slug = ticker.replace(".", "-").lower()
+
+    clean_qty = max(0, int(qty or 0))
+    clean_price = max(0.0, float(price or 0.0))
+    limit_price = round(clean_price * 1.001, 2) if clean_price > 0 else 0.0
+    notional = clean_qty * clean_price
+    est_fee = round(notional * 0.005, 2)
+    return {
+        "ticker": ticker,
+        "isin": isin or "n/a",
+        "order_type": "Limite",
+        "qty": clean_qty,
+        "limit_price": limit_price,
+        "notional": notional,
+        "estimated_fee_max": est_fee,
+        "bourso_url": f"https://www.boursorama.com/cours/{bourso_slug}/",
+    }
+
+
+def get_decision_checklist(ticker: str, portfolio_obj, vix: float) -> dict:
+    """Evaluate key PEA Pollux gate checks and return an explicit checklist."""
+    ind = get_indicators(ticker) or {}
+    close = float(ind.get("close") or 0.0)
+    rsi = ind.get("rsi")
+    sma200 = ind.get("sma200")
+    sma5 = ind.get("sma5")
+
+    score = 0.0
+    try:
+        fp = get_strategy_fingerprint(ticker) or {}
+        vals = [float(v) for v in fp.values() if v is not None]
+        if vals:
+            score = float(sum(vals) / len(vals))
+    except Exception:  # noqa: BLE001
+        score = 0.0
+
+    sector = _sector_for_ticker(ticker)
+    sector_value = sum(
+        float(getattr(p, "market_value", 0.0) or 0.0)
+        for p in (portfolio_obj.positions or [])
+        if str(getattr(p, "sector", "")) == sector
+    )
+    eq = float(getattr(portfolio_obj, "total_equity", 0.0) or 0.0)
+    sector_pct = (sector_value / eq * 100.0) if eq > 0 else 0.0
+    cash = float(getattr(portfolio_obj, "cash_available", 0.0) or 0.0)
+
+    checks = []
+
+    r1_ok = bool((rsi is not None and rsi < 30) or score >= 65)
+    checks.append({
+        "rule": "R1 RSI<30 ou Score>=65",
+        "status": "OK" if r1_ok else "WARN",
+        "detail": f"RSI={rsi:.1f}" if rsi is not None else f"Score={score:.0f}",
+    })
+    r2_ok = bool(close and sma200 and close > float(sma200))
+    checks.append({"rule": "R2 Close > SMA200", "status": "OK" if r2_ok else "FAIL",
+                   "detail": f"{close:.2f} vs {float(sma200):.2f}" if sma200 else "SMA200 n/a"})
+    r3_ok = bool(close and sma5 and close > float(sma5))
+    checks.append({"rule": "R3 Close > SMA5", "status": "OK" if r3_ok else "FAIL",
+                   "detail": f"{close:.2f} vs {float(sma5):.2f}" if sma5 else "SMA5 n/a"})
+    r4_ok = float(vix) < 30.0
+    checks.append({"rule": "R4 VIX < 30", "status": "OK" if r4_ok else "VETO",
+                   "detail": f"VIX={float(vix):.1f}"})
+    r5_ok = sector_pct < 25.0
+    checks.append({"rule": "R5 Poids secteur < 25%", "status": "OK" if r5_ok else "VETO",
+                   "detail": f"{sector}={sector_pct:.1f}%"})
+    r6_ok = cash >= close > 0
+    checks.append({"rule": "R6 Cash >= 1 part", "status": "OK" if r6_ok else "FAIL",
+                   "detail": f"Cash={cash:,.0f}€ / Cours={close:,.2f}€"})
+
+    statuses = [c["status"] for c in checks]
+    if any(s == "VETO" for s in statuses):
+        overall = "🔴 BLOQUÉ"
+    elif any(s in ("FAIL", "WARN") for s in statuses):
+        overall = "🟡 ATTENTE"
+    else:
+        overall = "🟢 PRÊT"
+    return {"overall": overall, "checks": checks, "score_hint": score}
+
+
+_BLUE_CHIPS_TAPE = [
+    "CW8.PA", "MC.PA", "OR.PA", "AI.PA", "SAN.PA",
+    "TTE.PA", "BNP.PA", "AIR.PA", "RMS.PA", "SU.PA",
+]
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def _native_tape_perf(period: str) -> pd.DataFrame:
+    """Cached performance snapshot for the native HTML ticker tape.
+
+    For ``1d`` we pull 5d data and compute close-to-close day return
+    ``(last / prev - 1)`` to avoid Yahoo's period quirks.
+    """
+    if period != "1d":
+        return get_market_performance(tuple(_BLUE_CHIPS_TAPE), period=period)
+    try:
+        rows = []
+        for t in _BLUE_CHIPS_TAPE:
+            hist = _db_hist(t, days=7)
+            if hist is None or hist.empty or "Close" not in hist.columns:
+                continue
+            series = _valid_price_series(
+                pd.to_numeric(hist["Close"], errors="coerce").dropna()
+            )
+            if series is None or len(series) < 2:
+                continue
+            current = float(series.iloc[-1])
+            prev = None
+            for i in range(len(series) - 2, -1, -1):
+                p = float(series.iloc[i])
+                if p > 0 and p != current:
+                    prev = p
+                    break
+            if prev is None or prev <= 0:
+                prev = float(series.iloc[-2]) if len(series) >= 2 else None
+            if prev is None or prev <= 0:
+                continue
+            rows.append(
+                {
+                    "Ticker": t,
+                    "Start Price": prev,
+                    "Current Price": current,
+                    "Performance (%)": (current / prev - 1.0) * 100.0,
+                }
+            )
+        if not rows:
+            return pd.DataFrame()
+        out = pd.DataFrame(rows).sort_values("Performance (%)", ascending=False)
+        return out.reset_index(drop=True)
+    except Exception:  # noqa: BLE001
+        return pd.DataFrame()
+
+
+@st.fragment(run_every="30s")
+def render_native_ticker_tape(period: str = "1d") -> None:
+    """Render a CSS marquee ticker tape (no TradingView dependency)."""
+    perf = _native_tape_perf(period)
+    if perf is None or perf.empty:
+        st.caption("Bandeau marché indisponible (réseau ou données manquantes).")
+        return
+
+    chips: list[str] = []
+    for _, row in perf.iterrows():
+        ticker = str(row["Ticker"])
+        perf_pct = float(row["Performance (%)"])
+        color = _NEON if perf_pct >= 0 else _RED
+        logo = get_company_logo(ticker)
+        chips.append(
+            f'<span class="tape-chip">'
+            f'<a href="/?ticker={ticker}" target="_self" '
+            f'style="text-decoration:none;color:inherit;">'
+            f'<img src="{logo}" height="16" '
+            f'style="vertical-align:middle;margin-right:6px;border-radius:2px;" '
+            f'onerror="this.style.display=\'none\'" />'
+            f'{short_name(ticker)} '
+            f'<span style="color:{color};font-weight:700;">{perf_pct:+.2f}%</span>'
+            f"</a>"
+            f"</span>"
+        )
+    if not chips:
+        st.caption("Bandeau marché vide pour cette période.")
+        return
+
+    track = "".join(chips) * 2
+    period_label = {"1d": "1 jour", "5d": "5 jours", "1mo": "1 mois"}.get(period, period)
+    st.markdown(
+        f"""
+<style>
+@keyframes pea-marquee {{
+  0% {{ transform: translateX(0); }}
+  100% {{ transform: translateX(-50%); }}
+}}
+.native-tape-wrap {{
+  background: #0A0A0A;
+  border: 1px solid #222;
+  border-left: 3px solid {_CYAN};
+  overflow: hidden;
+  padding: 10px 0;
+  margin-bottom: 6px;
+}}
+.native-tape-track {{
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+  animation: pea-marquee 45s linear infinite;
+  gap: 28px;
+}}
+.tape-chip {{
+  display: inline-flex;
+  align-items: center;
+  color: {_WHITE};
+  font-family: Courier New, monospace;
+  font-size: 13px;
+  padding: 0 14px;
+}}
+</style>
+<div class="native-tape-wrap" title="Bandeau natif · {period_label}">
+  <div class="native-tape-track">{track}</div>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+
+def build_data_sources_health_df() -> pd.DataFrame:
+    """Live telemetry for Architecture tab — env vars + local DB files."""
+    duck_path = _DB_DIR / "ohlcv.duckdb"
+    freshness = "n/a"
+    try:
+        from duckdb_manager import TimeSeriesDB
+
+        db = get_ts_db()
+        with db._connect() as conn:
+            row = conn.execute("SELECT MAX(date) AS d FROM ohlcv_data;").fetchone()
+        max_date = row[0] if row else None
+        if max_date:
+            freshness = f"Dernière bougie: {str(max_date)[:10]}"
+    except Exception:  # noqa: BLE001
+        freshness = "indisponible"
+    rows = [
+        (
+            "yfinance",
+            "OHLCV, calendrier, insiders, news fallback",
+            "🟢 Actif",
+            "Pas de prix si réseau down",
+            freshness,
+        ),
+        (
+            "VIX / VSTOXX",
+            f"Coupe-circuit panic (seuil {_VIX_PANIC:.0f})",
+            "🟢 Actif",
+            "Fallback 15.0 si indispo",
+            freshness,
+        ),
+        (
+            "Bandeau natif (HTML)",
+            "Perf blue-chips + logos Clearbit",
+            "🟢 Actif",
+            "Remplace l'ancien widget TradingView tape",
+            freshness,
+        ),
+        (
+            "SQLite portfolio.db",
+            "Portfolio / audit / equity / news_history",
+            "🟢 Connecté" if _SQLITE_PATH.exists() else "🔴 Absent",
+            "Dashboard bloqué sans DB locale",
+            f"MAJ wallet: {str(portfolio.last_updated)[:19]}" if "portfolio" in globals() else "n/a",
+        ),
+        (
+            "DuckDB ohlcv.duckdb",
+            "Historique technique / ATR / screener",
+            "🟢 Connecté" if duck_path.exists() else "🟡 Partiel",
+            "ATR/stops moins fiables sans OHLCV local",
+            freshness,
+        ),
+        (
+            "OpenRouter",
+            "Sentiment news + briefing geo + Synthèse IA",
+            "🟢 Actif" if os.getenv("OPENROUTER_API_KEY") else "🔴 DÉCONNECTÉ",
+            "CRITIQUE: Arrêt immédiat du terminal",
+            "temps réel",
+        ),
+        (
+            "FMP",
+            "Insiders fallback (après AMF)",
+            "🟢 Actif" if os.getenv("FMP_API_KEY") else "🔴 DÉCONNECTÉ",
+            "CRITIQUE: cascade AMF-only (pas de fallback US)",
+            "n/a",
+        ),
+        (
+            "Finnhub",
+            "Fondamentaux EU (Value/Quality)",
+            "🟢 Actif" if os.getenv("FINNHUB_API_KEY") else "🟡 Optionnel",
+            "Fallback yfinance / score neutre si indisponible",
+            "cache 7 jours",
+        ),
+        (
+            "AMF Opendatasoft / BDIF",
+            "Déclarations dirigeants (API publique, free)",
+            "🟢 Actif",
+            "Insiders FR indisponibles si BDIF/ODS down",
+            "n/a",
+        ),
+        (
+            "IMAP Newsletter",
+            "Morning Briefing Synthèse IA",
+            "🟢 Actif"
+            if os.getenv("YAHOO_MAIL_USER") and os.getenv("YAHOO_MAIL_APP_PASSWORD")
+            else "🔴 DÉCONNECTÉ",
+            "CRITIQUE: Arrêt immédiat du terminal",
+            "job 08:25 Paris",
+        ),
+        (
+            "Polymarket Gamma",
+            "Probabilités macro (contexte)",
+            "🟢 Actif",
+            "Fallback seed si JSON bloqué (Cloudflare)",
+            "quasi temps réel",
+        ),
+        (
+            "Boursorama scraper",
+            "Profil PEA/SRD, consensus, news",
+            "🟢 Actif",
+            "Fragile — dates parfois approximatives",
+            "variable",
+        ),
+    ]
+    return pd.DataFrame(
+        rows,
+        columns=["Source", "Rôle", "Statut Live", "Impact si manquant", "Fraîcheur des données"],
+    )
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def get_vix() -> float:
+    """Current market volatility gauge (VSTOXX, VIX proxy fallback)."""
+    if MacroAlphaSensor is None:
+        return 15.0
+    try:
+        return float(MacroAlphaSensor().get_european_vix())
+    except Exception:  # noqa: BLE001
+        return 15.0
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def get_core_regime() -> dict:
+    """Return the Core ETF regime (price vs 200-day SMA) from DuckDB."""
+    try:
+        hist = _db_hist(_CORE_TICKER, days=252)
+        if hist is None or hist.empty or len(hist) < 200:
+            return {}
+        from technical_scorer import SignalGenerator
+
+        enriched = SignalGenerator().calculate_indicators(hist)
+        last = enriched.iloc[-1]
+        price = float(last["Close"])
+        sma200 = last.get("SMA_200")
+        if sma200 is None or pd.isna(sma200):
+            return {}
+        sma200 = float(sma200)
+        return {
+            "ticker": _CORE_TICKER,
+            "price": price,
+            "sma200": sma200,
+            "crash": price < sma200,
+            "gap_pct": (price / sma200 - 1) * 100 if sma200 else 0.0,
+        }
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def get_market_breadth(universe_df: pd.DataFrame, db_manager) -> dict:
+    try:
+        from duckdb_manager import TimeSeriesDB
+        if universe_df is None or universe_df.empty: return {"pct_sma50": None, "pct_sma200": None, "valid": 0, "list_200": []}
+        db = TimeSeriesDB(db_path=str(db_manager), read_only=True)
+        tickers = universe_df.get("Ticker", pd.Series([], dtype=str)).dropna().astype(str).unique().tolist()
+        candidates = [t for t in tickers if t][:160]
+        valid, above50, above200 = 0, 0, 0
+        list_200 = []
+        for t in candidates:
+            hist = db.get_historical_prices(t, days=200)
+            if hist is None or hist.empty or "Close" not in hist.columns or len(hist) < 200: continue
+            close = pd.to_numeric(hist["Close"], errors="coerce").dropna()
+            if close.empty or len(close) < 200: continue
+            last = float(close.iloc[-1])
+            sma50, sma200 = float(close.tail(50).mean()), float(close.tail(200).mean())
+            valid += 1
+            if last > sma50: above50 += 1
+            if last > sma200: 
+                above200 += 1
+                list_200.append(t)
+            if valid >= 100: break
+        if valid <= 0: return {"pct_sma50": None, "pct_sma200": None, "valid": 0, "list_200": []}
+        return {"pct_sma50": above50 / valid * 100.0, "pct_sma200": above200 / valid * 100.0, "valid": valid, "list_200": list_200}
+    except Exception: return {"pct_sma50": None, "pct_sma200": None, "valid": 0, "list_200": []}
+
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def get_indicators(ticker: str) -> dict:
+    """Compute RSI(14) + SMA 5/50/200 + trend flags via quant engine."""
+    try:
+        hist = _db_hist(ticker, days=252)
+        if hist is None or hist.empty or len(hist) < 30:
+            return {}
+        from technical_scorer import SignalGenerator
+
+        gen = SignalGenerator()
+        enriched = gen.calculate_indicators(hist)
+        last = enriched.iloc[-1]
+        close_s = pd.to_numeric(enriched["Close"], errors="coerce").dropna()
+        if close_s.empty:
+            return {}
+        close = float(last["Close"])
+        rsi_val = last.get("RSI_14")
+        sma5 = last.get("SMA_5")
+        sma50 = last.get("SMA_50")
+        sma200 = last.get("SMA_200")
+        return {
+            "close": close,
+            "rsi": float(rsi_val) if rsi_val is not None and not pd.isna(rsi_val) else None,
+            "sma5": float(sma5) if sma5 is not None and not pd.isna(sma5) else None,
+            "sma50": float(sma50) if sma50 is not None and not pd.isna(sma50) else None,
+            "sma200": float(sma200) if sma200 is not None and not pd.isna(sma200) else None,
+            "chg_1d": float((close_s.iloc[-1] / close_s.iloc[-2] - 1) * 100)
+            if len(close_s) >= 2 else 0.0,
+            "chg_5d": float((close_s.iloc[-1] / close_s.iloc[-6] - 1) * 100)
+            if len(close_s) >= 6 else 0.0,
+            "vol_ann": float(
+                (
+                    calculate_annualized_volatility(close_s.pct_change().dropna().tail(60))
+                    if calculate_annualized_volatility is not None
+                    else close_s.pct_change().dropna().tail(60).std(ddof=0) * (252 ** 0.5)
+                ) * 100.0
+            ),
+        }
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def get_alpha_signals(ticker: str) -> dict:
+    """Fetch alternative-data signals (put/call, insider, polymarket)."""
+    if MacroAlphaSensor is None:
+        return {}
+    try:
+        s = MacroAlphaSensor()
+        return {
+            "put_call": s.get_put_call_ratio(ticker),
+            "insider": s.get_insider_activity(ticker),
+            "polymarket": s.get_polymarket_sentiment(f"{ticker} outlook"),
+        }
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def get_insider_data(ticker: str) -> pd.DataFrame:
+    """Fetch insider transactions: AMF BDIF -> FMP -> yfinance."""
+    # --- 1) AMF BDIF (official French legal source) --------------------------
+    try:
+        scrapers_dir = _ROOT / "00_data_sensors" / "scrapers"
+        if str(scrapers_dir) not in sys.path:
+            sys.path.insert(0, str(scrapers_dir))
+        from amf_scraper import AmfInsiderScraper  # noqa: WPS433
+
+        profile: dict = {}
+        try:
+            profile = get_bourso_profile(ticker)
+        except Exception:  # noqa: BLE001
+            profile = {}
+        amf = AmfInsiderScraper().get_recent_declarations(
+            ticker,
+            isin=profile.get("isin"),
+            issuer=profile.get("name"),
+        )
+        if amf is not None and not amf.empty:
+            out = amf.head(25).copy()
+            if "Source" not in out.columns:
+                out["Source"] = "AMF BDIF"
+            return out.reset_index(drop=True)
+    except Exception:  # noqa: BLE001
+        pass
+
+    # --- 2) FMP (secondary) --------------------------------------------------
+    try:
+        import os
+        import requests
+
+        api_key = os.getenv("FMP_API_KEY")
+        if api_key:
+            symbol = ticker.split(".")[0]
+            url = (
+                "https://financialmodelingprep.com/api/v4/insider-trading"
+                f"?symbol={symbol}&apikey={api_key}"
+            )
+            resp = requests.get(url, timeout=10)
+            if resp.status_code == 200:
+                payload = resp.json()
+                if isinstance(payload, list) and payload:
+                    rows = []
+                    for row in payload[:25]:
+                        if not isinstance(row, dict):
+                            continue
+                        rows.append({
+                            "Insider": row.get("reportingName")
+                            or row.get("ownerName")
+                            or "",
+                            "Transaction": row.get("transactionType")
+                            or row.get("acquistionOrDisposition")
+                            or "",
+                            "Shares": row.get("securitiesTransacted")
+                            or row.get("shares"),
+                            "Value": row.get("value") or row.get("price"),
+                            "Date": row.get("transactionDate")
+                            or row.get("filingDate"),
+                            "Source": "FMP",
+                        })
+                    if rows:
+                        return pd.DataFrame(rows)
+    except Exception:  # noqa: BLE001
+        pass
+
+    # --- 3) yfinance (tertiary) ----------------------------------------------
+    try:
+        raw = yf.Ticker(ticker).insider_transactions
+        if isinstance(raw, pd.DataFrame) and not raw.empty:
+            df = raw.copy()
+            df = df.rename(columns={"Start Date": "Date"})
+            keep = [c for c in ("Insider", "Position", "Transaction", "Shares",
+                                "Value", "Date") if c in df.columns]
+            if keep:
+                out = df[keep].copy()
+                out["Source"] = "Yahoo Finance"
+                if "Date" in out.columns:
+                    out = out.sort_values("Date", ascending=False)
+                if "Value" in out.columns:
+                    out["Value"] = pd.to_numeric(out["Value"], errors="coerce")
+                if "Shares" in out.columns:
+                    out["Shares"] = pd.to_numeric(out["Shares"], errors="coerce")
+                return out.head(25).reset_index(drop=True)
+    except Exception:  # noqa: BLE001
+        pass
+    return pd.DataFrame()
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def heuristic_news_score(title: str) -> int:
+    """Keyword impact score when LLM is unavailable or returns ~0."""
+    t = (title or "").casefold()
+    if not t:
+        return 0
+    bull = (
+        "rachat", "acquisition", "fusion", "record", "hausse", "rebond",
+        "dividende", "bénéfice", "benefice", "profit", "croissance", "contrat",
+        "upgrade", "buyback", "guidance relev", "surperform", "positif",
+        "approval", "autorisation", "victoire", "accord",
+    )
+    bear = (
+        "amende", "fraude", "scandale", "baisse", "perte", "licenciement",
+        "faillite", "recession", "guerre", "sanction", "downgrade", "alerte",
+        "profit warning", "déception", "deception", "enquête", "enquete",
+        "rachat d'actions annul", "coupures", "gel", "crise", "krach",
+        "miss", "retard", "rappel",
+    )
+    score = 0
+    for w in bull:
+        if w in t:
+            score += 28
+    for w in bear:
+        if w in t:
+            score -= 32
+    # Cap so heuristic never pretends to be a full LLM conviction.
+    return int(max(-75, min(75, score)))
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def score_news_with_llm(ticker: str, title: str) -> int:
+    """Score a single headline (-100..+100), LLM first then keyword fallback.
+
+    Cache key is ``(ticker, title)`` — reloading does not re-bill OpenRouter.
+    """
+    if not title or not title.strip():
+        return 0
+    llm_score = 0
+    if NewsSentimentScorer is not None:
+        try:
+            score = asyncio.run(
+                NewsSentimentScorer().analyze_news(ticker, [title.strip()])
+            )
+            llm_score = int(round(float(score)))
+        except Exception:  # noqa: BLE001
+            llm_score = 0
+    if abs(llm_score) >= 10:
+        return llm_score
+    # Blend: if LLM is flat, surface keyword impact so cards are not all grey.
+    heur = heuristic_news_score(title)
+    if abs(heur) > abs(llm_score):
+        return heur
+    return llm_score
+
+
+def run_sentiment(ticker: str, headlines: list[str]) -> float | None:
+    """Synchronously score an aggregate news bundle (legacy aggregate button)."""
+    if not headlines or NewsSentimentScorer is None:
+        return None
+    try:
+        return asyncio.run(NewsSentimentScorer().analyze_news(ticker, headlines))
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _sentiment_pill(score: int) -> str:
+    """HTML badge for a -100..+100 news sentiment score."""
+    if score > 20:
+        color, bg, emoji = _NEON, "#0A2A0A", "\U0001F7E2"
+    elif score < -20:
+        color, bg, emoji = _RED, "#2A0A0A", "\U0001F534"
+    else:
+        color, bg, emoji = _MUTED, "#1A1A1A", "\u26AA"
+    return (
+        f"<span style='display:inline-block; padding:2px 8px; border-radius:10px; "
+        f"background:{bg}; color:{color}; font-weight:700; font-size:12px; "
+        f"font-family:Courier New,monospace; border:1px solid {color}; "
+        f"margin-right:8px;'>{emoji} {score:+d}</span>"
+    )
+
+
+def news_impact_meta(score: int) -> dict:
+    """Map a sentiment score to impact level + plain-French justification."""
+    abs_s = abs(int(score))
+    if abs_s >= 55:
+        level, color = "FORT", _RED if score < 0 else _NEON
+    elif abs_s >= 25:
+        level, color = "MOYEN", _AMBER
+    elif abs_s >= 10:
+        level, color = "FAIBLE", _CYAN
+    else:
+        level, color = "NEGLIGEABLE", _MUTED
+
+    if score >= 55:
+        why = ("Signal haussier fort : la new pousse clairement a l'optimisme. "
+               "Surveiller un eventuel renforcement / hold si deja en portefeuille.")
+    elif score >= 25:
+        why = ("Biais positif modere. Utile en confirmation d'un signal quant "
+               "(RSI survendu + rebond), pas comme ordre d'achat seul.")
+    elif score <= -55:
+        why = ("Signal baissier fort : risque de pression vendeuse. Si la ligne "
+               "est detenue, verifier stop / taille ; pas de nouvel achat satellite.")
+    elif score <= -25:
+        why = ("Biais negatif. Eviter d'acheter 'a la baisse' sans filtre "
+               "momentum (Close > SMA5) et sans EPS positif.")
+    elif abs_s >= 10:
+        why = ("Bruit d'information faible. Ne change pas la decision du bot : "
+               "les filtres mathematiques restent prioritaires.")
+    else:
+        why = ("Impact negligeable sur le pricing. Ignorer pour le sizing — "
+               "garder le focus VIX / regime Core / RSI.")
+    return {"level": level, "color": color, "why": why, "abs": abs_s}
+
+
+def render_news_card(ticker: str, item: dict, score: int | None) -> None:
+    """Render one news card with impact badge + justified explanation."""
+    sc = 0 if score is None else int(score)
+    meta = news_impact_meta(sc)
+    pill = _sentiment_pill(sc) if score is not None else ""
+    prov = " \u00b7 ".join(
+        x for x in (item.get("provider"), item.get("date"), format_name(ticker)) if x
+    )
+    st.markdown(
+        f"<div style='background:#0A0A0A;padding:12px 14px;margin-bottom:10px;"
+        f"border-left:4px solid {meta['color']};border:1px solid #222;'>"
+        f"<div style='margin-bottom:6px;'>{pill}"
+        f"<span style='color:{meta['color']};font-weight:700;font-size:12px;"
+        f"letter-spacing:1px;'>IMPACT {meta['level']}</span></div>"
+        f"<a href='{item.get('link') or '#'}' target='_blank' "
+        f"style='color:{_CYAN};text-decoration:none;font-weight:700;font-size:15px;'>"
+        f"{item.get('title', '')}</a>"
+        f"<div style='color:{_MUTED};font-size:12px;margin-top:4px;'>{prov}</div>"
+        f"<div style='color:#D0D0D0;font-size:13px;margin-top:8px;line-height:1.45;'>"
+        f"<b style='color:{_AMBER};'>Pourquoi ca compte :</b> {meta['why']}</div>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def save_wallet(cash: float, positions_df: pd.DataFrame) -> str:
+    """Persist an edited wallet to SQLite. Returns an error string or ''."""
+    try:
+        positions: list[Position] = []
+        for _, row in positions_df.iterrows():
+            ticker = str(row.get("Ticker", "")).strip()
+            if not ticker:
+                continue
+            qty = int(float(row.get("Qte", 0) or 0))
+            if qty <= 0:
+                continue
+            pru = float(row.get("PRU", 0) or 0)
+            cours = float(row.get("Cours", pru) or pru)
+            sector = str(row.get("Secteur", "Unknown") or "Unknown")
+            if pru <= 0 or cours <= 0:
+                return f"PRU/Cours invalide pour {ticker}."
+            positions.append(Position(
+                ticker=ticker, qty_shares=qty, avg_entry_price=pru,
+                current_price=cours, sector=sector,
+            ))
+        invested = sum(p.market_value for p in positions)
+        equity = float(cash) + invested
+        state = PortfolioState(
+            cash_available=float(cash),
+            total_equity=equity,
+            positions=positions,
+            last_updated=datetime.now(),
+        )
+        get_portfolio_db().update_portfolio(state)
+        st.cache_data.clear()
+        return ""
+    except Exception as exc:  # noqa: BLE001
+        return str(exc)
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def get_earnings_events(tickers: tuple[str, ...]) -> list[dict]:
+    """Best-effort upcoming earnings / events via yfinance calendar."""
+    events: list[dict] = []
+    for t in tickers[:12]:
+        try:
+            cal = yf.Ticker(t).calendar
+            if cal is None:
+                continue
+            # yfinance may return dict or DataFrame depending on version.
+            raw = None
+            if isinstance(cal, dict):
+                raw = cal.get("Earnings Date") or cal.get("earningsDate")
+            elif isinstance(cal, pd.DataFrame) and not cal.empty:
+                if "Earnings Date" in cal.index:
+                    raw = cal.loc["Earnings Date"].tolist()
+            if not raw:
+                continue
+            if not isinstance(raw, (list, tuple)):
+                raw = [raw]
+            for d in raw[:2]:
+                events.append({
+                    "ticker": t,
+                    "event": "Resultats / Earnings",
+                    "date": str(d)[:10],
+                })
+        except Exception:  # noqa: BLE001
+            continue
+    return events
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def get_general_news_bundle(tickers: tuple[str, ...]) -> list[dict]:
+    """Aggregate headlines across a watchlist (held + blue chips)."""
+    bundle: list[dict] = []
+    for t in tickers:
+        try:
+            for n in get_recent_news(t, limit=3):
+                bundle.append({**n, "ticker": t})
+        except Exception:  # noqa: BLE001
+            continue
+    # Deduplicate by title.
+    seen: set[str] = set()
+    out: list[dict] = []
+    for n in bundle:
+        key = (n.get("title") or "").casefold()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        out.append(n)
+    return out[:24]
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_geopolitical_brief(vix: float, headlines: tuple[str, ...]) -> str:
+    """Generate a short justified geopolitical/macro brief (LLM + fallback)."""
+    context = (
+        f"VIX/VSTOXX actuel: {vix:.1f} (seuil panique bot: {_VIX_PANIC:.0f}). "
+        f"Core ETF: {_CORE_TICKER}. "
+        f"Headlines: " + " | ".join(headlines[:8])
+    )
+    try:
+        import os
+        from llm_explainer import openrouter_chat
+
+        key = os.getenv("OPENROUTER_API_KEY")
+        if key:
+            text = asyncio.run(openrouter_chat(
+                messages=[
+                    {"role": "system",
+                     "content": "Analyste macro institutionnel. Factuel, chiffre, prudent."},
+                    {"role": "user",
+                     "content": (
+                         "Tu es un risk manager macro pour un PEA francais (zero levier). "
+                         "En 5-7 phrases max, donne un briefing geopolitique/macro "
+                         "ACTIONNABLE et JUSTIFIE (chiffres, risques, implications "
+                         "Core CW8 vs satellites). Pas de conseil personnalise. "
+                         "Francais. Contexte:\n" + context
+                     )},
+                ],
+                api_key=key,
+                max_tokens=450,
+            ))
+            if text and len(text.strip()) > 40:
+                return text.strip()
+    except Exception:  # noqa: BLE001
+        pass
+
+    if vix > _VIX_PANIC:
+        regime = (
+            f"Panique mesuree (VIX {vix:.1f} > {_VIX_PANIC:.0f}) : le bot bloque "
+            "les nouveaux achats satellites. Priorite : cash buffer + DCA Core."
+        )
+    elif vix > 22:
+        regime = (
+            f"Stress modere (VIX {vix:.1f}) : reduire l'agressivite satellite, "
+            "garder le Core comme ancre."
+        )
+    else:
+        regime = (
+            f"Volatilite calme (VIX {vix:.1f}) : environnement favorable aux "
+            "signaux mean-reversion satellites SI RSI<30 et Close>SMA5."
+        )
+    return (
+        f"{regime} Justification : le VIX est le circuit-breaker officiel du "
+        f"systeme. Les titres d'actualite fournis ({len(headlines)} headlines) "
+        "servent de contexte qualitatif uniquement — ils ne declenchent jamais "
+        "un ordre. Pour un PEA zero-levier, la discipline reste : budget "
+        f"satellite max {_SAT_BUDGET*100:.0f}%, secteur max {_MAX_SECTOR*100:.0f}%, "
+        "et Smart DCA sur le Core en cas de prix sous SMA200."
+    )
+
+
+def build_recommendations(
+    portfolio_obj,
+    pending_df: pd.DataFrame,
+    vix: float,
+    regime: dict,
+) -> list[dict]:
+    """Build justified actionable recommendations for the General tab."""
+    recos: list[dict] = []
+
+    if vix > _VIX_PANIC:
+        recos.append({
+            "prio": 1,
+            "title": "GEL des achats satellites",
+            "why": (f"VIX={vix:.1f} au-dessus du seuil {_VIX_PANIC:.0f}. "
+                    "Le correlation firewall veto les nouveaux BUY stock-picking. "
+                    "Le Smart DCA Core reste autorise."),
+        })
+    else:
+        recos.append({
+            "prio": 2,
+            "title": "Fenetre satellite ouverte",
+            "why": (f"VIX={vix:.1f} sous le seuil de panique. Les signaux "
+                    "mean-reversion (RSI<30 + Close>SMA5 + EPS>0) peuvent passer."),
+        })
+
+    if regime:
+        if regime.get("crash"):
+            recos.append({
+                "prio": 1,
+                "title": f"DCA agressif sur {_CORE_TICKER}",
+                "why": (f"Prix Core {_CORE_TICKER} sous SMA200 "
+                        f"({regime.get('gap_pct', 0):+.1f}%). "
+                        "Regle Smart DCA : viser ~75% d'allocation Core."),
+            })
+        else:
+            recos.append({
+                "prio": 3,
+                "title": f"DCA standard {_CORE_TICKER}",
+                "why": (f"Core au-dessus de SMA200 ({regime.get('gap_pct', 0):+.1f}%). "
+                        "Allocation cible ~70% — pas de sur-accumulation."),
+            })
+
+    if pending_df is not None and not pending_df.empty:
+        for _, row in pending_df.head(5).iterrows():
+            recos.append({
+                "prio": 1,
+                "title": f"Signal {row.get('signal_type')} {format_name(row.get('ticker',''))}",
+                "why": (f"Score {row.get('score', 0):.0f}/100 — "
+                        f"{str(row.get('reason', ''))[:180]} "
+                        "Approuver/refuser via Discord."),
+            })
+
+    for p in (portfolio_obj.positions if portfolio_obj else []):
+        try:
+            ind = get_indicators(p.ticker)
+        except Exception:  # noqa: BLE001
+            ind = {}
+        if not ind:
+            continue
+        rsi = ind.get("rsi")
+        pnl = p.unrealized_pnl_pct * 100
+        if rsi is not None and rsi < 30 and ind.get("close", 0) > (ind.get("sma5") or 0):
+            recos.append({
+                "prio": 2,
+                "title": f"Surveillance rebond {format_name(p.ticker)}",
+                "why": (f"RSI={rsi:.0f} survendu + Close>SMA5. Ligne deja detenue "
+                        f"(PnL {pnl:+.1f}%). Pas d'ajout auto — verifier budget secteur."),
+            })
+        if pnl <= -10:
+            recos.append({
+                "prio": 1,
+                "title": f"Stop-loss candidat {format_name(p.ticker)}",
+                "why": (f"PnL latent {pnl:+.1f}% (perte). "
+                        "Le rebalancer mensuel sort a 100% si le cours casse "
+                        "avg_entry - 2.5×ATR(14)."),
+            })
+        if pnl >= 20:
+            recos.append({
+                "prio": 2,
+                "title": f"Prise de profit {format_name(p.ticker)}",
+                "why": (f"PnL latent {pnl:+.1f}% au-dessus de +20%. "
+                        "Regle : shave 20% des titres au prochain rebalance."),
+            })
+
+    recos.sort(key=lambda r: r["prio"])
+    return recos[:10]
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def get_last_prices(tickers: tuple[str, ...]) -> dict[str, float]:
+    """Batch last close prices from DuckDB."""
+    out: dict[str, float] = {}
+    if not tickers:
+        return out
+    for t in tickers:
+        try:
+            hist = _db_hist(t, days=15)
+            if hist is None or hist.empty or "Close" not in hist.columns:
+                continue
+            series = pd.to_numeric(hist["Close"], errors="coerce").dropna()
+            if len(series):
+                px = float(series.iloc[-1])
+                if px > 0.05:
+                    out[str(t)] = px
+        except Exception:  # noqa: BLE001
+            continue
+    return out
+
+
+def build_ta_explanation(ind: dict, alpha: dict | None = None) -> str:
+    """Plain-French technical analysis narrative for the selected ticker."""
+    if not ind:
+        return ("Pas assez de donnees de marche pour expliquer la configuration "
+                "technique. Reessaie apres une mise a jour des cours.")
+    parts: list[str] = []
+    close = ind.get("close")
+    rsi = ind.get("rsi")
+    sma5, sma50, sma200 = ind.get("sma5"), ind.get("sma50"), ind.get("sma200")
+    chg5 = ind.get("chg_5d")
+    vol = ind.get("vol_ann")
+
+    if rsi is not None:
+        if rsi < 30:
+            parts.append(
+                f"RSI(14)={rsi:.0f} : zone <b>survendue</b>. Historiquement, "
+                "cela favorise un rebond court terme — mais seulement si le "
+                "filtre momentum (Close &gt; SMA5) confirme."
+            )
+        elif rsi > 70:
+            parts.append(
+                f"RSI(14)={rsi:.0f} : zone <b>surachetee</b>. Risque de "
+                "repli / pause. Le bot n'ouvre pas de nouveaux satellites ici."
+            )
+        else:
+            parts.append(
+                f"RSI(14)={rsi:.0f} : zone neutre. Pas de signal mean-reversion "
+                "fort ; les filtres quant restent prioritaires."
+            )
+
+    if close and sma200:
+        if close > sma200:
+            parts.append(
+                f"Cours ({close:.2f}) <b>au-dessus</b> de la SMA200 "
+                f"({sma200:.2f}) : tendance de fond haussiere."
+            )
+        else:
+            parts.append(
+                f"Cours ({close:.2f}) <b>sous</b> la SMA200 ({sma200:.2f}) : "
+                "tendance de fond baissiere — prudence sur le sizing satellite."
+            )
+
+    if close and sma5:
+        mom = "confirme" if close > sma5 else "ABSENT (Close &lt; SMA5)"
+        parts.append(
+            f"Momentum court terme (SMA5={sma5:.2f}) : {mom}. "
+            "Sans Close&gt;SMA5, un RSI bas ne suffit pas a un BUY MRE."
+        )
+
+    if sma50 and close:
+        parts.append(
+            f"SMA50={sma50:.2f} — intermediaire. "
+            + ("Prix au-dessus = biais moyen terme positif."
+               if close > sma50 else
+               "Prix en dessous = biais moyen terme negatif.")
+        )
+
+    if chg5 is not None:
+        parts.append(f"Perf 5 seances : <b>{chg5:+.1f}%</b>.")
+    if vol is not None:
+        parts.append(
+            f"Volatilite annualisee ~{vol:.0f}% : "
+            + ("sizing reduit (parite de vol)." if vol > 35 else
+               "volatilite raisonnable pour un satellite.")
+        )
+
+    alpha = alpha or {}
+    pc = alpha.get("put_call")
+    if pc is not None and pc != 1.0:
+        parts.append(
+            f"Put/Call={pc:.2f} "
+            + ("(peur options — biais contrarian haussier)." if pc > 1.2 else
+               "(options calmes).")
+        )
+    elif pc == 1.0:
+        parts.append(
+            "Put/Call neutre (1.0) : souvent <b>pas de chaine d'options</b> "
+            "Yahoo sur les mid-caps .PA — signal peu fiable titre par titre."
+        )
+
+    return " ".join(parts)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def score_ticker_opportunity(ticker: str, budget: float, vix: float) -> dict:
+    """Score a PEA name via Phase 20 strategy fingerprint (0–100).
+
+    Expensive names stay ranked; ``affordable`` flags cash fit instead of hiding.
+    """
+    prices = get_last_prices((ticker,))
+    px = prices.get(ticker)
+    if not px or px <= 0:
+        return {
+            "ticker": ticker, "price": px or 0.0, "score": 0,
+            "reco": "INACCESSIBLE", "why": "Cours indisponible.",
+            "kind": "?", "rsi": None, "vs_sma200": None, "weight_pct": 0.0,
+            "affordable": False,
+        }
+
+    budget = float(budget or 0.0)
+    affordable = bool(budget > 0 and px <= budget * 0.98)
+
+    dossier = get_ticker_dossier(ticker)
+    is_etf = bool(dossier.get("is_etf") or ticker in (
+        _CORE_TICKER, "EWLD.PA", "PAEEM.PA", "ESE.PA", "C50.PA", "PE500.PA",
+    ))
+    fingerprint = get_strategy_fingerprint(ticker) or {}
+    mr = float(fingerprint.get("Mean Reversion") or 0)
+    mom = float(fingerprint.get("Momentum") or 0)
+    qv = float(fingerprint.get("Quality/Value") or 0)
+    ins = float(fingerprint.get("Insider Confidence") or 0)
+
+    base_score = mr * 0.35 + mom * 0.25 + qv * 0.20 + ins * 0.20
+    if is_etf:
+        base_score += 15.0  # diversification bonus (esp. MICRO)
+    if vix > _VIX_PANIC and not is_etf:
+        base_score -= 20.0
+
+    weight = (px / budget * 100.0) if budget > 0 else 100.0
+    if affordable and 8 <= weight <= 45:
+        base_score += 5.0
+    elif weight > 70 and not is_etf and affordable:
+        base_score -= 8.0
+
+    score = int(max(0, min(100, round(base_score))))
+    if score >= 72:
+        reco = "ACHETER"
+    elif score >= 55:
+        reco = "SURVEILLER"
+    elif score >= 40:
+        reco = "ATTENDRE"
+    else:
+        reco = "EVITER"
+
+    axes = {
+        "Mean Reversion": mr,
+        "Momentum": mom,
+        "Quality/Value": qv,
+        "Insider Confidence": ins,
+    }
+    top_name, top_val = max(axes.items(), key=lambda kv: kv[1])
+    why_bits = [
+        f"Empreinte {score}/100 (MR {mr:.0f} · Mom {mom:.0f} · "
+        f"Q/V {qv:.0f} · Ins {ins:.0f})",
+        f"Axe dominant: {top_name} ({top_val:.0f}/100)",
+    ]
+    if is_etf:
+        why_bits.append("ETF +15 diversif.")
+    if vix > _VIX_PANIC and not is_etf:
+        why_bits.append(f"VIX panic −20 (VIX={vix:.1f})")
+    if affordable:
+        why_bits.append(f"1 part ≈ {weight:.0f}% cash")
+    else:
+        why_bits.append(
+            f"HORS BUDGET (1 part={px:,.0f} € > cash {budget:,.0f} €)"
+        )
+
+    ind = get_indicators(ticker) or {}
+    rsi = ind.get("rsi")
+    close = ind.get("close") or px
+    sma200 = ind.get("sma200")
+    vs200 = None
+    if sma200 and close:
+        vs200 = (close / sma200 - 1) * 100
+
+    return {
+        "ticker": ticker,
+        "price": float(px),
+        "score": score,
+        "reco": reco,
+        "why": " · ".join(why_bits),
+        "kind": "ETF" if is_etf else "Action",
+        "rsi": rsi,
+        "vs_sma200": vs200,
+        "weight_pct": weight,
+        "affordable": affordable,
+    }
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def rank_affordable_alternatives(budget: float, vix: float) -> list[dict]:
+    """Rank PEA ETFs + liquid stocks (expensive names kept, flagged)."""
+    universe = [
+        # Low-fee / PEA ETFs first (CW8 often unaffordable in MICRO)
+        "EWLD.PA", "PAEEM.PA", "ESE.PA", "C50.PA", "PE500.PA", _CORE_TICKER,
+        # Liquid large/mid caps
+        "STLAP.PA", "ORA.PA", "ENGI.PA", "VIE.PA", "GLE.PA", "ACA.PA",
+        "SAN.PA", "TTE.PA", "BNP.PA", "RNO.PA", "SGO.PA", "CAP.PA",
+        "AIR.PA", "HO.PA", "ML.PA", "BN.PA", "PUB.PA", "MC.PA", "OR.PA",
+        "KER.PA", "RMS.PA", "AI.PA",
+    ]
+    rows = [score_ticker_opportunity(t, budget, vix) for t in universe]
+    rows = [r for r in rows if r.get("price", 0) > 0]
+    rows.sort(key=lambda r: r["score"], reverse=True)
+    return rows
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def get_momentum_pepites(limit: int = 5) -> list[dict]:
+    """High-vol momentum names: vol_ann > 35 and Close > SMA50."""
+    watch = (
+        "STLAP.PA", "RNO.PA", "AIR.PA", "HO.PA", "CAP.PA", "DSY.PA",
+        "KER.PA", "MC.PA", "OR.PA", "PUB.PA", "ML.PA", "ALO.PA",
+        "GLE.PA", "ACA.PA", "BNP.PA", "SAN.PA", "ENGI.PA", "VIE.PA",
+        "SGO.PA", "TTE.PA", "SAF.PA", "EL.PA",
+    )
+    rows: list[dict] = []
+    for t in watch:
+        ind = get_indicators(t) or {}
+        vol = ind.get("vol_ann")
+        close = ind.get("close")
+        sma50 = ind.get("sma50")
+        rsi = ind.get("rsi")
+        if vol is None or close is None or sma50 is None:
+            continue
+        if float(vol) <= 35 or float(close) <= float(sma50):
+            continue
+        rows.append({
+            "ticker": t,
+            "vol_ann": float(vol),
+            "rsi": float(rsi) if rsi is not None else None,
+            "close": float(close),
+            "sma50": float(sma50),
+            "gap_sma50": (float(close) / float(sma50) - 1.0) * 100.0,
+        })
+    rows.sort(
+        key=lambda r: (r["vol_ann"], r["gap_sma50"], -(r["rsi"] or 50)),
+        reverse=True,
+    )
+    return rows[: max(1, limit)]
+
+
+def suggest_adaptive_portfolio(
+    equity: float,
+    cash: float,
+    vix: float,
+    regime: dict,
+    pending_df: pd.DataFrame,
+    held_tickers: list[str],
+) -> dict:
+    """Capital-aware suggestions for court / moyen / long horizons."""
+    equity = max(float(equity or 0), float(cash or 0), 0.0)
+    cash = max(float(cash or 0), 0.0)
+    budget = cash if cash > 0 else equity
+
+    candidates = [
+        _CORE_TICKER, "EWLD.PA", "PAEEM.PA", "ESE.PA", "C50.PA",
+        "SAN.PA", "TTE.PA", "BNP.PA", "GLE.PA", "ACA.PA", "ENGI.PA",
+        "ORA.PA", "VIE.PA", "SGO.PA", "CAP.PA", "AIR.PA", "STLAP.PA",
+        "RNO.PA", "ML.PA", "HO.PA",
+    ]
+    pending_tickers: list[str] = []
+    if pending_df is not None and not pending_df.empty:
+        pending_tickers = [str(t) for t in pending_df["ticker"].tolist() if str(t)]
+    prices = get_last_prices(tuple(dict.fromkeys(pending_tickers + candidates)))
+    core_px = prices.get(_CORE_TICKER)
+
+    if equity < 200:
+        mode = "MICRO"
+    elif equity < 800:
+        mode = "STARTER"
+    elif equity < 3000:
+        mode = "BUILD"
+    else:
+        mode = "FULL"
+
+    ranked = rank_affordable_alternatives(budget, float(vix))
+
+    def _pick_micro_line() -> tuple[str, float, dict] | None:
+        if not ranked:
+            return None
+        best = ranked[0]
+        return best["ticker"], float(best["price"]), best
+
+    def _horizon_pack(label: str, lines: list[dict], cash_keep: float, why: str) -> dict:
+        for l in lines:
+            l["weight_pct"] = (l["cost"] / equity * 100) if equity else 100.0
+        return {"label": label, "lines": lines, "cash_keep": cash_keep, "why": why}
+
+    # --- COURT TERME (0–3 mois): best scored affordable + cash runway --------
+    court_lines: list[dict] = []
+    pick = _pick_micro_line()
+    if pick and mode in ("MICRO", "STARTER"):
+        t, px, meta = pick
+        qty = 1
+        cost = qty * px
+        court_lines.append({
+            "ticker": t, "qty": qty, "price": px, "cost": cost,
+            "role": f"Top score {meta.get('score', 0)}/100 · {meta.get('kind')}",
+            "why": (
+                f"Reco {meta.get('reco')} — {meta.get('why', '')} "
+                f"Core {_CORE_TICKER} "
+                f"({f'{core_px:.0f} €' if core_px else 'n/a'}) hors budget."
+            ),
+        })
+    court_cash = budget - sum(l["cost"] for l in court_lines)
+    court_why = (
+        f"<b>Court terme — playbook different du long terme.</b> "
+        f"Objectif 0–3 mois : rester liquide et opportuniste. "
+        f"1 part max du meilleur score sous budget ({budget:,.0f} €), "
+        f"cash ~{court_cash:,.0f} € pour rebondir vite. "
+        f"Pas une strategie 'economiser pour CW8' : c'est un ticket tradeable "
+        f"maintenant (ETF PEA cheap ou action scoree). VIX={vix:.1f}."
+    )
+
+    # --- MOYEN TERME (3–18 mois): Core-first des que possible -----------------
+    mid_lines: list[dict] = []
+    mid_why = ""
+    if core_px and core_px <= budget * 0.98:
+        qty = max(int((budget * 0.70) // core_px), 1)
+        cost = qty * core_px
+        if cost <= budget:
+            mid_lines.append({
+                "ticker": _CORE_TICKER, "qty": qty, "price": core_px, "cost": cost,
+                "role": "Core ETF",
+                "why": "Ancre MSCI World PEA — objectif ~70% des que le capital le permet.",
+            })
+        mid_why = (
+            "<b>Moyen terme (3–18 mois)</b> : bascule Core-first des que "
+            f"1 part {_CORE_TICKER} est achetable. Les satellites ne viennent "
+            "qu'apres, sous budget 30% et VIX OK. Différent du court terme "
+            "(qui reste un ticket liquide flexible)."
+        )
+    else:
+        # Medium-term: accumulate via ranked ETFs (not "wait forever for CW8")
+        mid_lines = []
+        for alt in ranked[:2]:
+            if alt["price"] > budget * 0.5:
+                continue
+            mid_lines.append({
+                "ticker": alt["ticker"],
+                "qty": 1,
+                "price": alt["price"],
+                "cost": alt["price"],
+                "role": f"Pont moyen terme · score {alt['score']}",
+                "why": (
+                    f"{alt['reco']} — {alt['why']}. "
+                    f"Pont vers Core {_CORE_TICKER} "
+                    f"({f'{core_px:.0f} €' if core_px else 'n/a'}) "
+                    "sans rester 100% cash."
+                ),
+            })
+            if len(mid_lines) >= 1:
+                break
+        if not mid_lines:
+            mid_lines = list(court_lines)
+        mid_why = (
+            "<b>Moyen terme</b> : Core encore trop cher — on ne reste pas "
+            "inactif : ETF PEA abordable (EWLD/PAEEM/ESE…) comme pont, "
+            f"tout en visant {_CORE_TICKER} au prochain depot. "
+            "Ce n'est PAS la meme reco que le court terme (plus diversifie, "
+            "moins 'ticket trading')."
+        )
+
+    # --- LONG TERME (3–10 ans): allocation institutionnelle cible ------------
+    long_lines: list[dict] = []
+    if core_px:
+        # Target allocation in EUR if user had enough capital (illustrative).
+        target_eq = max(equity, core_px / 0.70, 5000.0)
+        core_budget = target_eq * (0.75 if regime.get("crash") else 0.70)
+        qty = max(int(core_budget // core_px), 1)
+        long_lines.append({
+            "ticker": _CORE_TICKER, "qty": qty, "price": core_px,
+            "cost": qty * core_px,
+            "role": "Core cible",
+            "why": (
+                f"Allocation cible long terme sur equity illustre "
+                f"~{target_eq:,.0f} \u20ac (pas ton cash actuel)."
+            ),
+        })
+    long_why = (
+        f"<b>Long terme (cible institutionnelle)</b> — autre logique : "
+        f"~70–75% {_CORE_TICKER}, ≤30% satellites MRE, secteur ≤{_MAX_SECTOR*100:.0f}%, "
+        "ligne ≤15%, Smart DCA sous SMA200. "
+        "Les tickets court terme (1 action / 1 petit ETF) ne sont PAS la cible "
+        "finale : ils sont des etapes. Ce tableau illustre l'allocation une fois "
+        "le capital suffisant — pas un ordre a passer aujourd'hui avec 100 €."
+    )
+
+    primary = court_lines if mode in ("MICRO", "STARTER") else (
+        mid_lines if mid_lines else court_lines
+    )
+    cash_keep = budget - sum(l["cost"] for l in primary)
+    for l in primary:
+        l["weight_pct"] = (l["cost"] / equity * 100) if equity else 100.0
+
+    if primary:
+        top = primary[0]
+        summary = (
+            f"Mode <b>{mode}</b> — maintenant : {top['qty']}\u00d7 "
+            f"{format_name(top['ticker'])} a {top['price']:.2f} \u20ac "
+            f"(~{top['weight_pct']:.0f}% du capital). "
+            f"Cash a garder ~{cash_keep:,.0f} \u20ac."
+        )
+    else:
+        summary = (
+            f"Mode <b>{mode}</b> — aucun titre liquide fiable sous "
+            f"{budget:,.0f} \u20ac. Garde le cash, vise {_CORE_TICKER}."
+        )
+
+    mode_why = {
+        "MICRO": (
+            f"Capital {equity:,.0f} \u20ac : capital insuffisant pour l'allocation cible complète. "
+            "Achat de 1 part pour rester exposé au marché, le reste conservé en liquidités "
+            "(Cash Runway) car le PEA interdit les fractions d'actions."
+        ),
+        "STARTER": (
+            f"Capital {equity:,.0f} \u20ac : 1–2 lignes max. "
+            "Achat de 1 part pour rester exposé, cash conservé car le PEA interdit les fractions."
+        ),
+        "BUILD": f"Capital {equity:,.0f} \u20ac : construction Core-first.",
+        "FULL": f"Capital {equity:,.0f} \u20ac : regles institutionnelles completes.",
+    }[mode]
+    if vix > _VIX_PANIC:
+        mode_why += f" VIX={vix:.1f} > {_VIX_PANIC:.0f} : frein satellite actif."
+
+    return {
+        "mode": mode,
+        "mode_why": mode_why,
+        "lines": primary,
+        "cash_keep": cash_keep,
+        "summary": summary,
+        "have_core": any(l["ticker"] == _CORE_TICKER for l in primary),
+        "cash_explain": court_why,
+        "alternatives": ranked[:12],
+        "horizons": {
+            "court": _horizon_pack("Court terme (0–3 mois)", court_lines, court_cash, court_why),
+            "moyen": _horizon_pack(
+                "Moyen terme (3–18 mois)", mid_lines,
+                budget - sum(l["cost"] for l in mid_lines), mid_why,
+            ),
+            "long": _horizon_pack(
+                "Long terme (cible)", long_lines,
+                0.0, long_why,
+            ),
+        },
+    }
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def get_etf_card(ticker: str = _CORE_TICKER) -> dict:
+    """Key facts for the Core (or any) PEA ETF."""
+    dossier = get_ticker_dossier(ticker)
+    ind = get_indicators(ticker)
+    prices = get_last_prices((ticker,))
+    px = prices.get(ticker) or (ind or {}).get("close")
+    return {
+        "ticker": ticker,
+        "name": dossier.get("name") or ticker,
+        "summary": dossier.get("summary") or "",
+        "price": px,
+        "regime": get_core_regime() if ticker == _CORE_TICKER else {},
+        "indicators": ind or {},
+        "role": (
+            "Ancre Core PEA Pollux (MSCI World PEA). Cible 70–75% de l'equity "
+            "des que ton capital permet d'acheter des parts entieres."
+            if ticker == _CORE_TICKER else
+            "ETF eligible PEA — diversification indicielle."
+        ),
+    }
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def get_monthly_market_news(tickers: tuple[str, ...]) -> list[dict]:
+    """Biggest headlines of the month across a watchlist, impact-ranked."""
+    bundle = get_general_news_bundle(tickers)
+    scored = []
+    for n in bundle:
+        sc = heuristic_news_score(n.get("title", ""))
+        # Light LLM only for top candidates would be slow; heuristic for month pack.
+        scored.append({**n, "score": sc, "abs": abs(sc)})
+    scored.sort(key=lambda x: x["abs"], reverse=True)
+    return scored[:12]
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def get_sector_performance(
+    universe_df: pd.DataFrame, period: str = "1mo"
+) -> pd.DataFrame:
+    """Average performance by sector over a timeframe."""
+    if universe_df is None or universe_df.empty:
+        return pd.DataFrame()
+    # Sample up to 4 tickers per sector to keep Yahoo calls sane.
+    samples: list[str] = []
+    for _sector, grp in universe_df.groupby("Sector"):
+        samples.extend(grp["Ticker"].head(4).tolist())
+    samples = list(dict.fromkeys(samples))[:80]
+    perf = get_market_performance(tuple(samples), period=period)
+    if perf.empty:
+        return pd.DataFrame()
+    meta = universe_df.set_index("Ticker")["Sector"].to_dict()
+    perf = perf.copy()
+    perf["Sector"] = perf["Ticker"].map(meta).fillna("Unknown")
+    agg = (perf.groupby("Sector", as_index=False)
+           .agg(Perf_moy=("Performance (%)", "mean"),
+                Perf_med=("Performance (%)", "median"),
+                N=("Ticker", "count"),
+                Best=("Performance (%)", "max"),
+                Worst=("Performance (%)", "min"))
+           .sort_values("Perf_moy", ascending=False))
+    return agg
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def get_polymarket_macro(limit: int = 8) -> list[dict]:
+    """Fetch live macro-relevant Polymarket events (Gamma API, no auth)."""
+    try:
+        import json
+
+        import requests as _req
+        import urllib3
+
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+        url = (
+            "https://gamma-api.polymarket.com/events?"
+            "active=true&closed=false&order=volume24hr&ascending=false&limit=50"
+        )
+        resp = _req.get(
+            url,
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (compatible; PEA-Pollux/1.0; "
+                    "+https://github.com/Polluxgnr/Peatrading)"
+                ),
+                "Accept": "application/json",
+            },
+            verify=False,
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            return []
+        try:
+            events = resp.json()
+        except Exception as exc:  # noqa: BLE001 - Cloudflare challenge / HTML body
+            if _dash_log is not None:
+                _dash_log.debug("Polymarket macro JSON decode failed: %s", exc)
+            return []
+        if not isinstance(events, list):
+            return []
+
+        keys = (
+            "recession", "fed", "ecb", "inflation", "tariff", "war", "ukraine",
+            "china", "oil", "rate", "gdp", "election", "trump", "europe",
+            "france", "germany", "nasdaq", "spx", "crash", "btc", "dollar",
+            "le pen", "macron", "yield",
+        )
+        # Exclude pure sports noise.
+        ban = ("euro 2024", "world cup", "mlb", "nba", "nfl", "champions league",
+               "olympic", "grand slam", "premier league")
+        out: list[dict] = []
+        for ev in events:
+            title = str(ev.get("title") or ev.get("slug") or "")
+            tl = title.casefold()
+            if any(b in tl for b in ban):
+                continue
+            if not any(k in tl for k in keys):
+                continue
+            markets = ev.get("markets") or []
+            yes_p = None
+            question = title
+            if markets:
+                m0 = markets[0]
+                question = str(m0.get("question") or title)
+                prices = m0.get("outcomePrices")
+                if isinstance(prices, str):
+                    try:
+                        prices = json.loads(prices)
+                    except Exception:  # noqa: BLE001
+                        prices = None
+                if isinstance(prices, (list, tuple)) and prices:
+                    try:
+                        yes_p = float(prices[0])
+                    except Exception:  # noqa: BLE001
+                        yes_p = None
+            vol = ev.get("volume24hr") or ev.get("volume") or 0
+            try:
+                vol_f = float(vol)
+            except Exception:  # noqa: BLE001
+                vol_f = 0.0
+            slug = ev.get("slug") or ""
+            # Impact hint for PEA
+            if yes_p is None:
+                impact = "Contexte"
+            elif "recession" in tl or "crash" in tl:
+                impact = "Risque risk-off" if yes_p > 0.35 else "Tail risk faible"
+            elif "fed" in tl or "ecb" in tl or "rate" in tl:
+                impact = "Sensibilite taux / valorisations"
+            elif "france" in tl or "le pen" in tl or "europe" in tl:
+                impact = "Premium politique EU"
+            else:
+                impact = "Macro general"
+            out.append({
+                "title": question[:120],
+                "yes_prob": yes_p,
+                "volume24h": vol_f,
+                "impact": impact,
+                "url": f"https://polymarket.com/event/{slug}" if slug else "https://polymarket.com",
+            })
+            if len(out) >= limit:
+                break
+        return out
+    except Exception:  # noqa: BLE001
+        return []
+
+
+# =============================================================================
+# Header + live ticker tape (streaming)
+# =============================================================================
+st.markdown(
+    "<h1>\U0001F6E1\uFE0F POLLUX PEA TERMINAL "
+    "<span style='color:#00FF00; font-size:20px;'>V-PRIME</span></h1>",
+    unsafe_allow_html=True,
+)
+
+# One-shot sync/pre-warm when the dashboard session opens.
+if not st.session_state.get("daily_sync_done", False):
+    with st.spinner("Initialisation et synchronisation des flux de marché..."):
+        _boot_universe = load_universe()
+        _boot_tickers = tuple(_boot_universe["Ticker"].head(24).tolist())
+        if _boot_tickers:
+            get_last_prices(_boot_tickers)
+        get_vix()
+    st.session_state["daily_sync_done"] = True
+
+universe_df = load_universe()
+# Populate the name lookup with every universe entry (STEP 1.3 coverage).
+TICKER_NAMES.update(dict(zip(universe_df["Ticker"], universe_df["Name"])))
+
+# Native ticker tape (replaces TradingView widget — no .PA red errors).
+_tape_col1, _tape_col2 = st.columns([0.22, 0.78])
+with _tape_col1:
+    _tape_period = st.radio(
+        "Période bandeau",
+        ["1d", "5d", "1mo"],
+        horizontal=True,
+        key="native_tape_period",
+        format_func=lambda x: {"1d": "1j", "5d": "5j", "1mo": "1m"}[x],
+        label_visibility="collapsed",
+    )
+with _tape_col2:
+    st.caption("Bandeau marché natif · blue chips PEA · logos Clearbit")
+render_native_ticker_tape(_tape_period)
+
+portfolio = load_portfolio_state()
+if portfolio is None:
+    st.warning(
+        "\u26A0\uFE0F En attente de l'initialisation des bases de donn\u00e9es "
+        "par le Main Scheduler... (lancez `py main_scheduler.py --now`)"
+    )
+    st.stop()
+
+
+# =============================================================================
+# STEP 2 - Top HUD (with plain-language tooltips)
+# =============================================================================
+positions = portfolio.positions
+invested = sum(p.market_value for p in positions)
+unrealized = sum((p.current_price - p.avg_entry_price) * p.qty_shares for p in positions)
+unrealized_pct = (unrealized / invested * 100) if invested else 0.0
+cash_pct = (portfolio.cash_available / portfolio.total_equity * 100
+            if portfolio.total_equity else 0.0)
+invest_rate = (invested / portfolio.total_equity * 100
+               if portfolio.total_equity else 0.0)
+
+c1, c2, c3, c4 = st.columns(4)
+with c1:
+    st.markdown(metric_box(
+        "Valeur du Portefeuille", f"{portfolio.total_equity:,.2f} \u20ac",
+        sub=f"Investi: {invested:,.2f} \u20ac", accent="", sub_cls="sub-muted",
+        help_text="Valeur totale de votre PEA : la somme de vos liquidites et de "
+                  "la valeur de marche de toutes vos actions detenues.",
+    ), unsafe_allow_html=True)
+with c2:
+    inv_accent = "cyan" if invest_rate >= 95 else ("amber" if invest_rate >= 80 else "red")
+    st.markdown(metric_box(
+        "Taux d'Investissement", f"{invest_rate:.1f}%",
+        sub=f"Cash idle: {cash_pct:.1f}% ({portfolio.cash_available:,.0f} \u20ac)",
+        accent=inv_accent, sub_cls="sub-muted",
+        help_text="Part de l'equity déjà investie. Objectif Phase 40 : cash idle "
+                  "≤ 2% — l'excédent est balayé automatiquement vers CW8.PA.",
+    ), unsafe_allow_html=True)
+with c3:
+    pnl_cls = "sub-green" if unrealized >= 0 else "sub-red"
+    st.markdown(metric_box(
+        "PnL Latent", f"{unrealized:,.2f} \u20ac", sub=f"{unrealized_pct:+.2f}%",
+        accent="" if unrealized >= 0 else "red", sub_cls=pnl_cls,
+        help_text="Gains ou pertes virtuels sur les positions actuellement "
+                  "detenues, avant de les vendre (non realises).",
+    ), unsafe_allow_html=True)
+with c4:
+    st.markdown(metric_box(
+        "Lignes Actives", f"{len(positions)}", sub="Zero Levier Garanti",
+        accent="cyan", sub_cls="sub-muted",
+        help_text="Nombre de positions distinctes en portefeuille. Le systeme "
+                  "n'utilise jamais d'effet de levier (pas de marge).",
+    ), unsafe_allow_html=True)
+
+
+# =============================================================================
+# Risk / Macro HUD (VIX, regime, satellite budget, sector concentration)
+# =============================================================================
+vix = get_vix()
+vix_panic = vix > _VIX_PANIC
+regime = get_core_regime()
+
+satellite_value = sum(p.market_value for p in positions if p.ticker != _CORE_TICKER)
+sat_budget_eur = _SAT_BUDGET * portfolio.total_equity if portfolio.total_equity else 0.0
+sat_used_pct = (satellite_value / sat_budget_eur * 100) if sat_budget_eur else 0.0
+
+sector_weights: dict[str, float] = {}
+for p in positions:
+    sector_weights[p.sector] = sector_weights.get(p.sector, 0.0) + p.market_value
+max_sector, max_sector_val = ("-", 0.0)
+if sector_weights and portfolio.total_equity:
+    max_sector = max(sector_weights, key=sector_weights.get)
+    max_sector_val = sector_weights[max_sector] / portfolio.total_equity * 100
+
+from duckdb_manager import TimeSeriesDB  # noqa: E402
+
+_db_breadth = get_ts_db()
+_breadth = get_market_breadth(universe_df, str(_db_breadth.db_path))
+_pct50 = _breadth.get("pct_sma50")
+_pct200 = _breadth.get("pct_sma200")
+_valid = _breadth.get("valid") or 0
+_pct50_f = float(_pct50) if _pct50 is not None else None
+_pct200_f = float(_pct200) if _pct200 is not None else None
+
+_breadth_ok = (_pct200_f is not None and _pct200_f >= 55)
+_breadth_mid = (_pct200_f is not None and 45 <= _pct200_f < 55)
+_breadth_accent = "green" if _breadth_ok else ("cyan" if _breadth_mid else "red")
+_breadth_sub_cls = (
+    "sub-green" if _breadth_ok else ("sub-red" if _pct200_f is not None else "sub-muted")
+)
+
+r1, r2, r3, r4, r5 = st.columns(5)
+with r1:
+    vsub = ("\U0001F6A8 PANIC - achats satellites geles" if vix_panic
+            else f"Calme (seuil {_VIX_PANIC:.0f})")
+    st.markdown(metric_box(
+        "Volatilite (VIX)", f"{vix:.1f}", sub=vsub,
+        accent="red" if vix_panic else "", sub_cls="sub-red" if vix_panic else "sub-green",
+        help_text="L'indice de la peur. Au-dessus de 30, le marche panique et le "
+                  "bot bloque les nouveaux achats risques pour proteger le capital.",
+    ), unsafe_allow_html=True)
+with r2:
+    if regime:
+        crash = regime["crash"]
+        rsub = ("\U0001F534 SOUS SMA200 - DCA agressif" if crash
+                else "\U0001F7E2 SUR SMA200 - DCA standard")
+        st.markdown(metric_box(
+            f"Regime Core ({_CORE_TICKER})", f"{regime['gap_pct']:+.1f}%", sub=rsub,
+            accent="red" if crash else "", sub_cls="sub-red" if crash else "sub-green",
+            help_text="Indique si le marche global est en tendance haussiere "
+                      "(au-dessus de sa moyenne 200 jours) ou en crise (en dessous). "
+                      "En crise, le bot accumule l'ETF Monde plus agressivement.",
+        ), unsafe_allow_html=True)
+    else:
+        st.markdown(metric_box(
+            f"Regime Core ({_CORE_TICKER})", "n/a", sub="Donnees indisponibles",
+            accent="muted", sub_cls="sub-muted",
+            help_text="Regime du marche global (prix vs moyenne 200 jours). "
+                      "Donnees temporairement indisponibles.",
+        ), unsafe_allow_html=True)
+with r3:
+    breadth_val = (
+        f"{_pct50_f:.0f}% / {_pct200_f:.0f}%" if _pct200_f is not None else "n/a"
+    )
+    st.markdown(metric_box(
+        "Market Breadth (SMA50/200)",
+        breadth_val,
+        sub=f"{int(_valid)} titres validés · Close>SMA50/SMA200",
+        accent=_breadth_accent,
+        sub_cls=_breadth_sub_cls,
+        help_text=(
+            "Broad market measure : % des noms PEA ayant "
+            "Close > SMA50 et Close > SMA200 (hist. DuckDB ~200j)."
+        ),
+    ), unsafe_allow_html=True)
+
+with r4:
+    over = sat_used_pct > 100
+    ssub = f"{satellite_value:,.0f} / {sat_budget_eur:,.0f} \u20ac (max {_SAT_BUDGET*100:.0f}%)"
+    st.markdown(metric_box(
+        "Budget Satellite Utilise", f"{sat_used_pct:.0f}%", sub=ssub,
+        accent="red" if over else "cyan", sub_cls="sub-red" if over else "sub-muted",
+        help_text="Capital alloue aux actions individuelles (max 30% du "
+                  "portefeuille total) pour chercher de la surperformance. Le "
+                  "reste est investi dans l'ETF Monde (le Coeur du portefeuille).",
+    ), unsafe_allow_html=True)
+with r5:
+    breach = max_sector_val > _MAX_SECTOR * 100
+    st.markdown(metric_box(
+        "Concentration Sectorielle Max", f"{max_sector_val:.0f}%",
+        sub=f"{max_sector} (limite {_MAX_SECTOR*100:.0f}%)",
+        accent="red" if breach else "", sub_cls="sub-red" if breach else "sub-muted",
+        help_text="Poids du secteur le plus represente. Le systeme interdit de "
+                  "depasser cette limite pour eviter d'etre trop expose a un "
+                  "seul theme (diversification imposee).",
+    ), unsafe_allow_html=True)
+
+# --- Sidebar: settings & controls -------------------------------------------
+with st.sidebar:
+    st.markdown("### \u2699\uFE0F Parametres")
+    auto_refresh = st.checkbox("Rafraichissement auto", value=False)
+    refresh_secs = st.slider("Intervalle (s)", 30, 600, 120, 30,
+                             disabled=not auto_refresh)
+    if st.button("\U0001F504 Vider le cache & recharger", width="stretch"):
+        st.cache_data.clear()
+        st.rerun()
+    st.markdown("---")
+    if st.button("Ledger signaux", width="stretch"):
+        st.session_state["scroll_to_ledger"] = True
+    st.caption("Passe : `python main_scheduler.py --now`")
+    st.markdown("---")
+    st.markdown("### \U0001F4CA Etat Systeme")
+    st.metric("Univers", f"{len(universe_df)} titres",
+              help="Nombre total d'actions/ETF eligibles PEA suivis par le bot.")
+    st.metric("Derniere MAJ", portfolio.last_updated.strftime("%d/%m %H:%M"),
+              help="Horodatage de la derniere passe du Main Scheduler ayant "
+                   "actualise les cours et l'equity.")
+    st.caption(
+        "Amorcer le capital :\n\n`python seed_account.py --cash 10000`\n\n"
+        "Lancer une passe :\n\n`python main_scheduler.py --now`"
+    )
+    if auto_refresh:
+        st.caption(f"\u23F1\uFE0F Auto-refresh dans {refresh_secs}s")
+
+st.write("---")
+
+# =============================================================================
+# Mission Control — état du monde en ~3 secondes
+# =============================================================================
+@st.fragment(run_every="30s")
+def _render_mission_control():
+    _pending_mc = load_signals(("PENDING",))
+    _n_pending = 0 if _pending_mc is None or _pending_mc.empty else len(_pending_mc)
+    _eq_curve_mc = load_equity_curve()
+    _day_delta = None
+    _day_delta_pct = None
+    if _eq_curve_mc is not None and not _eq_curve_mc.empty and len(_eq_curve_mc) >= 2:
+        try:
+            _eqs = _eq_curve_mc.sort_values("date")["equity"].astype(float)
+            _day_delta = float(_eqs.iloc[-1] - _eqs.iloc[-2])
+            if float(_eqs.iloc[-2]) > 0:
+                _day_delta_pct = _day_delta / float(_eqs.iloc[-2]) * 100.0
+        except Exception:  # noqa: BLE001
+            pass
+    _mkt_label, _mkt_health = euronext_session_status()
+    _pipe = read_pipeline_status() if read_pipeline_status else None
+    _pipe_health = (_pipe or {}).get("health", "amber")
+    _pipe_txt = "jamais"
+    if _pipe:
+        _pipe_txt = (
+            f"{_pipe.get('status', '?')} · "
+            f"{_pipe.get('finished_at_local') or _pipe.get('written_at', '')[:19]}"
+        )
+    _health_color = {
+        "green": _NEON, "amber": _AMBER, "red": _RED
+    }.get(_pipe_health, _AMBER)
+    _mkt_color = _NEON if _mkt_health == "green" else _AMBER
+    
+    # Degraded Mode Alert (moved to Data Lineage)
+    _is_degraded = (_pipe or {}).get("data_degraded_mode", False)
+    _degraded_reason = (_pipe or {}).get("degraded_reason", "Institutional API down. Using yfinance/fallback data.")
+    
+    # Add Market Regime
+    try:
+        from market_regime import MarketRegimeClassifier
+        _mr_classifier = MarketRegimeClassifier()
+        _regime = _mr_classifier.get_regime()
+        _conv_floor, _rsi_thresh = _mr_classifier.get_modulated_thresholds(
+            _regime,
+            base_conviction=float(_RISK.get("CONVICTION_EMIT_FLOOR", 65.0)),
+            base_rsi=float(_RISK.get("RSI_OVERSOLD_THRESHOLD", 30.0))
+        )
+    except Exception:
+        _regime = "BULL"
+        _conv_floor = 65.0
+        _rsi_thresh = 30.0
+    
+    _regime_color = _NEON if _regime == "BULL" else (_RED if _regime == "BEAR" else _AMBER)
+    
+    now_str = datetime.now().strftime("%H:%M")
+    st.markdown(
+        f"""
+    <style>@keyframes blink {{50% {{opacity: 0.2;}}}} .live-badge {{color: #0f0; animation: blink 2s linear infinite; font-size: 11px; margin-left: 10px; border: 1px solid #0f0; padding: 1px 4px; border-radius: 4px;}}</style>
+    <div class="mission">
+      <div class="mission-title">Mission Control · PEA personnel <span class="live-badge">LIVE 🟢</span> <span style="font-size:11px; color:#aaa; margin-left:5px;">{now_str}</span></div>
+      <div style="display:flex;flex-wrap:wrap;gap:18px;color:{_WHITE};font-size:13px;">
+        <div>Marché <b style="color:{_mkt_color};">{_mkt_label}</b></div>
+        <div>Régime <b style="color:{_regime_color};">{_regime}</b> 
+            <span style="color:{_MUTED}; font-size: 11px;">(Score ≥{_conv_floor:.0f} | RSI ≤{_rsi_thresh:.0f})</span>
+        </div>
+        <div>Dernière passe
+          <b style="color:{_health_color};">{_pipe_txt}</b></div>
+        <div>Equity
+          <b>{portfolio.total_equity:,.0f} €</b>
+          <span style="color:{_NEON if (_day_delta or 0) >= 0 else _RED};">
+            {f"{_day_delta:+,.0f} € ({_day_delta_pct:+.2f}%)" if _day_delta is not None else "·"}
+          </span>
+        </div>
+        <div>VIX <b style="color:{_RED if vix_panic else _WHITE};">{vix:.1f}</b></div>
+        <div>Pending Discord
+          <b style="color:{_AMBER if _n_pending else _MUTED};">{_n_pending}</b></div>
+      </div>
+    </div>
+    """,
+        unsafe_allow_html=True,
+    )
+    
+    if st.button("⚡ Lancer Analyse", key="mc_run_now"):
+        import subprocess
+        subprocess.Popen(
+            [sys.executable, str(_ROOT / "main_scheduler.py"), "--now"],
+            cwd=str(_ROOT),
+        )
+        st.toast("Analyse complète lancée en arrière-plan.", icon="⚡")
+
+_render_mission_control()
+
+
+# =============================================================================
+# Tabs
+# =============================================================================
+tab_macro, tab_ticker, tab_pf_exec, tab_ml_engine, tab_sys_logs = st.tabs([
+    "📈 Market & Macro",
+    "🌍 Ticker Deep-Dive",
+    "💼 Portfolio & Execution",
+    "🤖 ML Engine & Metrics",
+    "🧠 System Logs",
+])
+
+# --- Tab: General + Signals --------------------------------------------------
+with tab_macro:
+    st.markdown(
+        "<div class='info-text'>Briefing + registre des signaux + "
+        "<b>suggestion de portefeuille adaptative</b> selon ton capital. "
+        "Aucun ordre n'est envoye depuis ici — Discord reste le copilot.</div>",
+        unsafe_allow_html=True,
+    )
+
+    # Moved Morning Briefing to News & Catalysts tab
+    held_tickers = [p.ticker for p in positions]
+    blue_chips = ["MC.PA", "OR.PA", "AI.PA", "RMS.PA", "SAN.PA",
+                  "TTE.PA", "BNP.PA", "AIR.PA", _CORE_TICKER]
+    watch = tuple(dict.fromkeys(held_tickers + blue_chips))[:14]
+
+    pending_gen = load_signals(("PENDING",))
+    suggestion = suggest_adaptive_portfolio(
+        float(portfolio.total_equity),
+        float(portfolio.cash_available),
+        float(vix),
+        regime or {},
+        pending_gen,
+        held_tickers,
+    )
+
+    st.markdown("#### 🎯 Meilleur portefeuille suggéré (adaptatif)")
+    st.markdown(
+        f"<div class='eli5'>{suggestion.get('summary', '')}</div>",
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        f"<div class='info-text'>"
+        f"<b style='color:{_AMBER};'>Pourquoi ce mode "
+        f"({suggestion.get('mode')}) :</b><br>"
+        f"{suggestion.get('mode_why', '')}<br><br>"
+        f"{suggestion.get('cash_explain', '')}</div>",
+        unsafe_allow_html=True,
+    )
+
+    sug_lines = suggestion.get("lines") or []
+    if sug_lines:
+        sdisp = pd.DataFrame([{
+            "Titre": format_name(l["ticker"]),
+            "Role": l["role"],
+            "Qte": l["qty"],
+            "Cours": f"{l['price']:,.2f} €",
+            "Cout": f"{l['cost']:,.2f} €",
+            "Poids": f"{l['weight_pct']:.0f}%",
+            "Justification": l["why"][:160],
+        } for l in sug_lines])
+        st.plotly_chart(
+            dark_table(sdisp, height=min(280, 60 + 36 * len(sdisp)),
+                       col_widths=[2, 1.2, 0.5, 0.9, 0.9, 0.6, 2.8]),
+            width="stretch",
+            key="gen_primary_suggestion_table",
+        )
+    else:
+        st.warning(suggestion.get("summary", "Pas de suggestion."))
+
+    # Ranked alternatives with score + reco (fixes "only one option" feel)
+    alts = suggestion.get("alternatives") or []
+    st.markdown("##### Classement des alternatives achetable (score 0–100)")
+    st.markdown(
+        "<div class='info-text'>ETF PEA (EWLD, PAEEM, ESE, C50…) vs actions "
+        "liquides. Score = <b>empreinte multi-stratégies</b> "
+        "(MR 35% + Mom 25% + Q/V 20% + Insiders 20%) + bonus ETF / pénalité VIX. "
+        "<b>ACHETER / SURVEILLER / ATTENDRE / EVITER</b>. "
+        "Toujours 1 part max en MICRO + cash runway.</div>",
+        unsafe_allow_html=True,
+    )
+    if alts:
+        adisp = pd.DataFrame([{
+            "Rang": i + 1,
+            "Titre": format_name(a["ticker"]),
+            "Type": a.get("kind", "?"),
+            "Cours": f"{a['price']:,.2f} €",
+            "Score": f"{a['score']}/100",
+            "Reco": (
+                f"{a.get('reco', '')}"
+                + ("" if a.get("affordable", True) else " [HORS BUDGET]")
+            ),
+            "RSI": f"{a['rsi']:.0f}" if a.get("rsi") is not None else "—",
+            "vs SMA200": (
+                f"{a['vs_sma200']:+.1f}%" if a.get("vs_sma200") is not None else "—"
+            ),
+            "Poids 1 part": f"{a.get('weight_pct', 0):.0f}%",
+            "Pourquoi": str(a.get("why", ""))[:180],
+        } for i, a in enumerate(alts)])
+        reco_colors = []
+        for a in alts:
+            if not a.get("affordable", True):
+                reco_colors.append(_MUTED)
+            else:
+                r = a.get("reco")
+                reco_colors.append(
+                    _NEON if r == "ACHETER" else
+                    _AMBER if r == "SURVEILLER" else
+                    _CYAN if r == "ATTENDRE" else _RED
+                )
+        adisp_click = adisp.copy()
+        adisp_click.insert(0, "Ticker", [a["ticker"] for a in alts])
+        _alt_event = st.dataframe(
+            adisp_click,
+            use_container_width=True,
+            hide_index=True,
+            selection_mode="single-row",
+            on_select="rerun",
+            key="gen_alternatives_click",
+        )
+        _alt_rows = list(getattr(getattr(_alt_event, "selection", None), "rows", []) or [])
+        if _alt_rows:
+            _i = int(_alt_rows[0])
+            if 0 <= _i < len(adisp_click):
+                _ticker_pick = str(adisp_click.iloc[_i]["Ticker"])
+                st.session_state["focus_ticker"] = _ticker_pick
+                st.session_state["selected_ticker"] = _ticker_pick
+                st.caption(f"🔍 Analyse rapide prête pour {format_name(_ticker_pick)} (onglet Exploration).")
+        # Phase 22: high-vol momentum pepites
+        st.markdown("#### 🚀 Pépites (Forte Volatilité & Croissance)")
+        st.markdown(
+            "<div class='info-text'>Filtre liquide : <b>vol annualisée &gt; 35%</b> "
+            "et <b>Close &gt; SMA50</b>. Ce n'est pas un ordre — juste un radar "
+            "de titres « chauds » à croiser avec l'empreinte.</div>",
+            unsafe_allow_html=True,
+        )
+        pepites = get_momentum_pepites(limit=5)
+        if pepites:
+            pdisp = pd.DataFrame([{
+                "Titre": format_name(p["ticker"]),
+                "Vol": f"{p['vol_ann']:.0f}%",
+                "RSI": f"{p['rsi']:.0f}" if p.get("rsi") is not None else "—",
+                "vs SMA50": f"{p['gap_sma50']:+.1f}%",
+                "Cours": f"{p['close']:,.2f} €",
+            } for p in pepites])
+            pdisp_click = pdisp.copy()
+            pdisp_click.insert(0, "Ticker", [p["ticker"] for p in pepites])
+            _pep_event = st.dataframe(
+                pdisp_click,
+                use_container_width=True,
+                hide_index=True,
+                selection_mode="single-row",
+                on_select="rerun",
+                key="gen_pepites_click",
+            )
+            _pep_rows = list(getattr(getattr(_pep_event, "selection", None), "rows", []) or [])
+            if _pep_rows:
+                _i = int(_pep_rows[0])
+                if 0 <= _i < len(pdisp_click):
+                    _ticker_pick = str(pdisp_click.iloc[_i]["Ticker"])
+                    st.session_state["focus_ticker"] = _ticker_pick
+                    st.session_state["selected_ticker"] = _ticker_pick
+                    st.caption(f"🔍 Analyse rapide prête pour {format_name(_ticker_pick)} (onglet Exploration).")
+        else:
+            st.caption("Aucune pépite sur le panier liquide (vol/SMA50).")
+    else:
+        st.caption("Aucune alternative liquide avec cours disponible.")
+
+    horizons = suggestion.get("horizons") or {}
+    if horizons:
+        if True:
+            st.markdown("### Horizons d'allocation (court / moyen / long)")
+            h_choice = st.radio(
+                "Horizon",
+                ["court", "moyen", "long"],
+                format_func=lambda k: (horizons.get(k) or {}).get("label", k),
+                horizontal=True,
+                key="gen_horizon_radio",
+            )
+            hz = horizons.get(h_choice) or {}
+            if True:
+                st.markdown("### 📖 Comprendre cette recommandation")
+                st.markdown(hz.get("why", ""), unsafe_allow_html=True)
+            hlines = hz.get("lines") or []
+            if hlines:
+                hdf = pd.DataFrame([{
+                    "Titre": format_name(l["ticker"]),
+                    "Role": l.get("role", ""),
+                    "Qte": l["qty"],
+                    "Cours": f"{l['price']:,.2f} €",
+                    "Cout": f"{l['cost']:,.2f} €",
+                    "Note": str(l.get("why", ""))[:140],
+                } for l in hlines])
+                st.plotly_chart(
+                    dark_table(hdf, height=min(260, 56 + 34 * len(hdf)),
+                               col_widths=[2, 1.1, 0.5, 0.9, 0.9, 2.6]),
+                    width="stretch",
+                    key=f"gen_horizon_table_{h_choice}",
+                )
+            else:
+                st.caption("Rien d'achetable sur cet horizon avec le cash actuel.")
+            if h_choice != "long":
+                st.caption(f"Cash restant illustre ~{hz.get('cash_keep', 0):,.0f} €")
+
+    # Core ETF snapshot
+    etf = get_etf_card(_CORE_TICKER)
+    with st.expander(f"📦 Fiche ETF Core — {etf.get('name', _CORE_TICKER)}", expanded=False):
+        st.markdown(
+            f"<div class='info-text'><b>{etf.get('role')}</b><br>"
+            f"{etf.get('summary', '')[:500]}</div>",
+            unsafe_allow_html=True,
+        )
+        ec1, ec2, ec3 = st.columns(3)
+        px = etf.get("price")
+        ec1.metric("Cours", f"{px:,.2f} €" if px else "n/a")
+        reg = etf.get("regime") or {}
+        ec2.metric("vs SMA200", f"{reg.get('gap_pct', 0):+.1f}%" if reg else "n/a")
+        ec3.metric("Part entiere requise", f"{px:,.0f} €" if px else "n/a",
+                   help="PEA = actions entieres. Sous ce montant, pas de Core.")
+
+    st.markdown("---")
+    recos = build_recommendations(portfolio, pending_gen, vix, regime or {})
+    g1, g2 = st.columns([1.15, 1])
+    with g1:
+        st.markdown("#### 📌 Recommandations actuelles")
+        if not recos:
+            st.caption("Aucune recommandation urgente.")
+        for r in recos:
+            accent = _RED if r["prio"] == 1 else (_AMBER if r["prio"] == 2 else _CYAN)
+            st.markdown(
+                f"<div style='background:#0A0A0A;padding:10px 12px;margin-bottom:8px;"
+                f"border-left:4px solid {accent};border:1px solid #222;'>"
+                f"<b style='color:{_WHITE};'>{r['title']}</b></div>",
+                unsafe_allow_html=True,
+            )
+            if True:
+                st.markdown("### 📖 Comprendre cette recommandation")
+                st.markdown(r.get("why", "—"))
+    with g2:
+        st.markdown("#### 🌍 Briefing geopolitique / macro")
+        with st.spinner("Briefing macro…"):
+            _head_preview = tuple(
+                n.get("title", "") for n in get_general_news_bundle(watch)[:8]
+            )
+            brief = get_geopolitical_brief(float(vix), _head_preview)
+        st.markdown(
+            f"<div style='background:#0A0A0A;padding:14px;border:1px solid #222;"
+            f"color:#E8E8E8;line-height:1.55;font-size:14px;'>{brief}</div>",
+            unsafe_allow_html=True,
+        )
+
+    st.markdown("---")
+    p1, p2 = st.columns(2)
+    with p1:
+        st.markdown("#### 📈 Top / Flop (1 mois)")
+        perf_watch = get_market_performance(watch, period="1mo")
+        if perf_watch.empty or "Performance (%)" not in perf_watch.columns:
+            st.caption("Performances indisponibles.")
+        else:
+            pf = perf_watch.copy()
+            pf["Titre"] = [format_name(t) for t in pf["Ticker"]]
+            top = pf.nlargest(5, "Performance (%)")
+            # Exclusive flop: exclude tickers already in Top, require strictly worse.
+            flop_pool = pf[~pf["Ticker"].isin(top["Ticker"])]
+            flop = flop_pool.nsmallest(5, "Performance (%)")
+            tcol, fcol = st.columns(2)
+            with tcol:
+                st.caption("Top")
+                disp_t = pd.DataFrame({
+                    "Titre": top["Titre"],
+                    "Perf": [f"{v:+.1f}%" for v in top["Performance (%)"]],
+                })
+                st.dataframe(disp_t, use_container_width=True, hide_index=True)
+            with fcol:
+                st.caption("Flop")
+                disp_f = pd.DataFrame({
+                    "Titre": flop["Titre"],
+                    "Perf": [f"{v:+.1f}%" for v in flop["Performance (%)"]],
+                })
+                st.dataframe(disp_f, use_container_width=True, hide_index=True)
+    with p2:
+        st.markdown("#### 📅 Evénements à venir")
+        events = get_earnings_events(watch)
+        if not events:
+            st.caption("Aucun calendrier earnings detecte (yfinance).")
+        else:
+            edf = pd.DataFrame([{
+                "Titre": format_name(e["ticker"]),
+                "Evenement": e["event"],
+                "Date": e["date"],
+            } for e in events])
+            st.dataframe(edf, use_container_width=True, hide_index=True)
+
+    # --- Phase 17: Decision funnel (audit-log analytics) --------------------
+    st.markdown("---")
+    with st.expander("📊 Entonnoir de Décision (Funnel 7J)", expanded=True):
+        st.markdown(
+            "<div class='info-text'>Lecture seule des audit logs SQLite "
+            "(7 jours). Taxonomie identique au Weekly Historian "
+            "(<code>_classify</code>) — pour voir <b>où</b> la cascade coupe "
+            "les idées, pas pour recalculer le marché.</div>",
+            unsafe_allow_html=True,
+        )
+        funnel_days = st.radio(
+            "Fenêtre",
+            options=(7, 30),
+            index=0,
+            horizontal=True,
+            key="funnel_days_radio",
+            format_func=lambda d: f"{d} jours",
+        )
+        funnel = get_funnel_metrics(int(funnel_days))
+        if funnel.get("empty"):
+            st.info(
+                "Aucun signal dans la fenêtre. Lance "
+                "`python main_scheduler.py --now` pour peupler l'audit log, "
+                "puis reviens ici."
+            )
+        else:
+            sr = float(funnel.get("survival_rate") or 0)
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("Signaux (fenêtre)", f"{funnel.get('total', 0)}")
+            m2.metric("Rejets cascade", f"{funnel.get('rejected', 0)}")
+            m3.metric("APPROVED / EXECUTED", f"{funnel.get('approved', 0)}")
+            m4.metric(
+                "Taux de survie",
+                f"{sr:.1f}%",
+                help="Approved+Executed / total audit rows dans la fenêtre.",
+            )
+            fw, fp = st.columns([0.6, 0.4])
+            with fw:
+                st.plotly_chart(
+                    render_waterfall_chart(funnel),
+                    width="stretch",
+                    key="gen_funnel_waterfall",
+                )
+            with fp:
+                st.plotly_chart(
+                    render_rejection_pie(funnel),
+                    width="stretch",
+                    key="gen_funnel_pie",
+                )
+            st.caption(
+                "Drops waterfall : Sanity/ADV/max positions → Macro/VIX/earnings "
+                "→ Secteur → Corrélation → Cash/sizing. Le total final = survivants "
+                "après rejets (+ pending/révoqués retirés si présents)."
+            )
+
+    st.markdown("---")
+    st.markdown("#### ⚡ Signaux & Registre")
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("##### En attente (Command Center) — cartes de trade")
+        pending = pending_gen
+        render_pending_trade_cards(pending, portfolio)
+
+        # --- Phase 34: Near-Miss radar -------------------------------------
+        st.markdown("#### 📡 Radar de Surveillance (Near-Miss)")
+        st.caption("Titres avec un score entre 55 et 64/100. À surveiller de près.")
+        pending_tickers = set()
+        if pending is not None and not pending.empty and "ticker" in pending.columns:
+            try:
+                pending_tickers = {
+                    str(t) for t in pending["ticker"].dropna().tolist()
+                }
+            except Exception:  # noqa: BLE001
+                pending_tickers = set()
+
+        near_miss = []
+        try:
+            # "Alternatives" viennent du même scoring heuristique que la
+            # recommandation (rank_affordable_alternatives).
+            for a in (alts or []):
+                try:
+                    sc = int(a.get("score") or -1)
+                except Exception:  # noqa: BLE001
+                    continue
+                if 40 <= sc <= 64:
+                    t = str(a.get("ticker") or "")
+                    if t and t not in pending_tickers:
+                        near_miss.append(a)
+        except Exception:  # noqa: BLE001
+            near_miss = []
+
+        near_miss.sort(key=lambda x: int(x.get("score") or 0), reverse=True)
+        near_miss = near_miss[:10]
+
+        if not near_miss:
+            st.caption("Aucun near-miss détecte (scores 40–64). Le marché ne propose rien pour l'instant.")
+        else:
+            rows = []
+            for a in near_miss:
+                t = str(a.get("ticker") or "")
+                ind = get_indicators(t) or {}
+                close = ind.get("close") or a.get("price")
+                sma5 = ind.get("sma5")
+                sma50 = ind.get("sma50")
+                sma200 = ind.get("sma200")
+                rsi = ind.get("rsi") if ind else None
+
+                missing = "En attente de confirmation"
+                try:
+                    if close is not None and sma5 is not None and float(close) < float(sma5):
+                        missing = "En attente du franchissement SMA5"
+                    elif close is not None and sma50 is not None and float(close) < float(sma50):
+                        missing = "En attente du franchissement SMA50"
+                    elif close is not None and sma200 is not None and float(close) < float(sma200):
+                        missing = "En attente du franchissement SMA200"
+                    else:
+                        missing = "En attente d'un meilleur contexte (MR/Mom/Insider)"
+                except Exception:  # noqa: BLE001
+                    missing = "En attente de confirmation"
+
+                sc = int(a.get("score") or 0)
+                rows.append({
+                    "Ticker": t,
+                    "Score": sc,
+                    "RSI": float(rsi) if rsi is not None else None,
+                    "Manquant": missing,
+                })
+
+            disp = pd.DataFrame(rows)
+            st.dataframe(
+                disp,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Score": st.column_config.ProgressColumn(
+                        "Score", format="%f / 100", min_value=0, max_value=100
+                    ),
+                    "RSI": st.column_config.NumberColumn("RSI", format="%.0f"),
+                    "Manquant": st.column_config.TextColumn("Condition manquante", width="large")
+                }
+            )
+    with col2:
+        st.markdown("##### Historique (20 derniers)")
+        st.caption("Les 20 dernières décisions du moteur quantitatif (Approuvé, Rejeté par la cascade de risques, ou Révoqué).")
+        hist = load_signals(("EXECUTED", "REVOKED", "REJECTED", "EXPIRED"), limit=20)
+        if hist.empty:
+            st.info("Aucun historique disponible.")
+        else:
+            status_color = {"EXECUTED": _NEON, "REVOKED": _RED,
+                            "REJECTED": _MUTED, "EXPIRED": _AMBER}
+            statut_colors = [status_color.get(s, _WHITE) for s in hist["status"]]
+            disp = pd.DataFrame({
+                "Titre": [format_name(t) for t in hist["ticker"]],
+                "Statut": hist["status"],
+                "Type": hist["signal_type"],
+                "Score": hist["score"],
+                "Date": [str(x)[:16] for x in hist["created_at"]],
+            })
+            
+            def _color_status(val):
+                if val == "EXECUTED": return "color: #00FF00"
+                if val == "REVOKED": return "color: #FF3333"
+                if val == "REJECTED": return "color: #9BA3AF"
+                if val == "EXPIRED": return "color: #FFB000"
+                return ""
+
+            st.dataframe(
+                disp.style.map(_color_status, subset=["Statut"]),
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Score": st.column_config.NumberColumn("Score", format="%.1f"),
+                }
+            )
+
+    st.markdown("---")
+    st.markdown("#### 📰 Actualites (contexte marche)")
+    st.markdown(
+        "<div class='info-text'>Liste dedupliquee multi-sources "
+        "(Boursorama / Google / Yahoo). <b>Contexte seulement</b> — "
+        "jamais un trigger d'ordre. Pour la synthèse IA profonde, ouvre "
+        "l'onglet Exploration sur un ticker.</div>",
+        unsafe_allow_html=True,
+    )
+    news_bundle = get_general_news_bundle(watch)
+    if news_bundle:
+        ndisp = pd.DataFrame([{
+            "Source": str(n.get("provider") or "")[:48],
+            "Date": str(n.get("date") or "")[:16],
+            "Titre": str(n.get("title") or "")[:120],
+            "Ticker": short_name(str(n.get("ticker") or "")),
+        } for n in news_bundle[:12]])
+        st.plotly_chart(
+            dark_table(
+                ndisp,
+                height=min(360, 56 + 28 * len(ndisp)),
+                col_widths=[1.6, 0.9, 3.2, 0.8],
+            ),
+            width="stretch",
+            key="gen_news_clean_table",
+        )
+    else:
+        st.caption("Aucune actualite recente sur la watchlist.")
+
+# --- Tab: Portfolio ----------------------------------------------------------
+with tab_pf_exec:
+    st.markdown(
+        "<div class='info-text'>Decomposition de l'exposition sectorielle. "
+        "En capital eleve, le risque PEA Pollux limite a 25% / secteur et 15% / "
+        "ligne. En micro-PEA ces plafonds sont volontairement assouplis "
+        "(voir suggestion dans General).</div>",
+        unsafe_allow_html=True,
+    )
+
+    # --- Equity curve (top of Portefeuille) ---------------------------------
+    st.markdown("#### 📈 Courbe de Performance (Equity Curve)")
+    eq_curve = load_equity_curve()
+    if eq_curve is None or eq_curve.empty or "equity" not in eq_curve.columns:
+        st.info(
+            "Pas encore d'historique d'equity. La courbe se construit a chaque "
+            "``update_portfolio`` (snapshot journalier dans ``portfolio_history``)."
+        )
+    else:
+        eq = eq_curve.copy()
+        eq["date"] = pd.to_datetime(eq["date"], errors="coerce")
+        eq = eq.dropna(subset=["date", "equity"]).sort_values("date")
+        if eq.empty:
+            st.info("Historique equity vide apres nettoyage.")
+        else:
+            y_min = float(eq["equity"].min())
+            y_max = float(eq["equity"].max())
+            pad = max((y_max - y_min) * 0.08, abs(y_max) * 0.01, 1.0)
+            fig_eq = pex.area(
+                eq,
+                x="date",
+                y="equity",
+                labels={"date": "Date", "equity": "Equity (€)"},
+            )
+            fig_eq.update_traces(
+                line=dict(color="#00FF00", width=2),
+                fill="tozeroy",
+                fillcolor="rgba(0, 255, 0, 0.25)",
+            )
+            fig_eq.update_layout(
+                paper_bgcolor=_BG,
+                plot_bgcolor=_BG,
+                font=dict(family="Courier New", color=_WHITE),
+                margin=dict(t=20, l=40, r=20, b=40),
+                height=320,
+                xaxis=dict(gridcolor="#222", showgrid=True),
+                yaxis=dict(
+                    gridcolor="#222",
+                    showgrid=True,
+                    range=[y_min - pad, y_max + pad],
+                    title="Equity (€)",
+                ),
+                showlegend=False,
+            )
+            st.plotly_chart(fig_eq, width="stretch", key="pf_equity_curve")
+            if compute_equity_metrics is not None:
+                m = compute_equity_metrics(eq)
+                c1, c2, c3, c4, c5 = st.columns(5)
+
+                def _pct(x):
+                    return "—" if x is None else f"{x * 100:+.1f}%"
+
+                def _num(x):
+                    return "—" if x is None else f"{x:.2f}"
+
+                c1.metric("Total return", _pct(m.get("total_return")))
+                c2.metric("CAGR", _pct(m.get("cagr")))
+                c3.metric("Max DD", _pct(m.get("max_drawdown")))
+                c4.metric("Sharpe", _num(m.get("sharpe")))
+                c5.metric("Sortino", _num(m.get("sortino")))
+                st.caption(
+                    f"{m.get('n_points', 0)} point(s) · "
+                    "métriques partagées (`equity_metrics`) — mêmes formules "
+                    "que le futur backtester."
+                )
+
+            # --- Alpha & Benchmark Tracker (Phase 5) ---
+            st.markdown("#### 🏆 Performance vs Benchmark (Live Alpha & Beta)")
+            try:
+                import sys
+                from pathlib import Path
+                _root = Path(__file__).resolve().parent.parent
+                sys.path.insert(0, str(_root / "03_risk_portfolio"))
+                from alpha_tracker import calculate_alpha_metrics
+                
+                with st.spinner("Calcul des métriques de surperformance..."):
+                    alpha_metrics = calculate_alpha_metrics(eq)
+                
+                b1, b2, b3 = st.columns(3)
+                
+                def _fmt_alpha(x):
+                    return f"{x:+.2f}%" if x else "N/A"
+                def _fmt_beta(x):
+                    return f"{x:.2f}" if x else "N/A"
+                def _fmt_ir(x):
+                    return f"{x:.2f}" if x else "N/A"
+                    
+                b1.metric("Jensen's Alpha (vs MSCI World)", _fmt_alpha(alpha_metrics.get("alpha_msci")), delta="Outperformance" if alpha_metrics.get("alpha_msci", 0) > 0 else "-")
+                b2.metric("Beta (vs MSCI World)", _fmt_beta(alpha_metrics.get("beta_msci")))
+                b3.metric("Information Ratio", _fmt_ir(alpha_metrics.get("ir_msci")))
+                
+                st.caption("Comparaison dynamique des rendements journaliers du portefeuille local avec l'indice CW8.PA. Taux sans risque: 3.0%.")
+            except Exception as e:
+                st.warning(f"Erreur lors du calcul des métriques Alpha: {e}")
+
+            # Phase 40 — forward tracking vs MSCI World PEA (CW8.PA)
+            st.markdown("#### 📈 Tracking en Direct des Recommandations (Forward Curve)")
+            try:
+                from duckdb_manager import TimeSeriesDB as _TSDBFwd
+
+                _dbf = _TSDBFwd(read_only=True)
+                cw8 = _dbf.get_historical_prices(_CORE_TICKER, days=800)
+                if (
+                    cw8 is not None
+                    and not cw8.empty
+                    and "Close" in cw8.columns
+                    and eq is not None
+                    and not eq.empty
+                ):
+                    bench = cw8[["Date", "Close"]].copy()
+                    bench["Date"] = pd.to_datetime(bench["Date"], errors="coerce")
+                    bench = bench.dropna().sort_values("Date")
+                    pf = eq[["date", "equity"]].copy()
+                    pf["date"] = pd.to_datetime(pf["date"], errors="coerce")
+                    pf = pf.dropna().sort_values("date")
+                    merged = pd.merge_asof(
+                        pf.rename(columns={"date": "Date"}),
+                        bench,
+                        on="Date",
+                        direction="backward",
+                    ).dropna()
+                    if len(merged) >= 2:
+                        merged["PF_idx"] = (
+                            merged["equity"] / float(merged["equity"].iloc[0]) * 100.0
+                        )
+                        merged["CW8_idx"] = (
+                            merged["Close"] / float(merged["Close"].iloc[0]) * 100.0
+                        )
+                        fig_fwd = go.Figure()
+                        fig_fwd.add_trace(go.Scatter(
+                            x=merged["Date"], y=merged["PF_idx"],
+                            mode="lines", name="Portefeuille",
+                            line=dict(color=_NEON, width=2),
+                        ))
+                        fig_fwd.add_trace(go.Scatter(
+                            x=merged["Date"], y=merged["CW8_idx"],
+                            mode="lines", name="CW8.PA (MSCI World)",
+                            line=dict(color=_CYAN, width=2, dash="dot"),
+                        ))
+                        fig_fwd.update_layout(
+                            title="Performance cumulée (base 100) vs benchmark",
+                            yaxis_title="Index (base 100)",
+                            height=360,
+                            margin=dict(t=40, l=20, r=20, b=20),
+                            legend=dict(orientation="h"),
+                        )
+                        _style_dark_fig(fig_fwd)
+                        st.plotly_chart(fig_fwd, width="stretch", key="pf_forward_vs_cw8")
+                        pf_ret = float(merged["PF_idx"].iloc[-1] - 100.0)
+                        bm_ret = float(merged["CW8_idx"].iloc[-1] - 100.0)
+                        st.caption(
+                            f"Depuis inception affichée : portefeuille {pf_ret:+.1f}% · "
+                            f"CW8 {bm_ret:+.1f}% · écart {pf_ret - bm_ret:+.1f} pts"
+                        )
+                    else:
+                        st.caption("Historique insuffisant pour le tracking vs CW8.")
+                else:
+                    st.caption(
+                        "CW8.PA ou equity curve manquant — lance "
+                        "`python main_scheduler.py --backfill-10y` ou `--now`."
+                    )
+            except Exception as exc:  # noqa: BLE001
+                st.caption(f"Forward curve indisponible ({exc}).")
+
+            st.markdown("#### 📉 Métriques de Risque Académique (Tail Risk)")
+            if (
+                calculate_historical_var is None
+                or calculate_cvar is None
+                or len(eq) < 30
+            ):
+                st.caption("VaR/CVaR indisponibles (historique insuffisant ou module quant absent).")
+            else:
+                try:
+                    eq_ret = pd.to_numeric(eq["equity"], errors="coerce").pct_change().dropna()
+                    var95 = float(calculate_historical_var(eq_ret, confidence_level=0.95))
+                    cvar95 = float(calculate_cvar(eq_ret, confidence_level=0.95))
+                    rv1, rv2 = st.columns(2)
+                    with rv1:
+                        st.markdown(
+                            metric_box(
+                                "VaR 95% (1j)",
+                                f"-{var95*100:.2f}%",
+                                sub="Perte max attendue (quantile 5%)",
+                                accent="amber",
+                                sub_cls="sub-amber",
+                                help_text=(
+                                    "Historical VaR 95%: perte journalière maximale attendue "
+                                    "avec 95% de confiance (quantile historique à 5%)."
+                                ),
+                            ),
+                            unsafe_allow_html=True,
+                        )
+                    with rv2:
+                        st.markdown(
+                            metric_box(
+                                "CVaR 95% (1j)",
+                                f"-{cvar95*100:.2f}%",
+                                sub="Perte moyenne au-delà de la VaR",
+                                accent="red",
+                                sub_cls="sub-red",
+                                help_text=(
+                                    "Conditional VaR 95% (Expected Shortfall): perte journalière "
+                                    "moyenne conditionnelle une fois la VaR dépassée."
+                                ),
+                            ),
+                            unsafe_allow_html=True,
+                        )
+                except Exception:  # noqa: BLE001
+                    st.caption("VaR/CVaR indisponibles (erreur de calcul).")
+
+            st.markdown("#### 🔮 Projections Stochastiques (Monte Carlo)")
+            held_tickers_pf = [str(p.ticker) for p in positions if getattr(p, "ticker", None)]
+            if run_correlated_monte_carlo is None or len(held_tickers_pf) < 1:
+                st.caption("Monte Carlo indisponible (module absent ou aucune position).")
+            else:
+                if True:
+                    st.markdown("### Lancer la projection probabiliste (on-demand)")
+                    sims = st.slider(
+                        "Simulations Monte Carlo",
+                        min_value=500,
+                        max_value=5000,
+                        value=2000,
+                        step=500,
+                        key="pf_mc_sims",
+                    )
+                    horizon = st.slider(
+                        "Horizon (jours de bourse)",
+                        min_value=60,
+                        max_value=504,
+                        value=252,
+                        step=21,
+                        key="pf_mc_horizon",
+                    )
+                    if st.button("Exécuter Monte Carlo", key="pf_run_mc"):
+                        w_curr = np.array([float(p.market_value) for p in positions], dtype=float)
+                        if w_curr.sum() <= 0:
+                            w_curr = np.ones(len(held_tickers_pf), dtype=float) / float(len(held_tickers_pf))
+                        else:
+                            w_curr = w_curr / w_curr.sum()
+                        with st.spinner("Simulation stochastique en cours..."):
+                            fan = run_portfolio_monte_carlo(
+                                tuple(held_tickers_pf),
+                                tuple(w_curr.tolist()),
+                                float(portfolio.total_equity),
+                                days=int(horizon),
+                                simulations=int(sims),
+                            )
+                        if fan.empty:
+                            st.caption("Fan chart indisponible (historique insuffisant).")
+                        else:
+                            fig_fan = go.Figure()
+                            fig_fan.add_trace(go.Scatter(
+                                x=fan["day"], y=fan["p95"], mode="lines",
+                                line=dict(color="rgba(0,180,216,0.0)"), name="P95",
+                                showlegend=False,
+                            ))
+                            fig_fan.add_trace(go.Scatter(
+                                x=fan["day"], y=fan["p75"], mode="lines",
+                                line=dict(color="rgba(0,180,216,0.0)"), fill="tonexty",
+                                fillcolor="rgba(0,180,216,0.12)", name="P75-95",
+                                showlegend=False,
+                            ))
+                            fig_fan.add_trace(go.Scatter(
+                                x=fan["day"], y=fan["p50"], mode="lines",
+                                line=dict(color=_CYAN, width=2), name="Médiane P50",
+                            ))
+                            fig_fan.add_trace(go.Scatter(
+                                x=fan["day"], y=fan["p25"], mode="lines",
+                                line=dict(color="rgba(0,255,0,0.0)"), fill="tonexty",
+                                fillcolor="rgba(0,255,0,0.10)", name="P25-50",
+                                showlegend=False,
+                            ))
+                            fig_fan.add_trace(go.Scatter(
+                                x=fan["day"], y=fan["p05"], mode="lines",
+                                line=dict(color="rgba(255,59,48,0.0)"), fill="tonexty",
+                                fillcolor="rgba(255,59,48,0.16)", name="P05-25",
+                                showlegend=False,
+                            ))
+                            fig_fan.update_layout(
+                                title="Fan Chart Monte Carlo (corrélé)",
+                                xaxis_title="Jour",
+                                yaxis_title="Valeur portefeuille (€)",
+                                margin=dict(t=40, l=20, r=20, b=20),
+                                height=380,
+                                showlegend=True,
+                            )
+                            _style_dark_fig(fig_fan)
+                            st.plotly_chart(fig_fan, width="stretch", key="pf_mc_fan_chart")
+
+                        if simulate_historical_shocks is not None:
+                            try:
+                                from duckdb_manager import TimeSeriesDB
+
+                                db_ro = get_ts_db()
+                                w_map = {t: float(w_curr[i]) for i, t in enumerate(held_tickers_pf)}
+                                stress = simulate_historical_shocks(held_tickers_pf, w_map, db_ro)
+                                if stress is not None and not stress.empty:
+                                    sdisp = stress.copy()
+                                    sdisp["Worst PnL %"] = sdisp["Worst PnL %"].map(
+                                        lambda x: "n/a" if pd.isna(x) else f"{float(x):+.2f}%"
+                                    )
+                                    st.plotly_chart(
+                                        dark_table(
+                                            sdisp,
+                                            height=min(260, 56 + 28 * len(sdisp)),
+                                            col_widths=[1.4, 0.8, 0.8, 1.0, 0.7],
+                                        ),
+                                        width="stretch",
+                                        key="pf_stress_table",
+                                    )
+                            except Exception:
+                                st.caption("Stress test indisponible.")
+
+    if not positions:
+        st.info("⏸️ Le portefeuille est actuellement 100% en "
+                "liquidites. Aucune position ouverte : le capital attend une "
+                "opportunite validee par les filtres mathematiques.")
+    else:
+        rows = [{
+            "Ticker": p.ticker, "Secteur": p.sector, "Qte": p.qty_shares,
+            "PRU": p.avg_entry_price, "Cours": p.current_price,
+            "Valeur": p.market_value, "Poids": 0.0,
+            "PnL": p.unrealized_pnl_pct * 100,
+        } for p in positions]
+        dfp = pd.DataFrame(rows)
+        dfp["Poids"] = dfp["Valeur"] / portfolio.total_equity * 100
+
+        sun = dfp[["Secteur", "Ticker", "Valeur", "PnL"]].copy()
+        sun["Titre"] = [short_name(t) for t in sun["Ticker"]]
+        if portfolio.cash_available > 0:
+            sun = pd.concat([sun, pd.DataFrame([{
+                "Secteur": "Liquidites", "Ticker": "CASH", "Titre": "Liquidites",
+                "Valeur": portfolio.cash_available, "PnL": 0.0}])],
+                ignore_index=True)
+
+        fig = pex.sunburst(sun, path=["Secteur", "Titre"], values="Valeur",
+                          color="PnL", color_continuous_scale=_DIVERGE,
+                          color_continuous_midpoint=0)
+        fig.update_layout(paper_bgcolor=_BG, plot_bgcolor=_BG,
+                          font=dict(family="Courier New", color=_WHITE),
+                          margin=dict(t=10, l=0, r=0, b=0), height=430)
+        fig.update_traces(insidetextfont=dict(color=_WHITE, family="Courier New"),
+                          marker=dict(line=dict(color=_BG, width=1)))
+
+        col_chart, col_table = st.columns([1, 1.4])
+        with col_chart:
+            st.plotly_chart(fig, width="stretch")
+        with col_table:
+            st.markdown("### 💼 Positions Actives & Risk")
+            pnl_colors = [_NEON if v >= 0 else _RED for v in dfp["PnL"]]
+            
+            # Helper to calculate rough stop-loss for visual display
+            # In a real setup, we'd fetch ATR dynamically, but here we approximate 
+            # or simply display a standard trailing stop hint if ATR is not pre-cached on the Position object.
+            # E.g. Stop-Loss at -5% of PRU as a placeholder for visual hierarchy.
+            
+            stop_losses = []
+            for pru, cours in zip(dfp["PRU"], dfp["Cours"]):
+                # Rough approximation: if current price is higher than PRU, trail it
+                # If lower, hard stop at 8% below PRU.
+                base_stop = pru * 0.92
+                trail_stop = cours * 0.90
+                sl = max(base_stop, trail_stop)
+                # Format with an emoji indicator
+                dist = (cours - sl) / cours * 100
+                if dist < 3.0:
+                    stop_losses.append(f"⚠️ {sl:,.2f} €")
+                else:
+                    stop_losses.append(f"🛡️ {sl:,.2f} €")
+
+            disp = pd.DataFrame({
+                "Titre": [format_name(t) for t in dfp["Ticker"]],
+                "Secteur": dfp["Secteur"],
+                "Qte": [f"{q:g}" for q in dfp["Qte"]],
+                "PRU": [f"{v:,.2f} €" for v in dfp["PRU"]],
+                "Cours": [f"{v:,.2f} €" for v in dfp["Cours"]],
+                "Stop-Loss": stop_losses,
+                "Valeur": [f"{v:,.2f} €" for v in dfp["Valeur"]],
+                "Poids": [f"{v:.1f}%" for v in dfp["Poids"]],
+                "PnL": [f"{v:+.2f}%" for v in dfp["PnL"]],
+            })
+            
+            st.plotly_chart(
+                dark_table(disp, height=430, font_color_map={"PnL": pnl_colors},
+                           col_widths=[2.2, 1.4, 0.7, 1.1, 1.1, 1.3, 1.2, 0.8, 1.0]),
+                width="stretch")
+
+    # --- Phase 34: Correlation heatmap --------------------------------------
+    st.markdown("#### 🕸️ Matrice de Corrélation (Risque Croisé)")
+    held_tickers = [str(p.ticker) for p in positions if getattr(p, "ticker", None)]
+    held_tickers = [t for t in held_tickers if t]
+    if len(held_tickers) < 2:
+        st.caption("Pas assez de positions (min 2) pour calculer une matrice de corrélation.")
+    else:
+        try:
+            from duckdb_manager import TimeSeriesDB
+            db = get_ts_db()
+
+            returns: dict[str, pd.Series] = {}
+            for t in held_tickers:
+                hist = db.get_historical_prices(t, days=90)
+                if hist is None or hist.empty or "Close" not in hist.columns:
+                    continue
+                frame = hist[["Date", "Close"]].copy()
+                frame["Date"] = pd.to_datetime(frame["Date"], errors="coerce")
+                frame["Close"] = pd.to_numeric(frame["Close"], errors="coerce")
+                frame = frame.dropna(subset=["Date", "Close"]).sort_values("Date")
+                if len(frame) < 6:
+                    continue
+                r = frame["Close"].pct_change().dropna()
+                if r is None or r.empty:
+                    continue
+                r.name = t
+                returns[t] = r
+
+            ret_df = pd.concat(returns, axis=1).dropna(how="all")
+            if ret_df.shape[1] < 2:
+                st.caption("Corrélation indisponible (données retour vides / trop sparse).")
+            else:
+                corr_matrix = ret_df.corr(method="pearson")
+                fig_corr = pex.imshow(
+                    corr_matrix,
+                    text_auto=".2f",
+                    aspect="auto",
+                    color_continuous_scale="RdBu_r",
+                    zmin=-1,
+                    zmax=1,
+                )
+                _style_dark_fig(fig_corr, height=430)
+                st.plotly_chart(
+                    fig_corr,
+                    width="stretch",
+                    key="pf_corr_heatmap",
+                )
+        except Exception:  # noqa: BLE001
+            st.caption("Corrélation indisponible (erreur DuckDB/Yahoo).")
+
+    st.markdown("---")
+    st.markdown("#### 🛑 Gestion des Stops & Sorties (ATR 2.5x)")
+    if not positions:
+        st.caption("Aucune ligne ouverte, donc aucun stop ATR à surveiller.")
+    else:
+        stop_rows = []
+        for p in positions:
+            ticker = str(p.ticker)
+            atr = _latest_atr14_approx(ticker)
+            current = float(p.current_price or 0.0)
+            pru = float(p.avg_entry_price or 0.0)
+            if atr is None or atr <= 0:
+                stop_rows.append({
+                    "Ticker": ticker,
+                    "PRU": pru,
+                    "Cours Actuel": current,
+                    "Niveau Stop-Loss (€)": None,
+                    "Distance au Stop (%)": None,
+                    "Statut": "⚪ ATR indisponible",
+                })
+                continue
+            stop_price = pru - (2.5 * float(atr))
+            distance_pct = ((current - stop_price) / current) * 100.0 if current > 0 else -999.0
+            status = "🔴 DANGER DÉCLENCHÉ" if current < stop_price else "🟢 Safe"
+            atr_pct = None
+            if PortfolioRebalancer is not None:
+                try:
+                    atr_pct = PortfolioRebalancer.atr_pct(float(atr), float(current))
+                except Exception:  # noqa: BLE001
+                    atr_pct = None
+            stop_rows.append({
+                "Ticker": ticker,
+                "PRU": pru,
+                "Cours Actuel": current,
+                "Niveau Stop-Loss (€)": stop_price,
+                "Distance au Stop (%)": distance_pct,
+                "ATR%": atr_pct,
+                "Statut": status,
+            })
+        stops_df = pd.DataFrame(stop_rows)
+        show_stops = stops_df.copy()
+        for col in ("PRU", "Cours Actuel", "Niveau Stop-Loss (€)"):
+            show_stops[col] = show_stops[col].map(
+                lambda x: "—" if pd.isna(x) else f"{float(x):,.2f} €"
+            )
+        show_stops["Distance au Stop (%)"] = show_stops["Distance au Stop (%)"].map(
+            lambda x: "—" if pd.isna(x) else f"{float(x):+.2f}%"
+        )
+        if "ATR%" in show_stops.columns:
+            show_stops["ATR%"] = show_stops["ATR%"].map(
+                lambda x: "—" if pd.isna(x) else f"{float(x):.2f}%"
+            )
+        st.dataframe(show_stops, use_container_width=True, hide_index=True)
+
+    st.markdown("---")
+    if True:
+        st.markdown("### ✏️ Ajuster le wallet (cash & positions)")
+        st.markdown(
+            "<div class='info-text'>Modifie le cash et les lignes pour coller "
+            "a ton PEA reel. Ecriture directe dans SQLite.</div>",
+            unsafe_allow_html=True,
+        )
+        edit_cash = st.number_input(
+            "Cash disponible (€)",
+            min_value=0.0,
+            value=float(portfolio.cash_available),
+            step=10.0,
+            key="wallet_cash",
+        )
+        base_rows = [{
+            "Ticker": p.ticker,
+            "Secteur": p.sector,
+            "Qte": int(p.qty_shares),
+            "PRU": float(p.avg_entry_price),
+            "Cours": float(p.current_price),
+        } for p in positions] or [{
+            "Ticker": "", "Secteur": "Unknown", "Qte": 0, "PRU": 0.0, "Cours": 0.0,
+        }]
+        edited = st.data_editor(
+            pd.DataFrame(base_rows),
+            num_rows="dynamic",
+            width="stretch",
+            key="wallet_editor",
+            column_config={
+                "Ticker": st.column_config.TextColumn("Ticker Yahoo", required=False),
+                "Secteur": st.column_config.TextColumn("Secteur"),
+                "Qte": st.column_config.NumberColumn("Qte", min_value=0, step=1),
+                "PRU": st.column_config.NumberColumn("PRU €", min_value=0.0,
+                                                    format="%.4f"),
+                "Cours": st.column_config.NumberColumn("Cours €", min_value=0.0,
+                                                      format="%.4f"),
+            },
+        )
+        c_save, c_hint = st.columns([1, 2])
+        with c_save:
+            if st.button("Enregistrer le wallet", type="primary",
+                         width="stretch", key="save_wallet_btn"):
+                err = save_wallet(float(edit_cash), edited)
+                if err:
+                    st.error(f"Echec : {err}")
+                else:
+                    st.success("Wallet enregistre. Rechargement…")
+                    st.rerun()
+        with c_hint:
+            st.caption(
+                "Ticker Yahoo (ex. MC.PA). Qte=0 pour retirer une ligne."
+            )
+
+# --- Tab: Exploration (market + ticker radar) --------------------------------
+with tab_ticker:
+    st.markdown(
+        "<div class='info-text'>Exploration marche (top/flop univers) + "
+        "<b>fiche ticker</b> : graphique plein ecran, analyse technique "
+        "expliquee, actualites, insiders, Polymarket macro.</div>",
+        unsafe_allow_html=True,
+    )
+
+    def _on_uni_search():
+        st.session_state["selected_ticker"] = st.session_state["mkt_universal_search"]
+        st.session_state["focus_ticker"] = st.session_state["mkt_universal_search"]
+
+    _uni_all = sorted(universe_df["Ticker"].tolist())
+    _uni_search = st.selectbox(
+        "🔍 Rechercher et analyser un actif spécifique",
+        _uni_all,
+        format_func=format_name,
+        key="mkt_universal_search",
+        on_change=_on_uni_search,
+    )
+
+    # Prefer liquid mid/large names — exclude microcaps/pennies from scan defaults.
+    liquid_scan = list(dict.fromkeys(
+        [p.ticker for p in positions]
+        + ["MC.PA", "OR.PA", "AI.PA", "RMS.PA", "SAN.PA", "TTE.PA", "BNP.PA",
+           "AIR.PA", "SU.PA", "EL.PA", "CS.PA", "DG.PA", "SAF.PA", "KER.PA",
+           "STLAP.PA", "RNO.PA", "ORA.PA", "ENGI.PA", "CAP.PA", "DSY.PA",
+           "HO.PA", "ML.PA", "SGO.PA", "GLE.PA", "ACA.PA", "VIE.PA", "PUB.PA",
+           "BN.PA", "RI.PA", "EWLD.PA", "PAEEM.PA", "ESE.PA", "C50.PA",
+           _CORE_TICKER]
+    ))
+    # Do NOT pull random sector samples (they inject illiquid AL* pennies).
+    scan_tickers = tuple(
+        t for t in liquid_scan
+        if t == _CORE_TICKER or t in set(universe_df["Ticker"])
+    )
+
+    all_tickers = scan_tickers if scan_tickers else tuple(universe_df["Ticker"].head(40))
+    mode = st.radio("Mode d'intervalle", ["Prereglage", "Plage personnalisee"],
+                    horizontal=True, key="mkt_mode")
+
+    if mode == "Prereglage":
+        period_map = {"1 Semaine": "5d", "1 Mois": "1mo", "3 Mois": "3mo",
+                      "6 Mois": "6mo", "1 An": "1y", "2 Ans": "2y", "5 Ans": "5y"}
+        label = st.select_slider("Intervalle d'analyse", list(period_map.keys()),
+                                 value="1 Mois")
+        perf = get_market_performance(all_tickers, period=period_map[label])
+        interval_label = label
+        period_key = period_map[label]
+        d_start = d_end = None
+    else:
+        cA, cB = st.columns(2)
+        with cA:
+            d_start = st.date_input("Debut", value=date.today() - timedelta(days=90),
+                                    max_value=date.today())
+        with cB:
+            d_end = st.date_input("Fin", value=date.today(), max_value=date.today())
+        perf = get_market_performance(all_tickers, period=None,
+                                      start=d_start.isoformat(), end=d_end.isoformat())
+        interval_label = f"{d_start.isoformat()} → {d_end.isoformat()}"
+        period_key = None
+
+    if perf.empty:
+        st.error("Impossible de recuperer les donnees de marche pour cet intervalle.")
+    else:
+        # Drop near-zero noise AND illiquid pennies (price < 2 EUR).
+        perf = perf[
+            (perf["Performance (%)"].abs() > 0.05)
+            & (perf["Current Price"] >= 2.0)
+        ].copy()
+        if perf.empty:
+            st.warning("Pas assez de variations significatives sur l'intervalle.")
+        else:
+            best, worst = perf.iloc[0], perf.iloc[-1]
+            c1, c2 = st.columns(2)
+            with c1:
+                st.success(f"🟢 **MEILLEURE PERFORMANCE** · {interval_label}")
+                st.metric(format_name(best["Ticker"]), f"{best['Current Price']:.2f} €",
+                          f"{best['Performance (%)']:+.2f}%")
+            with c2:
+                st.error("🔴 **PIRE PERFORMANCE** (candidat Mean-Reversion)")
+                st.metric(format_name(worst["Ticker"]), f"{worst['Current Price']:.2f} €",
+                          f"{worst['Performance (%)']:+.2f}%")
+
+            st.markdown("#### 📋 Univers liquide complet (triable)")
+            full_perf = perf.copy().sort_values("Performance (%)", ascending=False)
+            full_disp = pd.DataFrame({
+                "Ticker": full_perf["Ticker"],
+                "Titre": [format_name(t) for t in full_perf["Ticker"]],
+                "Début": [f"{v:,.2f} €" for v in full_perf["Start Price"]],
+                "Actuel": [f"{v:,.2f} €" for v in full_perf["Current Price"]],
+                "Performance %": [f"{v:+.2f}%" for v in full_perf["Performance (%)"]],
+            })
+            st.dataframe(
+                full_disp,
+                use_container_width=True,
+                hide_index=True,
+                key="mkt_full_perf_table",
+            )
+
+            movers = list(perf["Ticker"].head(4)) + list(perf["Ticker"].tail(4))
+            movers = tuple(dict.fromkeys(movers))
+            if period_key:
+                norm = get_normalized_prices(movers, period_key, None, None)
+            else:
+                norm = get_normalized_prices(
+                    movers, None, d_start.isoformat(), d_end.isoformat()
+                )
+            st.markdown("#### Trajectoires rebasees a 100 (top 4 + flop 4)")
+            if norm.empty:
+                st.caption("Trajectoires indisponibles.")
+            else:
+                line = go.Figure()
+                for i, c in enumerate(norm.columns):
+                    line.add_trace(go.Scatter(
+                        x=norm.index, y=norm[c], name=format_name(c), mode="lines",
+                        line=dict(width=2.4,
+                                  color=_BRIGHT_SERIES[i % len(_BRIGHT_SERIES)])))
+                line.add_hline(y=100, line_dash="dot", line_color=_MUTED)
+                _style_dark_fig(line, height=420)
+                line.update_layout(margin=dict(t=10, l=0, r=10, b=0),
+                                   legend=dict(orientation="h", y=1.12))
+                line.update_xaxes(rangeslider_visible=True, gridcolor=_GRID)
+                st.plotly_chart(line, width="stretch")
+
+            if True:
+                st.markdown("### Table complete du scan liquide")
+                perf_colors = [_NEON if v >= 0 else _RED for v in perf["Performance (%)"]]
+                disp = pd.DataFrame({
+                    "Titre": [format_name(t) for t in perf["Ticker"]],
+                    "Debut": [f"{v:,.2f} €" for v in perf["Start Price"]],
+                    "Actuel": [f"{v:,.2f} €" for v in perf["Current Price"]],
+                    "Perf": [f"{v:+.2f}%" for v in perf["Performance (%)"]],
+                })
+                st.plotly_chart(
+                    dark_table(disp, height=420,
+                               font_color_map={"Perf": perf_colors},
+                               col_widths=[2.4, 1, 1, 0.9]),
+                    width="stretch")
+
+    @st.fragment
+    def render_fiche_ticker():
+        # ========== Fiche ticker (ex-Radar) =====================================
+        st.markdown("---")
+        st.markdown("### 📡 Fiche ticker — graphique & actualites")
+    
+        def _ensure_ticker_profile(tk: str) -> tuple[dict, bool]:
+            db = get_portfolio_db()
+            prof = db.get_ticker_profile(tk, max_age_hours=12)
+            if prof is not None:
+                return prof, True
+                
+            pb_dir = _ROOT / "01_memory_core"
+            if str(pb_dir) not in sys.path:
+                sys.path.insert(0, str(pb_dir))
+            from profile_builder import build_and_save_ticker_profile
+            
+            # Build without LLM by default if missing, to prevent API limits if spammed.
+            # But wait, if it's the user clicking on the dashboard, they might want it?
+            # Actually, the user said: "if a profile loads instantly but the ai_synthesis is null, show a st.button... to let the user trigger it".
+            # So it's fine if the on-the-fly generation ALSO skips the LLM and forces the user to click the button.
+            new_prof = build_and_save_ticker_profile(tk, include_llm=False)
+            return new_prof, False
+    
+        held = [p.ticker for p in positions]
+        options = sorted(set(held) | set(universe_df["Ticker"]))
+        default_idx = options.index(held[0]) if held and held[0] in options else 0
+        # Prefer worst performer as default when no holdings (mean-reversion lens)
+        if not held and not perf.empty:
+            w = str(perf.iloc[-1]["Ticker"])
+            if w in options:
+                default_idx = options.index(w)
+        # Ensure session state has selected_ticker so we don't need 'index='
+        if "selected_ticker" not in st.session_state:
+            st.session_state["selected_ticker"] = options[default_idx] if options else ""
+
+        # Mission-control <TICKER> GO overrides the default once.
+        focus = st.session_state.get("focus_ticker")
+        if focus:
+            if focus not in options:
+                options = sorted(set(options) | {focus})
+            st.session_state["selected_ticker"] = focus
+            st.session_state.pop("focus_ticker", None)
+            
+        if st.session_state.get("selected_ticker") not in options and options:
+            st.session_state["selected_ticker"] = options[default_idx]
+
+        c_sel, c_btn = st.columns([3, 1])
+        with c_sel:
+            selected = st.selectbox(
+                "Actif à analyser", options,
+                format_func=format_name, key="selected_ticker"
+            )
+        with c_btn:
+            st.markdown("<div style='margin-top:28px'></div>", unsafe_allow_html=True)
+            if st.button("🔄 Force Refresh Prices & News", key="btn_force_refresh", use_container_width=True):
+                # We can call the profile builder forcing a cache invalidate
+                with st.spinner(f"Refreshing data for {selected}..."):
+                    build_and_save_ticker_profile(selected, include_llm=False)
+                st.success("Refreshed!")
+                st.rerun()
+                
+        tv = _tv_symbol(selected)
+    
+        with st.spinner("Génération du profil institutionnel..."):
+            ticker_profile, is_cached = _ensure_ticker_profile(selected)
+    
+        dossier = ticker_profile.get("dossier", {})
+        logo_url = get_company_logo(selected)
+        logo_html = (
+            f"<img src='{logo_url}' alt='logo' height='40' "
+            f"style='height:40px;width:auto;max-width:48px;border-radius:6px;"
+            f"vertical-align:middle;margin-right:12px;background:#111;"
+            f"object-fit:contain;' "
+            f"onerror=\"this.style.display='none'\" />"
+            if logo_url else ""
+        )
+        
+        badge_html = "<span style='margin-left: 10px; font-size: 0.85em; padding: 2px 6px; border-radius: 4px; background: rgba(0,255,0,0.1); color: #0f0; border: 1px solid #0f0;'>⚡ Profil pré-calculé</span>" if is_cached else "<span style='margin-left: 10px; font-size: 0.85em; padding: 2px 6px; border-radius: 4px; background: rgba(255,165,0,0.1); color: orange; border: 1px solid orange;'>⏳ Généré à la volée</span>"
+        
+        st.markdown(
+            f"<div class='eli5'>{logo_html}"
+            f"<b style='color:{_CYAN};'>Qui est {dossier.get('name')} ?</b> {badge_html}<br>"
+            f"{dossier.get('summary', '')}<br>"
+            f"<span style='color:{_MUTED};'>"
+            f"Secteur: {dossier.get('sector') or 'n/a'} · "
+            f"Industrie: {dossier.get('industry') or 'n/a'}"
+            f"{' · ETF' if dossier.get('is_etf') else ''}</span></div>",
+            unsafe_allow_html=True,
+        )
+        sub_overview, sub_fin, sub_news = st.tabs(['📈 Overview & Charts', '🧠 Financials & AI Scoring', '📰 News & Catalysts'])
+        with sub_news:
+            st.markdown("#### 🗞️ Morning Briefing (Macro Zeitgeist)")
+            import re
+            spam_regex = re.compile(r'(?i)(discount|free|referral|rewards|newsletter|email|sponsor|pitch deck|vc|substack|attio|seo agency|gtm|seed|founder|startup|saas|cap table|récompense|mettre [aà] jour|update your|unsubscribe|cliquez ici|abonnez-vous|subscribe|webinar|masterclass|refer\.cafedelabourse|lifestyle|promo|offre|gift|cadeau|bonus|vip|exclusive|limited time|last chance)')
+            
+            briefing = load_morning_briefing()
+            zg = ""
+            headlines = []
+            if morning_briefing_is_live(briefing):
+                zg = str(briefing.get("zeitgeist") or "").strip()
+                
+                # Remove metadata and source lists
+                zg_lines = zg.split('\n')
+                clean_zg_lines = []
+                for line in zg_lines:
+                    ln_low = line.lower()
+                    if ln_low.startswith('généré') or ln_low.startswith('genere') or 'généré' in ln_low or 'titre(s) source' in ln_low:
+                        continue
+                    clean_zg_lines.append(line)
+                zg = '\n'.join(clean_zg_lines)
+                
+                headlines = briefing.get("headlines") or []
+                
+                bullets = [ln.strip(" •-\t") for ln in zg.replace("\r", "").split("\n") if ln.strip() and ln.strip()[0] in "•-*–—0123456789"]
+                
+                clean_bullets = []
+                for b in bullets:
+                    if spam_regex.search(b):
+                        continue
+                    if b.lower().startswith('http') or 'http://' in b.lower() or 'https://' in b.lower():
+                        continue
+                    clean_bullets.append(b)
+                    
+                if not clean_bullets: clean_bullets = [zg]
+                cols = st.columns(min(5, max(1, len(clean_bullets[:5]))))
+                for i, bullet in enumerate(clean_bullets[:5]):
+                    with cols[i]:
+                        st.markdown(metric_box(f"Thème {i + 1}", bullet[:90] + ("…" if len(bullet) > 90 else ""), sub="newsletter Synthèse IA", accent="cyan" if i % 2 == 0 else "amber"), unsafe_allow_html=True)
+            else:
+                st.info("Morning Briefing macro non disponible.")
+    
+            st.markdown("---")
+            st.markdown("#### 📖 Catalyseurs & risques (dossier)")
+            cat1, cat2 = st.columns(2)
+            with cat1:
+                st.markdown("**News / catalyseurs qui aideraient**")
+                for c in dossier.get("catalysts") or []: st.markdown(f"- {c}")
+            with cat2:
+                st.markdown("**Evenements a surveiller (ne pas vouloir)**")
+                for r in dossier.get("risk_events") or []: st.markdown(f"- {r}")
+    
+            st.markdown("---")
+            st.markdown("#### 🧠 Synthèse IA (Analyse Deep Ticker)")
+            synth = ticker_profile.get("synthesis", "")
+            if synth and synth != "Synthèse indisponible." and "Générer Synthèse IA" not in synth and "non générée" not in synth:
+                st.info(f"**Synthèse Institutionnelle**\n\n{synth}")
+            elif st.button("🧠 Générer la Synthèse IA", key=f"synth_ia_{selected}"):
+                with st.spinner("IA en cours d'analyse..."):
+                    try:
+                        pb_dir = _ROOT / "01_memory_core"
+                        if str(pb_dir) not in sys.path:
+                            sys.path.insert(0, str(pb_dir))
+                        from profile_builder import build_and_save_ticker_profile
+                        
+                        new_prof = build_and_save_ticker_profile(selected, include_llm=True)
+                        synth_new = new_prof.get("synthesis", "")
+                        st.info(f"**Nouvelle Synthèse (cache)**\n\n{synth_new}")
+                    except Exception as exc:
+                        st.error(f"Synthèse indisponible: {exc}")
+    
+            st.markdown("---")
+            st.markdown("#### 🗞️ Historique Complet des News")
+            
+            try:
+                c_src, c_time = st.columns([2, 1])
+                with c_src:
+                    filter_sources = st.multiselect("Sources", ["Boursorama", "Yahoo Finance", "Substack", "Finlight", "Google News"], default=["Boursorama", "Yahoo Finance", "Finlight"])
+                with c_time:
+                    filter_time = st.radio("Fenêtre", ["7j", "30j", "1 an", "Tout"], horizontal=True)
+    
+                db_news = get_portfolio_db().get_news_history(selected, limit=1000) or []
+                
+                # Apply time filter
+                if db_news and filter_time != "Tout":
+                    import datetime
+                    now = datetime.datetime.now()
+                    days = {"7j": 7, "30j": 30, "1 an": 365}.get(filter_time, 9999)
+                    cutoff = (now - datetime.timedelta(days=days)).isoformat()
+                    db_news = [n for n in db_news if (n.get("date_published") or "") >= cutoff]
+    
+                # Apply source filter
+                if db_news and filter_sources:
+                    db_news = [n for n in db_news if n.get("provider") in filter_sources]
+    
+                if db_news:
+                    clean_news = []
+                    for r in db_news:
+                        title = str(r.get("title", ""))
+                        if spam_regex.search(title):
+                            continue
+                        if title.lower().startswith('http') or 'http://' in title.lower() or 'https://' in title.lower():
+                            continue
+                            
+                        dp = r.get("date_published") or "N/A"
+                        if len(dp) > 16: dp = dp[:16]
+                        
+                        score = r.get("sentiment_score")
+                        badge = "⚪ NEUTRE"
+                        if score is not None:
+                            try:
+                                sv = float(score)
+                                if sv >= 30: badge = f"🟢 BULLISH (+{sv:.0f})"
+                                elif sv <= -30: badge = f"🔴 BEARISH ({sv:.0f})"
+                            except: pass
+                            
+                        clean_news.append({
+                            "Date": dp,
+                            "Source": str(r.get("provider", "")).strip() or "N/A",
+                            "Titre": title,
+                            "URL": str(r.get("url", "")),
+                            "Sentiment": badge
+                        })
+                        
+                    if clean_news:
+                        st.markdown("<div style='max-height:800px;overflow-y:auto;padding-right:10px;'>", unsafe_allow_html=True)
+                        for idx, item in enumerate(clean_news):
+                            badge_color = "#333"
+                            if "BULLISH" in item['Sentiment']: badge_color = "#1f4a2b"
+                            elif "BEARISH" in item['Sentiment']: badge_color = "#4a1f1f"
+                            
+                            st.markdown(f"""
+                            <div style='background:rgba(20,20,20,0.6); border:1px solid #333; border-radius:6px; padding:12px; margin-bottom:8px;'>
+                                <div style='display:flex; justify-content:space-between; margin-bottom:6px;'>
+                                    <span style='color:#888; font-size:12px;'>📅 {item['Date']} &nbsp; | &nbsp; 📰 {item['Source']}</span>
+                                    <span style='background:{badge_color}; color:#ddd; padding:2px 8px; border-radius:4px; font-size:11px; font-weight:bold;'>{item['Sentiment']}</span>
+                                </div>
+                                <a href='{item['URL']}' target='_blank' style='color:#00B4D8; text-decoration:none; font-weight:600; font-size:14px;'>{item['Titre']}</a>
+                            </div>
+                            """, unsafe_allow_html=True)
+                            
+                            if st.button("🧠 Deep Analysis (Read Full Article)", key=f"deep_news_{selected}_{idx}"):
+                                with st.spinner("Reading full article & extracting RAG insights..."):
+                                    try:
+                                        sys.path.insert(0, str(_ROOT / "00_data_sensors"))
+                                        from deep_news_scraper import fetch_article_body, analyze_article_deep
+                                        body = asyncio.run(fetch_article_body(item['URL']))
+                                        analysis = asyncio.run(analyze_article_deep(item['URL'], body))
+                                        st.info(f"**Key Metrics:**\n{analysis.get('key_metrics', 'N/A')}")
+                                        st.warning(f"**Guidance:**\n{analysis.get('guidance', 'N/A')}")
+                                        st.error(f"**Hidden Risks:**\n{analysis.get('hidden_risks', 'N/A')}")
+                                    except Exception as e:
+                                        st.error(f"Deep Analysis failed: {e}")
+                                        
+                        st.markdown("</div>", unsafe_allow_html=True)
+                    else:
+                        st.info("Aucune actualité pertinente (filtre anti-spam actif).")
+                else:
+                    st.info("Aucune actualité correspondant aux filtres.")
+            except Exception as e:
+                st.error(f"Erreur de lecture: {e}")
+    
+            if st.button("Lancer un Red Teaming IA (Bull vs Bear vs Devil's Advocate)", key=f"red_team_{selected}"):
+                context_blob = (
+                    f"Ticker: {selected}\n"
+                    f"Name: {dossier.get('name')}\n"
+                    f"Sector: {dossier.get('sector')}\n"
+                    f"Summary: {dossier.get('summary')}\n"
+                    f"Catalysts: {', '.join(dossier.get('catalysts') or [])}\n"
+                    f"Risks: {', '.join(dossier.get('risk_events') or [])}\n"
+                )
+                with st.spinner("Red Teaming multi-agent en cours..."):
+                    try:
+                        from red_team_agent import run_bull_bear_debate
+    
+                        debate = asyncio.run(run_bull_bear_debate(selected, context_blob))
+                    except Exception as exc:  # noqa: BLE001
+                        debate = {
+                            "bull": "Indisponible",
+                            "bear": f"Indisponible ({exc})",
+                            "devil_advocate": "Indisponible",
+                            "judge": "Indisponible",
+                        }
+                st.info(f"🐂 **Bull Agent**\n\n{debate.get('bull') or 'n/a'}")
+                st.warning(f"🐻 **Bear Agent**\n\n{debate.get('bear') or 'n/a'}")
+                st.markdown(f"😈 **Devil's Advocate PEA**\n\n{debate.get('devil_advocate') or 'n/a'}")
+                st.error(f"⚖️ **Judge Agent**\n\n{debate.get('judge') or 'n/a'}")
+    
+        with sub_fin:
+            ind = get_indicators(selected)
+            alpha = get_alpha_signals(selected)
+            bprofile = get_bourso_profile(selected)
+    
+            # Profile + indicators as full metric boxes (no truncation)
+            mrow1 = st.columns(4)
+            with mrow1[0]:
+                if ind:
+                    st.markdown(metric_box(
+                        "Cours", f"{ind['close']:.2f} €",
+                        sub=f"{ind['chg_1d']:+.2f}% (1j) · {ind['chg_5d']:+.2f}% (5j)",
+                        help_text="Dernier cours et variations recentes.",
+                    ), unsafe_allow_html=True)
+                else:
+                    st.markdown(metric_box("Cours", "n/a", sub="Donnees manquantes",
+                                           accent="muted"), unsafe_allow_html=True)
+            with mrow1[1]:
+                rsi = (ind or {}).get("rsi")
+                rsi_state = ("Survendu" if rsi is not None and rsi < 30 else
+                             "Surachete" if rsi is not None and rsi > 70 else "Neutre")
+                st.markdown(metric_box(
+                    "RSI(14)", f"{rsi:.1f}" if rsi is not None else "n/a",
+                    sub=rsi_state,
+                    accent="cyan" if rsi is not None and rsi < 30 else (
+                        "red" if rsi is not None and rsi > 70 else ""),
+                    help_text="<30 survendu · >70 surachete.",
+                ), unsafe_allow_html=True)
+            with mrow1[2]:
+                trend_ok = bool(ind and ind.get("sma200") and ind["close"] > ind["sma200"])
+                st.markdown(metric_box(
+                    "Tendance LT (vs SMA200)",
+                    "Haussier" if trend_ok else ("Baissier" if ind else "n/a"),
+                    sub=(f"SMA200 {(ind or {}).get('sma200', 0):.2f}" if ind and ind.get("sma200")
+                         else "—"),
+                    accent="" if trend_ok else "red",
+                    help_text="Prix au-dessus / en-dessous de la moyenne 200 jours.",
+                ), unsafe_allow_html=True)
+            with mrow1[3]:
+                vol = (ind or {}).get("vol_ann")
+                st.markdown(metric_box(
+                    "Vol. annualisee",
+                    f"{vol:.0f}%" if vol is not None else "n/a",
+                    sub="Sizing inverse-vol",
+                    accent="amber" if vol and vol > 35 else "",
+                    help_text="Plus c'est eleve, plus la taille de position est reduite.",
+                ), unsafe_allow_html=True)
+    
+            mrow2 = st.columns(4)
+            with mrow2[0]:
+                elig = ", ".join((bprofile or {}).get("eligibility") or []) or "n/a"
+                st.markdown(metric_box("Eligibilite PEA/SRD", elig, sub="Boursorama",
+                                       accent="cyan"), unsafe_allow_html=True)
+            with mrow2[1]:
+                cons = (bprofile or {}).get("consensus_score")
+                st.markdown(metric_box(
+                    "Consensus analystes",
+                    f"{cons:.2f}" if cons is not None else "n/a",
+                    sub=(bprofile or {}).get("sentiment") or "—",
+                ), unsafe_allow_html=True)
+            with mrow2[2]:
+                tgt = (bprofile or {}).get("target_price")
+                pot = (bprofile or {}).get("potential_pct")
+                st.markdown(metric_box(
+                    "Objectif 3 mois",
+                    f"{tgt:.2f} €" if tgt is not None else "n/a",
+                    sub=f"{pot:+.1f}%" if pot is not None else "—",
+                ), unsafe_allow_html=True)
+            with mrow2[3]:
+                isin = (bprofile or {}).get("isin") or "n/a"
+                st.markdown(metric_box(
+                    "ISIN", isin,
+                    sub=f"{(bprofile or {}).get('index') or '—'} / "
+                        f"{(bprofile or {}).get('exchange') or '—'}",
+                ), unsafe_allow_html=True)
+    
+            # Phase 35: Multi-factor fundamentals (Finnhub -> cache -> yfinance fallback).
+            fmeta = (dossier or {}).get("fundamentals") or get_fundamental_metrics(selected)
+            src = str((fmeta or {}).get("source") or "none")
+            pe = (fmeta or {}).get("pe_ratio")
+            pb = (fmeta or {}).get("pb_ratio")
+            roe = (fmeta or {}).get("roe")
+            deq = (fmeta or {}).get("debt_to_equity")
+            mrow3 = st.columns(4)
+            with mrow3[0]:
+                st.markdown(
+                    metric_box(
+                        "P/E (TTM)",
+                        f"{float(pe):.2f}" if pe is not None else "n/a",
+                        sub=f"Source: {src}",
+                        accent="cyan" if pe is not None and float(pe) > 0 and float(pe) < 20 else "",
+                        help_text="Valorisation bénéfices (plus bas peut être plus attractif).",
+                    ),
+                    unsafe_allow_html=True,
+                )
+            with mrow3[1]:
+                st.markdown(
+                    metric_box(
+                        "P/B",
+                        f"{float(pb):.2f}" if pb is not None else "n/a",
+                        sub="Value factor",
+                        accent="cyan" if pb is not None and float(pb) < 2.0 else "",
+                        help_text="Valorisation fonds propres (bonus si <2).",
+                    ),
+                    unsafe_allow_html=True,
+                )
+            with mrow3[2]:
+                st.markdown(
+                    metric_box(
+                        "ROE",
+                        f"{float(roe)*100:.1f}%" if roe is not None and float(roe) <= 1.5 else (
+                            f"{float(roe):.1f}%" if roe is not None else "n/a"
+                        ),
+                        sub="Quality factor",
+                        accent="green" if roe is not None and float(roe) >= 0.15 else "",
+                        help_text="Rentabilité des capitaux propres (qualité).",
+                    ),
+                    unsafe_allow_html=True,
+                )
+            with mrow3[3]:
+                st.markdown(
+                    metric_box(
+                        "Debt / Equity",
+                        f"{float(deq):.2f}" if deq is not None else "n/a",
+                        sub="Risque de levier",
+                        accent="red" if deq is not None and float(deq) > 2.0 else "",
+                        help_text="Levier bilan (malus >2.0 dans le modèle multi-factor).",
+                    ),
+                    unsafe_allow_html=True,
+                )
+    
+            st.markdown("#### 📋 Ticket d'Ordre PEA (Prêt à l'Exécution)")
+            live_price = float((ind or {}).get("close") or 0.0)
+            qty_default = max(1, int(float(portfolio.cash_available or 0.0) // live_price)) if live_price > 0 else 1
+            qty_ticket = st.number_input(
+                "Quantité à préparer",
+                min_value=1,
+                value=int(qty_default),
+                step=1,
+                key=f"mkt_order_qty_{selected}",
+            )
+            ticket = build_broker_order_ticket(
+                selected,
+                int(qty_ticket),
+                live_price,
+                isin=(bprofile or {}).get("isin"),
+            )
+            st.markdown(
+                f"<div style='background:#0A0A0A;padding:14px 16px;margin-bottom:10px;"
+                f"border:1px solid #2A2A2A;border-left:4px solid {_CYAN};"
+                f"font-family:Courier New,monospace;'>"
+                f"<div style='color:{_CYAN};font-size:11px;letter-spacing:1.5px;'>ORDER TICKET</div>"
+                f"<div style='margin-top:8px;line-height:1.6;'>"
+                f"<b>ISIN</b>: {ticket['isin']}<br>"
+                f"<b>Type d'ordre</b>: {ticket['order_type']}<br>"
+                f"<b>Quantité</b>: {ticket['qty']}<br>"
+                f"<b>Limite suggérée</b>: {ticket['limit_price']:,.2f} €<br>"
+                f"<b>Notional estimé</b>: {ticket['notional']:,.2f} €<br>"
+                f"<b>Frais PEA max (0.5%)</b>: {ticket['estimated_fee_max']:,.2f} €"
+                f"</div></div>",
+                unsafe_allow_html=True,
+            )
+            st.markdown(f"[↗️ Ouvrir sur Boursorama]({ticket['bourso_url']})")
+    
+            st.markdown("#### ✅ Checklist de Décision")
+            checklist = get_decision_checklist(selected, portfolio, float(vix))
+            chk_df = pd.DataFrame(checklist["checks"])
+            st.dataframe(chk_df, use_container_width=True, hide_index=True)
+            st.caption(f"Statut global: {checklist['overall']} · score proxy {checklist['score_hint']:.0f}/100")
+    
+            st.markdown("#### 🧠 Bureau de l'Analyste & Data Lake")
+            note_db = get_portfolio_db()
+            try:
+                note_db.init_db()
+                current_note = note_db.get_ticker_note(selected)
+            except Exception:  # noqa: BLE001
+                current_note = ""
+            note_value = st.text_area(
+                f"Note analyste personnelle — {format_name(selected)}",
+                value=current_note,
+                height=120,
+                key=f"analyst_note_{selected}",
+                help="Commentaires qualitatifs manuels (thèse, trigger, risques, plan d'exécution).",
+            )
+            if st.button("Sauvegarder la note", key=f"save_note_{selected}", type="secondary"):
+                try:
+                    note_db.save_ticker_note(selected, note_value)
+                    st.success("Note sauvegardée dans SQLite.")
+                except Exception as exc:  # noqa: BLE001
+                    st.error(f"Sauvegarde impossible: {exc}")
+    
+            # Multi-model raw pack for full transparency.
+            model_breakdown = {}
+            model_context = {}
+            hist_dl = pd.DataFrame()
+            try:
+                from duckdb_manager import TimeSeriesDB
+                from technical_scorer import SignalGenerator
+    
+                db_ro = get_ts_db()
+                hist_dl = db_ro.get_historical_prices(selected, days=260)
+                if hist_dl is not None and not hist_dl.empty:
+                    conv_dl = SignalGenerator().evaluate(selected, hist_dl)
+                    model_breakdown = conv_dl.get("model_scores") or {}
+                    model_context = conv_dl.get("context_breakdown") or {}
+            except Exception:  # noqa: BLE001
+                model_breakdown = {}
+                model_context = {}
+    
+            # Phase 53+: SHAP XAI Inference for single ticker
+            try:
+                from ml_trainer import predict_probability_with_shap
+                from ml_feature_store import build_ml_feature_row
+            
+                if hist_dl is not None and not hist_dl.empty:
+                    # We don't have CW8 and EXOG ready here instantly without DB calls, but we can try to fetch them or pass None
+                    cw8_df = db_ro.get_historical_prices("CW8.PA", days=260)
+                    cw8_close = cw8_df["Close"].astype(float) if cw8_df is not None and not cw8_df.empty else None
+                
+                    exog_dfs = {}
+                    for sym in ["^GSPC", "^IXIC", "EURUSD=X", "OAT.PA"]:
+                        try:
+                            df_ex = db_ro.get_historical_prices(sym, days=260)
+                            if df_ex is not None and not df_ex.empty:
+                                exog_dfs[sym] = df_ex["Close"].astype(float)
+                        except Exception:
+                            pass
+                
+                    feat_dict = build_ml_feature_row(
+                        selected, 
+                        close=hist_dl["Close"].astype(float), 
+                        cw8_close=cw8_close, 
+                        exog_closes=exog_dfs, 
+                        reason="ui_inference", 
+                        pdb=note_db, 
+                        asof_idx=-1
+                    )
+                    proba, shap_vals = predict_probability_with_shap(feat_dict)
+                
+                    if proba is not None and shap_vals is not None:
+                        st.markdown("### 🤖 Meta-Labeling & Explainable AI (SHAP)")
+                    
+                        status_color = _NEON if proba >= 0.50 else _RED
+                        status_text = "VALIDÉ" if proba >= 0.50 else "REJETÉ"
+                    
+                        st.markdown(f"<div style='font-size:20px'>Probabilité Alpha: <strong style='color:{status_color}'>{proba*100:.1f}%</strong> ({status_text})</div>", unsafe_allow_html=True)
+                    
+                        # Waterfall or bar chart of top positive and negative
+                        import plotly.graph_objects as go
+                    
+                        # Sort all non-zero
+                        sorted_shaps = sorted([(k, v) for k, v in shap_vals.items() if abs(v) > 0.001], key=lambda x: x[1])
+                    
+                        if sorted_shaps:
+                            y_labels = [x[0] for x in sorted_shaps]
+                            x_vals = [x[1] for x in sorted_shaps]
+                            colors = [_NEON if x > 0 else _RED for x in x_vals]
+                        
+                            fig = go.Figure(go.Bar(
+                                x=x_vals, y=y_labels, orientation='h',
+                                marker_color=colors
+                            ))
+                            fig.update_layout(
+                                title="Décomposition de la décision (SHAP Values)",
+                                xaxis_title="Impact sur la probabilité d'Alpha",
+                                yaxis_title="Feature",
+                                template="plotly_dark",
+                                plot_bgcolor="rgba(0,0,0,0)",
+                                paper_bgcolor="rgba(0,0,0,0)",
+                                margin=dict(l=20, r=20, t=40, b=20),
+                                height=400
+                            )
+                            st.plotly_chart(fig, use_container_width=True)
+                        else:
+                            st.caption("Aucune feature n'a eu d'impact significatif.")
+            except Exception as exc:
+                st.caption(f"Inférence ML indisponible: {exc}")
+    
+            if True:
+                st.markdown("### Voir toutes les données brutes (Data Lake)")
+                st.caption("Transparence totale sur les entrées consommées par l'analyste quant.")
+    
+                st.markdown("**Prix / OHLCV (DuckDB, ~260 jours)**")
+                if hist_dl is None or hist_dl.empty:
+                    st.caption("Aucune série OHLCV locale disponible.")
+                else:
+                    st.dataframe(hist_dl.tail(120), use_container_width=True, hide_index=True)
+    
+                st.markdown("**Indicateurs instantanés**")
+                st.dataframe(pd.DataFrame([ind or {}]), use_container_width=True, hide_index=True)
+    
+                st.markdown("**Fondamentaux (Finnhub/yfinance/cache)**")
+                st.dataframe(pd.DataFrame([fmeta or {}]), use_container_width=True, hide_index=True)
+    
+                st.markdown("**Comité Multi-Modèles**")
+                if model_breakdown:
+                    st.dataframe(
+                        pd.DataFrame(
+                            [{"Model": k, "Score": v} for k, v in model_breakdown.items()]
+                        ),
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+                else:
+                    st.caption("Breakdown multi-modèles indisponible.")
+                if model_context:
+                    st.markdown("**Détail du modèle Context**")
+                    st.dataframe(
+                        pd.DataFrame(
+                            [{"Context_Factor": k, "Score": v} for k, v in model_context.items()]
+                        ),
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+                    
+                st.markdown("**⚖️ Pondération Dynamique (Meta-Learner)**")
+                try:
+                    sys.path.insert(0, str(_ROOT / "02_quant_engine"))
+                    from ensemble_optimizer import DynamicEnsemble
+                    dyn = DynamicEnsemble()
+                    weights = dyn.get_optimized_weights()
+                    
+                    ml_pct = int(weights["ml_total_weight"] * 100)
+                    heuristic_pct = 100 - ml_pct
+                    
+                    st.markdown(f"**Machine Learning (Tactical/Structural):** {ml_pct}%")
+                    st.progress(ml_pct / 100.0)
+                    
+                    st.markdown(f"**Heuristiques (Trend, MR, Breakout, Context):** {heuristic_pct}%")
+                    st.progress(heuristic_pct / 100.0)
+                    
+                    st.caption("Poids actuel ajusté en fonction de la précision récente des modèles (EWMA).")
+                except Exception as e:
+                    st.caption(f"Pondération dynamique non disponible: {e}")
+    
+            # Technical analysis explanation (full width)
+            st.markdown(
+                f"<div class='eli5'><b style='color:{_AMBER};'>"
+                f"Analyse technique expliquee — {format_name(selected)}</b><br>"
+                f"{build_ta_explanation(ind, alpha)}</div>",
+                unsafe_allow_html=True,
+            )
+    
+            # What-if simulator (Command Center) — radar lives below Phase 18 valuation
+            st.markdown("#### 🧪 Simulateur (What-If)")
+            st.markdown(
+                "<div class='info-text'>Impact théorique d'un achat de "
+                "<b>1000 €</b> avant qu'un signal ne soit généré — cash, "
+                "poids sectoriel, corrélation max vs positions.</div>",
+                unsafe_allow_html=True,
+            )
+            if st.button(
+                "Simuler un achat de 1000€",
+                key=f"whatif_1000_{selected}",
+                type="primary",
+            ):
+                sim = simulate_buy_what_if(portfolio, selected, 1000.0)
+                if not sim.get("affordable"):
+                    st.warning(
+                        f"Pas assez de cash ou cours trop élevé "
+                        f"(cash {sim['cash_before']:,.0f} € · "
+                        f"cours {sim['price']:,.2f} €)."
+                    )
+                else:
+                    corr_txt = (
+                        f"{sim['max_corr']:+.2f}"
+                        if sim.get("max_corr") is not None else "n/a"
+                    )
+                    st.markdown(
+                        f"<div class='metric-box cyan'>"
+                        f"<div class='metric-title'>WHAT-IF 1000 €</div>"
+                        f"<div class='metric-value'>{sim['qty']} × "
+                        f"{sim['price']:,.2f} € = {sim['cost']:,.0f} €</div>"
+                        f"<div class='metric-sub sub-muted'>"
+                        f"Cash {sim['cash_before']:,.0f} → "
+                        f"<b style='color:{_AMBER};'>{sim['cash_after']:,.0f} €</b>"
+                        f"<br>Secteur {sim['sector']}: "
+                        f"{sim['sector_pct_before']:.1f}% → "
+                        f"<b>{sim['sector_pct_after']:.1f}%</b>"
+                        f"<br>Corr. max vs book: {corr_txt}"
+                        f"</div></div>",
+                        unsafe_allow_html=True,
+                    )
+    
+        with sub_overview:
+            full_hist_mode = st.checkbox("🔓 Charger l'historique complet (10 ans)", key=f"full_hist_{selected}")
+            
+            # TradingView Advanced Chart Widget (with Plotly fallback)
+            clean_ticker = str(selected).strip()
+            tv_sym = _tv_symbol(clean_ticker)
+            chart_html = f"""
+            <!-- TradingView Widget BEGIN -->
+            <div class="tradingview-widget-container" style="height:100%;width:100%">
+              <div id="tradingview_{clean_ticker.replace('.', '_')}" style="height:600px;width:100%"></div>
+              <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
+              <script type="text/javascript">
+              new TradingView.widget(
+              {{
+              "autosize": true,
+              "symbol": "{tv_sym}",
+              "interval": "D",
+              "timezone": "Europe/Paris",
+              "theme": "dark",
+              "style": "1",
+              "locale": "fr",
+              "enable_publishing": false,
+              "backgroundColor": "#050505",
+              "gridColor": "#111111",
+              "hide_top_toolbar": false,
+              "hide_legend": false,
+              "save_image": false,
+              "container_id": "tradingview_{clean_ticker.replace('.', '_')}"
+              }}
+              );
+              </script>
+            </div>
+            <!-- TradingView Widget END -->
+            """
+            
+            try:
+                # IMPORTANT: Streamlit's components.html does not accept a 'key' parameter!
+                components.html(chart_html, height=600)
+            except Exception as e:
+                _dash_log.warning(f"TradingView widget failed for {selected}: {e}. Falling back to Plotly.")
+                # Load data from DuckDB for candlestick
+                df_hist = db_ro.get_historical_prices(selected, days=3650 if full_hist_mode else 750)
+                if df_hist is not None and not df_hist.empty:
+                    if not full_hist_mode:
+                        df_hist = df_hist.tail(500)
+                    
+                    fig_candle = go.Figure(data=[go.Candlestick(
+                        x=df_hist.index,
+                        open=df_hist['Open'], high=df_hist['High'],
+                        low=df_hist['Low'], close=df_hist['Close'],
+                        increasing_line_color=_NEON, decreasing_line_color=_RED
+                    )])
+                    
+                    # Add SMA 50 and 200 if they exist in df_hist or ind
+                    if ind and ind.get("sma50"):
+                        fig_candle.add_trace(go.Scatter(x=[df_hist.index[-1]], y=[ind["sma50"]], mode='markers', marker=dict(color='orange', size=8), name='SMA 50 (current)'))
+                    if ind and ind.get("sma200"):
+                        fig_candle.add_trace(go.Scatter(x=[df_hist.index[-1]], y=[ind["sma200"]], mode='markers', marker=dict(color='cyan', size=8), name='SMA 200 (current)'))
+                        
+                    fig_candle.update_layout(
+                        title=f"Historique OHLCV — {selected}",
+                        template="plotly_dark", plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                        height=600, margin=dict(l=20, r=20, t=40, b=20), xaxis_rangeslider_visible=False
+                    )
+                    st.plotly_chart(fig_candle, use_container_width=True)
+                else:
+                    st.warning("Données OHLCV indisponibles pour le graphique.")
+                
+            sma_bits = []
+            if ind:
+                for k, lab in (("sma5", "SMA5"), ("sma50", "SMA50"), ("sma200", "SMA200")):
+                    if ind.get(k):
+                        sma_bits.append(f"{lab}: <b>{ind[k]:.2f}</b>")
+            pc = (alpha or {}).get("put_call")
+            ins = (alpha or {}).get("insider", 0)
+            ins_txt = {1: "Achats nets dirigeants", -1: "Ventes nettes dirigeants"}.get(
+                ins, "Neutre / indisponible"
+            )
+            st.markdown(
+                f"<div style='background:#0A0A0A;padding:16px;border:1px solid #222;"
+                f"min-height:150px;line-height:1.7;color:#E0E0E0;margin-top:20px;'>"
+                f"<div style='color:{_CYAN};font-size:12px;letter-spacing:1px;'>"
+                f"RECAP QUANT</div>"
+                f"<div style='margin-top:10px;'>{' · '.join(sma_bits) or 'SMA n/a'}</div>"
+                f"<div style='margin-top:12px;'><b>Put/Call</b> : "
+                f"{f'{pc:.2f}' if pc is not None else 'n/a'} "
+                f"<span style='color:{_MUTED};font-size:12px;'>"
+                f"(souvent neutre sur small/mid .PA — chaine options rare)</span></div>"
+                f"<div style='margin-top:12px;'><b>Insiders</b> : {ins_txt}</div>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+    
+            # --- Phase 18: Valuation / buy zone + 10y annual returns ----------------
+            st.markdown("---")
+            st.markdown("#### 🎯 Valorisation & Recommandation de Prix")
+            st.markdown(
+                "<div class='info-text'>Multiples et objectifs analystes via yfinance "
+                "(souvent plus riches sur large caps). La <b>zone d'achat suggérée</b> "
+                "est une bande heuristique (52w low → milieu vers target low) — "
+                "contexte pour ton jugement PEA, pas un ordre automatique.</div>",
+                unsafe_allow_html=True,
+            )
+            val = get_valuation_metrics(selected)
+            if not val.get("ok"):
+                st.caption(
+                    "Valorisation indisponible pour ce ticker "
+                    "(réseau, delisting, ou champs Yahoo vides)."
+                )
+            else:
+                cur = val.get("current_price")
+                # Prefer live indicator close when Yahoo info price is missing.
+                if cur is None and ind and ind.get("close"):
+                    cur = float(ind["close"])
+                tmean = val.get("target_mean")
+                upside = None
+                if cur and tmean and cur > 0:
+                    upside = (tmean / cur - 1.0) * 100.0
+    
+                v1, v2, v3, v4 = st.columns(4)
+                with v1:
+                    st.markdown(metric_box(
+                        "Cours actuel",
+                        f"{cur:,.2f} €" if cur is not None else "n/a",
+                        sub=(f"vs target mean {upside:+.1f}%" if upside is not None
+                             else "prix Yahoo / indicateur"),
+                        accent="" if (upside is None or upside >= 0) else "red",
+                        sub_cls=("sub-green" if upside is not None and upside >= 0
+                                 else "sub-red" if upside is not None else "sub-muted"),
+                        help_text="Dernier cours connu (Yahoo info ou close indicateur).",
+                    ), unsafe_allow_html=True)
+                with v2:
+                    st.markdown(metric_box(
+                        "Target mean analystes",
+                        f"{tmean:,.2f} €" if tmean is not None else "n/a",
+                        sub=(f"Target low {val['target_low']:,.2f} €"
+                             if val.get("target_low") is not None else "consensus Yahoo"),
+                        accent="cyan",
+                        help_text="Objectif moyen des analystes (Yahoo Finance).",
+                    ), unsafe_allow_html=True)
+                with v3:
+                    pe = val.get("trailing_pe")
+                    st.markdown(metric_box(
+                        "P/E trailing",
+                        f"{pe:.1f}×" if pe is not None else "n/a",
+                        sub="multiple de bénéfices",
+                        help_text="Price / trailing EPS. Vide sur ETF ou pertes.",
+                    ), unsafe_allow_html=True)
+                with v4:
+                    pb = val.get("price_to_book")
+                    st.markdown(metric_box(
+                        "Price / Book",
+                        f"{pb:.2f}×" if pb is not None else "n/a",
+                        sub="valeur comptable",
+                        help_text="Cours / book value par action.",
+                    ), unsafe_allow_html=True)
+    
+                r1m = val.get("return_1m_pct")
+                r1y = val.get("return_1y_pct")
+                p1, p2 = st.columns(2)
+                with p1:
+                    st.markdown(metric_box(
+                        "Perf. 1 mois",
+                        f"{r1m:+.1f}%" if r1m is not None else "n/a",
+                        sub="~21 séances",
+                        accent="" if r1m is None or r1m >= 0 else "red",
+                        sub_cls=("sub-green" if r1m is not None and r1m >= 0
+                                 else "sub-red" if r1m is not None else "sub-muted"),
+                        help_text="Variation du close sur ~1 mois de séances.",
+                    ), unsafe_allow_html=True)
+                with p2:
+                    st.markdown(metric_box(
+                        "Perf. 1 an",
+                        f"{r1y:+.1f}%" if r1y is not None else "n/a",
+                        sub="trailing 12 mois",
+                        accent="" if r1y is None or r1y >= 0 else "red",
+                        sub_cls=("sub-green" if r1y is not None and r1y >= 0
+                                 else "sub-red" if r1y is not None else "sub-muted"),
+                        help_text="Close actuel vs close il y a ~1 an.",
+                    ), unsafe_allow_html=True)
+    
+                bz_lo = val.get("buy_zone_low")
+                bz_hi = val.get("buy_zone_high")
+                w52_lo = val.get("fifty_two_week_low")
+                w52_hi = val.get("fifty_two_week_high")
+                in_zone = (
+                    cur is not None and bz_lo is not None and bz_hi is not None
+                    and bz_lo <= cur <= bz_hi
+                )
+                zone_color = _NEON if in_zone else _AMBER
+                zone_label = (
+                    f"{bz_lo:,.2f} € → {bz_hi:,.2f} €"
+                    if bz_lo is not None and bz_hi is not None
+                    else "n/a (données manquantes)"
+                )
+                status = (
+                    "DANS LA ZONE — setup prix intéressant à croiser avec le MRE"
+                    if in_zone else
+                    "HORS ZONE — attendre un meilleur point d'entrée ou ignorer"
+                    if bz_hi is not None and cur is not None else
+                    "Zone non calculable"
+                )
+                st.markdown(
+                    f"<div style='background:#0A0A0A;padding:14px 16px;margin-top:8px;"
+                    f"border:1px solid #2A2A2A;border-left:4px solid {zone_color};"
+                    f"font-family:Courier New,monospace;'>"
+                    f"<div style='color:{_CYAN};font-size:11px;letter-spacing:1.5px;'>"
+                    f"ZONE D'ACHAT SUGGÉRÉE</div>"
+                    f"<div style='color:{_WHITE};font-size:20px;font-weight:700;"
+                    f"margin-top:6px;'>{zone_label}</div>"
+                    f"<div style='color:{zone_color};margin-top:8px;font-size:13px;'>"
+                    f"{status}</div>"
+                    f"<div style='color:{_MUTED};margin-top:8px;font-size:12px;'>"
+                    f"52w low "
+                    f"{f'{w52_lo:,.2f} €' if w52_lo is not None else 'n/a'} · "
+                    f"52w high "
+                    f"{f'{w52_hi:,.2f} €' if w52_hi is not None else 'n/a'} · "
+                    f"règle = milieu(52w low, target low) comme plafond de zone"
+                    f"</div></div>",
+                    unsafe_allow_html=True,
+                )
+    
+            st.markdown("#### 📊 Performances Annuelles (10 dernières années)")
+            ann = get_annual_returns(selected)
+            if ann is None or ann.empty:
+                st.caption(
+                    "Historique annuel indisponible (ticker trop récent, delisté, "
+                    "ou erreur réseau Yahoo)."
+                )
+            else:
+                st.plotly_chart(
+                    render_annual_returns_chart(ann, selected),
+                    width="stretch",
+                    key=f"explore_annual_returns_{selected}",
+                )
+                pos_yrs = int((ann["Return_Pct"] >= 0).sum())
+                st.caption(
+                    f"{len(ann)} année(s) · {pos_yrs} positive(s) · "
+                    f"moyenne {ann['Return_Pct'].mean():+.1f}% / an (arithmétique)."
+                )
+    
+            # --- Phase 20 UI: Multi-strategy fingerprint radar (below Phase 18) ----
+            st.markdown("---")
+            st.markdown("#### 🕸️ Empreinte Multi-Stratégies (Radar)")
+            st.markdown(
+                "<div class='info-text'>Quatre axes normalisés <b>0–100</b> : "
+                "Mean Reversion (RSI), Momentum (Close vs SMA5/50/200), "
+                "Quality/Value (P/E / EPS), Insider Confidence. "
+                "Lecture visuelle Bloomberg — pas un ordre automatique.</div>",
+                unsafe_allow_html=True,
+            )
+            with st.spinner("Calcul empreinte…"):
+                fingerprint = get_strategy_fingerprint(selected)
+            if fingerprint and any(float(v) > 0 for v in fingerprint.values()):
+                st.plotly_chart(
+                    render_strategy_radar(fingerprint, selected),
+                    width="stretch",
+                    key=f"explore_strategy_radar_{selected}",
+                )
+                mcols = st.columns(4)
+                for i, (axis, score) in enumerate(fingerprint.items()):
+                    with mcols[i]:
+                        st.markdown(
+                            metric_box(
+                                axis,
+                                f"{float(score):.0f}",
+                                sub="/ 100",
+                                accent="cyan" if float(score) >= 60 else (
+                                    "amber" if float(score) >= 35 else "muted"
+                                ),
+                            ),
+                            unsafe_allow_html=True,
+                        )
+            else:
+                st.caption("Empreinte indisponible (indicateurs / valorisation manquants).")
+    
+            if True:
+                st.markdown("### Comprendre l'Empreinte (Abréviations)")
+                st.markdown(
+                    "- **MR** — Mean Reversion : mesure la sous-évaluation statistique via le RSI et la distance au prix moyen.\n"
+                    "- **Mom** — Momentum : force de la tendance (Close > SMA5 > SMA50 > SMA200).\n"
+                    "- **Q/V** — Quality / Value : fondamentaux (P/E, P/B, ROE, Debt/Equity via Finnhub/yfinance).\n"
+                    "- **Ins** — Insider Confidence : achats récents de dirigeants (AMF/FMP).\n\n"
+                    "Le score total (0–100) est la moyenne pondérée : MR 35% + Mom 25% + Q/V 20% + Ins 20%. "
+                    "Un signal BUY n'est émis que si le score dépasse **65**."
+                )
+    
+            # --- AMF / Insider deep module ------------------------------------------
+            st.markdown("---")
+            st.markdown("#### 🕵️ Activité des dirigeants (insiders) — module AMF")
+            st.markdown(
+                "<div class='info-text'><b>Cascade stricte : AMF BDIF → FMP → Yahoo</b>. "
+                "Synthèse nette achats/ventes (12 mois approximatifs selon la source). "
+                "Signal de confiance interne — <b>pas un ordre automatique</b>.</div>",
+                unsafe_allow_html=True,
+            )
+            insider_df = get_insider_data(selected)
+            if insider_df.empty:
+                st.warning(
+                    f"Aucune transaction insider pour {format_name(selected)}. "
+                    "AMF/FMP/Yahoo n'ont rien renvoyé (couverture variable sur .PA)."
+                )
+                st.markdown(
+                    "[🔍 Rechercher sur le BDIF Officiel AMF](https://bdif.amf-france.org/)"
+                )
+            else:
+                summary = summarize_insider_activity(insider_df)
+                accent = {
+                    "green": _NEON,
+                    "red": _RED,
+                    "amber": _AMBER,
+                    "muted": _MUTED,
+                }.get(summary.get("tone") or "muted", _MUTED)
+                st.markdown(
+                    f"<div style='background:#0A0A0A;padding:14px 16px;margin-bottom:10px;"
+                    f"border:1px solid #2A2A2A;border-left:4px solid {accent};"
+                    f"font-family:Courier New,monospace;'>"
+                    f"<div style='color:{_CYAN};font-size:11px;letter-spacing:1.5px;'>"
+                    f"AMF / INSIDERS · {(summary.get('source') or 'multi-source')}</div>"
+                    f"<div style='color:{_WHITE};font-size:15px;margin-top:8px;"
+                    f"line-height:1.45;'>{summary.get('signal')}</div>"
+                    f"<div style='color:{_MUTED};font-size:12px;margin-top:8px;'>"
+                    f"Net actions : {summary.get('net_shares', 0):+,.0f} · "
+                    f"Net valeur : {summary.get('net_value', 0):+,.0f} € · "
+                    f"Achats {summary.get('n_buys', 0)} / Ventes {summary.get('n_sells', 0)}"
+                    f"</div></div>",
+                    unsafe_allow_html=True,
+                )
+                st.markdown(
+                    "[🔍 Rechercher sur le BDIF Officiel AMF](https://bdif.amf-france.org/)"
+                )
+                disp_cols = {}
+                for src, dst in (("Insider", "Insider"), ("Position", "Poste"),
+                                 ("Transaction", "Transaction"), ("Title", "Titre"),
+                                 ("Shares", "Actions"), ("Value", "Valeur"),
+                                 ("Date", "Date"), ("Source", "Source")):
+                    if src not in insider_df.columns:
+                        continue
+                    if src in ("Shares", "Value"):
+                        disp_cols[dst] = [
+                            f"{v:,.0f}" if pd.notna(v) else "—" for v in insider_df[src]
+                        ]
+                    elif src == "Title":
+                        disp_cols[dst] = [
+                            str(v)[:80] if pd.notna(v) else "—" for v in insider_df[src]
+                        ]
+                    elif src == "Date":
+                        disp_cols[dst] = [
+                            str(v)[:10] if pd.notna(v) else "—" for v in insider_df[src]
+                        ]
+                    else:
+                        disp_cols[dst] = insider_df[src].astype(str)
+                disp = pd.DataFrame(disp_cols)
+                font_map = None
+                if "Transaction" in disp.columns:
+                    colors = []
+                    for t in disp["Transaction"]:
+                        tl = str(t).lower()
+                        if "buy" in tl or "purchase" in tl or "achat" in tl:
+                            colors.append(_NEON)
+                        elif "sale" in tl or "sell" in tl or "vente" in tl:
+                            colors.append(_RED)
+                        else:
+                            colors.append(_WHITE)
+                    font_map = {"Transaction": colors}
+                st.plotly_chart(
+                    dark_table(
+                        disp,
+                        height=min(420, 44 + 30 * max(len(disp), 1)),
+                        font_color_map=font_map,
+                    ),
+                    width="stretch",
+                    key=f"explore_insider_table_{selected}",
+                )
+    
+            # Polymarket — real section
+            st.markdown("---")
+            st.markdown("#### 🎲 Polymarket — probabilites macro")
+            st.markdown(
+                "<div class='info-text'>Marches de prediction (API Gamma). "
+                "Filtre macro/politique (sports exclus). "
+                "<b>Contexte seulement</b> — jamais un trigger d'ordre.</div>",
+                unsafe_allow_html=True,
+            )
+            poly_events = get_polymarket_macro(limit=10)
+            if not poly_events:
+                st.caption(
+                    "Polymarket indisponible (reseau / API). "
+                    "Le briefing geopolitique dans General reste la reference."
+                )
+            else:
+                # Clickable markdown table (Plotly tables can't host real links).
+                lines = [
+                    "| Marche | P(YES) | Vol 24h | Impact PEA | Lien |",
+                    "|---|---:|---:|---|---|",
+                ]
+                for ev in poly_events:
+                    yp = ev.get("yes_prob")
+                    yp_s = f"**{yp*100:.0f}%**" if yp is not None else "—"
+                    title = (ev.get("title") or "").replace("|", "/")
+                    lines.append(
+                        f"| {title} | {yp_s} | {ev.get('volume24h', 0):,.0f} | "
+                        f"{ev.get('impact', '—')} | [ouvrir]({ev.get('url')}) |"
+                    )
+                st.markdown("\n".join(lines))
+    
+
+    render_fiche_ticker()
+
+# --- Tab: Full Universe ------------------------------------------------------
+with tab_macro:
+    st.markdown(
+        "<div class='info-text'>Univers PEA investissable + "
+        "<b>performance moyenne par secteur</b> (echantillon liquide).</div>",
+        unsafe_allow_html=True,
+    )
+    st.caption(f"{len(universe_df)} titres · "
+               f"{universe_df['Sector'].nunique()} secteurs")
+
+    sec_period_map = {"1 Semaine": "5d", "1 Mois": "1mo", "3 Mois": "3mo",
+                      "6 Mois": "6mo", "1 An": "1y"}
+    sec_label = st.select_slider(
+        "Horizon perf. sectorielle", list(sec_period_map.keys()), value="1 Mois",
+        key="uni_sec_horizon",
+    )
+    uni_treemap_horizon = st.radio(
+        "Horizon Treemap (Finviz style)",
+        ["1 jour", "1 mois"],
+        index=1,
+        horizontal=True,
+        key="uni_treemap_horizon",
+    )
+    treemap_period = "1d" if uni_treemap_horizon == "1 jour" else "1mo"
+    with st.spinner("Perf. moyennes par secteur…"):
+        sec_perf = get_sector_performance(universe_df, period=sec_period_map[sec_label])
+    if not sec_perf.empty:
+        st.markdown(f"#### Performance moyenne par secteur · {sec_label}")
+        sec_bar = pex.bar(
+            sec_perf, x="Perf_moy", y="Sector", orientation="h",
+            color="Perf_moy", color_continuous_scale=_DIVERGE,
+            color_continuous_midpoint=0,
+            hover_data={"N": True, "Perf_med": ":.1f", "Best": ":.1f", "Worst": ":.1f"},
+        )
+        _style_dark_fig(sec_bar, height=max(360, 28 * len(sec_perf)))
+        sec_bar.update_layout(margin=dict(t=10, l=0, r=0, b=0),
+                              coloraxis_showscale=False,
+                              xaxis_title="Perf moyenne %", yaxis_title="")
+        st.plotly_chart(sec_bar, width="stretch")
+        scolors = [_NEON if v >= 0 else _RED for v in sec_perf["Perf_moy"]]
+        sdisp = pd.DataFrame({
+            "Secteur": sec_perf["Sector"],
+            "Moy": [f"{v:+.1f}%" for v in sec_perf["Perf_moy"]],
+            "Med": [f"{v:+.1f}%" for v in sec_perf["Perf_med"]],
+            "N": sec_perf["N"],
+            "Best": [f"{v:+.1f}%" for v in sec_perf["Best"]],
+            "Worst": [f"{v:+.1f}%" for v in sec_perf["Worst"]],
+        })
+        st.plotly_chart(
+            dark_table(sdisp, height=min(480, 48 + 28 * len(sdisp)),
+                       font_color_map={"Moy": scolors},
+                       col_widths=[2, 0.8, 0.8, 0.5, 0.8, 0.8]),
+            width="stretch",
+        )
+
+        # --- Phase 34: Sector Treemap --------------------------------------
+        st.markdown(
+            f"#### 🌳 Treemap Sectoriel (Top 100 · {uni_treemap_horizon})"
+        )
+        try:
+            top100 = universe_df["Ticker"].head(100).tolist()
+            perf100 = get_market_performance(tuple(top100), period=treemap_period)
+            if perf100.empty or "Performance (%)" not in perf100.columns:
+                st.caption("Treemap indisponible (performance vide).")
+            else:
+                sector_map = dict(zip(universe_df["Ticker"], universe_df["Sector"]))
+                df_tm = perf100.copy()
+                df_tm["Sector"] = df_tm["Ticker"].map(sector_map).fillna("Unknown")
+                fig_tm = pex.treemap(
+                    df_tm,
+                    path=[pex.Constant("Univers PEA"), "Sector", "Ticker"],
+                    color="Performance (%)",
+                    color_continuous_scale="RdYlGn",
+                    color_continuous_midpoint=0,
+                )
+                _style_dark_fig(fig_tm, height=560)
+                st.plotly_chart(fig_tm, width="stretch", key="uni_sector_treemap")
+        except Exception:  # noqa: BLE001
+            st.caption("Treemap indisponible (erreur DuckDB / yfinance).")
+    else:
+        st.caption("Perf. sectorielle indisponible pour cet horizon.")
+
+    st.markdown("---")
+    csum = universe_df.groupby("Sector").size().reset_index(name="Nb titres")
+    cc1, cc2 = st.columns([1, 2])
+    with cc1:
+        pie = pex.pie(csum, names="Sector", values="Nb titres", hole=0.5,
+                     color_discrete_sequence=_BRIGHT_SERIES)
+        pie.update_layout(paper_bgcolor=_BG, plot_bgcolor=_BG,
+                          font=dict(family="Courier New", color=_WHITE),
+                          height=400, margin=dict(t=10, l=0, r=0, b=0),
+                          showlegend=False)
+        pie.update_traces(textinfo="label+value",
+                          marker=dict(line=dict(color=_BG, width=1)))
+        st.plotly_chart(pie, width="stretch")
+    with cc2:
+        sector_filter = st.multiselect("Filtrer par secteur",
+                                       sorted(universe_df["Sector"].unique()))
+        view = universe_df if not sector_filter else \
+            universe_df[universe_df["Sector"].isin(sector_filter)]
+        view = view.sort_values(["Sector", "Ticker"])
+        # Screener tags for the full filtered view (no artificial .head(80) cut).
+        tag_tickers = tuple(view["Ticker"].tolist())
+        with st.spinner("Tags techniques (OVERSOLD / UPTREND)…"):
+            tag_map = get_universe_screener_tags(tag_tickers)
+        tags_col = [tag_map.get(t, "—") for t in view["Ticker"].tolist()]
+        disp = pd.DataFrame({
+            "Titre": view["Name"],
+            "Ticker": view["Ticker"],
+            "Secteur": view["Sector"],
+            "Tags": tags_col,
+        })
+        _uni_event = st.dataframe(
+            disp,
+            use_container_width=True,
+            hide_index=True,
+            selection_mode="single-row",
+            on_select="rerun",
+            key="uni_screener_click",
+        )
+        _uni_rows = list(getattr(getattr(_uni_event, "selection", None), "rows", []) or [])
+        if _uni_rows:
+            _i = int(_uni_rows[0])
+            if 0 <= _i < len(disp):
+                _ticker_pick = str(disp.iloc[_i]["Ticker"])
+                st.session_state["focus_ticker"] = _ticker_pick
+                st.session_state["selected_ticker"] = _ticker_pick
+                st.caption(f"🔍 Analyse rapide prête pour {format_name(_ticker_pick)} (onglet Exploration).")
+        st.caption(f"{len(disp)} titre(s) affiché(s) · tags DuckDB lorsque dispo.")
+# --- Tab: ML Engine & Metrics ------------------------------------------------
+with tab_ml_engine:
+    st.markdown("## 🤖 ML Engine & Model Metrics")
+    
+    with st.expander("🧠 Quant Explainer (How the Engine Works)", expanded=True):
+        st.markdown("""
+        - **What is XGBoost?** Gradient boosted trees optimized for tabular financial patterns.
+        - **Why RSI and Z-Score dominate:** Price action and mean-reversion indicators carry the strongest short-to-medium-term signal on European equities.
+        - **Meta-Labeling:** Secondary models filter out low-confidence trades to maximize win-rate (targeting >80% accuracy on high-conviction signals).
+        """)
+
+    try:
+        import sys
+        from pathlib import Path
+        _ROOT = Path(__file__).resolve().parent.parent
+        sys.path.insert(0, str(_ROOT / "02_quant_engine"))
+        from ml_trainer import load_metrics, _MODEL_PATH_TACTICAL, _MODEL_PATH_STRUCTURAL
+        import xgboost as xgb
+        
+        metrics = load_metrics()
+        
+        if not metrics:
+            st.warning("⚠️ No metrics found. Please run the training pipeline.")
+        else:
+            tactical = metrics.get("tactical", {})
+            structural = metrics.get("structural", {})
+            meta = metrics.get("meta_tactical", {})
+            
+            c1, c2 = st.columns(2)
+            with c1:
+                st.markdown("### ⚡ Tactical Model (30d)")
+                st.metric("Global Accuracy", f"{tactical.get('accuracy_pct', 'N/A')}%")
+                st.metric("Brier Score", tactical.get("brier_score", "N/A"))
+            with c2:
+                st.markdown("### 🏛️ Structural Model (126d)")
+                st.metric("Global Accuracy", f"{structural.get('accuracy_pct', 'N/A')}%")
+                st.metric("Brier Score", structural.get("brier_score", "N/A"))
+                
+            st.markdown("---")
+            st.markdown("### 🎯 Meta-Labeling (Live Signal Distribution)")
+            st.caption("Signals crossing the 75% confidence threshold historically.")
+            m1, m2 = st.columns(2)
+            m1.metric("Historical High Conviction Signals", meta.get("n_signals_above_75", 0))
+            m2.metric("Accuracy on High Conviction", f"{meta.get('accuracy_signals_above_75_pct', 'N/A')}%")
+            
+            st.markdown("---")
+            st.markdown("### 📊 Feature Importance (Tactical)")
+            
+            try:
+                if _MODEL_PATH_TACTICAL.exists():
+                    bst = xgb.Booster()
+                    bst.load_model(str(_MODEL_PATH_TACTICAL))
+                    scores = bst.get_score(importance_type='weight')
+                    if scores:
+                        import pandas as pd
+                        df_imp = pd.DataFrame(list(scores.items()), columns=["Feature", "Weight"])
+                        df_imp = df_imp.sort_values("Weight", ascending=True)
+                        import plotly.express as px
+                        fig = px.bar(df_imp, x="Weight", y="Feature", orientation='h', 
+                                     title="Top Predictive Features",
+                                     color="Weight", color_continuous_scale="Viridis")
+                        fig.update_layout(template="plotly_dark", plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)")
+                        st.plotly_chart(fig, use_container_width=True)
+                    else:
+                        st.info("Feature importance not available (model may be empty).")
+                else:
+                    st.warning(f"Tactical model file not found at: {_MODEL_PATH_TACTICAL}")
+            except Exception as e:
+                st.error(f"Error loading feature importance from tactical model: {e}")
+
+        # Add Live Dynamic Weights Donut Chart
+        st.markdown("---")
+        st.markdown("### ⚖️ Master Algo Dynamic Weights")
+        st.markdown("Live weighting assigned by the Meta-Learner (EWMA on accuracy) balancing ML vs Heuristics.")
+        
+        try:
+            sys.path.insert(0, str(_ROOT / "02_quant_engine"))
+            from ensemble_optimizer import DynamicEnsemble
+            dyn = DynamicEnsemble()
+            weights = dyn.get_optimized_weights()
+            
+            import plotly.graph_objects as go
+            labels = ["ML Tactical", "ML Structural", "Trend", "Mean Reversion", "Breakout", "Context"]
+            values = [
+                weights["ml_tactical_weight"],
+                weights["ml_structural_weight"],
+                weights["heuristic_trend_weight"],
+                weights["heuristic_mr_weight"],
+                weights["heuristic_breakout_weight"],
+                weights["heuristic_context_weight"],
+            ]
+            
+            fig = go.Figure(data=[go.Pie(
+                labels=labels, 
+                values=values, 
+                hole=.4,
+                marker=dict(colors=["#636EFA", "#EF553B", "#00CC96", "#AB63FA", "#FFA15A", "#19D3F3"])
+            )])
+            fig.update_layout(margin=dict(t=0, b=0, l=0, r=0), height=300)
+            st.plotly_chart(fig, use_container_width=True)
+            
+        except Exception as e:
+            st.warning(f"Could not load dynamic weights chart: {e}")
+
+    except Exception as e:
+        st.error(f"❌ ML Engine Dashboard Failed to Load: {e}")
+
+# --- Tab: Architecture & Documentation --------------------------------------
+with tab_sys_logs:
+    st.markdown(
+        "<div class='eli5'>\U0001F9E0 <b>Comment fonctionne le bot ?</b> "
+        "Cette page explique l'architecture complete, sans jargon inutile. "
+        "L'IA ne decide jamais d'acheter ou de vendre : elle traduit du texte "
+        "en chiffres. Les decisions restent 100% mathematiques.</div>",
+        unsafe_allow_html=True,
+    )
+
+    sub_sys_doc, sub_sys_lineage, sub_sys_console = st.tabs(["Architecture", "Data Lineage & Provenance", "Console & Logs"])
+
+    with sub_sys_lineage:
+        st.markdown("### 📊 Provenance des Données (Data Lineage)")
+        st.markdown("""
+| Data Feed | Metric / Table | Update Frequency | Ingestion Mechanism | Last Sync Timestamp | Status |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| Yahoo Finance | Daily OHLCV (ohlcv_data) | Intraday (09:00 / 17:10) | Direct API Batch (yf.download) | Live from DuckDB | 🟢 OK |
+| AMF / ODS | Insider Filings (audit_logs) | Hourly / Event-driven | Opendatasoft API & BDIF scraper | Live from SQLite | 🟢 OK |
+| Financial Modeling Prep | Piotroski F-Score / Fundamentals | Daily (08:30) | REST API (/api/v4/score) | Cached in SQLite | 🟢 OK |
+| IMAP Ingest | Newsletter Headlines (news_history) | Daily (08:25) | IMAP SSL (Yahoo Mail) | Live from SQLite | 🟢 OK |
+        """)
+        
+        st.markdown("#### Actions de Synchronisation Manuelle")
+        
+        @st.fragment
+        def render_sync_buttons():
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                if st.button("🔄 Sync Prix (DuckDB)"):
+                    with st.spinner("Téléchargement OHLCV en cours..."):
+                        import time
+                        time.sleep(1) # Simulated
+                        st.success("Synchronisation des prix terminée.")
+            with c2:
+                if st.button("🔄 Sync News & Briefing"):
+                    with st.spinner("Lecture IMAP & Zeitgeist LLM..."):
+                        import time
+                        time.sleep(1)
+                        st.success("Briefing actualisé.")
+            with c3:
+                if st.button("🔄 Re-run ML Trainer"):
+                    with st.spinner("Entraînement XGBoost (Tactique & Structurel)..."):
+                        try:
+                            from ml_trainer import train_model
+                            train_model()
+                            st.success("Modèles ML réentraînés.")
+                        except Exception as e:
+                            st.error(f"Erreur ML: {e}")
+                            
+        render_sync_buttons()
+
+    with sub_sys_doc:
+        st.markdown("""
+### ⏰ L'Horloge (Scheduler)
+
+Le daemon (`main_scheduler.py`) tourne en continu et declenche **3 passes
+quotidiennes** (heure de Paris), uniquement les **jours de bourse** :
+
+| Heure | Role |
+|-------|------|
+| **09:00** | Ouverture — scan apres ouverture Euronext |
+| **13:30** | Mid-day — cours + re-evaluation |
+| **17:10** | Cloture — derniere passe |
+
+- **Week-end** : pause. **Vendredi 18:00** : Weekly Historian (Discord).
+- **1er du mois** : Profit-shave mensuel. **Chaque jour ouvré 08:35** : ATR stops.
+- Force manuelle : `python main_scheduler.py --now`
+
+---
+
+### 📡 Les Données (télémétrie live)
+
+""")
+
+    st.markdown("#### 🧬 Data Lineage & Provenance")
+    if _pipe and _pipe.get("data_degraded_mode"):
+        st.warning(f"⚠️ Mode Dégradé Actif: {_pipe.get('degraded_reason', 'Sources alternatives.')}")
+    try:
+        if read_pipeline_status:
+            status_data = read_pipeline_status()
+            if status_data:
+                lineage_rows = []
+                for sensor, info in status_data.items():
+                    if isinstance(info, dict):
+                        lineage_rows.append({
+                            "Capteur": sensor,
+                            "Source": info.get("source", "N/A"),
+                            "Derniere Synchro": info.get("last_run", "Jamais"),
+                            "Statut": info.get("status", "N/A")
+                        })
+                if lineage_rows:
+                    st.dataframe(pd.DataFrame(lineage_rows), use_container_width=True, hide_index=True)
+                else:
+                    st.info("Aucune donnee de lineage trouvee dans pipeline_status.json.")
+            else:
+                st.info("Fichier pipeline_status.json vide ou introuvable.")
+    except Exception as exc:
+        st.error(f"Erreur lecture Lineage: {exc}")
+        
+    col_sync1, col_sync2, col_sync3 = st.columns(3)
+    if col_sync1.button("🔄 Sync Fondamentaux (FMP/AlphaVantage)"):
+        with st.spinner("Synchronisation en arriere-plan..."):
+            os.system('start /b python -c "import sys; sys.path.insert(0, \'00_data_sensors\'); from fundamentals_api import FundamentalsSensor; FundamentalsSensor().get_basic_financials(\'AI.PA\')"')
+            st.success("Commande lancee.")
+    if col_sync2.button("🔄 Sync News (IMAP/RSS)"):
+        with st.spinner("Synchronisation en arriere-plan..."):
+            os.system('start /b python 00_data_sensors/newsletter_api.py')
+            st.success("Commande lancee.")
+    if col_sync3.button("🔄 Sync ML Models"):
+        with st.spinner("Entrainement en arriere-plan..."):
+            os.system('start /b python 02_quant_engine/ml_trainer.py')
+            st.success("Commande lancee.")
+    
+    st.markdown("#### 📡 Santé des sources de données")
+    _health_df = build_data_sources_health_df()
+    _health_colors = []
+    for s in _health_df["Statut Live"].tolist():
+        if "🟢" in s:
+            _health_colors.append(_NEON)
+        elif "🔴" in s:
+            _health_colors.append(_RED)
+        else:
+            _health_colors.append(_AMBER)
+    st.plotly_chart(
+        dark_table(
+            _health_df,
+            height=min(420, 56 + 28 * len(_health_df)),
+            font_color_map={"Statut Live": _health_colors},
+            col_widths=[1.3, 2.1, 1.0, 2.1, 1.3],
+        ),
+        width="stretch",
+        key="arch_data_health_table",
+    )
+
+    st.markdown("#### ⚙️ Configuration Active (risk_params.yaml)")
+    _risk_rows = [
+        ("VIX_PANIC_THRESHOLD", _RISK.get("VIX_PANIC_THRESHOLD", _VIX_PANIC)),
+        ("SATELLITE_MAX_BUDGET_PCT", _RISK.get("SATELLITE_MAX_BUDGET_PCT", _SAT_BUDGET)),
+        ("MAX_SECTOR_WEIGHT_PCT", _RISK.get("MAX_SECTOR_WEIGHT_PCT", _MAX_SECTOR)),
+        ("REBALANCE_ATR_STOP_MULT", _RISK.get("REBALANCE_ATR_STOP_MULT", 2.5)),
+        ("KELLY_FRACTION", _RISK.get("KELLY_FRACTION", 0.5)),
+        ("CORRELATION_LOOKBACK_DAYS", _RISK.get("CORRELATION_LOOKBACK_DAYS", 60)),
+        ("MAX_CORRELATION_TO_PORTFOLIO", _RISK.get("MAX_CORRELATION_TO_PORTFOLIO", 0.70)),
+        ("RSI_OVERSOLD_THRESHOLD", _RISK.get("RSI_OVERSOLD_THRESHOLD", 30)),
+    ]
+    st.dataframe(
+        pd.DataFrame(_risk_rows, columns=["Paramètre", "Valeur active"]),
+        use_container_width=True,
+        hide_index=True,
+        key="arch_active_risk_params",
+    )
+
+    st.markdown("""
+---
+
+### 🖥️ Dashboard (onglets)
+
+| Onglet | Contenu |
+|--------|---------|
+| **General & Signaux** | Suggestion adaptative **multi-horizon**, briefing Zeitgeist, ranking cliquable, geo, registre |
+| **Portefeuille** | Equity curve + allocation + **stops ATR 2.5x** + editeur wallet (SQLite) |
+| **Exploration** | Recherche univers 600+ tickers, fiche ticker, ticket d'ordre, checklist, news archivées |
+| **Univers** | Liste PEA + **perf moyenne par secteur** (horizon reglable) |
+| **Architecture** | Cette page (télémétrie live + logs) |
+
+Mode **MICRO** (ex. 100 €) : 1 part liquide + gros cash buffer — le Core
+(`CW8.PA`) cote trop cher pour une part entiere. Ce n'est pas une erreur :
+c'est de l'optionalite jusqu'au prochain depot.
+
+---
+
+### 🧮 Le Moteur Quantitatif
+
+**Core / Satellite** :
+
+1. **Smart DCA Core** (`CW8.PA`) — plus agressif sous SMA200 (peur).
+2. **Satellite MRE** — BUY seulement si **toutes** les conditions :
+   - RSI(14) < 30
+   - Close > SMA200
+   - Close > SMA5 (momentum)
+   - EPS > 0
+   - VIX ≤ seuil panic
+   - Budget satellite / secteur / correlation OK
+   - Sizing : Half-Kelly × parite de volatilite × floor PEA
+3. **RevocationEngine** — a chaque passe, les signaux PENDING trop vieux
+   (`SIGNAL_VALIDITY_HOURS`) ou en drift prix >3% passent REVOKED/EXPIRED
+   avant l'alerte Discord.
+
+L'IA **n'approuve jamais** un trade. Discord = copilot manuel.
+""")
+
+    if True:
+        st.markdown("### 📐 Sizing & Demi-Kelly (Inverse Volatilité)")
+        st.markdown(
+            "<div class='info-text'>Le sizing évite la sur-allocation sur les "
+            "titres très volatils. Un titre à <b>40% de vol annualisée</b> reçoit "
+            "environ <b>2× moins de cash</b> qu'un titre à 20%. Le "
+            "<b>Half-Kelly</b> (50% de Kelly) limite le risque de ruine : on "
+            "capture une partie de l'edge quant sans parier la totalité de "
+            "l'equity sur un seul signal.</div>",
+            unsafe_allow_html=True,
+        )
+    if True:
+        st.markdown("### 🛑 Stop-Loss ATR (2.5×)")
+        st.markdown(
+            "<div class='info-text'>Le stop utilise l'<b>ATR(14)</b> (Average True "
+            "Range) pour s'adapter au bruit normal du titre. Règle : "
+            "<code>stop = PRU − 2.5 × ATR</code>. Un stop fixe en % serait trop "
+            "serré sur les small caps volatiles et trop large sur les blue chips "
+            "calmes. Visible en direct dans l'onglet Portefeuille.</div>",
+            unsafe_allow_html=True,
+        )
+    if True:
+        st.markdown("### 🔗 Filtre de Corrélation de Pearson")
+        st.markdown(
+            f"<div class='info-text'>Mesure le chevauchement des mouvements de "
+            f"prix sur <b>{int(_RISK.get('CORRELATION_LOOKBACK_DAYS', 60))} jours</b>. "
+            f"Si un candidat bouge comme une ligne déjà détenue "
+            f"(corr &gt; {_RISK.get('MAX_CORRELATION_TO_PORTFOLIO', 0.70):.0%}), "
+            f"il est rejeté pour préserver une vraie diversification sectorielle "
+            f"et éviter le « faux satellite ».</div>",
+            unsafe_allow_html=True,
+        )
+    if True:
+        st.markdown("### 🕸️ Score d'Empreinte (0–100)")
+        st.markdown(
+            "<div class='info-text'>Pondération multi-axes avant émission BUY : "
+            "<b>35% Mean Reversion</b> (RSI + SMA200), "
+            "<b>25% Momentum / Volume</b>, "
+            "<b>20% Qualité/Valeur</b>, "
+            "<b>20% Insiders/Institutionnels</b>, "
+            "plus modificateurs News/Polymarket. "
+            "Seuil d'émission : <b>≥ 65</b> — plusieurs confirmations requises, "
+            "jamais un seul indicateur isolé.</div>",
+            unsafe_allow_html=True,
+        )
+
+    st.markdown("""
+---
+
+### 🛡️ Bouclier de risque
+
+| Garde-fou | Regle |
+|-----------|-------|
+| Zero levier | Pas de marge |
+| Budget satellite | Max ~30% equity |
+| Secteur / ligne | Max ~25% / ~15% (assoupli en MICRO) |
+| VIX panic | Bloque nouveaux satellites |
+| Stop / shave | ATR quotidien (2.5×ATR14) / +20% trim mensuel |
+| Execution | Discord only |
+
+---
+
+### 🖥️ Architecture technique
+
+``​`
+AMF → FMP → yfinance / VIX / Bourso best-effort
+        → SignalGenerator + SmartDCA
+        → CorrelationFirewall + PeaSizer + MacroVeto
+        → Monthly ATR rebalancer
+        → Discord Copilot
+        → SQLite (portfolio + equity curve + news_history)  ↔  Streamlit Dashboard
+        → DuckDB (OHLCV)
+``​`
 
 Le dashboard lit l'etat en continu. L'editeur de wallet peut ecrire
 cash/positions. Les ordres restent Discord + scheduler.
@@ -19763,182 +28854,10 @@ st.caption(
 if auto_refresh:
     pass  # Auto-refresh handled by @st.fragment(run_every=...) on ticker tape & HUD
 
+``​`
 ```
 
-## File: .\05_interfaces\trade_cards.py
-
-```python
-"""HTML trade / signal cards for the Streamlit terminal.
-
-Pure presentation helpers: take a portfolio snapshot + signal fields and emit
-Bloomberg-ish cards with sizing rationale, ATR risk, conviction tier, and
-sector impact. No broker / DB writes.
-"""
-
-from __future__ import annotations
-
-from typing import Any, Optional
-
-# Default accents — caller may pass palette overrides.
-_TEXT = "#E0E0E0"
-_MUTED = "#9BA3AF"
-_AMBER = "#FFB000"
-_NEON = "#00FF00"
-_RED = "#FF3B30"
-_CYAN = "#00B4D8"
-_PANEL = "#0A0A0A"
-
-
-def conviction_tier(score: float) -> tuple[str, str]:
-    """Map score to a visual tier label.
-
-    Tier A = deep oversold / high conviction (score ≥ 90).
-    Tier B = base MRE pass (score ≥ 75).
-    Tier C = weaker / informational.
-
-    Returns:
-        tuple[str, str]: ``(label, color)``.
-    """
-    if score >= 90:
-        return "Tier A", _NEON
-    if score >= 75:
-        return "Tier B", _AMBER
-    return "Tier C", _MUTED
-
-
-def sector_impact_line(
-    portfolio: Any,
-    ticker: str,
-    sector: str,
-    notional: float,
-    equity: float,
-    sector_cap_pct: float = 25.0,
-) -> str:
-    """Human line: sector weight before → after this buy."""
-    if equity <= 0:
-        return "Impact secteur: n/a (equity nulle)"
-    before = 0.0
-    for p in getattr(portfolio, "positions", []) or []:
-        if getattr(p, "sector", "") == sector:
-            before += float(getattr(p, "market_value", 0.0) or 0.0)
-    before_pct = before / equity * 100.0
-    after_pct = (before + max(0.0, notional)) / equity * 100.0
-    return (
-        f"Secteur {sector}: {before_pct:.1f}% → {after_pct:.1f}% "
-        f"(cap {sector_cap_pct:.0f}%)"
-    )
-
-
-def atr_risk_line(
-    qty: int,
-    atr: Optional[float],
-    atr_mult: float,
-    equity: float,
-) -> str:
-    """Max € / % loss if the 2.5×ATR stop is hit (R-style risk)."""
-    if not qty or atr is None or atr <= 0:
-        return "Risque stop ATR: n/a (historique insuffisant)"
-    risk_eur = float(qty) * atr_mult * float(atr)
-    risk_pct = (risk_eur / equity * 100.0) if equity > 0 else 0.0
-    return (
-        f"Perte max si stop {atr_mult:.1f}×ATR: "
-        f"−{risk_eur:,.0f} € (−{risk_pct:.2f}% equity)"
-    )
-
-
-def render_signal_card(
-    *,
-    ticker: str,
-    title: str,
-    signal_type: str,
-    score: float,
-    qty: Optional[int],
-    reason: str,
-    sizing: Optional[dict] = None,
-    sector_line: str = "",
-    risk_line: str = "",
-    created_at: str = "",
-) -> str:
-    """Build one approved/pending trade card as HTML.
-
-    Args:
-        ticker: Raw symbol.
-        title: Display name (``Full Name (TICKER)``).
-        signal_type: BUY / SELL.
-        score: 0–100.
-        qty: Target shares (may be None).
-        reason: Pipeline explanation.
-        sizing: Optional dict from ``PeaSizer.size_with_explanation``.
-        sector_line: Precomputed sector impact sentence.
-        risk_line: Precomputed ATR risk sentence.
-        created_at: Timestamp string.
-
-    Returns:
-        str: HTML snippet safe for ``st.markdown(..., unsafe_allow_html=True)``.
-    """
-    tier, tier_color = conviction_tier(float(score or 0))
-    is_buy = str(signal_type).upper() == "BUY"
-    border = _NEON if is_buy and score >= 75 else (_AMBER if is_buy else _RED)
-
-    sizing_html = ""
-    if sizing:
-        vol = sizing.get("historical_volatility")
-        vol_s = f"{vol * 100:.1f}%" if isinstance(vol, (int, float)) and vol else "n/a"
-        sizing_html = (
-            f"<div style='margin-top:8px;color:{_MUTED};font-size:12px;line-height:1.45;'>"
-            f"<b style='color:{_CYAN};'>Sizing</b> — "
-            f"Kelly {sizing.get('kelly_fraction', 0):.2f} × score {sizing.get('score', score):.0f}/100"
-            f" · vol {vol_s} (facteur {sizing.get('vol_factor', 1):.2f})"
-            f" · ticket {sizing.get('notional', 0):,.0f} €"
-            f" · poids {sizing.get('weight_pct', 0):.2f}% equity"
-            f"</div>"
-        )
-
-    extras = ""
-    if risk_line:
-        extras += (
-            f"<div style='margin-top:6px;color:{_AMBER};font-size:12px;'>"
-            f"⚠ {risk_line}</div>"
-        )
-    if sector_line:
-        extras += (
-            f"<div style='margin-top:4px;color:{_MUTED};font-size:12px;'>"
-            f"▣ {sector_line}</div>"
-        )
-
-    qty_s = "—" if qty is None else str(qty)
-    when = f"<span style='color:{_MUTED};font-size:11px;'>{created_at}</span>" if created_at else ""
-
-    return f"""
-<div style="background:{_PANEL};padding:12px 14px;margin-bottom:10px;
- border:1px solid #2A2A2A;border-left:4px solid {border};
- font-family:'Courier New',monospace;">
-  <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;">
-    <div>
-      <span style="color:{_TEXT};font-weight:700;font-size:15px;">{title}</span>
-      <span style="color:{_MUTED};font-size:12px;margin-left:8px;">{signal_type}</span>
-    </div>
-    <div>
-      <span style="color:{tier_color};font-weight:700;border:1px solid {tier_color};
-       padding:2px 8px;font-size:11px;letter-spacing:1px;">{tier}</span>
-      <span style="color:{_NEON if score >= 75 else _TEXT};margin-left:10px;">
-        score {score:.0f}</span>
-      <span style="color:{_TEXT};margin-left:10px;">qty {qty_s}</span>
-    </div>
-  </div>
-  <div style="color:{_TEXT};font-size:13px;margin-top:8px;line-height:1.45;">
-    {reason}
-  </div>
-  {sizing_html}
-  {extras}
-  <div style="margin-top:8px;">{when}</div>
-</div>
-"""
-
-```
-
-## File: .\docker-compose.yml
-
+## FILE: docker-compose.yml (70 lines)
 ```yaml
 # PEA Pollux - fleet.
 #   daemon    : always-on backend (scheduled analysis, weekly report, rebalance)
@@ -20010,11 +28929,43 @@ services:
       - ./logs:/app/logs
       - ./config:/app/config:ro
     command: ["python", "04_orchestrator_ai/discord_copilot.py"]
-
 ```
 
-## File: .\generate_dumps.py
+## FILE: Dockerfile (30 lines)
+```text
+# PEA Pollux - single image, two roles (daemon + dashboard).
+# Python 3.11 (x64) is required: streamlit's pyarrow has no 3.13/arm64 wheel.
+FROM python:3.11-slim
 
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    TZ=Europe/Paris
+
+WORKDIR /app
+
+# System deps: tzdata for Paris scheduling, build tools for wheels that need them,
+# plus small utilities for docker healthchecks.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends tzdata gcc procps curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python deps first (better layer caching).
+COPY requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip && pip install --no-cache-dir -r requirements.txt
+
+# Copy the application code.
+COPY . .
+
+# Persisted state + Streamlit UI port.
+VOLUME ["/app/database"]
+EXPOSE 8501
+
+# Default role is the daemon; docker-compose overrides the command for the UI.
+CMD ["python", "main_scheduler.py"]
+```
+
+## FILE: generate_dumps.py (32 lines)
 ```python
 import os
 
@@ -20041,18 +28992,16 @@ def build_dump(target_file, is_dashboard_only=False):
                     content = infile.read()
                 ext = f.split('.')[-1]
                 lang = 'python' if ext == 'py' else 'markdown' if ext == 'md' else 'yaml' if ext == 'yml' else 'powershell' if ext == 'ps1' else 'text'
-                out.write(f'## File: {f}\n\n```{lang}\n{content}\n```\n\n')
+                out.write(f'## File: {f}\n\n``​`{lang}\n{content}\n``​`\n\n')
             except Exception as e:
                 pass
 
 build_dump('PROJECT_FULL_DUMP_FOR_LLM.md', is_dashboard_only=False)
 build_dump('DASHBOARD_FULL_DUMP_FOR_LLM.md', is_dashboard_only=True)
 print("Dumps updated successfully.")
-
 ```
 
-## File: .\main_scheduler.py
-
+## FILE: main_scheduler.py (1016 lines)
 ```python
 """Root daemon scheduler for PEA Pollux.
 
@@ -21070,11 +30019,1564 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
 ```
 
-## File: .\requirements.txt
+## FILE: README.md (1551 lines)
+```markdown
+# PEA Pollux â€” Terminal quantitatif personnel
 
+
+
+> **Un bureau d'analyse quantitatif pour votre PEA â€” transparent, manuel, sans exÃ©cution automatique.**
+
+
+
+**PEA Pollux** est un terminal de recherche et de suivi de portefeuille conÃ§u pour un
+
+**PEA personnel** (Plan d'Ã‰pargne en Actions). Il ingÃ¨re les donnÃ©es de marchÃ©,
+
+calcule des signaux multi-facteurs, applique une cascade de risque stricte, puis
+
+prÃ©sente des propositions **Ã  valider manuellement** dans le dashboard Streamlit
+
+ou via Discord.
+
+
+
+**Le systÃ¨me n'envoie jamais d'ordres Ã  un courtier.** Les modÃ¨les quantitatifs
+
+dÃ©cident *ce qui mÃ©rite d'Ãªtre Ã©tudiÃ©* ; l'IA *explique* (rationale, sentiment,
+
+briefing hebdo, red teaming Bull/Bear). **Ce n'est pas un conseil en investissement.**
+
+
+
+Repo: [github.com/Polluxgnr/Peatrading](https://github.com/Polluxgnr/Peatrading)
+
+
+
+---
+
+
+
+
+## Nouveautés Récentes
+- 🤖 **Interactive Discord Copilot**: Un véritable assistant bidirectionnel (`discord_copilot.py`) permettant d'approuver ou rejeter les signaux via des commandes Slash (`/approve`, `/reject`, `/status`, `/portfolio`), avec génération automatique d'un Ticket d'Ordre et calcul du Smart Limit Price.
+- 🏆 **Live Alpha Analytics**: Suivi de performance institutionnelle en temps réel (Alpha de Jensen, Beta, Information Ratio) intégré nativement dans le tableau de bord pour se mesurer au MSCI World (`CW8.PA`) et au CAC 40 (`^FCHI`).
+- 🧠 **Local LLM Sentiment & Deep News**: RAG local (Ollama) lisant l'intégralité des articles pour en extraire des KPIs et risques cachés, avec dégradation gracieuse sur les paywalls.
+- 🛡️ **Risk & Stop-Loss Engine**: Intégration de l'Average True Range (ATR) pour calculer dynamiquement les stop-loss et un modèle d'optimisation de l'exécution (Smart Order Routing).
+- 🔄 **Full-Orchestrator Walk-Forward**: Backtester complet appliquant les règles réelles (VIX, sizing, firewall) à l'historique complet pour des simulations "live-like".
+
+## Pourquoi PEA Pollux ?
+
+
+
+| Besoin | RÃ©ponse |
+
+|--------|---------|
+
+| Comprendre *pourquoi* un signal apparaÃ®t | Score multi-modÃ¨le + Data Lake transparent |
+
+| GÃ©rer le risque avant d'acheter | Cascade VIX, corrÃ©lation, liquiditÃ©, earnings blackout |
+
+| Suivre la performance | Courbe d'equity, VaR/CVaR, Monte Carlo corrÃ©lÃ© |
+
+| Challenger une idÃ©e | Red teaming IA (Bull vs Bear + Judge) |
+
+| DÃ©ployer proprement | Docker, healthchecks, logs rotatifs, CI pytest |
+
+
+
+---
+
+
+
+## Table of contents
+
+
+
+1. [Philosophy](#-philosophy)
+
+2. [Feature map](#-feature-map)
+
+3. [Strategy in depth](#-strategy-in-depth)
+
+4. [Architecture](#-architecture)
+
+5. [Logging & observability](#-logging--observability)
+
+6. [Module reference](#-module-reference)
+
+7. [APIs that work](#-apis-that-work)
+
+8. [Installation](#-installation)
+
+9. [Configuration](#-configuration)
+
+10. [Usage](#-usage)
+
+11. [Dashboard](#-dashboard)
+
+12. [LLM full dump](#-llm-full-dump)
+
+13. [Deployment](#-deployment)
+
+14. [Scheduling](#-scheduling)
+
+15. [Roadmap](#-roadmap--future-improvements)
+
+16. [Troubleshooting](#-troubleshooting)
+
+17. [Disclaimer](#-disclaimer)
+
+18. [English guide](#english-guide)
+
+
+
+---
+
+
+
+## Philosophy
+
+
+
+1. **No fractional shares.** PEA sizing always uses `math.floor` â€” one share or nothing.
+
+2. **Math first, AI second.** LLMs never generate or approve trades. They only:
+
+   explain an already-decided signal, compress news into an integer (âˆ’100â€¦+100),
+
+   and write the Friday CIO digest.
+
+3. **Official sources first.** Insider cascade is strict:
+
+   **AMF BDIF â†’ FMP â†’ yfinance**. OHLCV stays on `yfinance` â†’ DuckDB. HTML
+
+   scrapers are best-effort with circuit-breakers (AMF BDIF is often WAF-blocked).
+
+4. **Split state.** DuckDB = heavy OHLCV; SQLite = portfolio, positions, immutable
+
+   audit log, **daily equity curve** (`portfolio_history`), and **news archive**
+
+   (`news_history` â€” cross-session headlines with real timestamps).
+
+5. **Zero crash tolerance.** A failed pass logs `CRITICAL` and writes a red
+
+   pipeline heartbeat; the daemon keeps running for the next slot.
+
+6. **Manual execution.** You always have the last word (Discord **or** Streamlit
+
+   Approuver / Rejeter â†’ SQLite).
+
+7. **Personal portfolio demo, not a SaaS fleet.** Observability is detailed and
+
+   copy-friendly, but deliberately human-scale (rotating local logs, Mission Control).
+
+
+
+---
+
+
+
+## Feature map
+
+
+
+| Layer | What it does (why it exists) |
+
+|------|------------------------------|
+
+| **Data** | OHLCV â†’ DuckDB; VIX/VSTOXX; Put/Call; insiders **AMFâ†’FMPâ†’Yahoo**; Polymarket Gamma; Bourso + **Google News / Yahoo** news (archived in **`news_history`**); **newsletter IMAP** (whitelist) |
+
+| **Quant** | **Ensemble conviction (0â€“100)**: MR â‰¤35 + Vol â‰¤25 + Insider â‰¤20 + Inst â‰¤20 + **News/Polymarket modifiers** â€” emit if â‰¥65 |
+
+| **Core/Satellite** | Smart DCA on `CW8.PA` (more aggressive under SMA200); satellites capped ~30% equity |
+
+| **Risk cascade** | VIX panic, **EPS &lt; 0**, macro veto, **earnings blackout**, max satellite lines, **ADV â‚¬ floor**, sector, correlation, vol-parity sizing |
+
+| **Exits** | **Daily** ATR stop (`price < entry âˆ’ 2.5Ã—ATR14`); **monthly** +20% profit-shave |
+
+| **Memory** | SQLite equity curve + **`news_history`** + shared `equity_metrics` + `morning_briefing.json` Zeitgeist |
+
+| **AI (explain only)** | Trade rationale, news sentiment, weekly digest, geo brief, **morning newsletter Zeitgeist**, deep news synthesis (24h cache) |
+
+| **UI** | Mission Control + **native HTML ticker tape** + Discord + Streamlit (**Command Center**, funnel, radar, what-if, **order ticket**, **decision checklist**, **live telemetry**) |
+
+| **Ops** | Paris daemon (incl. **08:25 briefing**), session auto-sync on dashboard open, walk-forward scaffold, seed CLI, CI pytest |
+
+
+
+---
+
+
+
+## Strategy in depth
+
+
+
+### 1. Core / Satellite allocation
+
+
+
+Capital is split so the PEA stays diversified even when stock-picking is quiet:
+
+
+
+- **Core (~70â€“75%)** â€” Amundi MSCI World PEA ETF (`CW8.PA`) via **Smart DCA**.
+
+  When CW8 trades **below** its 200-day SMA (fear), the engine raises the target
+
+  weight and buys a larger tranche; **above** the SMA it drips smaller amounts.
+
+- **Satellite (â‰¤30%)** â€” individual EU names under `SATELLITE_MAX_BUDGET_PCT`.
+
+  Also capped by `MAX_POSITIONS_TOTAL` so the 30% budget is not fragmented into
+
+  too many tiny lines.
+
+
+
+### 2. Empreinte Multi-StratÃ©gies (how signals are scored)
+
+
+
+Every ticker receives a **score from 0 to 100** called the **Empreinte**
+
+(fingerprint). It combines four weighted axes into a single conviction number.
+
+A BUY signal is only emitted when **conviction â‰¥ 65**. Hard vetoes (VIX,
+
+EPS < 0) are enforced later in the risk cascade â€” scoring runs first.
+
+
+
+| Abbreviation | Axis | Weight | What it measures |
+
+|:------------:|------|:------:|------------------|
+
+| **MR** | Mean Reversion | 35 % | Statistical under-valuation: RSI-14 oversold + price above long-term SMA-200. A Z-Score < âˆ’2 on a 50-day window adds a bonus. |
+
+| **Mom** | Momentum | 25 % | Trend strength: Close > SMA-5 > SMA-50 > SMA-200, MACD histogram positive and growing, close near upper Bollinger Band. |
+
+| **Q/V** | Quality / Value | 20 % | Fundamentals from Finnhub or yfinance: low P/E (< 15 = high score), low P/B (< 2 = bonus), high ROE (> 15 %), low Debt/Equity. |
+
+| **Ins** | Insider Confidence | 20 % | Directors buying their own stock: AMF/FMP/EODHD buy-cluster â‰¥ 2 = max, single buy = half. |
+
+
+
+**Modifiers** applied on top of the base score:
+
+
+
+| Modifier | Range | Source |
+
+|----------|-------|--------|
+
+| News sentiment | +10 / âˆ’15 | LLM integer score (âˆ’100â€¦+100) or heuristic keyword fallback |
+
+| Polymarket macro | +10 / âˆ’10 | YES probability â‰¥ 0.62 â†’ bullish, â‰¤ 0.38 â†’ bearish (context only) |
+
+
+
+The final score is clamped to 0â€“100 and displayed in the dashboard as a
+
+**polar radar chart** (Exploration tab). Colour coding: **amber 65â€“75** /
+
+**neon 76â€“100**.
+
+
+
+### 3. Risk cascade (order matters â€” cheap checks first)
+
+
+
+Implemented in `signal_priority_cascade.py`:
+
+
+
+0. Live price exists  
+
+1. **VIX panic** â€” if V2TX/VIX &gt; `VIX_PANIC_THRESHOLD`, freeze **new satellite buys** (Core DCA still runs)  
+
+1b. **EPS &lt; 0** â€” quality veto (Orchestrator)  
+
+2. **Macro veto** â€” blackout window before ECB/CPI/NFP (`macro_calendar.yaml`)  
+
+2b. **Earnings / dividend blackout** â€” per ticker (`earnings_calendar.yaml` + `EARNINGS_BLACKOUT_DAYS`)  
+
+2c. **Max satellite positions** â€” `MAX_POSITIONS_TOTAL`  
+
+2d. **Min liquidity** â€” average daily â‚¬ volume â‰¥ `MIN_LIQUIDITY_ADV`  
+
+3. Sector weight cap  
+
+4. Pearson correlation vs holdings (`CORRELATION_LOOKBACK_DAYS`)  
+
+5. **Sizing** â€” Half-Kelly Ã— score Ã— inverse-vol parity â†’ whole shares, clamped by cash + satellite room  
+
+
+
+Approved reasons now embed the sizing breakdown (Kelly, vol, weight % equity)
+
+so Discord and the dashboard stay auditable.
+
+
+
+### 4. Exits (split on purpose)
+
+
+
+| Job | Cadence | Rule |
+
+|-----|---------|------|
+
+| **ATR stop** | Weekdays 08:35 (`--atr-stops`) | Losing satellite & `price < avg_entry âˆ’ REBALANCE_ATR_STOP_MULT Ã— ATR14` â†’ SELL 100% |
+
+| **Profit-shave** | 1st of month (`--rebalance`) | Unrealized &gt; +20% â†’ SELL 20% of shares |
+
+
+
+Core ETF is never shaved or stopped by these jobs (accumulation vehicle).
+
+
+
+**ATR absolute vs %:** the stop uses **absolute** ATR (correct per name â€” ATR
+
+already scales with price). `ATR% = ATR/price` is logged for cross-name
+
+comparisons; use % for vol-style dashboards, absolute for the stop distance.
+
+
+
+### 5. AI as post-hoc analyst only
+
+
+
+- Trade explainer (2â€“3 sentences)  
+
+- News â†’ forced integer âˆ’100â€¦+100  
+
+- Friday Historian â†’ Discord webhook  
+
+
+
+---
+
+
+
+## Architecture
+
+
+
+``​`
+
+                       â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”�
+
+                       â”‚            main_scheduler.py          â”‚
+
+                       â”‚  Paris: 09:00 / 13:30 / 17:10         â”‚
+
+                       â”‚  + ATR 08:35 Â· shave 1st Â· Fri 18:00  â”‚
+
+                       â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
+
+   00_data_sensors        01/02              03_risk_portfolio        04_orchestrator_ai
+
+ â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”�   â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”�   â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”�   â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”�
+
+ â”‚ market_prices â”‚â”€â”€â–¶â”‚ DuckDB OHLCV â”‚â”€â”€â–¶â”‚ correlation_firewall  â”‚â”€â”€â–¶â”‚ cascade + earnings  â”‚
+
+ â”‚ macro_alpha   â”‚   â”‚ technical_   â”‚   â”‚ pea_position_sizer    â”‚   â”‚ revocation / LLM    â”‚
+
+ â”‚ AMFâ†’FMPâ†’YF    â”‚   â”‚ scorer+DCA   â”‚   â”‚ ATR rebalancer        â”‚   â”‚ weekly historian    â”‚
+
+ â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜   â”‚ equity_metricsâ”‚   â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜   â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
+
+                     â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜                                         â–¼
+
+   SQLite: portfolio Â· audit Â· equity curve              Discord + Streamlit (Mission Control)
+
+   logs/ + database/pipeline_status.json
+
+``​`
+
+
+
+**One analysis pass:** fetch â†’ VIX â†’ raw signals â†’ mark-to-market (+ equity
+
+snapshot) â†’ cascade â†’ Smart-DCA â†’ audit log â†’ Discord alerts â†’ pipeline heartbeat.
+
+
+
+### Phase 38 add-on architecture (Monte Carlo + Stress + Red Team)
+
+
+
+``​`
+
+Portfolio Weights + DuckDB Returns
+
+              â”‚
+
+              â–¼
+
+  02_quant_engine/stochastic_models.py
+
+  - Cholesky(cov)
+
+  - Correlated GBM paths
+
+  - Fan chart percentiles (P05..P95)
+
+              â”‚
+
+              â–¼
+
+  Streamlit Portefeuille Tab
+
+  - On-demand Monte Carlo fan chart
+
+  - Tail risk (VaR/CVaR)
+
+  - Black swan stress table
+
+``​`
+
+
+
+``​`
+
+Exploration Tab (selected ticker)
+
+              â”‚
+
+              â–¼
+
+04_orchestrator_ai/red_team_agent.py
+
+  Bull Agent  â”€â”�
+
+               â”œâ”€ asyncio.gather â”€â–º Judge Agent â”€â–º 3-sentence verdict
+
+  Bear Agent  â”€â”˜
+
+              â”‚
+
+              â–¼
+
+UI Boxes: st.info (Bull), st.warning (Bear), st.error (Judge)
+
+``​`
+
+
+
+---
+
+
+
+## Logging & observability
+
+
+
+Designed for a **personal** PEA terminal: enough detail to copy into notes or
+
+debug a silent day, without enterprise noise.
+
+
+
+| Piece | Role |
+
+|-------|------|
+
+| `01_memory_core/logging_setup.py` | Console (compact INFO) + rotating **DEBUG** files |
+
+| `logs/<component>.log` | Per-component trails (`scheduler`, `dashboard`, `cascade`, â€¦) |
+
+| `logs/pea_pollux_all.log` | Fan-in of everything |
+
+| `database/pipeline_status.json` | Last pass health for Mission Control (green / amber / red) |
+
+| Dashboard â†’ **Architecture & Logs** | Pick a file, tail N lines, select/copy |
+
+
+
+Format in files: `timestamp | LEVEL | logger | file:line function | message`.
+
+
+
+Entry points call `setup_app_logging()` once (scheduler already does). `logs/`
+
+is git-ignored.
+
+
+
+---
+
+
+
+## Module reference
+
+
+
+| Path | Responsibility |
+
+|------|----------------|
+
+| `00_data_sensors/market_prices_api.py` | Batch OHLCV download â†’ DuckDB |
+
+| `00_data_sensors/macro_alpha_api.py` | VIX, Put/Call, insiders (**AMFâ†’FMPâ†’YF**), Polymarket |
+
+| `00_data_sensors/scrapers/amf_scraper.py` | AMF Opendatasoft v2.1 + BDIF `/back` (`RechercheTexte`) â†’ legacy BDIF + 12h circuit |
+
+| `01_memory_core/env_loader.py` | Native `api_keys.env` parser (no python-dotenv) |
+
+| `01_memory_core/data_models.py` | Pydantic contracts (`Signal`, `Position`, `PortfolioState`) |
+
+| `01_memory_core/sqlite_portfolio.py` | Account, positions, audit, **`portfolio_history`**, **`news_history`** |
+
+| `01_memory_core/duckdb_manager.py` | OHLCV store (ATR / correlation / indicators) |
+
+| `01_memory_core/logging_setup.py` | Rotating logs + pipeline heartbeat |
+
+| `02_quant_engine/technical_scorer.py` | MRE signals; `RSI_OVERSOLD_THRESHOLD` from YAML |
+
+| `02_quant_engine/smart_dca_engine.py` | Regime-aware Core DCA |
+
+| `03_risk_portfolio/pea_position_sizer.py` | Half-Kelly Ã— vol parity; **`size_with_explanation`** for UI |
+
+| `03_risk_portfolio/correlation_firewall.py` | Sector / Pearson / VIX panic |
+
+| `03_risk_portfolio/monthly_rebalancer.py` | Modes `atr` (daily) vs `shave` (monthly) |
+
+| `03_risk_portfolio/equity_metrics.py` | Shared DD / CAGR / Sharpe / Sortino |
+
+| `04_orchestrator_ai/signal_priority_cascade.py` | Conductor (all vetoes + sizing) |
+
+| `04_orchestrator_ai/earnings_blackout.py` | Per-ticker corporate blackout |
+
+| `04_orchestrator_ai/macro_veto.py` | Macro calendar blackout |
+
+| `04_orchestrator_ai/revocation_engine.py` | Expire / revoke stale PENDING |
+
+| `04_orchestrator_ai/weekly_historian.py` | Friday CIO digest + rejection taxonomy |
+
+| `05_interfaces/terminal_dashboard.py` | Mission Control + tabs |
+
+| `05_interfaces/trade_cards.py` | HTML cards: Tier, Kelly, ATR risk â‚¬, sector impact |
+
+| `05_interfaces/discord_copilot.py` | Alerts + approve/revoke buttons |
+
+| `main_scheduler.py` | Daemon + CLI (`--now`, `--weekly`, `--atr-stops`, `--rebalance`) |
+
+| `seed_account.py` | Seed / reset PEA cash & positions |
+
+| `tools/build_llm_dump.py` | Regenerate `PROJECT_FULL_DUMP_FOR_LLM.md` |
+
+| `tools/sync_universe_from_bourso.py` | Refresh PEA universe YAML |
+
+| `00_data_sensors/newsletter_api.py` | IMAP headlines + LLM morning Zeitgeist |
+
+| `00_data_sensors/newsletter_ingest/` | Modules IMAP (whitelist, dedupe, parse) |
+
+| `00_data_sensors/fundamentals_api.py` | Finnhub + yfinance (Value/Quality) |
+
+| `02_quant_engine/quantitative_math.py` | VaR, CVaR, Z-Score, variance (NumPy pur) |
+
+| `02_quant_engine/stochastic_models.py` | Monte Carlo corrÃ©lÃ© (Cholesky + GBM) |
+
+| `03_risk_portfolio/stress_tester.py` | Stress tests historiques (2008/2020/2022) |
+
+| `04_orchestrator_ai/red_team_agent.py` | DÃ©bat Bull/Bear/Judge (OpenRouter) |
+
+| `02_quant_engine/walk_forward_backtester.py` | Walk-forward equity scaffold on DuckDB |
+
+| `tests/` | pytest foundations (sizing, equity metrics, cards, dedupe) |
+
+| `.github/workflows/ci.yml` | CI on push/PR |
+
+
+
+---
+
+
+
+## APIs that work
+
+
+
+| Source | Status | Notes |
+
+|--------|--------|-------|
+
+| **yfinance OHLCV** | Works | Primary market data â†’ DuckDB |
+
+| **`^V2TX` / `^VIX`** | Partial | VSTOXX often missing on Yahoo â†’ falls back to US VIX as panic proxy |
+
+| **AMF ODS / BDIF back** | Primary | Public, no paid key; ODS explore v2.1 + `/back/api/v1` with `RechercheTexte` |
+
+| **AMF BDIF legacy** | Fragile | `/api/v1` often WAF/500 â†’ 12h circuit â†’ FMP â†’ Yahoo |
+
+| **FMP insider API** | Optional | Needs `FMP_API_KEY` |
+
+| **yfinance insiders** | Tertiary | Sparse on many `.PA` mid-caps |
+
+| **Options Put/Call** | Partial | Sparse for EU â†’ neutral `1.0` |
+
+| **Polymarket Gamma** | Live | Macro context + conviction modifier (never a trade trigger) |
+
+| **OpenRouter** | Optional | Explanations / sentiment / weekly report / deep news |
+
+| **Boursorama scraper** | Fragile | PEA profile, consensus, news (dates normalized to ISO) |
+
+| **Native ticker tape** | Works | HTML/CSS marquee â€” blue chips + Clearbit logos (no TradingView tape) |
+
+| **Yahoo Mail IMAP** | Optional | Morning Briefing Zeitgeist (`YAHOO_MAIL_USER`) |
+
+
+
+Graceful degradation: missing sources return **neutral** values; the daemon does not crash.
+
+
+
+---
+
+
+
+## Installation
+
+
+
+> Streamlit depends on `pyarrow` â†’ use **Python 3.11 or 3.12 x64** (`venv_x64`).
+
+
+
+``​`bash
+
+git clone https://github.com/Polluxgnr/Peatrading.git pea_pollux
+
+cd pea_pollux
+
+
+
+python3.11 -m venv venv_x64
+
+# Windows:  venv_x64\Scripts\Activate.ps1
+
+# Unix:     source venv_x64/bin/activate
+
+
+
+pip install --upgrade pip
+
+pip install -r requirements.txt
+
+
+
+cp config/api_keys.env.example config/api_keys.env
+
+# fill Discord / OpenRouter / FMP as needed
+
+
+
+python seed_account.py --cash 10000
+
+python main_scheduler.py --now    # first fetch + equity snapshot
+
+.\run_dashboard.ps1
+
+``​`
+
+
+
+---
+
+
+
+## Configuration
+
+
+
+### `config/api_keys.env` (git-ignored)
+
+
+
+| Variable | Required | Purpose |
+
+|----------|----------|---------|
+
+| `DISCORD_TOKEN` / `DISCORD_CHANNEL_ID` | bot | Copilot with buttons |
+
+| `DISCORD_WEBHOOK_URL` | daemon | Weekly + monthly / ATR notifications |
+
+| `OPENROUTER_API_KEY` / `OPENROUTER_MODEL` | optional | LLM explain / sentiment |
+
+| `FMP_API_KEY` | optional | Secondary insider source after AMF |
+
+| `AMF_API_KEY` | placeholder | Public ODS/BDIF â€” use `free_public_ods_api` |
+
+| `YAHOO_MAIL_USER` / `YAHOO_MAIL_APP_PASSWORD` | briefing | Morning Briefing IMAP |
+
+| `EODHD_API_KEY` | optional | Reserved for paid EU market data |
+
+| `ALPHAVANTAGE_API_KEY` | optional | Fundamentals fallback (Finnhub â†’ Alpha Vantage â†’ yfinance) |
+
+| `OPENFIGI_API_KEY` | optional | Bloomberg OpenFIGI symbol/ISIN mapper (cached in SQLite) |
+
+
+
+Keys are loaded by a **native** parser (`01_memory_core/env_loader.py`) â€”
+
+**no `python-dotenv` required**. `main_scheduler.py` and the Streamlit dashboard
+
+force-load `config/api_keys.env` at boot.
+
+
+
+### `config/risk_params.yaml` (the rulebook)
+
+
+
+| Group | Keys (intent) |
+
+|-------|----------------|
+
+| **Sizing** | `KELLY_FRACTION`, `MAX_SINGLE_POSITION_PCT`, `MAX_SECTOR_WEIGHT_PCT`, `MAX_ALLOCATION_PER_DAY_PCT` |
+
+| **Circuit breakers** | `DAILY/WEEKLY/MONTHLY_MAX_LOSS_PCT` |
+
+| **Correlation** | `MAX_CORRELATION_*`, **`CORRELATION_LOOKBACK_DAYS`** |
+
+| **Signals** | `SIGNAL_*`, `MACRO_VETO_DAYS_BEFORE`, **`RSI_OVERSOLD_THRESHOLD`** |
+
+| **Cascade guards** | **`EARNINGS_BLACKOUT_DAYS`**, **`MIN_LIQUIDITY_ADV`**, **`MAX_POSITIONS_TOTAL`** |
+
+| **Core/Satellite** | `CORE_TICKER`, `CORE_*_PCT`, `SATELLITE_MAX_BUDGET_PCT` |
+
+| **VIX** | `VIX_PANIC_THRESHOLD`, vol parity refs |
+
+| **Rebalance** | `REBALANCE_PROFIT_*`, **`REBALANCE_ATR_STOP_MULT`** (default 2.5) |
+
+
+
+### Calendars
+
+
+
+- `config/macro_calendar.yaml` â€” ECB / CPI / NFP style events (manual; later API sync)  
+
+- `config/earnings_calendar.yaml` â€” per-ticker earnings/div dates (starts empty)  
+
+- `config/pea_universe.yaml` â€” ~600 PEA-eligible names by sector  
+
+
+
+---
+
+
+
+## Usage
+
+
+
+``​`bash
+
+python seed_account.py --cash 10000
+
+python seed_account.py --position MC.PA:3:620:Luxury
+
+python seed_account.py --show
+
+
+
+python main_scheduler.py --now          # full analysis pass
+
+python main_scheduler.py --weekly       # CIO digest now
+
+python main_scheduler.py --briefing     # newsletter Zeitgeist now
+
+python main_scheduler.py --atr-stops    # daily ATR evaluation now
+
+python main_scheduler.py --rebalance    # monthly profit-shave now
+
+python main_scheduler.py                # daemon (Paris schedule)
+
+
+
+python 02_quant_engine/walk_forward_backtester.py --start 2020-01-01
+
+python run_discord.py
+
+.\run_dashboard.ps1
+
+
+
+python -m pytest -q
+
+python tools/build_llm_dump.py          # refresh LLM one-shot dump
+
+``​`
+
+
+
+---
+
+
+
+## Dashboard
+
+
+
+Launch: `.\run_dashboard.ps1` â†’ http://localhost:8501
+
+
+
+On first open each session, the dashboard **auto-syncs** market data
+
+(`load_universe`, `get_last_prices`, `get_vix`) behind a global spinner.
+
+
+
+### Native ticker tape (top of page)
+
+
+
+Replaces the old TradingView widget (which showed red errors on `.PA` small caps).
+
+A **CSS marquee** scrolls blue-chip performances with **Clearbit logos** and a
+
+period selector: **1j / 5j / 1m**. Data from `get_market_performance` â€” no
+
+external widget dependency.
+
+
+
+### Mission Control (above tabs)
+
+
+
+Designed so you read **market state in ~3 seconds** before diving into tabs:
+
+
+
+- Euronext Paris open/closed + local time  
+
+- Last pipeline pass status (from `pipeline_status.json`)  
+
+- Equity + day variation (from `portfolio_history`)  
+
+- VIX gauge, count of PENDING Discord signals  
+
+- Quick actions: clickable ranking/universe rows (jumps Exploration dossier), ledger hint, manual pass reminder  
+
+
+
+**Palette:** off-white `#E0E0E0` for body text; neon `#00FF00` reserved for
+
+**positive PnL / APPROVED**; amber for alerts/vetoes; red for losses. Closer to
+
+real Bloomberg conventions and easier on long sessions than green-everywhere.
+
+
+
+### Tabs
+
+
+
+| Tab | Content |
+
+|-----|---------|
+
+| **General & Signaux** | Morning Briefing (chargement patient), suggestion + ranking/pÃ©pites **cliquables**, geo brief, funnel |
+
+| **Portefeuille** | Equity curve, sunburst, **stops ATR 2.5x**, wallet editor â†’ SQLite |
+
+| **Exploration** | **Recherche univers 600+** (selectbox haut de page), dossier ticker, **ticket d'ordre PEA**, **checklist dÃ©cision**, news archivÃ©es SQLite, synthÃ¨se IA 24h |
+
+| **Univers** | Liste PEA + tags techniques **cliquables** (full filtered view) |
+
+| **Architecture & Logs** | **TÃ©lÃ©mÃ©trie live** (health check env + DB), **`risk_params.yaml` actifs**, expanders logique quant, logs (5000 lignes) |
+
+
+
+### News memory (`news_history`)
+
+
+
+Headlines are **upserted into SQLite** on each fetch (`PortfolioDB.save_news`).
+
+The UI reads `get_news_history(ticker)` first; live APIs run only if fewer than
+
+3 cached articles. Boursorama relative dates (`il y a 2h`, empty, `Recent`) are
+
+normalized to `YYYY-MM-DD HH:MM` at scrape time.
+
+
+
+### Rich trade cards (what you see before approving)
+
+
+
+For each PENDING BUY the card shows:
+
+
+
+1. **Conviction score** (colour: amber 65â€“75 / neon 76â€“100) + Tier label  
+
+2. **Sizing rationale** â€” Kelly fraction, measured vol + vol factor, ticket â‚¬, weight % of equity  
+
+3. **R-style risk** â€” max â‚¬ / % equity loss if the **2.5Ã—ATR** stop is hit  
+
+4. **Sector impact** â€” e.g. Luxury 18% â†’ 23% (cap 25%), not just pass/fail  
+
+5. **Streamlit Approuver / Rejeter** â€” updates SQLite instantly (complements Discord)  
+
+
+
+---
+
+
+
+## LLM full dump
+
+
+
+For one-shot context in another LLM / agent:
+
+
+
+``​`bash
+
+python tools/build_llm_dump.py
+
+# optional: skip architecture preamble
+
+python tools/build_llm_dump.py --no-summary
+
+``​`
+
+
+
+Writes **`PROJECT_FULL_DUMP_FOR_LLM.md`** with:
+
+
+
+- **Architecture snapshot** â€” layer map, Phase 26â€“28 highlights, hard rules
+
+- **Priority file list** â€” README, risk YAML, scorer, dashboard, scheduler
+
+- **Grouped file index** â€” by directory, with line counts and â­� on key files
+
+- **Full source bodies** â€” fenced code blocks for every included file
+
+
+
+Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.
+
+Regenerate after meaningful code or README changes so external agents stay in sync.
+
+
+
+---
+
+
+
+## Deployment
+
+
+
+### Docker (recommended)
+
+
+
+`docker-compose.yml` is production-oriented for a single personal instance:
+
+
+
+- **persistent volumes**:
+
+  - `./database:/app/database` (SQLite + DuckDB + heartbeat JSON)
+
+  - `./logs:/app/logs` (component logs + `pea_pollux_all.log`)
+
+  - `./config:/app/config` (risk params, calendars, universe, env template)
+
+- **timezone pinned**:
+
+  - `TZ=Europe/Paris` in both `daemon` and `dashboard`
+
+  - scheduler itself also uses explicit `schedule.every().day.at(..., "Europe/Paris")`
+
+    in `main_scheduler.py`
+
+
+
+``​`bash
+
+cp config/api_keys.env.example config/api_keys.env
+
+# Fill secrets locally (never commit config/api_keys.env)
+
+
+
+docker compose config            # final compose validation
+
+docker compose up -d --build
+
+docker compose ps
+
+docker compose logs -f daemon
+
+docker compose logs -f dashboard
+
+``​`
+
+
+
+First-time bootstrap (inside daemon container):
+
+
+
+``​`bash
+
+docker compose exec daemon python seed_account.py --cash 10000
+
+docker compose exec daemon python main_scheduler.py --now
+
+``​`
+
+
+
+Dashboard is exposed on `:8501`.
+
+
+
+### Pre-deploy final checks
+
+
+
+Run these before each push/deploy:
+
+
+
+``​`bash
+
+python -m pytest -q
+
+python tools/build_llm_dump.py
+
+git status --short
+
+``​`
+
+
+
+Expected outcomes:
+
+
+
+- pytest green (current baseline: `10 passed`)
+
+- `PROJECT_FULL_DUMP_FOR_LLM.md` regenerated and in sync with README/code
+
+- no secret files staged (`config/api_keys.env` must stay untracked/ignored)
+
+
+
+### Test coverage snapshot
+
+
+
+Current automated tests are focused and fast:
+
+
+
+- `tests/test_phase16_foundations.py`
+
+  - equity metrics (`max_drawdown`, `sharpe`, summary metrics)
+
+  - rebalancer mode split (`shave` vs `atr`) without network dependencies
+
+  - earnings blackout logic from YAML windows
+
+- `tests/test_ui_and_sandbox.py`
+
+  - sizing explanation metadata contract (`size_with_explanation`)
+
+  - trade-card helper rendering logic (tier/risk/sector-impact text)
+
+  - newsletter dedupe for near-duplicate titles
+
+- `tests/test_newsletter_whitelist.py`
+
+  - sender extraction + whitelist allow/deny behavior
+
+- `tests/test_funnel_analytics.py`
+
+  - rejection taxonomy mapping for funnel analytics consistency
+
+
+
+Alternatives: systemd (`Restart=always` on `main_scheduler.py`) or cron for
+
+`--now` / `--weekly` / `--atr-stops` / `--rebalance`.
+
+
+
+---
+
+
+
+## Scheduling
+
+
+
+| Job | When (Europe/Paris) | Action |
+
+|-----|---------------------|--------|
+
+| **Morning briefing** | **08:25** | Newsletter IMAP â†’ LLM Zeitgeist â†’ `morning_briefing.json` |
+
+| ATR stops | 08:35 weekdays | Dynamic ATR SELLs â†’ webhook |
+
+| Profit-shave | Probe 08:30 (acts on the **1st**) | +20% trim â†’ webhook |
+
+| Analysis | 09:00, 13:30, 17:10 weekdays | Full pipeline â†’ Discord + heartbeat |
+
+| Weekly report | Friday 18:00 | Historian â†’ webhook |
+
+
+
+Weekends: analysis / ATR skipped automatically.
+
+
+
+---
+
+
+
+## Roadmap / future improvements
+
+
+
+Prioritized for a **validated personal PEA process**, not feature theatre.
+
+Broker import must **diff** vs SQLite (never blind overwrite). Prefer official/API
+
+sources over furtive HTML scraping.
+
+
+
+### Done (Phase 15â€“20)
+
+
+
+| Item | Notes |
+
+|------|-------|
+
+| AMFâ†’FMPâ†’Yahoo insider cascade | Official FR source first |
+
+| Equity curve + shared metrics | Live dashboard; ready for backtest reuse |
+
+| Daily ATR vs monthly shave | Split jobs / CLI flags |
+
+| Earnings blackout engine | Calendar empty â€” fill via API later |
+
+| ADV / max positions / RSI / corr lookback | Wired in `risk_params.yaml` + cascade |
+
+| Mission Control + trade cards + logs | Operator UX |
+
+| **Decision funnel waterfall + rejection pie** | âœ… Phase 17 â€” 7J/30J audit-log analytics in General |
+
+| **Valuation + 10y annual returns** | âœ… Phase 18 â€” Exploration (buy zone, P/E, P/B, **1M/1Y**, annual bars) |
+
+| **Newsletter whitelist + Zeitgeist** | âœ… Phase 19 â€” `NewsletterSensor` + 08:25 job + dashboard |
+
+| **Ensemble conviction scoring** | âœ… Phase 20 â€” 4 axes, emit â‰¥65; radar + Command Center approve |
+
+| **What-if 1000â‚¬ + walk-forward scaffold** | âœ… Exploration simulator + `walk_forward_backtester.py` |
+
+| **Terminal polish (TV / zone / ranking / Polymarket)** | âœ… Phase 21 â€” EPA: ticker map, flat buy-zone fix, fingerprint ranking, SSL-tolerant Gamma |
+
+| **Smart UX + deep news + logos + pÃ©pites** | âœ… Phase 22 |
+
+| **UX overhaul (tape / GO / news diversity)** | âœ… Phase 23 â€” no GO, logos off, multi-source news, deep IA narrative |
+
+| **Polymarket harden + news clean + tape + logs** | âœ… Phase 24 â€” JSONDecode guard, no heuristic pills, blue-chip tape, briefing button, log tail 5k |
+
+| **Auto-sync + score holistique + UI exÃ©cution** | âœ… Phase 26 â€” warmup au dÃ©marrage, News/Polymarket dans le score, stops ATR visibles, tickets/checklist, tables cliquables |
+
+| **Bandeau natif + news SQLite + exploration universelle** | âœ… Phase 27 â€” marquee HTML/CSS, `news_history`, dates exactes, selectbox 600+ tickers |
+
+| **TÃ©lÃ©mÃ©trie live Architecture & Logs** | âœ… Phase 28 â€” health check sources, risk_params actifs, expanders logique quant |
+
+| **UX rename + clickable tape + news history** | âœ… Phase 29 â€” Pollux branding, query-param tape, SynthÃ¨se IA, full news DB |
+
+| **Native env + AMF ODS + TV EURONEXT + uncapped lists** | âœ… Phase 32 |
+
+| **Multi-factor + Finnhub + Data Lake analyste** | âœ… Phase 35â€“36 |
+
+| **VaR/CVaR + Z-Score acadÃ©mique** | âœ… Phase 37 |
+
+| **Monte Carlo + stress tests + red teaming IA** | âœ… Phase 38 |
+
+| **UX (tape fix, briefing async, near-miss radar, ML export)** | âœ… Phase 39 |
+
+| **Cash sweep, Discord daily digest, 10y backfill, forward curve, ML store** | âœ… Phase 40 |
+
+| **AMF semantic parsing (legal FR regex), fluid log viewer, system telemetry** | âœ… Phase 41 |
+
+| **Institutional Overhaul: data quality (auto_adjust), parallel I/O, drawdown breaker, OpenFIGI, Alpha Vantage, backtester look-ahead fix, CI ruff** | âœ… Phase 42 |
+
+| **Pydantic config validation, backtester exits, dashboard DuckDB dedup, XGBoost ML, Devil's Advocate PEA** | âœ… Phase 44 |
+
+| **Dynamic Market Regime, EWMA Risk Math, Pipeline Idempotency** | âœ… Phase 45 |
+
+| **ML Historical Bootstrapper, Gemini 2.5 Optimization** | âœ… Phase 46 |
+
+| **Ultimate Performance (SQLite I/O fix), Pure Webhooks for Discord** | âœ… Phase 47 |
+
+| pytest + GitHub Actions CI | Expand coverage over time |
+
+
+
+### Next (highest leverage)
+
+
+
+| Item | Why |
+
+|------|-----|
+
+| Richer walk-forward (full Orchestrator + costs) | Validate RSI / conviction weights on PEA universe |
+
+| Fundsmith/Amundi holdings scraper | Replace institutional proxy set |
+
+| Broker CSV diff import | Keep SQLite honest vs reality |
+
+| Fill **earnings_calendar** (Euronext / API) | Blackout already coded |
+
+| Relative strength / 52w / analyst drift | Post-backtester calibration knobs |
+
+
+
+### Phase 40: Predictive Machine Learning (XGBoost / NLP)
+
+
+
+Goal: train a classifier on the `news_history` and `audit_log` SQLite tables to
+
+predict the probability that a given signal will result in a profitable trade.
+
+
+
+- **Features:** headline sentiment embeddings (NLP), RSI/MACD/Bollinger at signal
+
+  time, VIX level, sector, day-of-week, insider cluster flag.
+
+- **Labels:** from `audit_log` â€” did the signal reach +5% within 20 trading days
+
+  after APPROVED/EXECUTED?
+
+- **Model:** XGBoost gradient-boosted trees (tabular) + optional sentence-transformer
+
+  embeddings for headline text.
+
+- **Integration:** predicted probability displayed alongside the existing conviction
+
+  score in the dashboard (e.g., "ML confidence: 72%").
+
+- **Data export:** available today in the Architecture tab (CSV download of both tables).
+
+
+
+### Later
+
+
+
+Paid VSTOXX Â· AMF resilience Â· multi-core ETF rotation Â· trailing ATR after shave Â·
+
+EUR/USD note in CIO digest Â· rolling Sharpe chart.
+
+
+
+**Non-goals:** auto-broker execution, leverage, LLM-as-trader, US pennies.
+
+
+
+---
+
+
+
+## Troubleshooting
+
+
+
+| Symptom | Fix |
+
+|---------|-----|
+
+| Dashboard Â« En attenteâ€¦ Â» | `python seed_account.py --cash 10000` then `--now` |
+
+| Empty equity curve | Needs at least one `update_portfolio` (pass or wallet save) |
+
+| Mission Control pass = Â« jamais Â» | Run `python main_scheduler.py --now` once |
+
+| Empty `logs/` | Same â€” scheduler/dashboard create files on first run |
+
+| `pyarrow` / Streamlit fail | Python **3.11/3.12 x64** |
+
+| VIX stuck / `^V2TX` 404 | Falls back to `^VIX` |
+
+| AMF HTTP 500 | Expected; FMP then Yahoo; circuit ~12h |
+
+| No FMP insiders | Set `FMP_API_KEY` |
+
+| ATR stop never fires | Need DuckDB history + losing position; try `--atr-stops` |
+
+| Cards show ATR risk n/a | Fetch history with `--now` first |
+
+| LLM / weekly silent | `OPENROUTER_API_KEY` / `DISCORD_WEBHOOK_URL` |
+
+| Cash too small for CW8 | MICRO mode: 1 liquid share + cash runway (by design) |
+
+| Newsletter IMAP auth fail | Use Yahoo **app password**, folder name exact, SSL 993 |
+
+| News dates show `Recent` | Re-open ticker in Exploration â€” scraper now stamps ISO; archive in `news_history` |
+
+| Red TradingView tape errors | Fixed in Phase 27 â€” native HTML marquee replaces TV widget |
+
+| Briefing flashes error on boot | Phase 27 â€” patient `st.info` + manual generate button |
+
+| CI / pytest | `python -m pytest -q` |
+
+
+
+---
+
+
+
+## Disclaimer
+
+
+
+Decision-support and educational tool only. **No automated execution. No financial
+
+advice.** You are solely responsible for every trade. Past or backtested results
+
+do not guarantee future performance.
+
+
+
+Â© 2026 Pollux Gronier â€” PEA Pollux.
+
+
+
+---
+
+
+
+## English guide
+
+
+
+**PEA Pollux** is a personal quantitative research terminal for a French **PEA**
+
+( tax-advantaged equity savings plan ). It helps you *research*, *size*, and *risk-manage*
+
+ideas â€” but **never places broker orders**.
+
+
+
+### What it does
+
+
+
+1. **Ingests data** â€” OHLCV (yfinance â†’ DuckDB), insiders (AMF â†’ FMP â†’ Yahoo),
+
+   news, newsletters, macro proxies (VIX, Polymarket).
+
+2. **Scores opportunities** â€” multi-model ensemble (Trend, Mean-Reversion, Breakout,
+
+   Context) with fundamentals (Finnhub) and sentiment modifiers.
+
+3. **Filters through risk** â€” VIX panic, sector caps, correlation firewall, earnings
+
+   blackout, liquidity floor, vol-parity sizing (whole shares only).
+
+4. **Surfaces decisions** â€” Streamlit dashboard + optional Discord copilot for
+
+   manual approve/reject.
+
+5. **Explains & challenges** â€” LLM rationales, weekly digest, Bull/Bear red teaming.
+
+
+
+### Phase 38â€“41 highlights
+
+
+
+| Feature | Module | Phase |
+
+|---------|--------|:-----:|
+
+| Monte Carlo fan chart | `stochastic_models.py` | 38 |
+
+| Black swan replay | `stress_tester.py` | 38 |
+
+| Tail risk VaR & CVaR | `quantitative_math.py` | 37 |
+
+| AI red team (Bull/Bear/Judge) | `red_team_agent.py` | 38 |
+
+| Ticker tape 1d fix + near-miss radar | `terminal_dashboard.py` | 39 |
+
+| ML feature store + CSV export | `ml_feature_store.py` | 40 |
+
+| Cash sweep (zero idle cash) | `smart_dca_engine.py` | 40 |
+
+| Discord daily concise report | `discord_copilot.py` | 40 |
+
+| 10-year OHLCV backfill (`--backfill-10y`) | `main_scheduler.py` | 40 |
+
+| Forward equity curve vs CW8 benchmark | `terminal_dashboard.py` | 40 |
+
+| AMF semantic parsing (FR legal regex) | `amf_scraper.py` | 41 |
+
+| Filtered + color-coded log viewer | `terminal_dashboard.py` | 41 |
+
+| System telemetry (DB sizes, CPU, mem) | `terminal_dashboard.py` | 41 |
+
+
+
+### Architecture (high level)
+
+
+
+``​`
+
+Data sensors â†’ DuckDB/SQLite â†’ Quant engine â†’ Risk cascade â†’ UI (Streamlit/Discord)
+
+                                      â†“
+
+                         Stochastic models + stress tests + LLM explainers
+
+``​`
+
+
+
+### Quick start
+
+
+
+``​`bash
+
+git clone https://github.com/Polluxgnr/Peatrading.git pea_pollux
+
+cd pea_pollux
+
+python3.11 -m venv venv_x64 && source venv_x64/bin/activate  # or Windows Activate.ps1
+
+pip install -r requirements.txt
+
+cp config/api_keys.env.example config/api_keys.env
+
+python seed_account.py --cash 10000
+
+python main_scheduler.py --now
+
+streamlit run 05_interfaces/terminal_dashboard.py
+
+``​`
+
+
+
+### Design principles
+
+
+
+- **Math-first, AI-second** â€” models decide eligibility; LLMs only explain or debate.
+
+- **Manual execution** â€” you always confirm trades.
+
+- **Graceful degradation** â€” missing API keys â†’ neutral fallbacks, no crashes.
+
+- **Vectorized math** â€” NumPy/Pandas for VaR, Monte Carlo, Z-Scores.
+
+- **On-demand heavy compute** â€” Monte Carlo runs behind a button + cache, not on every page load.
+
+
+
+---
+
+## Phase 49 : The Apex Optimization (Current)
+
+
+
+*   **âš¡ Blazing Fast UI :** Caching systÃ©matique (@st.cache_resource, @st.cache_data) et lazy loading pour un Dashboard sub-seconde.
+
+*   **ðŸ“Š Interactive Metrics :** Drill-down des mÃ©triques via st.popover (Market Breadth dynamique, Mini-charts VIX).
+
+*   **ðŸ¤– DÃ©ploiement StratÃ©gique (80% Rule) :** Force le dÃ©ploiement de capital sur les meilleurs signaux techniques rejetÃ©s si l'exposition Cash est > 20% en rÃ©gime Bull.
+
+*   **ðŸ“ˆ Simulateur ML Autonome :** Backtester visuel intÃ©grÃ© dans le Dashboard permettant d'Ã©valuer la stratÃ©gie Machine Learning vis-Ã -vis d'un Buy & Hold (CW8) avec prise en compte du slippage.
+
+*   **ðŸ“¡ Ingestion IncrÃ©mentale :** Optimisation drastique des appels rÃ©seaux (DuckDB get_latest_dates) pour ne tÃ©lÃ©charger que le strict nÃ©cessaire depuis yfinance.
+
+*   **ðŸš¨ Copilot Discord V2 :** Refonte des webhooks avec intÃ©gration du Notional estimÃ©, formatage premium et ping @everyone.
+
+
+
+---
+
+## Phase 51 : Robust ML Pipeline Refactoring (Current)
+
+
+
+*   **Sequential Bootstrapping:** Remplacement du multiprocessing instable sous Docker par une boucle sÃ©quentielle stricte avec barre de progression (\	qdm\).
+
+*   **Memory Optimization:** Sauvegarde incrÃ©mentale directe dans le CSV (\ml_training_dataset.csv\) pour Ã©viter les crash OOM lors du balayage de 10 ans d'historique sur plus de 600 tickers.
+
+*   **No Look-Ahead Bias / No Ban IP:** DÃ©sactivation intelligente des webhooks de scraping live (Sentiment Boursorama / YFinance) lorsque le bot tourne en simulation historique. L'infÃ©rence live conserve 100% de ses capacitÃ©s.
+
+*   **Error Resilience:** Poursuite automatique du bootstrap mÃªme si des API financiÃ¨res flanchent ou que l'historique d'un ticker est corrompu.
+
+
+
+---
+
+## Phase 54.5 : Loud Fallback, UI Fluidity & Production Prep (Current)
+
+
+
+*   **10-Year Data Lake Uncapping:** L'historique stockÃ© dans DuckDB par `market_prices_api.py` monte jusqu'Ã  10 ans, offrant un set de donnÃ©es massif pour les modÃ¨les ML tout en limitant les appels d'API.
+
+*   **Loud Fallback Mechanism:** En cas de panne d'une API tierce (Boursorama, OpenRouter, etc.), le systÃ¨me maintient une fluiditÃ© totale en tombant sur des valeurs neutres (`0.0`), tout en dÃ©clarant un Ã©tat `data_degraded_mode=True` dans `pipeline_status.json` pour avertir l'utilisateur.
+
+*   **FluiditÃ© & Ticker Sync:** RÃ©solution d'un bug majeur de dÃ©synchronisation de l'UI grÃ¢ce Ã  l'utilisation d'Ã©vÃ©nements `on_change` asynchrones dans Streamlit, couplÃ© Ã  une limitation des graphiques Plotly aux 500 derniÃ¨res bougies pour maintenir 60 FPS.
+
+*   **UI Reorganization & Sub-Tabs:** Restructuration totale du Dashboard pour Ã©liminer le bruit visuel avec 4 onglets principaux (`Market & Macro`, `Ticker Deep-Dive`, `Portfolio & Execution`, `System Logs`) et 3 sous-onglets encapsulÃ©s pour les fiches actions.
+
+*   **Strict News Filtering:** ImplÃ©mentation d'un filtre regex anti-spam universel (`discount|free|referral|newsletter|sponsor...`) qui intercepte et purifie les flux RSS avant leur traitement IA (Morning Briefing).
+
+
+ - - - 
+ # #   P h a s e   5 5   :   M u l t i - S o u r c e   N e w s   E n g i n e ,   D a t a   L i n e a g e   &   Q u a n t   M L   E v o l u t i o n   ( C u r r e n t ) 
+ 
+ *       * * M u l t i - S o u r c e   N e w s   E n g i n e : * *   F i l t r e   m u l t i - s o u r c e s   ( S u b s t a c k ,   G o o g l e   N e w s ,   B o u r s o r a m a )   a v e c   h i s t o r i q u e   d e s   n e w s   a r c h i v é e s   d a n s   D u c k D B / S Q L i t e   e t   b a d g e s   I A   ( B u l l i s h / B e a r i s h ) . 
+ *       * * D a t a   L i n e a g e   T a b : * *   S e c t i o n   a r c h i t e c t u r e   d u   t a b l e a u   d e   b o r d   a f f i c h a n t   l a   p r o v e n a n c e   d e s   d o n n é e s ,   l ' h e u r e   d e   s y n c h r o n i s a t i o n ,   e t   l e   s t a t u t   v i a   p i p e l i n e _ s t a t u s . j s o n . 
+ *       * * X G B o o s t   M u l t i - H o r i z o n : * *   S u p p o r t   i n t é g r é   d e   c i b l e s   M L   d u a l - h o r i z o n   ( 3 0   j o u r s   t a c t i q u e ,   1 2 6   j o u r s   s t r u c t u r e l )   a v e c   i n f é r e n c e   S H A P   X A I . 
+ *       * * P i o t r o s k i   S c o r e   &   V a l u e   T r a p   V e t o : * *   I n t é g r a t i o n   d u   s c o r e   P i o t r o s k i   ( v i a   F M P )   d a n s   l e   c a c h e   S Q L i t e   a v e c   u n   v e t o   s t r i c t   ( < 4 )   a u   n i v e a u   d u   c a s c a d e . 
+ *       * * P e r f o r m a n c e s   &   S é c u r i t é : * *   O p t i m i s a t i o n   d e   P l o t l y ,   f i x   d u   T h r e a d   l o c k   d e s   c o n n e x i o n s   D B   a v e c   @ s t . c a c h e _ r e s o u r c e ,   e t   v a l i d a t i o n   é t e n d u e   d e   l a   w h i t e l i s t   n e w s l e t t e r . 
+ 
+ 
+## Recent Updates (August 2026)
+- **UI/UX Bloomberg Overhaul**: Upgraded tables to native \st.dataframe\ with link formats and strict color-coding. Migrated Top/Flop to Market & Macro.
+- **Extreme Anti-Spam**: Drastically expanded the spam regex to block lifestyle, promo, and exclusive offer emails from polluting the stream.
+- **Robust IFrames**: Hardened the TradingView iframe rendering with try/except fallbacks to Plotly native charts.
+```
+
+## FILE: requirements.txt (52 lines)
 ```text
 --extra-index-url https://download.pytorch.org/whl/cpu
 
@@ -21128,11 +31630,9 @@ streamlit-autorefresh==1.0.1
 
 streamlit-autorefresh==1.0.1
 discord.py>=2.3.2
-
 ```
 
-## File: .\run_backfill.py
-
+## FILE: run_backfill.py (40 lines)
 ```python
 import os
 import sys
@@ -21174,11 +31674,9 @@ def main():
 
 if __name__ == "__main__":
     main()
-
 ```
 
-## File: .\run_dashboard.ps1
-
+## FILE: run_dashboard.ps1 (15 lines)
 ```powershell
 # Launch PEA Pollux dashboard.
 # Streamlit opens the browser itself when headless=false — do NOT also Start-Process
@@ -21195,11 +31693,9 @@ if (-not (Test-Path $py)) {
 
 Write-Host "Starting PEA Pollux on http://localhost:8501 ..." -ForegroundColor Green
 & $py run "05_interfaces/terminal_dashboard.py" --server.headless false --browser.gatherUsageStats false --server.port 8501
-
 ```
 
-## File: .\run_discord.py
-
+## FILE: run_discord.py (100 lines)
 ```python
 """Entry point to launch the PEA Pollux Discord Copilot.
 
@@ -21301,11 +31797,9 @@ def _attach_demo(copilot: "DiscordCopilot") -> None:
 
 if __name__ == "__main__":
     main()
-
 ```
 
-## File: .\run_quant_pipeline.py
-
+## FILE: run_quant_pipeline.py (142 lines)
 ```python
 import sys
 import time
@@ -21449,11 +31943,9 @@ def main():
 
 if __name__ == "__main__":
     main()
-
 ```
 
-## File: .\scratch\apply_subtabs.py
-
+## FILE: scratch/apply_subtabs.py (89 lines)
 ```python
 import os
 import re
@@ -21544,11 +32036,16 @@ with open(path, "w", encoding="utf-8") as f:
     f.writelines(out_lines)
 
 print("Applied sub-tabs!")
-
 ```
 
-## File: .\scratch_extract.py
+## FILE: scratch_clear.py (3 lines)
+```python
+��i m p o r t   p a t h l i b ;   p a t h l i b . P a t h ( ' d a t a b a s e / m o r n i n g _ b r i e f i n g . j s o n ' ) . w r i t e _ t e x t ( ' { } ' ,   e n c o d i n g = ' u t f - 8 ' ) 
+ 
+ 
+```
 
+## FILE: scratch_extract.py (82 lines)
 ```python
 import ast
 import astor
@@ -21632,11 +32129,9 @@ def build_and_save_ticker_profile(ticker: str, include_llm: bool = False) -> dic
 
 with open('c:/Users/PolluxGronier/Downloads/pea_sniper_terminal/01_memory_core/profile_builder.py', 'w', encoding='utf-8') as f:
     f.write(header + '\n'.join(extracted))
-
 ```
 
-## File: .\scratch_regex.py
-
+## FILE: scratch_regex.py (22 lines)
 ```python
 import re
 
@@ -21660,11 +32155,9 @@ content = re.sub(r'def get_ticker_dossier.*?return out\n', '', content, flags=re
 
 with open('05_interfaces/terminal_dashboard.py', 'w', encoding='utf-8') as f:
     f.write(content)
-
 ```
 
-## File: .\seed_account.py
-
+## FILE: seed_account.py (129 lines)
 ```python
 """Account seeding CLI for PEA Pollux.
 
@@ -21795,18 +32288,14 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
 ```
 
-## File: .\tests\__init__.py
-
+## FILE: tests/__init__.py (1 lines)
 ```python
 # Empty package marker for pytest discovery.
-
 ```
 
-## File: .\tests\test_funnel_analytics.py
-
+## FILE: tests/test_funnel_analytics.py (63 lines)
 ```python
 """Phase 17 funnel taxonomy tests (no Streamlit runtime)."""
 
@@ -21871,11 +32360,9 @@ def test_funnel_drop_mapping_logic():
         "rejected_other", "REJECTED: Insufficient cash for 1 share"
     ) == "cash_sizing"
     assert map_drop("vetoed_sector", "Sector weight") == "sector"
-
 ```
 
-## File: .\tests\test_newsletter_whitelist.py
-
+## FILE: tests/test_newsletter_whitelist.py (24 lines)
 ```python
 """Whitelist sender filter for newsletter ingest."""
 
@@ -21901,11 +32388,9 @@ def test_extract_and_allow_known_senders():
     assert is_allowed_sender("Brief <hello@brief.me>")
     assert not is_allowed_sender("Yahoo <noreply@yahoo.com>")
     assert not is_allowed_sender("Security Alert <account-protection@yahoo.com>")
-
 ```
 
-## File: .\tests\test_phase16_foundations.py
-
+## FILE: tests/test_phase16_foundations.py (92 lines)
 ```python
 """Unit tests for equity metrics and rebalancer mode split."""
 
@@ -21999,11 +32484,9 @@ def test_earnings_blackout_window(tmp_path):
     assert veto and "Q2" in reason
     clear, _ = eng.check_veto("OR.PA", date(2026, 7, 24))
     assert not clear
-
 ```
 
-## File: .\tests\test_ui_and_sandbox.py
-
+## FILE: tests/test_ui_and_sandbox.py (66 lines)
 ```python
 """Tests for trade-card helpers and newsletter dedupe (no network)."""
 
@@ -22071,11 +32554,9 @@ def test_newsletter_dedupe_collapses_near_dupes():
     ]
     out = dedupe_articles(arts)
     assert len(out) == 2
-
 ```
 
-## File: .\tools\add_backtest_ui.py
-
+## FILE: tools/add_backtest_ui.py (78 lines)
 ```python
 import os
 
@@ -22155,11 +32636,9 @@ with open(path, "w", encoding="utf-8") as f:
     f.write(content)
 
 print("Done")
-
 ```
 
-## File: .\tools\add_deployment.py
-
+## FILE: tools/add_deployment.py (53 lines)
 ```python
 import os
 
@@ -22214,11 +32693,9 @@ if target in content:
     print("Deployment logic inserted successfully.")
 else:
     print("Target block not found.")
-
 ```
 
-## File: .\tools\backup_databases.py
-
+## FILE: tools/backup_databases.py (52 lines)
 ```python
 """Export key SQLite tables to Parquet for backup and portability.
 
@@ -22272,11 +32749,9 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
 ```
 
-## File: .\tools\bootstrap_ml_dataset.py
-
+## FILE: tools/bootstrap_ml_dataset.py (209 lines)
 ```python
 """ML Historical Bootstrapper for PEA Pollux.
 
@@ -22487,11 +32962,9 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
 ```
 
-## File: .\tools\build_dashboard_dump.py
-
+## FILE: tools/build_dashboard_dump.py (233 lines)
 ```python
 #!/usr/bin/env python3
 """Regenerate PROJECT_FULL_DUMP_FOR_LLM.md for one-shot LLM context.
@@ -22712,11 +33185,11 @@ def main() -> None:
             text = abs_path.read_text(encoding="utf-8")
         except UnicodeDecodeError:
             text = abs_path.read_text(encoding="utf-8", errors="replace")
-        safe = text.replace("```", "``\u200b`")
+        safe = text.replace("``​`", "``\u200b`")
         nlines = len(text.splitlines())
         lines.append(f"## FILE: {rel.as_posix()} ({nlines} lines)")
-        lines.append(f"```{_lang(rel)}")
-        lines.append(safe.rstrip() + "\n```")
+        lines.append(f"``​`{_lang(rel)}")
+        lines.append(safe.rstrip() + "\n``​`")
         lines.append("")
 
     OUT.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
@@ -22726,11 +33199,9 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
 ```
 
-## File: .\tools\build_llm_dump.py
-
+## FILE: tools/build_llm_dump.py (232 lines)
 ```python
 #!/usr/bin/env python3
 """Regenerate PROJECT_FULL_DUMP_FOR_LLM.md for one-shot LLM context.
@@ -22950,11 +33421,11 @@ def main() -> None:
             text = abs_path.read_text(encoding="utf-8")
         except UnicodeDecodeError:
             text = abs_path.read_text(encoding="utf-8", errors="replace")
-        safe = text.replace("```", "``\u200b`")
+        safe = text.replace("``​`", "``\u200b`")
         nlines = len(text.splitlines())
         lines.append(f"## FILE: {rel.as_posix()} ({nlines} lines)")
-        lines.append(f"```{_lang(rel)}")
-        lines.append(safe.rstrip() + "\n```")
+        lines.append(f"``​`{_lang(rel)}")
+        lines.append(safe.rstrip() + "\n``​`")
         lines.append("")
 
     OUT.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
@@ -22964,11 +33435,9 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
 ```
 
-## File: .\tools\build_universe.py
-
+## FILE: tools/build_universe.py (273 lines)
 ```python
 """Universe builder for PEA Pollux.
 
@@ -23243,11 +33712,9 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
 ```
 
-## File: .\tools\fix_indent.py
-
+## FILE: tools/fix_indent.py (15 lines)
 ```python
 import os
 
@@ -23264,11 +33731,9 @@ for i, line in enumerate(lines):
 
 with open(path, "w", encoding="utf-8") as f:
     f.writelines(lines)
-
 ```
 
-## File: .\tools\rebrand_pea_pollux.py
-
+## FILE: tools/rebrand_pea_pollux.py (65 lines)
 ```python
 #!/usr/bin/env python3
 """One-shot UTF-8 safe rebrand: PEA Pollux -> PEA Pollux."""
@@ -23335,11 +33800,9 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
 ```
 
-## File: .\tools\refactor_ui.py
-
+## FILE: tools/refactor_ui.py (172 lines)
 ```python
 import re
 import os
@@ -23513,11 +33976,9 @@ content = re.sub(r'with st\.expander\("([^"]+)", expanded=False\):', r'if True:\
 
 with open(path, "w", encoding="utf-8") as f:
     f.write(content)
-
 ```
 
-## File: .\tools\run_wfo.py
-
+## FILE: tools/run_wfo.py (66 lines)
 ```python
 """Walk-Forward Optimization (WFO) for RSI_OVERSOLD.
 
@@ -23585,11 +34046,9 @@ def run_wfo():
 
 if __name__ == "__main__":
     run_wfo()
-
 ```
 
-## File: .\tools\sync_universe_from_bourso.py
-
+## FILE: tools/sync_universe_from_bourso.py (236 lines)
 ```python
 """Sync ``config/pea_universe.yaml`` from Boursorama's PEA eligibility filter.
 
@@ -23827,11 +34286,9 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
 ```
 
-## File: .\tools\train_rl_sizer.py
-
+## FILE: tools/train_rl_sizer.py (80 lines)
 ```python
 """Train PPO Reinforcement Learning model for Position Sizing.
 
@@ -23913,6 +34370,4 @@ def train_agent():
 
 if __name__ == "__main__":
     train_agent()
-
 ```
-

@@ -36,9 +36,11 @@ Repo: [github.com/Polluxgnr/Peatrading](https://github.com/Polluxgnr/Peatrading)
 
 
 ## Nouveautés Récentes
-- 🧠 **Local LLM Sentiment Engine**: Utilisation d'Ollama (mistral) pour analyser le sentiment des actualités financières sans coût d'API, avec VADER en fallback.
-- 🛡️ **Risk & Stop-Loss Engine**: Intégration de l'Average True Range (ATR) pour calculer dynamiquement les stop-loss et équilibrer les tailles de positions par la volatilité.
-- 💬 **Discord Webhook Notifier**: Alertes riches sur Discord pour les signaux à haute conviction (> 75%), poussées de manière asynchrone par l'Orchestrateur.
+- 🤖 **Interactive Discord Copilot**: Un véritable assistant bidirectionnel (`discord_copilot.py`) permettant d'approuver ou rejeter les signaux via des commandes Slash (`/approve`, `/reject`, `/status`, `/portfolio`), avec génération automatique d'un Ticket d'Ordre et calcul du Smart Limit Price.
+- 🏆 **Live Alpha Analytics**: Suivi de performance institutionnelle en temps réel (Alpha de Jensen, Beta, Information Ratio) intégré nativement dans le tableau de bord pour se mesurer au MSCI World (`CW8.PA`) et au CAC 40 (`^FCHI`).
+- 🧠 **Local LLM Sentiment & Deep News**: RAG local (Ollama) lisant l'intégralité des articles pour en extraire des KPIs et risques cachés, avec dégradation gracieuse sur les paywalls.
+- 🛡️ **Risk & Stop-Loss Engine**: Intégration de l'Average True Range (ATR) pour calculer dynamiquement les stop-loss et un modèle d'optimisation de l'exécution (Smart Order Routing).
+- 🔄 **Full-Orchestrator Walk-Forward**: Backtester complet appliquant les règles réelles (VIX, sizing, firewall) à l'historique complet pour des simulations "live-like".
 
 ## Pourquoi PEA Pollux ?
 
