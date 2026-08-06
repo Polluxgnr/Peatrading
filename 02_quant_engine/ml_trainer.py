@@ -19,6 +19,7 @@ import pandas as pd
 _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT / "02_quant_engine"))
 sys.path.insert(0, str(_ROOT / "00_data_sensors"))
+sys.path.insert(0, str(_ROOT / "01_memory_core"))
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +123,11 @@ def train_model(
 
     df = _load_dataset(dataset_path)
     logger.info("Loaded ML training dataset with shape: %s", df.shape)
+    
+    # Safely initialize missing feature columns (e.g. NLP/news) to neutral 0.0
+    for f in FEATURES:
+        if f not in df.columns:
+            df[f] = 0.0
     
     df = df.replace([np.inf, -np.inf], np.nan)
     
