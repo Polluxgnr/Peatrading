@@ -4852,10 +4852,21 @@ with tab_ticker:
         if st.session_state.get("selected_ticker") not in options and options:
             st.session_state["selected_ticker"] = options[default_idx]
 
-        selected = st.selectbox(
-            "Actif a analyser", options,
-            format_func=format_name, key="selected_ticker"
-        )
+        c_sel, c_btn = st.columns([3, 1])
+        with c_sel:
+            selected = st.selectbox(
+                "Actif à analyser", options,
+                format_func=format_name, key="selected_ticker"
+            )
+        with c_btn:
+            st.markdown("<div style='margin-top:28px'></div>", unsafe_allow_html=True)
+            if st.button("🔄 Force Refresh Prices & News", key="btn_force_refresh", use_container_width=True):
+                # We can call the profile builder forcing a cache invalidate
+                with st.spinner(f"Refreshing data for {selected}..."):
+                    build_and_save_ticker_profile(selected, include_llm=False)
+                st.success("Refreshed!")
+                st.rerun()
+                
         tv = _tv_symbol(selected)
     
         with st.spinner("Génération du profil institutionnel..."):
@@ -5009,20 +5020,22 @@ with tab_ticker:
                         })
                         
                     if clean_news:
-                        df_news = pd.DataFrame(clean_news)
-                        st.dataframe(
-                            df_news,
-                            column_config={
-                                "URL": st.column_config.LinkColumn(
-                                    "Lien", display_text="Ouvrir ↗", max_chars=100
-                                ),
-                                "Titre": st.column_config.TextColumn(
-                                    "Titre de l'Article", width="large"
-                                )
-                            },
-                            hide_index=True,
-                            use_container_width=True
-                        )
+                        st.markdown("<div style='max-height:400px;overflow-y:auto;padding-right:10px;'>", unsafe_allow_html=True)
+                        for item in clean_news:
+                            badge_color = "#333"
+                            if "BULLISH" in item['Sentiment']: badge_color = "#1f4a2b"
+                            elif "BEARISH" in item['Sentiment']: badge_color = "#4a1f1f"
+                            
+                            st.markdown(f"""
+                            <div style='background:rgba(20,20,20,0.6); border:1px solid #333; border-radius:6px; padding:12px; margin-bottom:8px;'>
+                                <div style='display:flex; justify-content:space-between; margin-bottom:6px;'>
+                                    <span style='color:#888; font-size:12px;'>📅 {item['Date']} &nbsp; | &nbsp; 📰 {item['Source']}</span>
+                                    <span style='background:{badge_color}; color:#ddd; padding:2px 8px; border-radius:4px; font-size:11px; font-weight:bold;'>{item['Sentiment']}</span>
+                                </div>
+                                <a href='{item['URL']}' target='_blank' style='color:#00B4D8; text-decoration:none; font-weight:600; font-size:14px;'>{item['Titre']}</a>
+                            </div>
+                            """, unsafe_allow_html=True)
+                        st.markdown("</div>", unsafe_allow_html=True)
                     else:
                         st.info("Aucune actualité pertinente (filtre anti-spam actif).")
                 else:
@@ -5370,6 +5383,26 @@ with tab_ticker:
                         use_container_width=True,
                         hide_index=True,
                     )
+                    
+                st.markdown("**⚖️ Pondération Dynamique (Meta-Learner)**")
+                try:
+                    sys.path.insert(0, str(_ROOT / "02_quant_engine"))
+                    from ensemble_optimizer import DynamicEnsemble
+                    dyn = DynamicEnsemble()
+                    weights = dyn.get_optimized_weights()
+                    
+                    ml_pct = int(weights["ml_total_weight"] * 100)
+                    heuristic_pct = 100 - ml_pct
+                    
+                    st.markdown(f"**Machine Learning (Tactical/Structural):** {ml_pct}%")
+                    st.progress(ml_pct / 100.0)
+                    
+                    st.markdown(f"**Heuristiques (Trend, MR, Breakout, Context):** {heuristic_pct}%")
+                    st.progress(heuristic_pct / 100.0)
+                    
+                    st.caption("Poids actuel ajusté en fonction de la précision récente des modèles (EWMA).")
+                except Exception as e:
+                    st.caption(f"Pondération dynamique non disponible: {e}")
     
             # Technical analysis explanation (full width)
             st.markdown(
