@@ -339,129 +339,146 @@ def build_training_dataset(
         pass
     tdb = timeseries_db or TimeSeriesDB(read_only=True)
 
-    # 1. Fetch Universe from DuckDB
+    # 1. Load Data with Polars directly from DuckDB
     try:
         with tdb._connect() as conn:
-            raw_tickers = [row[0] for row in conn.execute("SELECT DISTINCT Ticker FROM ohlcv_data").fetchall()]
+            # We explicitly cast to ensure stable Polars types
+            df_ohlcv = conn.sql("SELECT Date, Ticker, Close, High, Low FROM ohlcv_data").pl()
     except Exception:
-        logger.exception("Could not fetch distinct tickers from DuckDB.")
-        raw_tickers = []
-
-    # 2. Filter Macro Tickers explicitly (Strict Hardcoded Rule)
-    valid_suffixes = (".PA", ".AS", ".NX", ".MI", ".MC", ".LS")
-    tickers = []
-    for t in raw_tickers:
-        if "IR3TIB" in t or t.endswith(".EM") or t.endswith(".INDX"):
-            continue
-        if any(t.endswith(s) for s in valid_suffixes) or t.isalpha():
-            tickers.append(t)
-
-    # 3. Pre-fetch exog for speed
-    macro_symbols = ["^GSPC", "^IXIC", "EURUSD=X", "OAT.PA"]
-    macro_returns = {}
-    for sym in macro_symbols:
-        try:
-            h = tdb.get_historical_prices(sym, days=3650)
-            if not h.empty and "Close" in h.columns and "Date" in h.columns:
-                ret1d = h.set_index("Date")["Close"].pct_change(1)
-                macro_returns[sym] = ret1d
-            else:
-                macro_returns[sym] = pd.Series(dtype=float)
-        except Exception:
-            macro_returns[sym] = pd.Series(dtype=float)
-
-    logger.info("Building historical ML dataset for %d valid equity tickers (Vectorized)...", len(tickers))
-
-    dfs = []
-    
-    # 4. Vectorized DataFrame Generation
-    import sys
-    sys.path.insert(0, str(_ROOT / "02_quant_engine"))
-    from technical_scorer import SignalGenerator
-    from quantitative_math import frac_diff_ffd
-    
-    sg = SignalGenerator(skip_regime=True, offline_mode=True)
-
-    for ticker in tickers:
-        try:
-            hist = tdb.get_historical_prices(ticker, days=3650)
-        except Exception:
-            continue
-            
-        if hist.empty or "Close" not in hist.columns:
-            continue
-            
-        # Need at least 250 days to construct solid SMA200
-        if len(hist) < 250:
-            continue
-            
-        # Compute indicators (vectorized over the whole 5 years for this ticker)
-        df_ind = sg.calculate_indicators(hist.copy())
-        
-        # Volatility 20d ann
-        df_ind["vol_20d_ann"] = df_ind["Close"].pct_change().rolling(20).std(ddof=0) * np.sqrt(252.0)
-        
-        # Fractional Diff
-        try:
-            df_ind["frac_diff_04"] = frac_diff_ffd(df_ind["Close"], d=0.4)
-        except Exception:
-            df_ind["frac_diff_04"] = np.nan
-            
-        # Fundamentals (Static per ticker in offline mode)
-        roe, pe, ev_ebitda = _fundamentals(ticker, pdb, offline_mode=True)
-        df_ind["finnhub_roe"] = roe
-        df_ind["finnhub_pe"] = pe
-        df_ind["ev_to_ebitda"] = ev_ebitda
-        df_ind["news_sentiment"] = _news_sentiment_proxy(ticker, pdb)
-        df_ind["insider_net_score"] = 0.0
-        df_ind["earnings_qa_sentiment"] = 0.0
-        df_ind["amf_short_interest"] = 0.0
-        df_ind["amf_threshold_crossing"] = 0.0
-        df_ind["ecb_euribor_3m"] = 0.0
-        df_ind["gex_proxy"] = 0.0
-        
-        # Match Macro return by Date
-        df_ind["ret1d"] = df_ind["Close"].pct_change()
-        if "Date" in df_ind.columns:
-            date_col = df_ind["Date"]
-            df_ind["sp500_ret1d"] = date_col.map(macro_returns["^GSPC"]).fillna(0.0) if not macro_returns["^GSPC"].empty else 0.0
-            df_ind["ndx_ret1d"] = date_col.map(macro_returns["^IXIC"]).fillna(0.0) if not macro_returns["^IXIC"].empty else 0.0
-            df_ind["eurusd_ret1d"] = date_col.map(macro_returns["EURUSD=X"]).fillna(0.0) if not macro_returns["EURUSD=X"].empty else 0.0
-            df_ind["oat_ret1d"] = date_col.map(macro_returns["OAT.PA"]).fillna(0.0) if not macro_returns["OAT.PA"].empty else 0.0
-        else:
-            df_ind["sp500_ret1d"] = 0.0
-            df_ind["ndx_ret1d"] = 0.0
-            df_ind["eurusd_ret1d"] = 0.0
-            df_ind["oat_ret1d"] = 0.0
-        
-        # Format mapping names to match expected FEATURES
-        df_ind["rsi14"] = df_ind["RSI_14"] if "RSI_14" in df_ind.columns else np.nan
-        df_ind["zscore_50"] = df_ind["Z_SCORE_50"] if "Z_SCORE_50" in df_ind.columns else np.nan
-        
-        # Calculate targets (Future Return) on the DAILY timeframe before sampling
-        df_ind['target_tactical_30d'] = df_ind['Close'].shift(-30) / df_ind['Close'] - 1.0
-        df_ind['target_structural_126d'] = df_ind['Close'].shift(-126) / df_ind['Close'] - 1.0
-        
-        # We sample end-of-week (e.g. step=5) to avoid huge correlation
-        # We also skip the first 200 rows due to SMA200 warm-up
-        if len(df_ind) > 200:
-            df_sampled = df_ind.iloc[200::5].copy()
-            df_sampled["ticker"] = ticker
-            if "Date" in df_sampled.columns:
-                df_sampled["created_at"] = df_sampled["Date"].dt.strftime("%Y-%m-%d %H:%M:%S")
-            else:
-                df_sampled["created_at"] = ""
-            df_sampled["signal_status"] = "HISTORICAL"
-            df_sampled["signal_score"] = 0.0
-            dfs.append(df_sampled)
-
-    if not dfs:
+        logger.exception("Could not fetch OHLCV from DuckDB into Polars.")
         return pd.DataFrame()
-        
-    df = pd.concat(dfs, ignore_index=True)
-    df['Date'] = pd.to_datetime(df['Date'])
 
-    # Sector StatArb Logic
+    # Filter Valid Tickers
+    valid_suffixes = (".PA", ".AS", ".NX", ".MI", ".MC", ".LS")
+    def is_valid_ticker(t: str) -> bool:
+        if "IR3TIB" in t or t.endswith(".EM") or t.endswith(".INDX"):
+            return False
+        return any(t.endswith(s) for s in valid_suffixes) or t.isalpha()
+
+    unique_tickers = df_ohlcv.get_column("Ticker").unique().to_list()
+    valid_tickers = [t for t in unique_tickers if is_valid_ticker(t)]
+    macro_symbols = ["^GSPC", "^IXIC", "EURUSD=X", "OAT.PA"]
+
+    import polars as pl
+    df_main = df_ohlcv.filter(pl.col("Ticker").is_in(valid_tickers)).sort(["Ticker", "Date"])
+    df_macro = df_ohlcv.filter(pl.col("Ticker").is_in(macro_symbols)).sort(["Ticker", "Date"])
+
+    logger.info("Building historical ML dataset for %d valid equity tickers (Polars Vectorized)...", len(valid_tickers))
+
+    # Calculate Macro Returns
+    df_macro = df_macro.with_columns([
+        (pl.col("Close") / pl.col("Close").shift(1).over("Ticker") - 1.0).alias("macro_ret1d")
+    ]).drop_nulls(subset=["macro_ret1d"])
+
+    # Pivot Macro
+    try:
+        macro_pivoted = df_macro.pivot(
+            values="macro_ret1d",
+            index="Date",
+            on="Ticker",
+            aggregate_function="first"
+        )
+    except Exception:
+        # Fallback if pivot fails or no macro
+        macro_pivoted = pl.DataFrame({"Date": []})
+
+    # Polars RSI implementation
+    def _pl_rsi(price: pl.Expr, n: int = 14) -> pl.Expr:
+        delta = price.diff()
+        up = pl.when(delta > 0).then(delta).otherwise(0.0)
+        down = pl.when(delta < 0).then(delta.abs()).otherwise(0.0)
+        roll_up = up.ewm_mean(alpha=1.0/n, adjust=False)
+        roll_down = down.ewm_mean(alpha=1.0/n, adjust=False)
+        rs = roll_up / roll_down
+        return 100.0 - (100.0 / (1.0 + rs))
+
+    # Core Features & Targets Calculation
+    df_main = df_main.with_columns([
+        pl.col("Close").rolling_mean(window_size=50).over("Ticker").alias("sma50"),
+        pl.col("Close").rolling_std(window_size=50, ddof=0).over("Ticker").alias("std50"),
+        _pl_rsi(pl.col("Close"), 14).over("Ticker").alias("rsi14"),
+        (pl.col("Close").pct_change().over("Ticker") * np.sqrt(252.0)).rolling_std(window_size=20, ddof=0).over("Ticker").alias("vol_20d_ann"),
+        (pl.col("Close").shift(-30).over("Ticker") / pl.col("Close") - 1.0).alias("target_tactical_30d"),
+        (pl.col("Close").shift(-126).over("Ticker") / pl.col("Close") - 1.0).alias("target_structural_126d"),
+        pl.col("Close").pct_change().over("Ticker").alias("ret1d")
+    ])
+
+    df_main = df_main.with_columns([
+        ((pl.col("Close") - pl.col("sma50")) / pl.col("std50")).alias("zscore_50"),
+        pl.int_range(0, pl.len()).over("Ticker").alias("row_nr")
+    ])
+
+    # Sample rows (skip first 200, then every 5th)
+    df_sampled = df_main.filter(
+        (pl.col("row_nr") >= 200) & (pl.col("row_nr") % 5 == 0)
+    )
+
+    # Drop null targets
+    df_sampled = df_sampled.drop_nulls(subset=["target_tactical_30d", "target_structural_126d"])
+
+    # Join Macro
+    if not macro_pivoted.is_empty():
+        df_sampled = df_sampled.join(macro_pivoted, on="Date", how="left")
+    
+    # Fill remaining macro columns if they don't exist
+    for m in macro_symbols:
+        if m not in df_sampled.columns:
+            df_sampled = df_sampled.with_columns(pl.lit(0.0).alias(m))
+
+    # Rename & Fill Nulls
+    df_sampled = df_sampled.rename({
+        "^GSPC": "sp500_ret1d",
+        "^IXIC": "ndx_ret1d",
+        "EURUSD=X": "eurusd_ret1d",
+        "OAT.PA": "oat_ret1d",
+        "Ticker": "ticker"
+    }).fill_null(0.0)
+
+    # Add extra constant columns
+    df_sampled = df_sampled.with_columns([
+        pl.col("Date").dt.strftime("%Y-%m-%d %H:%M:%S").alias("created_at"),
+        pl.lit("HISTORICAL").alias("signal_status"),
+        pl.lit(0.0).alias("signal_score"),
+        pl.lit(0.0).alias("insider_net_score"),
+        pl.lit(0.0).alias("earnings_qa_sentiment"),
+        pl.lit(0.0).alias("amf_short_interest"),
+        pl.lit(0.0).alias("amf_threshold_crossing"),
+        pl.lit(0.0).alias("ecb_euribor_3m"),
+        pl.lit(0.0).alias("gex_proxy")
+    ])
+    
+    # Drop temp columns
+    df_sampled = df_sampled.drop(["sma50", "std50", "row_nr"])
+    
+    # Convert back to Pandas for complex offline fundamentals / frac diff
+    df = df_sampled.to_pandas()
+    
+    logger.info("Polars processing complete. Enriching with Static Fundamentals and Frac Diff in Pandas. Rows: %d", len(df))
+    
+    # Fundamentals Enrichment
+    df["finnhub_roe"] = np.nan
+    df["finnhub_pe"] = np.nan
+    df["ev_to_ebitda"] = np.nan
+    df["news_sentiment"] = 0.0
+    
+    # To avoid looping every row, map by ticker
+    fund_cache = {}
+    for t in df["ticker"].unique():
+        roe, pe, ev_ebitda = _fundamentals(t, pdb, offline_mode=True)
+        ns = _news_sentiment_proxy(t, pdb)
+        fund_cache[t] = (roe, pe, ev_ebitda, ns)
+    
+    df["finnhub_roe"] = df["ticker"].map(lambda t: fund_cache[t][0])
+    df["finnhub_pe"] = df["ticker"].map(lambda t: fund_cache[t][1])
+    df["ev_to_ebitda"] = df["ticker"].map(lambda t: fund_cache[t][2])
+    df["news_sentiment"] = df["ticker"].map(lambda t: fund_cache[t][3])
+    
+    # Frac Diff FFD (expensive, applied per ticker)
+    sys.path.insert(0, str(_ROOT / "02_quant_engine"))
+    from quantitative_math import frac_diff_ffd
+    df["frac_diff_04"] = df.groupby("ticker")["Close"].transform(lambda x: frac_diff_ffd(x, d=0.4))
+
+    # StatArb Sector Relative Return
     try:
         import yaml
         with open(_ROOT / "config" / "pea_universe.yaml", "r", encoding="utf-8") as f:
@@ -496,17 +513,8 @@ def build_training_dataset(
         logger.warning("Failed to merge daily sentiment: %s", e)
         df['news_sentiment_3d'] = 0.0
 
-    # 1. Strict sorting and index reset
     df = df.sort_values(['ticker', 'Date']).reset_index(drop=True)
-
-    # 3. Force numeric types (coercing any weird values to NaN)
-    df['target_tactical_30d'] = pd.to_numeric(df['target_tactical_30d'], errors='coerce')
-    df['target_structural_126d'] = pd.to_numeric(df['target_structural_126d'], errors='coerce')
-
-    # 4. EXPLICITLY DROP NaNs AND REASSIGN TO df
     df = df.dropna(subset=['target_tactical_30d', 'target_structural_126d'])
-
-    # 5. Log the new shape to prove rows were dropped
     logger.info("Dataset shape after dropping NaN targets: %s", df.shape)
 
     return df

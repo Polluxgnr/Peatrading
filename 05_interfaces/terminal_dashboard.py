@@ -347,7 +347,7 @@ def render_shap_waterfall(ticker: str, shap_dict: dict) -> go.Figure:
 def render_pending_trade_cards(pending_df: pd.DataFrame, portfolio_obj) -> None:
     """Rich cards for PENDING Discord/Streamlit signals (sizing / ATR / approve)."""
     if pending_df is None or pending_df.empty:
-        st.info(
+        render_empty_state(
             "Aucun signal en attente. Soit le marche n'offre pas de setup "
             "ensemble (conviction < 65), soit un veto (VIX / macro / liquidite) "
             "a tout bloque."
@@ -496,7 +496,7 @@ def render_pending_trade_cards(pending_df: pd.DataFrame, portfolio_obj) -> None:
                         sig_id, "REJECTED", "Streamlit Command Center reject"
                     )
                     if ok:
-                        st.info(f"{format_name(ticker)} → REJECTED")
+                        render_empty_state(f"{format_name(ticker)} → REJECTED")
                         st.cache_data.clear()
                         st.rerun()
                     else:
@@ -602,7 +602,7 @@ if missing_keys:
     )
     for k in missing_keys:
         st.markdown(f"- `{k}`")
-    st.info("Remplissez vos clés dans le fichier `config/api_keys.env` et rechargez la page.")
+    render_empty_state("Remplissez vos clés dans le fichier `config/api_keys.env` et rechargez la page.")
     st.stop()
 
 if optional_missing_keys:
@@ -787,11 +787,8 @@ def run_portfolio_monte_carlo(
     w = np.asarray(weights, dtype=float)
     if len(w) != len(cols):
         return pd.DataFrame()
-    try:
-        from sklearn.covariance import LedoitWolf
-        cov = pd.DataFrame(LedoitWolf().fit(ret).covariance_, index=ret.columns, columns=ret.columns)
-    except ImportError:
-        cov = ret.cov()
+    from quantitative_math import calculate_shrunk_covariance
+    cov = calculate_shrunk_covariance(ret)
     mu = ret.mean()
     return run_correlated_monte_carlo(
         weights=w,
@@ -1083,7 +1080,6 @@ def get_annual_returns(ticker: str) -> pd.DataFrame:
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-@st.cache_data(ttl=300, show_spinner=False)
 def get_valuation_metrics(ticker: str) -> dict:
     """Analyst targets + multiples for a suggested buy-zone band.
 
@@ -2178,29 +2174,52 @@ def get_core_regime() -> dict:
 def get_market_breadth(universe_df: pd.DataFrame, db_manager) -> dict:
     try:
         from duckdb_manager import TimeSeriesDB
-        if universe_df is None or universe_df.empty: return {"pct_sma50": None, "pct_sma200": None, "valid": 0, "list_200": []}
-        db = TimeSeriesDB(db_path=str(db_manager), read_only=True)
+        if universe_df is None or universe_df.empty: 
+            return {"pct_sma50": None, "pct_sma200": None, "valid": 0, "list_200": []}
+        
         tickers = universe_df.get("Ticker", pd.Series([], dtype=str)).dropna().astype(str).unique().tolist()
         candidates = [t for t in tickers if t][:160]
-        valid, above50, above200 = 0, 0, 0
-        list_200 = []
-        for t in candidates:
-            hist = db.get_historical_prices(t, days=200)
-            if hist is None or hist.empty or "Close" not in hist.columns or len(hist) < 200: continue
-            close = pd.to_numeric(hist["Close"], errors="coerce").dropna()
-            if close.empty or len(close) < 200: continue
-            last = float(close.iloc[-1])
-            sma50, sma200 = float(close.tail(50).mean()), float(close.tail(200).mean())
-            valid += 1
-            if last > sma50: above50 += 1
-            if last > sma200: 
-                above200 += 1
-                list_200.append(t)
-            if valid >= 100: break
-        if valid <= 0: return {"pct_sma50": None, "pct_sma200": None, "valid": 0, "list_200": []}
-        return {"pct_sma50": above50 / valid * 100.0, "pct_sma200": above200 / valid * 100.0, "valid": valid, "list_200": list_200}
+        if not candidates:
+            return {"pct_sma50": None, "pct_sma200": None, "valid": 0, "list_200": []}
+            
+        candidates_str = ", ".join(f"'{t}'" for t in candidates)
+        
+        query = f"""
+        WITH Ranked AS (
+            SELECT 
+                Ticker,
+                Close,
+                AVG(Close) OVER (PARTITION BY Ticker ORDER BY Date ROWS BETWEEN 49 PRECEDING AND CURRENT ROW) as sma50,
+                AVG(Close) OVER (PARTITION BY Ticker ORDER BY Date ROWS BETWEEN 199 PRECEDING AND CURRENT ROW) as sma200,
+                COUNT(Close) OVER (PARTITION BY Ticker ORDER BY Date ROWS BETWEEN 199 PRECEDING AND CURRENT ROW) as cnt200,
+                ROW_NUMBER() OVER (PARTITION BY Ticker ORDER BY Date DESC) as rn
+            FROM ohlcv_data
+            WHERE Ticker IN ({candidates_str})
+        )
+        SELECT Ticker, Close, sma50, sma200
+        FROM Ranked
+        WHERE rn = 1 AND cnt200 = 200
+        """
+        
+        db = TimeSeriesDB(db_path=str(db_manager), read_only=True)
+        with db._connect() as conn:
+            df = conn.execute(query).df()
+            
+        if df.empty:
+            return {"pct_sma50": None, "pct_sma200": None, "valid": 0, "list_200": []}
+            
+        valid = len(df)
+        above50 = (df['Close'] > df['sma50']).sum()
+        above200 = (df['Close'] > df['sma200']).sum()
+        list_200 = df.loc[df['Close'] > df['sma200'], 'Ticker'].tolist()
+        
+        return {
+            "pct_sma50": float(above50 / valid * 100) if valid > 0 else 0.0,
+            "pct_sma200": float(above200 / valid * 100) if valid > 0 else 0.0,
+            "valid": int(valid),
+            "list_200": list_200
+        }
     except Exception: return {"pct_sma50": None, "pct_sma200": None, "valid": 0, "list_200": []}
-
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -2466,6 +2485,15 @@ def news_impact_meta(score: int) -> dict:
     return {"level": level, "color": color, "why": why, "abs": abs_s}
 
 
+
+def render_empty_state(message: str) -> None:
+    """A consistent, muted empty state for missing data."""
+    st.markdown(
+        f"<div style='padding: 16px; border: 1px dashed {_MUTED}; color: {_MUTED}; text-align: center; margin-top: 10px; font-size: 14px;'>{message}</div>",
+        unsafe_allow_html=True
+    )
+
+
 def render_news_card(ticker: str, item: dict, score: int | None) -> None:
     """Render one news card with impact badge + justified explanation."""
     sc = 0 if score is None else int(score)
@@ -2519,7 +2547,22 @@ def save_wallet(cash: float, positions_df: pd.DataFrame) -> str:
             positions=positions,
             last_updated=datetime.now(),
         )
-        get_portfolio_db().update_portfolio(state)
+        pdb = get_portfolio_db()
+        pdb.update_portfolio(state)
+        
+        try:
+            from data_models import Signal, SignalType, SignalStatus
+            pdb.log_signal(Signal(
+                ticker="WALLET_SYNC",
+                signal_type=SignalType.BUY,
+                status=SignalStatus.EXECUTED,
+                score=100.0,
+                target_qty=0,
+                reason="MANUAL_EDIT - Dashboard wallet synchronization",
+            ))
+        except Exception as e:
+            logger.warning(f"Failed to log wallet sync signal: {e}")
+            
         st.cache_data.clear()
         return ""
     except Exception as exc:  # noqa: BLE001
@@ -2529,12 +2572,14 @@ def save_wallet(cash: float, positions_df: pd.DataFrame) -> str:
 @st.cache_data(ttl=900, show_spinner=False)
 def get_earnings_events(tickers: tuple[str, ...]) -> list[dict]:
     """Best-effort upcoming earnings / events via yfinance calendar."""
+    from concurrent.futures import ThreadPoolExecutor
     events: list[dict] = []
-    for t in tickers[:12]:
+    
+    def fetch_event(t: str) -> list[dict]:
         try:
             cal = yf.Ticker(t).calendar
             if cal is None:
-                continue
+                return []
             # yfinance may return dict or DataFrame depending on version.
             raw = None
             if isinstance(cal, dict):
@@ -2543,17 +2588,26 @@ def get_earnings_events(tickers: tuple[str, ...]) -> list[dict]:
                 if "Earnings Date" in cal.index:
                     raw = cal.loc["Earnings Date"].tolist()
             if not raw:
-                continue
+                return []
             if not isinstance(raw, (list, tuple)):
                 raw = [raw]
+            
+            evts = []
             for d in raw[:2]:
-                events.append({
+                evts.append({
                     "ticker": t,
                     "event": "Resultats / Earnings",
                     "date": str(d)[:10],
                 })
+            return evts
         except Exception:  # noqa: BLE001
-            continue
+            return []
+            
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        results = executor.map(fetch_event, tickers[:12])
+        for res in results:
+            events.extend(res)
+            
     return events
 
 
@@ -3738,7 +3792,7 @@ with tab_market_pulse:
         news_items = db.get_news_history(limit=100)
         
         if not news_items:
-            st.info("Data lake is empty. Waiting for daemon to ingest news.")
+            render_empty_state("Data lake is empty. Waiting for daemon to ingest news.")
         else:
             filtered_news = []
             for r in news_items:
@@ -3805,9 +3859,9 @@ with tab_market_pulse:
                     df_opps = pd.DataFrame(opps).head(5)
                     st.dataframe(df_opps, use_container_width=True, hide_index=True)
                 else:
-                    st.info("Data unavailable")
+                    render_empty_state("Data unavailable")
             except Exception as e:
-                st.info("Data unavailable")
+                render_empty_state("Data unavailable")
                 
         with col_mom:
             st.markdown("#### 🚀 High Momentum Leaders")
@@ -3817,11 +3871,11 @@ with tab_market_pulse:
                     df_moms = pd.DataFrame(moms)
                     st.dataframe(df_moms, use_container_width=True, hide_index=True)
                 else:
-                    st.info("Data unavailable")
+                    render_empty_state("Data unavailable")
             except Exception as e:
-                st.info("Data unavailable")
+                render_empty_state("Data unavailable")
     except Exception as e:
-        st.info("Data unavailable")
+        render_empty_state("Data unavailable")
 
 
 def get_company_info(ticker: str) -> dict:
@@ -3901,9 +3955,9 @@ with tab_ticker_deep_dive:
                         st.markdown(metric_box("P/B Ratio", str(val_pb)), unsafe_allow_html=True)
                         st.markdown(metric_box("Return 1Y", str(val_ret)), unsafe_allow_html=True)
                     else:
-                        st.info("Metrics unavailable")
+                        render_empty_state("Metrics unavailable")
                 except Exception:
-                    st.info("Metrics unavailable")
+                    render_empty_state("Metrics unavailable")
                     
             with col_rad:
                 st.markdown("### 🎯 Strategy Fingerprint")
@@ -3914,9 +3968,9 @@ with tab_ticker_deep_dive:
                         fig = render_strategy_radar(fp, selected_ticker)
                         st.plotly_chart(fig, use_container_width=True)
                     else:
-                        st.info("Fingerprint unavailable")
+                        render_empty_state("Fingerprint unavailable")
                 except Exception:
-                    st.info("Fingerprint unavailable")
+                    render_empty_state("Fingerprint unavailable")
                     
             st.markdown("---")
             
@@ -3932,9 +3986,9 @@ with tab_ticker_deep_dive:
                     fig.update_layout(template="plotly_dark", margin=dict(t=10, b=10, l=10, r=10), height=400, xaxis_rangeslider_visible=False)
                     st.plotly_chart(fig, use_container_width=True)
                 else:
-                    st.info("Chart data unavailable")
+                    render_empty_state("Chart data unavailable")
             except Exception:
-                st.info("Chart data unavailable")
+                render_empty_state("Chart data unavailable")
                 
             st.markdown("---")
             
@@ -3951,9 +4005,9 @@ with tab_ticker_deep_dive:
                         st.markdown(f"**Signal AMF:** <span style='color:{color}; font-weight:bold;'>{sig_msg}</span>", unsafe_allow_html=True)
                         st.dataframe(df_insider, use_container_width=True, hide_index=True)
                     else:
-                        st.info("No insider activity recorded")
+                        render_empty_state("No insider activity recorded")
                 except Exception:
-                    st.info("Insider data unavailable")
+                    render_empty_state("Insider data unavailable")
                     
             with col_news:
                 st.markdown("### 📰 Ticker-Specific News")
@@ -3963,9 +4017,9 @@ with tab_ticker_deep_dive:
                         for n in t_news:
                             render_news_card(selected_ticker, n, n.get('sentiment_score'))
                     else:
-                        st.info("No specific news available")
+                        render_empty_state("No specific news available")
                 except Exception:
-                    st.info("News unavailable")
+                    render_empty_state("News unavailable")
 
 
 with tab_quant_engine:
@@ -4091,12 +4145,12 @@ with tab_quant_engine:
                     fig2.update_layout(margin=dict(t=20, b=20, l=20, r=20), height=350)
                     st.plotly_chart(fig2, use_container_width=True)
                 else:
-                    st.info(f"No feature importances found for {model_key}.")
+                    render_empty_state(f"No feature importances found for {model_key}.")
             else:
-                st.info(f"Metrics not found for {model_key}.")
+                render_empty_state(f"Metrics not found for {model_key}.")
 
     except Exception:
-        st.info("🤖 Models require initial training. Run ml_trainer.py.")
+        render_empty_state("🤖 Models require initial training. Run ml_trainer.py.")
 
 
 with tab_portfolio:
@@ -4134,7 +4188,7 @@ with tab_portfolio:
     # 2. Active Positions & HRP
     st.markdown("### 📊 Active Positions & HRP Target")
     if not positions:
-        st.info("Aucune position active.")
+        render_empty_state("Aucune position active.")
     else:
         disp_pos = []
         for p in positions:
@@ -4165,7 +4219,7 @@ with tab_portfolio:
     # 3. Execution (Pending Signals)
     st.markdown("### ⚡ Pending Discord Execution (with Slippage)")
     if 'pending_df' not in locals() or pending_df is None or pending_df.empty:
-        st.info("Aucun signal en attente.")
+        render_empty_state("Aucun signal en attente.")
     else:
         # Same logic as before but using the updated render_signal_card
         for _, row in pending_df.head(8).iterrows():
@@ -4233,7 +4287,7 @@ with tab_portfolio:
                 df_closed = pd.DataFrame()
         
         if df_closed.empty:
-            st.info("No closed trades in history yet. Waiting for next daemon pass.")
+            render_empty_state("No closed trades in history yet. Waiting for next daemon pass.")
         else:
             
             # Simple UI to select a trade to view its post-mortem

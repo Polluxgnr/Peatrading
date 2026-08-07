@@ -7069,129 +7069,146 @@ def build_training_dataset(
         pass
     tdb = timeseries_db or TimeSeriesDB(read_only=True)
 
-    # 1. Fetch Universe from DuckDB
+    # 1. Load Data with Polars directly from DuckDB
     try:
         with tdb._connect() as conn:
-            raw_tickers = [row[0] for row in conn.execute("SELECT DISTINCT Ticker FROM ohlcv_data").fetchall()]
+            # We explicitly cast to ensure stable Polars types
+            df_ohlcv = conn.sql("SELECT Date, Ticker, Close, High, Low FROM ohlcv_data").pl()
     except Exception:
-        logger.exception("Could not fetch distinct tickers from DuckDB.")
-        raw_tickers = []
-
-    # 2. Filter Macro Tickers explicitly (Strict Hardcoded Rule)
-    valid_suffixes = (".PA", ".AS", ".NX", ".MI", ".MC", ".LS")
-    tickers = []
-    for t in raw_tickers:
-        if "IR3TIB" in t or t.endswith(".EM") or t.endswith(".INDX"):
-            continue
-        if any(t.endswith(s) for s in valid_suffixes) or t.isalpha():
-            tickers.append(t)
-
-    # 3. Pre-fetch exog for speed
-    macro_symbols = ["^GSPC", "^IXIC", "EURUSD=X", "OAT.PA"]
-    macro_returns = {}
-    for sym in macro_symbols:
-        try:
-            h = tdb.get_historical_prices(sym, days=3650)
-            if not h.empty and "Close" in h.columns and "Date" in h.columns:
-                ret1d = h.set_index("Date")["Close"].pct_change(1)
-                macro_returns[sym] = ret1d
-            else:
-                macro_returns[sym] = pd.Series(dtype=float)
-        except Exception:
-            macro_returns[sym] = pd.Series(dtype=float)
-
-    logger.info("Building historical ML dataset for %d valid equity tickers (Vectorized)...", len(tickers))
-
-    dfs = []
-    
-    # 4. Vectorized DataFrame Generation
-    import sys
-    sys.path.insert(0, str(_ROOT / "02_quant_engine"))
-    from technical_scorer import SignalGenerator
-    from quantitative_math import frac_diff_ffd
-    
-    sg = SignalGenerator(skip_regime=True, offline_mode=True)
-
-    for ticker in tickers:
-        try:
-            hist = tdb.get_historical_prices(ticker, days=3650)
-        except Exception:
-            continue
-            
-        if hist.empty or "Close" not in hist.columns:
-            continue
-            
-        # Need at least 250 days to construct solid SMA200
-        if len(hist) < 250:
-            continue
-            
-        # Compute indicators (vectorized over the whole 5 years for this ticker)
-        df_ind = sg.calculate_indicators(hist.copy())
-        
-        # Volatility 20d ann
-        df_ind["vol_20d_ann"] = df_ind["Close"].pct_change().rolling(20).std(ddof=0) * np.sqrt(252.0)
-        
-        # Fractional Diff
-        try:
-            df_ind["frac_diff_04"] = frac_diff_ffd(df_ind["Close"], d=0.4)
-        except Exception:
-            df_ind["frac_diff_04"] = np.nan
-            
-        # Fundamentals (Static per ticker in offline mode)
-        roe, pe, ev_ebitda = _fundamentals(ticker, pdb, offline_mode=True)
-        df_ind["finnhub_roe"] = roe
-        df_ind["finnhub_pe"] = pe
-        df_ind["ev_to_ebitda"] = ev_ebitda
-        df_ind["news_sentiment"] = _news_sentiment_proxy(ticker, pdb)
-        df_ind["insider_net_score"] = 0.0
-        df_ind["earnings_qa_sentiment"] = 0.0
-        df_ind["amf_short_interest"] = 0.0
-        df_ind["amf_threshold_crossing"] = 0.0
-        df_ind["ecb_euribor_3m"] = 0.0
-        df_ind["gex_proxy"] = 0.0
-        
-        # Match Macro return by Date
-        df_ind["ret1d"] = df_ind["Close"].pct_change()
-        if "Date" in df_ind.columns:
-            date_col = df_ind["Date"]
-            df_ind["sp500_ret1d"] = date_col.map(macro_returns["^GSPC"]).fillna(0.0) if not macro_returns["^GSPC"].empty else 0.0
-            df_ind["ndx_ret1d"] = date_col.map(macro_returns["^IXIC"]).fillna(0.0) if not macro_returns["^IXIC"].empty else 0.0
-            df_ind["eurusd_ret1d"] = date_col.map(macro_returns["EURUSD=X"]).fillna(0.0) if not macro_returns["EURUSD=X"].empty else 0.0
-            df_ind["oat_ret1d"] = date_col.map(macro_returns["OAT.PA"]).fillna(0.0) if not macro_returns["OAT.PA"].empty else 0.0
-        else:
-            df_ind["sp500_ret1d"] = 0.0
-            df_ind["ndx_ret1d"] = 0.0
-            df_ind["eurusd_ret1d"] = 0.0
-            df_ind["oat_ret1d"] = 0.0
-        
-        # Format mapping names to match expected FEATURES
-        df_ind["rsi14"] = df_ind["RSI_14"] if "RSI_14" in df_ind.columns else np.nan
-        df_ind["zscore_50"] = df_ind["Z_SCORE_50"] if "Z_SCORE_50" in df_ind.columns else np.nan
-        
-        # Calculate targets (Future Return) on the DAILY timeframe before sampling
-        df_ind['target_tactical_30d'] = df_ind['Close'].shift(-30) / df_ind['Close'] - 1.0
-        df_ind['target_structural_126d'] = df_ind['Close'].shift(-126) / df_ind['Close'] - 1.0
-        
-        # We sample end-of-week (e.g. step=5) to avoid huge correlation
-        # We also skip the first 200 rows due to SMA200 warm-up
-        if len(df_ind) > 200:
-            df_sampled = df_ind.iloc[200::5].copy()
-            df_sampled["ticker"] = ticker
-            if "Date" in df_sampled.columns:
-                df_sampled["created_at"] = df_sampled["Date"].dt.strftime("%Y-%m-%d %H:%M:%S")
-            else:
-                df_sampled["created_at"] = ""
-            df_sampled["signal_status"] = "HISTORICAL"
-            df_sampled["signal_score"] = 0.0
-            dfs.append(df_sampled)
-
-    if not dfs:
+        logger.exception("Could not fetch OHLCV from DuckDB into Polars.")
         return pd.DataFrame()
-        
-    df = pd.concat(dfs, ignore_index=True)
-    df['Date'] = pd.to_datetime(df['Date'])
 
-    # Sector StatArb Logic
+    # Filter Valid Tickers
+    valid_suffixes = (".PA", ".AS", ".NX", ".MI", ".MC", ".LS")
+    def is_valid_ticker(t: str) -> bool:
+        if "IR3TIB" in t or t.endswith(".EM") or t.endswith(".INDX"):
+            return False
+        return any(t.endswith(s) for s in valid_suffixes) or t.isalpha()
+
+    unique_tickers = df_ohlcv.get_column("Ticker").unique().to_list()
+    valid_tickers = [t for t in unique_tickers if is_valid_ticker(t)]
+    macro_symbols = ["^GSPC", "^IXIC", "EURUSD=X", "OAT.PA"]
+
+    import polars as pl
+    df_main = df_ohlcv.filter(pl.col("Ticker").is_in(valid_tickers)).sort(["Ticker", "Date"])
+    df_macro = df_ohlcv.filter(pl.col("Ticker").is_in(macro_symbols)).sort(["Ticker", "Date"])
+
+    logger.info("Building historical ML dataset for %d valid equity tickers (Polars Vectorized)...", len(valid_tickers))
+
+    # Calculate Macro Returns
+    df_macro = df_macro.with_columns([
+        (pl.col("Close") / pl.col("Close").shift(1).over("Ticker") - 1.0).alias("macro_ret1d")
+    ]).drop_nulls(subset=["macro_ret1d"])
+
+    # Pivot Macro
+    try:
+        macro_pivoted = df_macro.pivot(
+            values="macro_ret1d",
+            index="Date",
+            on="Ticker",
+            aggregate_function="first"
+        )
+    except Exception:
+        # Fallback if pivot fails or no macro
+        macro_pivoted = pl.DataFrame({"Date": []})
+
+    # Polars RSI implementation
+    def _pl_rsi(price: pl.Expr, n: int = 14) -> pl.Expr:
+        delta = price.diff()
+        up = pl.when(delta > 0).then(delta).otherwise(0.0)
+        down = pl.when(delta < 0).then(delta.abs()).otherwise(0.0)
+        roll_up = up.ewm_mean(alpha=1.0/n, adjust=False)
+        roll_down = down.ewm_mean(alpha=1.0/n, adjust=False)
+        rs = roll_up / roll_down
+        return 100.0 - (100.0 / (1.0 + rs))
+
+    # Core Features & Targets Calculation
+    df_main = df_main.with_columns([
+        pl.col("Close").rolling_mean(window_size=50).over("Ticker").alias("sma50"),
+        pl.col("Close").rolling_std(window_size=50, ddof=0).over("Ticker").alias("std50"),
+        _pl_rsi(pl.col("Close"), 14).over("Ticker").alias("rsi14"),
+        (pl.col("Close").pct_change().over("Ticker") * np.sqrt(252.0)).rolling_std(window_size=20, ddof=0).over("Ticker").alias("vol_20d_ann"),
+        (pl.col("Close").shift(-30).over("Ticker") / pl.col("Close") - 1.0).alias("target_tactical_30d"),
+        (pl.col("Close").shift(-126).over("Ticker") / pl.col("Close") - 1.0).alias("target_structural_126d"),
+        pl.col("Close").pct_change().over("Ticker").alias("ret1d")
+    ])
+
+    df_main = df_main.with_columns([
+        ((pl.col("Close") - pl.col("sma50")) / pl.col("std50")).alias("zscore_50"),
+        pl.int_range(0, pl.len()).over("Ticker").alias("row_nr")
+    ])
+
+    # Sample rows (skip first 200, then every 5th)
+    df_sampled = df_main.filter(
+        (pl.col("row_nr") >= 200) & (pl.col("row_nr") % 5 == 0)
+    )
+
+    # Drop null targets
+    df_sampled = df_sampled.drop_nulls(subset=["target_tactical_30d", "target_structural_126d"])
+
+    # Join Macro
+    if not macro_pivoted.is_empty():
+        df_sampled = df_sampled.join(macro_pivoted, on="Date", how="left")
+    
+    # Fill remaining macro columns if they don't exist
+    for m in macro_symbols:
+        if m not in df_sampled.columns:
+            df_sampled = df_sampled.with_columns(pl.lit(0.0).alias(m))
+
+    # Rename & Fill Nulls
+    df_sampled = df_sampled.rename({
+        "^GSPC": "sp500_ret1d",
+        "^IXIC": "ndx_ret1d",
+        "EURUSD=X": "eurusd_ret1d",
+        "OAT.PA": "oat_ret1d",
+        "Ticker": "ticker"
+    }).fill_null(0.0)
+
+    # Add extra constant columns
+    df_sampled = df_sampled.with_columns([
+        pl.col("Date").dt.strftime("%Y-%m-%d %H:%M:%S").alias("created_at"),
+        pl.lit("HISTORICAL").alias("signal_status"),
+        pl.lit(0.0).alias("signal_score"),
+        pl.lit(0.0).alias("insider_net_score"),
+        pl.lit(0.0).alias("earnings_qa_sentiment"),
+        pl.lit(0.0).alias("amf_short_interest"),
+        pl.lit(0.0).alias("amf_threshold_crossing"),
+        pl.lit(0.0).alias("ecb_euribor_3m"),
+        pl.lit(0.0).alias("gex_proxy")
+    ])
+    
+    # Drop temp columns
+    df_sampled = df_sampled.drop(["sma50", "std50", "row_nr"])
+    
+    # Convert back to Pandas for complex offline fundamentals / frac diff
+    df = df_sampled.to_pandas()
+    
+    logger.info("Polars processing complete. Enriching with Static Fundamentals and Frac Diff in Pandas. Rows: %d", len(df))
+    
+    # Fundamentals Enrichment
+    df["finnhub_roe"] = np.nan
+    df["finnhub_pe"] = np.nan
+    df["ev_to_ebitda"] = np.nan
+    df["news_sentiment"] = 0.0
+    
+    # To avoid looping every row, map by ticker
+    fund_cache = {}
+    for t in df["ticker"].unique():
+        roe, pe, ev_ebitda = _fundamentals(t, pdb, offline_mode=True)
+        ns = _news_sentiment_proxy(t, pdb)
+        fund_cache[t] = (roe, pe, ev_ebitda, ns)
+    
+    df["finnhub_roe"] = df["ticker"].map(lambda t: fund_cache[t][0])
+    df["finnhub_pe"] = df["ticker"].map(lambda t: fund_cache[t][1])
+    df["ev_to_ebitda"] = df["ticker"].map(lambda t: fund_cache[t][2])
+    df["news_sentiment"] = df["ticker"].map(lambda t: fund_cache[t][3])
+    
+    # Frac Diff FFD (expensive, applied per ticker)
+    sys.path.insert(0, str(_ROOT / "02_quant_engine"))
+    from quantitative_math import frac_diff_ffd
+    df["frac_diff_04"] = df.groupby("ticker")["Close"].transform(lambda x: frac_diff_ffd(x, d=0.4))
+
+    # StatArb Sector Relative Return
     try:
         import yaml
         with open(_ROOT / "config" / "pea_universe.yaml", "r", encoding="utf-8") as f:
@@ -7226,17 +7243,8 @@ def build_training_dataset(
         logger.warning("Failed to merge daily sentiment: %s", e)
         df['news_sentiment_3d'] = 0.0
 
-    # 1. Strict sorting and index reset
     df = df.sort_values(['ticker', 'Date']).reset_index(drop=True)
-
-    # 3. Force numeric types (coercing any weird values to NaN)
-    df['target_tactical_30d'] = pd.to_numeric(df['target_tactical_30d'], errors='coerce')
-    df['target_structural_126d'] = pd.to_numeric(df['target_structural_126d'], errors='coerce')
-
-    # 4. EXPLICITLY DROP NaNs AND REASSIGN TO df
     df = df.dropna(subset=['target_tactical_30d', 'target_structural_126d'])
-
-    # 5. Log the new shape to prove rows were dropped
     logger.info("Dataset shape after dropping NaN targets: %s", df.shape)
 
     return df
@@ -7749,6 +7757,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import scipy.stats as stats
 
 
 def _clean_returns(returns: pd.Series) -> pd.Series:
@@ -7762,7 +7771,7 @@ def _clean_returns(returns: pd.Series) -> pd.Series:
 def calculate_historical_var(
     returns: pd.Series, confidence_level: float = 0.95
 ) -> float:
-    """Historical Value at Risk (VaR) as a positive loss number.
+    """Cornish-Fisher Value at Risk (VaR) as a positive loss number.
 
     Args:
         returns: Series of arithmetic returns (e.g. daily pct returns in decimal).
@@ -7777,12 +7786,32 @@ def calculate_historical_var(
         return 0.0
     alpha = float(1.0 - confidence_level)
     alpha = min(max(alpha, 1e-6), 1.0 - 1e-6)
-    q = float(np.quantile(r.to_numpy(dtype=float), alpha))
-    return float(max(0.0, -q))
+    
+    mu = float(np.mean(r))
+    sigma = float(np.std(r, ddof=1))
+    
+    if sigma == 0:
+        q_hist = float(np.quantile(r.to_numpy(dtype=float), alpha))
+        return float(max(0.0, -q_hist))
+        
+    z = float(stats.norm.ppf(alpha))
+    
+    s = float(stats.skew(r, nan_policy='omit'))
+    k = float(stats.kurtosis(r, nan_policy='omit'))
+    if np.isnan(s): s = 0.0
+    if np.isnan(k): k = 0.0
+    s = np.clip(s, -5.0, 5.0)
+    k = np.clip(k, -10.0, 10.0)
+    
+    z_cf = z + (z**2 - 1) * s / 6.0 + (z**3 - 3*z) * k / 24.0 - (2 * z**3 - 5 * z) * (s**2) / 36.0
+    z_cf = np.clip(z_cf, -10.0, 10.0)
+    
+    q_cf = mu + z_cf * sigma
+    return float(max(0.0, -q_cf))
 
 
 def calculate_cvar(returns: pd.Series, confidence_level: float = 0.95) -> float:
-    """Conditional VaR (Expected Shortfall) as positive tail loss.
+    """Conditional VaR (Expected Shortfall) as positive tail loss using Cornish-Fisher VaR threshold.
 
     Args:
         returns: Series of arithmetic returns.
@@ -7796,10 +7825,33 @@ def calculate_cvar(returns: pd.Series, confidence_level: float = 0.95) -> float:
         return 0.0
     alpha = float(1.0 - confidence_level)
     alpha = min(max(alpha, 1e-6), 1.0 - 1e-6)
-    q = float(np.quantile(r.to_numpy(dtype=float), alpha))
-    tail = r[r <= q]
+    
+    mu = float(np.mean(r))
+    sigma = float(np.std(r, ddof=1))
+    
+    if sigma == 0:
+        q = float(np.quantile(r.to_numpy(dtype=float), alpha))
+        tail = r[r <= q]
+        if tail.empty:
+            return float(max(0.0, -q))
+        return float(max(0.0, -float(tail.mean())))
+        
+    z = float(stats.norm.ppf(alpha))
+    s = float(stats.skew(r, nan_policy='omit'))
+    k = float(stats.kurtosis(r, nan_policy='omit'))
+    if np.isnan(s): s = 0.0
+    if np.isnan(k): k = 0.0
+    s = np.clip(s, -5.0, 5.0)
+    k = np.clip(k, -10.0, 10.0)
+    
+    z_cf = z + (z**2 - 1) * s / 6.0 + (z**3 - 3*z) * k / 24.0 - (2 * z**3 - 5 * z) * (s**2) / 36.0
+    z_cf = np.clip(z_cf, -10.0, 10.0)
+    
+    q_cf = mu + z_cf * sigma
+    tail = r[r <= q_cf]
+    
     if tail.empty:
-        return float(max(0.0, -q))
+        return float(max(0.0, -q_cf))
     return float(max(0.0, -float(tail.mean())))
 
 
@@ -7921,6 +7973,26 @@ def detect_cusum_downward_break(returns: pd.Series, threshold: float = 3.0, drif
             return True
             
     return False
+
+def calculate_shrunk_covariance(returns_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Calculates a Ledoit-Wolf shrunk covariance matrix.
+    Uses sklearn.covariance.LedoitWolf for robust correlation estimation 
+    even with a small sample of highly collinear assets.
+    """
+    if returns_df.empty:
+        return pd.DataFrame()
+        
+    df = returns_df.dropna(how='all', axis=1).fillna(0.0)
+    if df.shape[1] < 2:
+        return df.cov()
+        
+    from sklearn.covariance import LedoitWolf
+    try:
+        lw = LedoitWolf().fit(df.values)
+        return pd.DataFrame(lw.covariance_, index=df.columns, columns=df.columns)
+    except Exception:
+        return df.cov()
 
 
 ```
@@ -10319,12 +10391,9 @@ class HRPSizer:
         if returns_df.empty or len(returns_df.columns) < 2:
             return {c: 1.0/len(returns_df.columns) for c in returns_df.columns}
             
-        if LedoitWolf is not None:
-            cov_matrix = LedoitWolf().fit(returns_df).covariance_
-            cov = pd.DataFrame(cov_matrix, index=returns_df.columns, columns=returns_df.columns)
-        else:
-            cov = returns_df.cov()
-        corr = returns_df.corr()
+        from quantitative_math import calculate_shrunk_covariance
+        cov = calculate_shrunk_covariance(returns_df)
+        corr = returns_df.corr(method="pearson").fillna(0.0)
         
         # Distance matrix
         # d[i, j] = sqrt(0.5 * (1 - corr[i,j]))
@@ -12456,18 +12525,19 @@ class SignalOrchestrator:
                 pass
 
             # --- Check 0c: Value Trap Veto (Piotroski F-Score < 4) ---
-            try:
-                from technical_scorer import SignalGenerator  # noqa: WPS433
-                fundamentals = SignalGenerator()._load_fundamentals_from_sources(ticker)
-                f_score = fundamentals.get("piotroski_score")
-                if f_score is not None and f_score < 4:
-                    logger.info("Failed Piotroski Quality Veto for %s (F-Score: %.0f)", ticker, f_score)
-                    processed.append(
-                        self._reject(signal, f"REJECTED: Failed Piotroski Quality Veto (F-Score {f_score:.0f} < 4)", {"source": "fundamentals(Piotroski)", "f_score": f_score})
-                    )
-                    continue
-            except Exception:  # noqa: BLE001
-                pass
+            if ticker != self.core_ticker:
+                try:
+                    from technical_scorer import SignalGenerator  # noqa: WPS433
+                    fundamentals = SignalGenerator()._load_fundamentals_from_sources(ticker)
+                    f_score = fundamentals.get("piotroski_score")
+                    if f_score is not None and f_score < 4:
+                        logger.info("Failed Piotroski Quality Veto for %s (F-Score: %.0f)", ticker, f_score)
+                        processed.append(
+                            self._reject(signal, f"REJECTED: Failed Piotroski Quality Veto (F-Score {f_score:.0f} < 4)", {"source": "fundamentals(Piotroski)", "f_score": f_score})
+                        )
+                        continue
+                except Exception:  # noqa: BLE001
+                    pass
 
             # --- Check 1: Macro veto (cheapest - runs first) ---
             vetoed, veto_reason = self.macro_veto.check_veto(today)
@@ -12494,16 +12564,17 @@ class SignalOrchestrator:
                 continue
 
             # --- Check 1d: Minimum liquidity (ADV €) ---
-            adv = self._avg_daily_euro_volume(ticker)
-            if adv is not None and adv < self.min_liquidity_adv:
-                processed.append(
-                    self._reject(
-                        signal,
-                        f"REJECTED: Illiquid (ADV €{adv:,.0f} < {self.min_liquidity_adv:,.0f})",
-                        {"source": "TimeSeriesDB(Volume)", "adv_eur": adv}
+            if ticker != self.core_ticker:
+                adv = self._avg_daily_euro_volume(ticker)
+                if adv is not None and adv < self.min_liquidity_adv:
+                    processed.append(
+                        self._reject(
+                            signal,
+                            f"REJECTED: Illiquid (ADV €{adv:,.0f} < {self.min_liquidity_adv:,.0f})",
+                            {"source": "TimeSeriesDB(Volume)", "adv_eur": adv}
+                        )
                     )
-                )
-                continue
+                    continue
 
             # --- Check 2a: Sector concentration limit (cheap arithmetic) ---
             if not self.firewall.check_sector_limit(ticker, portfolio):
@@ -13638,7 +13709,7 @@ def render_shap_waterfall(ticker: str, shap_dict: dict) -> go.Figure:
 def render_pending_trade_cards(pending_df: pd.DataFrame, portfolio_obj) -> None:
     """Rich cards for PENDING Discord/Streamlit signals (sizing / ATR / approve)."""
     if pending_df is None or pending_df.empty:
-        st.info(
+        render_empty_state(
             "Aucun signal en attente. Soit le marche n'offre pas de setup "
             "ensemble (conviction < 65), soit un veto (VIX / macro / liquidite) "
             "a tout bloque."
@@ -13787,7 +13858,7 @@ def render_pending_trade_cards(pending_df: pd.DataFrame, portfolio_obj) -> None:
                         sig_id, "REJECTED", "Streamlit Command Center reject"
                     )
                     if ok:
-                        st.info(f"{format_name(ticker)} → REJECTED")
+                        render_empty_state(f"{format_name(ticker)} → REJECTED")
                         st.cache_data.clear()
                         st.rerun()
                     else:
@@ -13893,7 +13964,7 @@ if missing_keys:
     )
     for k in missing_keys:
         st.markdown(f"- `{k}`")
-    st.info("Remplissez vos clés dans le fichier `config/api_keys.env` et rechargez la page.")
+    render_empty_state("Remplissez vos clés dans le fichier `config/api_keys.env` et rechargez la page.")
     st.stop()
 
 if optional_missing_keys:
@@ -14078,11 +14149,8 @@ def run_portfolio_monte_carlo(
     w = np.asarray(weights, dtype=float)
     if len(w) != len(cols):
         return pd.DataFrame()
-    try:
-        from sklearn.covariance import LedoitWolf
-        cov = pd.DataFrame(LedoitWolf().fit(ret).covariance_, index=ret.columns, columns=ret.columns)
-    except ImportError:
-        cov = ret.cov()
+    from quantitative_math import calculate_shrunk_covariance
+    cov = calculate_shrunk_covariance(ret)
     mu = ret.mean()
     return run_correlated_monte_carlo(
         weights=w,
@@ -14374,7 +14442,6 @@ def get_annual_returns(ticker: str) -> pd.DataFrame:
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-@st.cache_data(ttl=300, show_spinner=False)
 def get_valuation_metrics(ticker: str) -> dict:
     """Analyst targets + multiples for a suggested buy-zone band.
 
@@ -15469,29 +15536,52 @@ def get_core_regime() -> dict:
 def get_market_breadth(universe_df: pd.DataFrame, db_manager) -> dict:
     try:
         from duckdb_manager import TimeSeriesDB
-        if universe_df is None or universe_df.empty: return {"pct_sma50": None, "pct_sma200": None, "valid": 0, "list_200": []}
-        db = TimeSeriesDB(db_path=str(db_manager), read_only=True)
+        if universe_df is None or universe_df.empty: 
+            return {"pct_sma50": None, "pct_sma200": None, "valid": 0, "list_200": []}
+        
         tickers = universe_df.get("Ticker", pd.Series([], dtype=str)).dropna().astype(str).unique().tolist()
         candidates = [t for t in tickers if t][:160]
-        valid, above50, above200 = 0, 0, 0
-        list_200 = []
-        for t in candidates:
-            hist = db.get_historical_prices(t, days=200)
-            if hist is None or hist.empty or "Close" not in hist.columns or len(hist) < 200: continue
-            close = pd.to_numeric(hist["Close"], errors="coerce").dropna()
-            if close.empty or len(close) < 200: continue
-            last = float(close.iloc[-1])
-            sma50, sma200 = float(close.tail(50).mean()), float(close.tail(200).mean())
-            valid += 1
-            if last > sma50: above50 += 1
-            if last > sma200: 
-                above200 += 1
-                list_200.append(t)
-            if valid >= 100: break
-        if valid <= 0: return {"pct_sma50": None, "pct_sma200": None, "valid": 0, "list_200": []}
-        return {"pct_sma50": above50 / valid * 100.0, "pct_sma200": above200 / valid * 100.0, "valid": valid, "list_200": list_200}
+        if not candidates:
+            return {"pct_sma50": None, "pct_sma200": None, "valid": 0, "list_200": []}
+            
+        candidates_str = ", ".join(f"'{t}'" for t in candidates)
+        
+        query = f"""
+        WITH Ranked AS (
+            SELECT 
+                Ticker,
+                Close,
+                AVG(Close) OVER (PARTITION BY Ticker ORDER BY Date ROWS BETWEEN 49 PRECEDING AND CURRENT ROW) as sma50,
+                AVG(Close) OVER (PARTITION BY Ticker ORDER BY Date ROWS BETWEEN 199 PRECEDING AND CURRENT ROW) as sma200,
+                COUNT(Close) OVER (PARTITION BY Ticker ORDER BY Date ROWS BETWEEN 199 PRECEDING AND CURRENT ROW) as cnt200,
+                ROW_NUMBER() OVER (PARTITION BY Ticker ORDER BY Date DESC) as rn
+            FROM ohlcv_data
+            WHERE Ticker IN ({candidates_str})
+        )
+        SELECT Ticker, Close, sma50, sma200
+        FROM Ranked
+        WHERE rn = 1 AND cnt200 = 200
+        """
+        
+        db = TimeSeriesDB(db_path=str(db_manager), read_only=True)
+        with db._connect() as conn:
+            df = conn.execute(query).df()
+            
+        if df.empty:
+            return {"pct_sma50": None, "pct_sma200": None, "valid": 0, "list_200": []}
+            
+        valid = len(df)
+        above50 = (df['Close'] > df['sma50']).sum()
+        above200 = (df['Close'] > df['sma200']).sum()
+        list_200 = df.loc[df['Close'] > df['sma200'], 'Ticker'].tolist()
+        
+        return {
+            "pct_sma50": float(above50 / valid * 100) if valid > 0 else 0.0,
+            "pct_sma200": float(above200 / valid * 100) if valid > 0 else 0.0,
+            "valid": int(valid),
+            "list_200": list_200
+        }
     except Exception: return {"pct_sma50": None, "pct_sma200": None, "valid": 0, "list_200": []}
-
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -15757,6 +15847,15 @@ def news_impact_meta(score: int) -> dict:
     return {"level": level, "color": color, "why": why, "abs": abs_s}
 
 
+
+def render_empty_state(message: str) -> None:
+    """A consistent, muted empty state for missing data."""
+    st.markdown(
+        f"<div style='padding: 16px; border: 1px dashed {_MUTED}; color: {_MUTED}; text-align: center; margin-top: 10px; font-size: 14px;'>{message}</div>",
+        unsafe_allow_html=True
+    )
+
+
 def render_news_card(ticker: str, item: dict, score: int | None) -> None:
     """Render one news card with impact badge + justified explanation."""
     sc = 0 if score is None else int(score)
@@ -15810,7 +15909,22 @@ def save_wallet(cash: float, positions_df: pd.DataFrame) -> str:
             positions=positions,
             last_updated=datetime.now(),
         )
-        get_portfolio_db().update_portfolio(state)
+        pdb = get_portfolio_db()
+        pdb.update_portfolio(state)
+        
+        try:
+            from data_models import Signal, SignalType, SignalStatus
+            pdb.log_signal(Signal(
+                ticker="WALLET_SYNC",
+                signal_type=SignalType.BUY,
+                status=SignalStatus.EXECUTED,
+                score=100.0,
+                target_qty=0,
+                reason="MANUAL_EDIT - Dashboard wallet synchronization",
+            ))
+        except Exception as e:
+            logger.warning(f"Failed to log wallet sync signal: {e}")
+            
         st.cache_data.clear()
         return ""
     except Exception as exc:  # noqa: BLE001
@@ -15820,12 +15934,14 @@ def save_wallet(cash: float, positions_df: pd.DataFrame) -> str:
 @st.cache_data(ttl=900, show_spinner=False)
 def get_earnings_events(tickers: tuple[str, ...]) -> list[dict]:
     """Best-effort upcoming earnings / events via yfinance calendar."""
+    from concurrent.futures import ThreadPoolExecutor
     events: list[dict] = []
-    for t in tickers[:12]:
+    
+    def fetch_event(t: str) -> list[dict]:
         try:
             cal = yf.Ticker(t).calendar
             if cal is None:
-                continue
+                return []
             # yfinance may return dict or DataFrame depending on version.
             raw = None
             if isinstance(cal, dict):
@@ -15834,17 +15950,26 @@ def get_earnings_events(tickers: tuple[str, ...]) -> list[dict]:
                 if "Earnings Date" in cal.index:
                     raw = cal.loc["Earnings Date"].tolist()
             if not raw:
-                continue
+                return []
             if not isinstance(raw, (list, tuple)):
                 raw = [raw]
+            
+            evts = []
             for d in raw[:2]:
-                events.append({
+                evts.append({
                     "ticker": t,
                     "event": "Resultats / Earnings",
                     "date": str(d)[:10],
                 })
+            return evts
         except Exception:  # noqa: BLE001
-            continue
+            return []
+            
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        results = executor.map(fetch_event, tickers[:12])
+        for res in results:
+            events.extend(res)
+            
     return events
 
 
@@ -17029,7 +17154,7 @@ with tab_market_pulse:
         news_items = db.get_news_history(limit=100)
         
         if not news_items:
-            st.info("Data lake is empty. Waiting for daemon to ingest news.")
+            render_empty_state("Data lake is empty. Waiting for daemon to ingest news.")
         else:
             filtered_news = []
             for r in news_items:
@@ -17096,9 +17221,9 @@ with tab_market_pulse:
                     df_opps = pd.DataFrame(opps).head(5)
                     st.dataframe(df_opps, use_container_width=True, hide_index=True)
                 else:
-                    st.info("Data unavailable")
+                    render_empty_state("Data unavailable")
             except Exception as e:
-                st.info("Data unavailable")
+                render_empty_state("Data unavailable")
                 
         with col_mom:
             st.markdown("#### 🚀 High Momentum Leaders")
@@ -17108,11 +17233,11 @@ with tab_market_pulse:
                     df_moms = pd.DataFrame(moms)
                     st.dataframe(df_moms, use_container_width=True, hide_index=True)
                 else:
-                    st.info("Data unavailable")
+                    render_empty_state("Data unavailable")
             except Exception as e:
-                st.info("Data unavailable")
+                render_empty_state("Data unavailable")
     except Exception as e:
-        st.info("Data unavailable")
+        render_empty_state("Data unavailable")
 
 
 def get_company_info(ticker: str) -> dict:
@@ -17192,9 +17317,9 @@ with tab_ticker_deep_dive:
                         st.markdown(metric_box("P/B Ratio", str(val_pb)), unsafe_allow_html=True)
                         st.markdown(metric_box("Return 1Y", str(val_ret)), unsafe_allow_html=True)
                     else:
-                        st.info("Metrics unavailable")
+                        render_empty_state("Metrics unavailable")
                 except Exception:
-                    st.info("Metrics unavailable")
+                    render_empty_state("Metrics unavailable")
                     
             with col_rad:
                 st.markdown("### 🎯 Strategy Fingerprint")
@@ -17205,9 +17330,9 @@ with tab_ticker_deep_dive:
                         fig = render_strategy_radar(fp, selected_ticker)
                         st.plotly_chart(fig, use_container_width=True)
                     else:
-                        st.info("Fingerprint unavailable")
+                        render_empty_state("Fingerprint unavailable")
                 except Exception:
-                    st.info("Fingerprint unavailable")
+                    render_empty_state("Fingerprint unavailable")
                     
             st.markdown("---")
             
@@ -17223,9 +17348,9 @@ with tab_ticker_deep_dive:
                     fig.update_layout(template="plotly_dark", margin=dict(t=10, b=10, l=10, r=10), height=400, xaxis_rangeslider_visible=False)
                     st.plotly_chart(fig, use_container_width=True)
                 else:
-                    st.info("Chart data unavailable")
+                    render_empty_state("Chart data unavailable")
             except Exception:
-                st.info("Chart data unavailable")
+                render_empty_state("Chart data unavailable")
                 
             st.markdown("---")
             
@@ -17242,9 +17367,9 @@ with tab_ticker_deep_dive:
                         st.markdown(f"**Signal AMF:** <span style='color:{color}; font-weight:bold;'>{sig_msg}</span>", unsafe_allow_html=True)
                         st.dataframe(df_insider, use_container_width=True, hide_index=True)
                     else:
-                        st.info("No insider activity recorded")
+                        render_empty_state("No insider activity recorded")
                 except Exception:
-                    st.info("Insider data unavailable")
+                    render_empty_state("Insider data unavailable")
                     
             with col_news:
                 st.markdown("### 📰 Ticker-Specific News")
@@ -17254,9 +17379,9 @@ with tab_ticker_deep_dive:
                         for n in t_news:
                             render_news_card(selected_ticker, n, n.get('sentiment_score'))
                     else:
-                        st.info("No specific news available")
+                        render_empty_state("No specific news available")
                 except Exception:
-                    st.info("News unavailable")
+                    render_empty_state("News unavailable")
 
 
 with tab_quant_engine:
@@ -17382,12 +17507,12 @@ with tab_quant_engine:
                     fig2.update_layout(margin=dict(t=20, b=20, l=20, r=20), height=350)
                     st.plotly_chart(fig2, use_container_width=True)
                 else:
-                    st.info(f"No feature importances found for {model_key}.")
+                    render_empty_state(f"No feature importances found for {model_key}.")
             else:
-                st.info(f"Metrics not found for {model_key}.")
+                render_empty_state(f"Metrics not found for {model_key}.")
 
     except Exception:
-        st.info("🤖 Models require initial training. Run ml_trainer.py.")
+        render_empty_state("🤖 Models require initial training. Run ml_trainer.py.")
 
 
 with tab_portfolio:
@@ -17425,7 +17550,7 @@ with tab_portfolio:
     # 2. Active Positions & HRP
     st.markdown("### 📊 Active Positions & HRP Target")
     if not positions:
-        st.info("Aucune position active.")
+        render_empty_state("Aucune position active.")
     else:
         disp_pos = []
         for p in positions:
@@ -17456,7 +17581,7 @@ with tab_portfolio:
     # 3. Execution (Pending Signals)
     st.markdown("### ⚡ Pending Discord Execution (with Slippage)")
     if 'pending_df' not in locals() or pending_df is None or pending_df.empty:
-        st.info("Aucun signal en attente.")
+        render_empty_state("Aucun signal en attente.")
     else:
         # Same logic as before but using the updated render_signal_card
         for _, row in pending_df.head(8).iterrows():
@@ -17524,7 +17649,7 @@ with tab_portfolio:
                 df_closed = pd.DataFrame()
         
         if df_closed.empty:
-            st.info("No closed trades in history yet. Waiting for next daemon pass.")
+            render_empty_state("No closed trades in history yet. Waiting for next daemon pass.")
         else:
             
             # Simple UI to select a trade to view its post-mortem

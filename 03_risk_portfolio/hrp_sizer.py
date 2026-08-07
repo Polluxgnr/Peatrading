@@ -83,12 +83,9 @@ class HRPSizer:
         if returns_df.empty or len(returns_df.columns) < 2:
             return {c: 1.0/len(returns_df.columns) for c in returns_df.columns}
             
-        if LedoitWolf is not None:
-            cov_matrix = LedoitWolf().fit(returns_df).covariance_
-            cov = pd.DataFrame(cov_matrix, index=returns_df.columns, columns=returns_df.columns)
-        else:
-            cov = returns_df.cov()
-        corr = returns_df.corr()
+        from quantitative_math import calculate_shrunk_covariance
+        cov = calculate_shrunk_covariance(returns_df)
+        corr = returns_df.corr(method="pearson").fillna(0.0)
         
         # Distance matrix
         # d[i, j] = sqrt(0.5 * (1 - corr[i,j]))

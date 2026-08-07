@@ -210,18 +210,19 @@ class SignalOrchestrator:
                 pass
 
             # --- Check 0c: Value Trap Veto (Piotroski F-Score < 4) ---
-            try:
-                from technical_scorer import SignalGenerator  # noqa: WPS433
-                fundamentals = SignalGenerator()._load_fundamentals_from_sources(ticker)
-                f_score = fundamentals.get("piotroski_score")
-                if f_score is not None and f_score < 4:
-                    logger.info("Failed Piotroski Quality Veto for %s (F-Score: %.0f)", ticker, f_score)
-                    processed.append(
-                        self._reject(signal, f"REJECTED: Failed Piotroski Quality Veto (F-Score {f_score:.0f} < 4)", {"source": "fundamentals(Piotroski)", "f_score": f_score})
-                    )
-                    continue
-            except Exception:  # noqa: BLE001
-                pass
+            if ticker != self.core_ticker:
+                try:
+                    from technical_scorer import SignalGenerator  # noqa: WPS433
+                    fundamentals = SignalGenerator()._load_fundamentals_from_sources(ticker)
+                    f_score = fundamentals.get("piotroski_score")
+                    if f_score is not None and f_score < 4:
+                        logger.info("Failed Piotroski Quality Veto for %s (F-Score: %.0f)", ticker, f_score)
+                        processed.append(
+                            self._reject(signal, f"REJECTED: Failed Piotroski Quality Veto (F-Score {f_score:.0f} < 4)", {"source": "fundamentals(Piotroski)", "f_score": f_score})
+                        )
+                        continue
+                except Exception:  # noqa: BLE001
+                    pass
 
             # --- Check 1: Macro veto (cheapest - runs first) ---
             vetoed, veto_reason = self.macro_veto.check_veto(today)
@@ -248,16 +249,17 @@ class SignalOrchestrator:
                 continue
 
             # --- Check 1d: Minimum liquidity (ADV €) ---
-            adv = self._avg_daily_euro_volume(ticker)
-            if adv is not None and adv < self.min_liquidity_adv:
-                processed.append(
-                    self._reject(
-                        signal,
-                        f"REJECTED: Illiquid (ADV €{adv:,.0f} < {self.min_liquidity_adv:,.0f})",
-                        {"source": "TimeSeriesDB(Volume)", "adv_eur": adv}
+            if ticker != self.core_ticker:
+                adv = self._avg_daily_euro_volume(ticker)
+                if adv is not None and adv < self.min_liquidity_adv:
+                    processed.append(
+                        self._reject(
+                            signal,
+                            f"REJECTED: Illiquid (ADV €{adv:,.0f} < {self.min_liquidity_adv:,.0f})",
+                            {"source": "TimeSeriesDB(Volume)", "adv_eur": adv}
+                        )
                     )
-                )
-                continue
+                    continue
 
             # --- Check 2a: Sector concentration limit (cheap arithmetic) ---
             if not self.firewall.check_sector_limit(ticker, portfolio):

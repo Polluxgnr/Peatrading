@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import scipy.stats as stats
 
 
 def _clean_returns(returns: pd.Series) -> pd.Series:
@@ -20,7 +21,7 @@ def _clean_returns(returns: pd.Series) -> pd.Series:
 def calculate_historical_var(
     returns: pd.Series, confidence_level: float = 0.95
 ) -> float:
-    """Historical Value at Risk (VaR) as a positive loss number.
+    """Cornish-Fisher Value at Risk (VaR) as a positive loss number.
 
     Args:
         returns: Series of arithmetic returns (e.g. daily pct returns in decimal).
@@ -35,12 +36,32 @@ def calculate_historical_var(
         return 0.0
     alpha = float(1.0 - confidence_level)
     alpha = min(max(alpha, 1e-6), 1.0 - 1e-6)
-    q = float(np.quantile(r.to_numpy(dtype=float), alpha))
-    return float(max(0.0, -q))
+    
+    mu = float(np.mean(r))
+    sigma = float(np.std(r, ddof=1))
+    
+    if sigma == 0:
+        q_hist = float(np.quantile(r.to_numpy(dtype=float), alpha))
+        return float(max(0.0, -q_hist))
+        
+    z = float(stats.norm.ppf(alpha))
+    
+    s = float(stats.skew(r, nan_policy='omit'))
+    k = float(stats.kurtosis(r, nan_policy='omit'))
+    if np.isnan(s): s = 0.0
+    if np.isnan(k): k = 0.0
+    s = np.clip(s, -5.0, 5.0)
+    k = np.clip(k, -10.0, 10.0)
+    
+    z_cf = z + (z**2 - 1) * s / 6.0 + (z**3 - 3*z) * k / 24.0 - (2 * z**3 - 5 * z) * (s**2) / 36.0
+    z_cf = np.clip(z_cf, -10.0, 10.0)
+    
+    q_cf = mu + z_cf * sigma
+    return float(max(0.0, -q_cf))
 
 
 def calculate_cvar(returns: pd.Series, confidence_level: float = 0.95) -> float:
-    """Conditional VaR (Expected Shortfall) as positive tail loss.
+    """Conditional VaR (Expected Shortfall) as positive tail loss using Cornish-Fisher VaR threshold.
 
     Args:
         returns: Series of arithmetic returns.
@@ -54,10 +75,33 @@ def calculate_cvar(returns: pd.Series, confidence_level: float = 0.95) -> float:
         return 0.0
     alpha = float(1.0 - confidence_level)
     alpha = min(max(alpha, 1e-6), 1.0 - 1e-6)
-    q = float(np.quantile(r.to_numpy(dtype=float), alpha))
-    tail = r[r <= q]
+    
+    mu = float(np.mean(r))
+    sigma = float(np.std(r, ddof=1))
+    
+    if sigma == 0:
+        q = float(np.quantile(r.to_numpy(dtype=float), alpha))
+        tail = r[r <= q]
+        if tail.empty:
+            return float(max(0.0, -q))
+        return float(max(0.0, -float(tail.mean())))
+        
+    z = float(stats.norm.ppf(alpha))
+    s = float(stats.skew(r, nan_policy='omit'))
+    k = float(stats.kurtosis(r, nan_policy='omit'))
+    if np.isnan(s): s = 0.0
+    if np.isnan(k): k = 0.0
+    s = np.clip(s, -5.0, 5.0)
+    k = np.clip(k, -10.0, 10.0)
+    
+    z_cf = z + (z**2 - 1) * s / 6.0 + (z**3 - 3*z) * k / 24.0 - (2 * z**3 - 5 * z) * (s**2) / 36.0
+    z_cf = np.clip(z_cf, -10.0, 10.0)
+    
+    q_cf = mu + z_cf * sigma
+    tail = r[r <= q_cf]
+    
     if tail.empty:
-        return float(max(0.0, -q))
+        return float(max(0.0, -q_cf))
     return float(max(0.0, -float(tail.mean())))
 
 
@@ -179,4 +223,24 @@ def detect_cusum_downward_break(returns: pd.Series, threshold: float = 3.0, drif
             return True
             
     return False
+
+def calculate_shrunk_covariance(returns_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Calculates a Ledoit-Wolf shrunk covariance matrix.
+    Uses sklearn.covariance.LedoitWolf for robust correlation estimation 
+    even with a small sample of highly collinear assets.
+    """
+    if returns_df.empty:
+        return pd.DataFrame()
+        
+    df = returns_df.dropna(how='all', axis=1).fillna(0.0)
+    if df.shape[1] < 2:
+        return df.cov()
+        
+    from sklearn.covariance import LedoitWolf
+    try:
+        lw = LedoitWolf().fit(df.values)
+        return pd.DataFrame(lw.covariance_, index=df.columns, columns=df.columns)
+    except Exception:
+        return df.cov()
 
