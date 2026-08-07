@@ -160,11 +160,10 @@ class CorrelationFirewall:
         if vix_level is None:
             return True
         if vix_level > self.vix_panic_threshold:
-            logger.warning(
-                "VIX PANIC VETO: V2TX %.1f > %.1f -> blocking new satellite buys.",
-                vix_level,
-                self.vix_panic_threshold,
-            )
+            msg = f"VIX PANIC VETO: V2TX {vix_level:.1f} > {self.vix_panic_threshold:.1f} -> blocking new satellite buys."
+            logger.warning(msg)
+            from logging_setup import send_discord_alert
+            send_discord_alert(msg, urgent=True)
             return False
         logger.debug(
             "VIX %.1f within calm threshold %.1f; satellite buys allowed.",

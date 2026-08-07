@@ -142,3 +142,41 @@ def calculate_annualized_volatility(returns: pd.Series, periods_per_year: int = 
         return 0.0
     return float(std_ewm.iloc[-1] * np.sqrt(float(periods_per_year)))
 
+
+def detect_cusum_downward_break(returns: pd.Series, threshold: float = 3.0, drift: float = 0.5) -> bool:
+    """
+    Detects a structural downward break in returns using the CUSUM algorithm.
+    
+    Calculates the standardized cumulative sum of negative deviations from the mean.
+    If the CUSUM drops below -threshold, it indicates a bearish breakdown.
+    
+    Args:
+        returns: Pandas Series of daily returns.
+        threshold: The negative threshold to trigger a structural break alert (e.g. 3.0).
+        drift: Tolerance parameter to ignore minor deviations (in standard deviations).
+        
+    Returns:
+        bool: True if a structural downward break is detected, False otherwise.
+    """
+    r = _clean_returns(returns)
+    if r.empty or len(r) < 5:
+        return False
+        
+    # Standardize returns
+    mean_ret = r.mean()
+    std_ret = r.std(ddof=1)
+    
+    if std_ret == 0 or pd.isna(std_ret):
+        return False
+        
+    z_scores = (r - mean_ret) / std_ret
+    
+    # Calculate negative CUSUM (S_low)
+    s_low = 0.0
+    for z in z_scores:
+        s_low = min(0.0, s_low + z + drift)
+        if s_low <= -threshold:
+            return True
+            
+    return False
+

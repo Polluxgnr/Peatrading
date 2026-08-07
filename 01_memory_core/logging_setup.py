@@ -266,7 +266,7 @@ def read_pipeline_status() -> Optional[dict]:
         return None
 
 
-def send_discord_alert(message: str) -> None:
+def send_discord_alert(message: str, urgent: bool = False) -> None:
     """Send an alert to the Discord webhook if configured."""
     import requests
     from env_loader import load_api_keys
@@ -278,7 +278,8 @@ def send_discord_alert(message: str) -> None:
         return
 
     try:
-        payload = {"content": message}
+        content = f"@everyone {message}" if urgent else message
+        payload = {"content": content}
         resp = requests.post(webhook_url, json=payload, timeout=5)
         resp.raise_for_status()
     except Exception as exc:

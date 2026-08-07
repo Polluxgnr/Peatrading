@@ -640,6 +640,14 @@ class SignalGenerator:
         if cluster >= 3 and (rsi_14 is not None and not pd.isna(rsi_14) and float(rsi_14) < 40) and (pb is not None and pb < 1.5):
             total = float(max(0.0, min(100.0, total * 1.35)))
             factors.append("BOOST x1.35 (Insider+RSI+PB)")
+            
+        # CUSUM Structural Breakdown Detection
+        from quantitative_math import detect_cusum_downward_break
+        if not history.empty and "Close" in history.columns:
+            recent_returns = history["Close"].tail(60).pct_change().dropna()
+            if detect_cusum_downward_break(recent_returns):
+                total -= 25.0
+                factors.append("⚠️ CUSUM VETO (Structural Breakdown)")
 
         return {
             # Backward-compatible keys consumed by dashboard/orchestrator.

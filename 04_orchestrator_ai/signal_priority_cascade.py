@@ -157,7 +157,10 @@ class SignalOrchestrator:
         # Drawdown circuit breaker: veto all new buys if loss limits breached.
         dd_breached, dd_reason = self.drawdown_breaker.check(self.portfolio_db)
         if dd_breached:
-            logger.warning("Drawdown breaker activated: %s", dd_reason)
+            msg = f"DRAWDOWN BREAKER TRIPPED: {dd_reason}"
+            logger.warning(msg)
+            from logging_setup import send_discord_alert
+            send_discord_alert(msg, urgent=True)
             return [self._reject(s, dd_reason, {"source": "DrawdownBreaker", "time": datetime.now(timezone.utc).isoformat()}) for s in raw_signals]
 
         # Market-wide panic brake: evaluated once for the whole batch.

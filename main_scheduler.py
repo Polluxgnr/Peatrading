@@ -438,12 +438,15 @@ async def run_pipeline_async() -> None:
     core_signal = core_engine.evaluate_cw8(
         tsdb, portfolio.cash_available, portfolio.total_equity, portfolio
     )
-    if core_signal and (core_signal.target_qty or 0) > 0:
-        core_signal.status = SignalStatus.APPROVED
-        processed.append(core_signal)
-        logger.info(
-            "Core DCA APPROVED: buy %d %s.", core_signal.target_qty, core_ticker
-        )
+    if core_signal:
+        from logging_setup import send_discord_alert
+        if (core_signal.target_qty or 0) > 0:
+            core_signal.status = SignalStatus.APPROVED
+            processed.append(core_signal)
+            logger.info("Core DCA APPROVED: buy %d %s.", core_signal.target_qty, core_ticker)
+            send_discord_alert(f"Core DCA: {core_signal.reason}", urgent=False)
+        else:
+            send_discord_alert(f"Core DCA: CALM ({core_signal.reason})", urgent=False)
 
     # --- Revocation Phase: anti-stale on existing PENDING signals ------------
     revoker = RevocationEngine(_CONFIG_DIR)
@@ -505,11 +508,12 @@ async def run_pipeline_async() -> None:
 
     # --- Alert Phase ---
     alertable = [
-        s for s in processed
-        if s.status in (SignalStatus.APPROVED, SignalStatus.REVOKED)
+        s for s in processed if s.status in (SignalStatus.APPROVED, SignalStatus.REVOKED)
     ]
     if not alertable:
         logger.info("No APPROVED/REVOKED signals to push to Discord this pass.")
+        from logging_setup import send_discord_alert
+        send_discord_alert("0 signals generated this pass.", urgent=False)
         return
 
     if not os.getenv("DISCORD_WEBHOOK_URL"):
@@ -530,8 +534,8 @@ async def run_pipeline_async() -> None:
             
             # Direct webhook alert for asynchronous paper trading
             from logging_setup import send_discord_alert
-            alert_msg = f"🚀 **PAPER TRADE APPROVED**\n**Ticker:** {signal.ticker}\n**Action:** {signal.signal_type.value}\n**Quantity:** {signal.target_qty} shares\n**Price:** {price:.2f} EUR\n**Reason:** {signal.reason}"
-            send_discord_alert(alert_msg)
+            alert_msg = f"🛒 **PAPER TRADE APPROVED**\n**Ticker:** {signal.ticker}\n**Action:** {signal.signal_type.value}\n**Quantity:** {signal.target_qty} shares\n**Price:** {price:.2f} EUR\n**Reason:** {signal.reason}"
+            send_discord_alert(alert_msg, urgent=True)
             
             # Also try the rich copilot alert if bot is connected
             try:
@@ -558,6 +562,8 @@ def run_analysis_pass() -> None:
 
     started = time.perf_counter()
     logger.info("=== Analysis pass starting ===")
+    from logging_setup import send_discord_alert
+    send_discord_alert("=== Analysis pass starting ===", urgent=False)
     try:
         asyncio.run(run_pipeline_async())
         elapsed = time.perf_counter() - started
