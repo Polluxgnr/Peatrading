@@ -11,6 +11,8 @@ import logging
 import os
 import random
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from datetime import datetime, timedelta
 from typing import Any, List
 
@@ -26,6 +28,34 @@ _OHLCV_ATTRS = ["Open", "High", "Low", "Close", "Volume"]
 
 class MarketDataFetcher:
     """Downloads and normalizes daily OHLCV data from Yahoo Finance."""
+    
+    def _get_stealth_session(self) -> requests.Session:
+        """Create a stealthy requests session to bypass rate limits."""
+        session = requests.Session()
+        session.headers.update({
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+            "Accept-Language": "en-US,en;q=0.9,fr;q=0.8",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Sec-Ch-Ua": '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+            "Sec-Ch-Ua-Mobile": "?0",
+            "Sec-Ch-Ua-Platform": '"Windows"',
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "none",
+            "Sec-Fetch-User": "?1",
+            "Upgrade-Insecure-Requests": "1"
+        })
+        retry = Retry(
+            total=3,
+            backoff_factor=1,
+            status_forcelist=[429, 500, 502, 503, 504],
+            allowed_methods=["HEAD", "GET", "OPTIONS"]
+        )
+        adapter = HTTPAdapter(max_retries=retry)
+        session.mount("http://", adapter)
+        session.mount("https://", adapter)
+        return session
 
     def fetch_daily_ohlcv(
         self, tickers: List[str], lookback_days: int = 3650
@@ -66,7 +96,8 @@ class MarketDataFetcher:
                 progress=False,
                 auto_adjust=True,
                 group_by="column",
-                threads=True,
+                threads=False,
+                session=self._get_stealth_session(),
             )
             if raw is not None and not raw.empty:
                 yf_df = self._flatten(raw, tickers)
@@ -167,7 +198,7 @@ class MarketDataFetcher:
         try:
             import time
             total_rows_upserted = 0
-            chunk_size = 20
+            chunk_size = 10
             now = datetime.now()
             
             for i in range(0, len(tickers), chunk_size):
@@ -238,7 +269,7 @@ class MarketDataFetcher:
                 )
                 
                 if i + chunk_size < len(tickers):
-                    time.sleep(random.uniform(2.5, 6.2))
+                    time.sleep(random.uniform(3.5, 7.5))
             
             logger.info("Finished incremental update. Total rows upserted: %d", total_rows_upserted)
             return total_rows_upserted
