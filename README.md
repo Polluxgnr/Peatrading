@@ -1,139 +1,72 @@
-# PEA Pollux — V-Prime Quant Terminal
+# PEA Sniper Terminal - Architectural Blueprint
 
-> **A professional quantitative research and portfolio management terminal designed for a personal PEA (Plan d'Épargne en Actions) account. Transparent, manual validation, zero automatic execution.**
+This repository contains a localized, strictly long-only algorithmic trading system designed for the European PEA (Plan d'Epargne en Actions) tax wrapper. 
 
-**PEA Pollux** is a highly advanced data-lake and algorithmic scoring engine. It ingests market data, calculates multi-factor signals (Momentum, Mean Reversion, Quality, Insider Flow), applies strict risk-management cascades, and presents its findings via a high-performance Streamlit dashboard or a Discord Copilot.
+The architecture is divided into clear logical modules, isolating data ingestion, quantitative scoring, risk assessment, and mission control interfaces.
 
-**The system never routes orders to a broker.** Quantitative models decide *what* deserves to be studied; AI models *explain* (rationale, sentiment, red-teaming). **This is not investment advice.**
+## 1. System Architecture
 
----
+The system operates across five primary layers:
 
-## 🌟 V-Prime Features & Recent Overhauls
+### Layer 00: Data Sensors (`00_data_sensors/`)
+Stateless APIs responsible for extracting external market data. Network failures are strictly bounded to this layer.
+- `market_prices_api.py`: Connects to `yfinance` to fetch heavily cached, chunked OHLCV data. 
+- `macro_alpha_api.py`: Fetches broad macroeconomic indicators (e.g. VIX, EUR/USD, ^FCHI).
+- `fundamentals_api.py` / `scrapers/`: Pulls static fundamental data (P/E, ROE) and regulatory insider flow filings (AMF).
 
-- **Bulletproof Streamlit Dashboard**: The `05_interfaces/terminal_dashboard.py` has been completely redesigned into a Bloomberg-style "V-Prime" terminal. It features instant-loading, heavy caching, robust SQL error-handling, and gracefully degrades when datasets are missing.
-- **Ticker Deep-Dive (Instant Terminal)**: Search the entire PEA universe and instantly view:
-  - Corporate Profiles & Fundamentals (P/E, P/B, EV/EBITDA).
-  - Native Plotly Price Charts with SMA50/SMA200/RSI(14) overlays.
-  - Ticker-specific News Feeds with 30D Sentiment Index.
-  - Multi-Scenario Future Theories (Bull / Quant Base / Bear).
-  - AMF Insider Flow tracking.
-- **SQLite / DuckDB Split**: Ultra-fast time-series analytics (OHLCV) runs on DuckDB, while transactional state (Portfolio, Pending Signals, News Master) runs on robust `sqlite3` reads to prevent database locking in concurrent Streamlit sessions.
-- **Interactive Discord Copilot**: A bi-directional assistant allowing you to approve or reject signals directly from Discord using Slash commands (`/approve`, `/reject`).
-- **Live Alpha Analytics**: Real-time institutional performance tracking (Jensen's Alpha, Beta, Information Ratio) benchmarked against MSCI World (`CW8.PA`).
-- **Smart DCA (Core/Satellite)**: Automated risk-parity scaling. Accumulate the `CW8.PA` core aggressively when the market is below its 200-day SMA, and carefully build Satellite positions with excess budget.
-- **Machine Learning & StatArb**: XGBoost meta-labeling trained on point-in-time Technicals, robust Macro indices (`^FCHI`, `^GSPC`, `EURUSD=X`), and dynamic Sector Relative Strength (StatArb).
-- **Real SHAP Explainability**: The Streamlit interface displays true SHAP value feature attributions directly from the XGBoost explainer, revealing the exact neural logic behind AI trade approvals.
+### Layer 01: Memory Core (`01_memory_core/`)
+Manages data persistence and state.
+- **SQLite Database (`sqlite_portfolio.py`)**: Stores transactional, mutable state. Tracks the `portfolio_state`, `signals` ledger, `audit_logs`, and cached `fundamentals`. Using SQLite ensures safe concurrent read/writes for the Streamlit UI.
+- **DuckDB Time-Series (`duckdb_manager.py`)**: Stores immutable, high-density OHLCV history. DuckDB provides columnar vectorization capabilities for quantitative feature engineering and backtesting without memory bottlenecks.
 
----
+### Layer 02: Quant Engine (`02_quant_engine/`)
+Performs feature engineering and generates trading signals.
+- `ml_feature_store.py`: Extracts DuckDB data and engineers target variables (30d, 126d forward returns), rolling statistics, and StatArb Sector Relative Strength metrics. 
+- `ml_trainer.py`: Uses XGBoost for Meta-Labeling signals based on quantitative features. Employs `IsolationForest` for anomaly detection (fitted exclusively on training sets to prevent leakage).
+- `technical_scorer.py`: Generates the baseline conviction score (0-100) using a multi-model ensemble (Mean Reversion, Trend/Momentum, Breakout, Context). Includes CUSUM detection (`detect_cusum_downward_break`) to veto structural breakdowns.
+- `quantitative_math.py`: Implements advanced analytics including Fractional Differentiation, Cornish-Fisher VaR (Extreme Value Theory), and (soon) Ledoit-Wolf Shrinkage.
 
-## 🏗️ Architecture
+### Layer 03: Risk & Portfolio (`03_risk_portfolio/`)
+Enforces capital constraints and exposure limits.
+- `correlation_firewall.py`: Prevents overexposure to specific sectors and blocks purchases when the VIX/V2TX exceeds panic thresholds.
+- `pea_position_sizer.py`: Allocates capital safely, heavily favoring low-volatility/blue-chip assets and scaling positions inversely to risk.
 
-```text
-                       ┌──────────────────────────────────────────────┐
-                       │            main_scheduler.py                 │
-                       │  Paris: 09:00 / 13:30 / 17:10                │
-                       │  + ATR 08:35 · shave 1st · Fri 18:00         │
-                       └───────────────┬──────────────────────────────┘
-                                       │
-  00_data_sensors        01/02              03_risk_portfolio        04_orchestrator_ai
- ┌────────────────┐   ┌────────────────┐   ┌──────────────────────┐   ┌──────────────────────┐
- │ market_prices  │──▶│ DuckDB OHLCV   │──▶│ correlation_firewall │──▶│ cascade + earnings   │
- │ macro_alpha    │   │ technical_     │   │ pea_position_sizer   │   │ revocation / LLM     │
- │ AMF→FMP→YF     │   │ scorer+DCA     │   │ ATR rebalancer       │   │ weekly historian     │
- └────────────────┘   │ equity_metrics │   └──────────────────────┘   └──────┬───────────────┘
-                      └────────┬───────┘                                     │
-                               │                                             ▼
-                               │                       Discord + Streamlit (Mission Control)
-                               ▼                       (05_interfaces/terminal_dashboard.py)
-                SQLite: portfolio · audit · news_master
-                logs/ + database/pipeline_status.json
-```
+### Layer 04: Orchestrator & AI (`04_orchestrator_ai/`)
+Filters and prioritizes incoming signals.
+- `signal_priority_cascade.py`: The ultimate arbiter. Evaluates signals sequentially against Macro constraints, Earnings Blackouts, Liquidity thresholds, Piotroski Quality rules, and Drawdown Breakers. Signals that fail are marked `REJECTED`. 
 
----
+### Layer 05: Interfaces (`05_interfaces/`)
+- `terminal_dashboard.py`: A Streamlit application providing live Mission Control. It allows manual wallet tracking, signal approvals via SQLite, real-time SHAP explainability charts, and deep-dive ticker analysis.
 
-## 🧬 Empreinte Multi-Stratégies (Scoring)
+## 2. Core vs Satellite Framework (Smart DCA)
 
-Every ticker receives a **score from 0 to 100** called the **Empreinte** (fingerprint). A BUY signal is only emitted when **conviction ≥ 65**. 
+The engine enforces a strict bifurcation in capital allocation:
 
-| Axis | Weight | What it measures |
-|------|--------|------------------|
-| **MR** | 35 % | Mean Reversion: RSI-14 oversold + price above long-term SMA-200. Z-Score bonus. |
-| **Mom** | 25 % | Momentum: Close > SMA-5 > SMA-50 > SMA-200, MACD histogram positive. |
-| **Q/V** | 20 % | Quality / Value: Low P/E, low P/B, high ROE, low Debt/Equity. |
-| **Ins** | 20 % | Insider Confidence: Directors buying their own stock via AMF/FMP. |
+- **Core Budget**: Allocated exclusively to the MSCI World ETF (`CW8.PA`). Managed by `smart_dca_engine.py`, which accumulates shares based on the ETF's proximity to its 200-day SMA, accumulating aggressively during dips and passively dripping capital during overheated rallies. This budget is immune to standard risk cascade vetoes (like VIX panic).
+- **Satellite Budget**: Allocated to high-conviction European equities. Extremely risk-averse, utilizing strict stop-losses, Piotroski F-Score checks, and liquidity minimums (`MIN_LIQUIDITY_ADV`).
 
-**Modifiers:** News Sentiment (+10 / −15) and Macro Context.
+## 3. Execution Schedule & Orchestration
 
----
+The system runs via `main_scheduler.py` executing a synchronized pipeline:
 
-## 🛡️ Strict Risk Cascade
+1. **Market Sync**: Fetches missing OHLCV and fundamental data.
+2. **Signal Generation**: Evaluates the universe and assigns conviction scores.
+3. **Risk Cascade**: Filters signals through `signal_priority_cascade.py`.
+4. **Smart DCA**: Evaluates `CW8.PA` against the cash buffer.
+5. **Discord Alerting**: Routes alerts appropriately (urgent tagging for approved paper trades, VIX panics, and drawdown triggers).
+6. **Garbage Collection**: Revokes stale pending signals to maintain ledger hygiene.
 
-Implemented in `signal_priority_cascade.py`. Checked in order before sizing:
+**Scheduled Execution (Paris Time):**
+- **09:00**: Morning Analysis Pass
+- **13:30**: Midday Re-evaluation
+- **17:10**: Pre-Close Analysis Pass
+- **08:35 / 18:00 (Friday)**: ATR Stop-Loss evaluations and profit shaving.
 
-1. **VIX panic**: Freeze new satellite buys if V2TX/VIX > 30.
-2. **Macro & Earnings Blackout**: No buying before ECB/CPI/NFP or corporate earnings dates.
-3. **Liquidity / Max Positions**: Prevents micro-fragmentation of the satellite budget.
-4. **Sector & Correlation**: Prevents over-exposure to a single theme.
-5. **Sizing**: Hierarchical Risk Parity (HRP) / Half-Kelly × inverse-vol parity. The system groups correlated assets into clusters using machine learning, and then assigns inverse-volatility weights across those clusters. This guarantees that highly correlated assets (e.g., LVMH, Hermès, Kering) share a single cluster risk budget, preventing catastrophic portfolio exposure to a single economic theme.
+## 4. Setup and Operations
 
----
-
-## 🚀 Installation & Setup
-
-> **Note**: Streamlit relies on `pyarrow`, requires Python 3.11 or 3.12 x64.
-
-```bash
-# 1. Clone & Environment
-git clone https://github.com/Polluxgnr/Peatrading.git pea_pollux
-cd pea_pollux
-python -m venv venv
-venv\Scripts\Activate.ps1  # Windows
-
-# 2. Dependencies
-pip install --upgrade pip
-pip install -r requirements.txt
-
-# 3. Config
-cp config/api_keys.env.example config/api_keys.env
-# Fill in required API keys (Discord, OpenRouter, etc.)
-
-# 4. Initialize Database
-python seed_account.py --cash 10000
-python main_scheduler.py --now
-
-# 5. Launch V-Prime Terminal
-.\run_dashboard.ps1
-# (or `streamlit run 05_interfaces/terminal_dashboard.py --server.port 8501`)
-```
-
----
-
-## 🛠️ Usage
-
-### CLI Commands
-```bash
-python main_scheduler.py --now          # Full analysis & ingestion pass
-python main_scheduler.py --atr-stops    # Daily ATR evaluation
-python main_scheduler.py --rebalance    # Monthly profit-shave
-python main_scheduler.py                # Run daemon (Paris schedule)
-```
-
-### Dashboard Tabs
-The Streamlit V-Prime terminal consists of:
-1. **Mission Control**: Live HUD, Portfolio Value, Asset Allocation, and Pending Discord Executions.
-2. **Market Pulse**: Market-wide breadth, Top Opportunities, High Momentum Leaders, and Global News Feed.
-3. **Ticker Deep-Dive**: The ultimate quant sandbox for researching individual stocks.
-4. **Portefeuille (Risque & Valo)**: Monte Carlo simulations, VaR, CVaR, and Black Swan stress tests.
-5. **Quant Engine**: Direct access to DuckDB feature stores and ML metric configurations.
-
----
-
-## 📜 Philosophy
-
-1. **No fractional shares**: PEA sizing uses `math.floor` — one share or nothing.
-2. **Math first, AI second**: LLMs never generate or approve trades. They synthesize text and explain scores.
-3. **Zero crash tolerance**: Safely wrapped Streamlit components ensure graceful degradation. 
-4. **Manual execution**: You always have the last word.
-
----
-*Developed for personal quant research. Do not use for automated trading without extensive code auditing and local backtesting.*
+1. Clone and initialize a Python 3.11+ virtual environment.
+2. Install dependencies: `pip install -r requirements.txt`.
+3. Copy `config/api_keys.env.example` to `config/api_keys.env` and populate webhooks.
+4. Initialize the ledger: `python seed_account.py --cash 10000`.
+5. Run the orchestrator: `python main_scheduler.py --now`.
+6. Launch the dashboard: `streamlit run 05_interfaces/terminal_dashboard.py`.

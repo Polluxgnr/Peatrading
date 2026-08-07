@@ -4957,7 +4957,7 @@ def read_pipeline_status() -> Optional[dict]:
         return None
 
 
-def send_discord_alert(message: str) -> None:
+def send_discord_alert(message: str, urgent: bool = False) -> None:
     """Send an alert to the Discord webhook if configured."""
     import requests
     from env_loader import load_api_keys
@@ -4969,7 +4969,8 @@ def send_discord_alert(message: str) -> None:
         return
 
     try:
-        payload = {"content": message}
+        content = f"@everyone {message}" if urgent else message
+        payload = {"content": content}
         resp = requests.post(webhook_url, json=payload, timeout=5)
         resp.raise_for_status()
     except Exception as exc:
@@ -7167,6 +7168,10 @@ def build_training_dataset(
         df_ind["rsi14"] = df_ind["RSI_14"] if "RSI_14" in df_ind.columns else np.nan
         df_ind["zscore_50"] = df_ind["Z_SCORE_50"] if "Z_SCORE_50" in df_ind.columns else np.nan
         
+        # Calculate targets (Future Return) on the DAILY timeframe before sampling
+        df_ind['target_tactical_30d'] = df_ind['Close'].shift(-30) / df_ind['Close'] - 1.0
+        df_ind['target_structural_126d'] = df_ind['Close'].shift(-126) / df_ind['Close'] - 1.0
+        
         # We sample end-of-week (e.g. step=5) to avoid huge correlation
         # We also skip the first 200 rows due to SMA200 warm-up
         if len(df_ind) > 200:
@@ -7223,10 +7228,6 @@ def build_training_dataset(
 
     # 1. Strict sorting and index reset
     df = df.sort_values(['ticker', 'Date']).reset_index(drop=True)
-
-    # 2. Calculate targets (Future Return)
-    df['target_tactical_30d'] = df.groupby('ticker')['Close'].shift(-30) / df['Close'] - 1.0
-    df['target_structural_126d'] = df.groupby('ticker')['Close'].shift(-126) / df['Close'] - 1.0
 
     # 3. Force numeric types (coercing any weird values to NaN)
     df['target_tactical_30d'] = pd.to_numeric(df['target_tactical_30d'], errors='coerce')
@@ -7345,24 +7346,32 @@ def _assign_regimes(df: pd.DataFrame) -> pd.DataFrame:
         fchi = fchi.set_index("Date")
         close = fchi["Close"].astype(float).dropna()
         returns = close.pct_change().dropna()
-        vol = returns.rolling(10).std().dropna()
-        common_idx = returns.index.intersection(vol.index)
         
-        X = np.column_stack([returns[common_idx].values, vol[common_idx].values])
-        model = GaussianHMM(n_components=3, covariance_type="diag", n_iter=100, random_state=42)
-        model.fit(X)
-        hidden_states = model.predict(X)
+        # Calculate rolling stats to avoid lookahead bias
+        vol_ann = returns.rolling(20).std() * np.sqrt(252)
+        trend = close.rolling(126).mean()
+        common_idx = returns.index.intersection(vol_ann.index).intersection(trend.index)
         
-        means = model.means_
-        volatile_state = np.argmax(means[:, 1])
-        other_states = [i for i in range(3) if i != volatile_state]
-        if means[other_states[0], 0] > means[other_states[1], 0]:
-            bull_state, bear_state = other_states[0], other_states[1]
-        else:
-            bull_state, bear_state = other_states[1], other_states[0]
+        # Calculate an expanding 75th percentile for high volatility threshold
+        vol_threshold = vol_ann.expanding(min_periods=126).quantile(0.75)
+        
+        regimes = []
+        for date in common_idx:
+            v = vol_ann.loc[date]
+            t = trend.loc[date]
+            c = close.loc[date]
+            v_thresh = vol_threshold.loc[date]
             
-        state_map = {volatile_state: "VOLATILE", bull_state: "BULL", bear_state: "BEAR"}
-        regime_series = pd.Series([state_map[s] for s in hidden_states], index=common_idx)
+            if pd.isna(v) or pd.isna(t) or pd.isna(v_thresh):
+                regimes.append("VOLATILE")
+            elif v > v_thresh:
+                regimes.append("VOLATILE")
+            elif c > t:
+                regimes.append("BULL")
+            else:
+                regimes.append("BEAR")
+                
+        regime_series = pd.Series(regimes, index=common_idx)
         
         if "Date" in df.columns:
             df["Date"] = pd.to_datetime(df["Date"])
@@ -7500,14 +7509,26 @@ def train_model(
                 import joblib
                 from sklearn.ensemble import IsolationForest
                 
+                # Fit anomaly detection only on the training set to prevent data leakage
+                df_sorted = df.copy()
+                if "created_at" in df_sorted.columns:
+                    df_sorted = df_sorted.sort_values("created_at")
+                elif "Date" in df_sorted.columns:
+                    df_sorted = df_sorted.sort_values("Date")
+                    
+                split = int(len(df_sorted) * 0.8)
+                embargo = 30
+                train_end = max(1, split - embargo)
+                df_train = df_sorted.iloc[:train_end]
+                
                 iso_model = IsolationForest(contamination=0.01, random_state=42)
-                X_all = df[FEATURE_COLS].values.astype(float)
-                X_all = np.nan_to_num(X_all)
-                iso_model.fit(X_all)
+                X_train_iso = df_train[FEATURE_COLS].values.astype(float)
+                X_train_iso = np.nan_to_num(X_train_iso)
+                iso_model.fit(X_train_iso)
                 
                 iso_path = _ROOT / "database" / "isolation_forest.joblib"
                 joblib.dump(iso_model, iso_path)
-                logger.info("[unsupervised] Isolation Forest trained with 1.5%% contamination.")
+                logger.info("[unsupervised] Isolation Forest trained with 1%% contamination on %d training rows.", len(X_train_iso))
             except ImportError:
                 logger.warning("scikit-learn required for Isolation Forest. pip install scikit-learn")
 
@@ -7864,6 +7885,44 @@ def calculate_annualized_volatility(returns: pd.Series, periods_per_year: int = 
     return float(std_ewm.iloc[-1] * np.sqrt(float(periods_per_year)))
 
 
+def detect_cusum_downward_break(returns: pd.Series, threshold: float = 3.0, drift: float = 0.5) -> bool:
+    """
+    Detects a structural downward break in returns using the CUSUM algorithm.
+    
+    Calculates the standardized cumulative sum of negative deviations from the mean.
+    If the CUSUM drops below -threshold, it indicates a bearish breakdown.
+    
+    Args:
+        returns: Pandas Series of daily returns.
+        threshold: The negative threshold to trigger a structural break alert (e.g. 3.0).
+        drift: Tolerance parameter to ignore minor deviations (in standard deviations).
+        
+    Returns:
+        bool: True if a structural downward break is detected, False otherwise.
+    """
+    r = _clean_returns(returns)
+    if r.empty or len(r) < 5:
+        return False
+        
+    # Standardize returns
+    mean_ret = r.mean()
+    std_ret = r.std(ddof=1)
+    
+    if std_ret == 0 or pd.isna(std_ret):
+        return False
+        
+    z_scores = (r - mean_ret) / std_ret
+    
+    # Calculate negative CUSUM (S_low)
+    s_low = 0.0
+    for z in z_scores:
+        s_low = min(0.0, s_low + z + drift)
+        if s_low <= -threshold:
+            return True
+            
+    return False
+
+
 ```
 
 ## File: .\02_quant_engine\risk_engine.py
@@ -8006,7 +8065,7 @@ class SmartDcaCore:
         )
 
     def evaluate_cw8(
-        self, db_manager: Any, current_cash: float, total_equity: float
+        self, db_manager: Any, current_cash: float, total_equity: float, portfolio: Any = None
     ) -> Signal:
         """Produce a Smart-DCA accumulation signal for the Core ETF.
 
@@ -8015,6 +8074,7 @@ class SmartDcaCore:
                 ``get_historical_prices(ticker, days)``.
             current_cash: Uninvested cash available in EUR.
             total_equity: Total account value in EUR.
+            portfolio: The current PortfolioState containing holdings.
 
         Returns:
             Signal: A BUY signal for the Core ETF. ``target_qty`` is the whole
@@ -8053,7 +8113,19 @@ class SmartDcaCore:
         score = 90.0 if crash_regime else 65.0
 
         target_value = target_pct * total_equity
-        tranche_cash = min(current_cash, tranche_pct * total_equity, target_value)
+        
+        # Determine existing exposure to avoid infinite scaling
+        current_core_value = 0.0
+        if portfolio and hasattr(portfolio, "positions"):
+            for pos in portfolio.positions:
+                if pos.ticker == self.core_ticker:
+                    current_core_value += float(pos.shares * pos.current_price)
+                    
+        remaining_target = max(0.0, target_value - current_core_value)
+        if remaining_target <= 0.0:
+            return self._neutral_signal(f"Core DCA skipped: currently hold {current_core_value:.0f} EUR vs target {target_value:.0f} EUR.")
+
+        tranche_cash = min(current_cash, tranche_pct * total_equity, remaining_target)
 
         # Phase 40 — zero cash drag: sweep idle cash above MAX_IDLE_CASH_PCT
         # into the Core ETF (whole shares only; PEA forbids fractions).
@@ -8880,6 +8952,14 @@ class SignalGenerator:
         if cluster >= 3 and (rsi_14 is not None and not pd.isna(rsi_14) and float(rsi_14) < 40) and (pb is not None and pb < 1.5):
             total = float(max(0.0, min(100.0, total * 1.35)))
             factors.append("BOOST x1.35 (Insider+RSI+PB)")
+            
+        # CUSUM Structural Breakdown Detection
+        from quantitative_math import detect_cusum_downward_break
+        if not history.empty and "Close" in history.columns:
+            recent_returns = history["Close"].tail(60).pct_change().dropna()
+            if detect_cusum_downward_break(recent_returns):
+                total -= 25.0
+                factors.append("⚠️ CUSUM VETO (Structural Breakdown)")
 
         return {
             # Backward-compatible keys consumed by dashboard/orchestrator.
@@ -9777,11 +9857,10 @@ class CorrelationFirewall:
         if vix_level is None:
             return True
         if vix_level > self.vix_panic_threshold:
-            logger.warning(
-                "VIX PANIC VETO: V2TX %.1f > %.1f -> blocking new satellite buys.",
-                vix_level,
-                self.vix_panic_threshold,
-            )
+            msg = f"VIX PANIC VETO: V2TX {vix_level:.1f} > {self.vix_panic_threshold:.1f} -> blocking new satellite buys."
+            logger.warning(msg)
+            from logging_setup import send_discord_alert
+            send_discord_alert(msg, urgent=True)
             return False
         logger.debug(
             "VIX %.1f within calm threshold %.1f; satellite buys allowed.",
@@ -12324,7 +12403,10 @@ class SignalOrchestrator:
         # Drawdown circuit breaker: veto all new buys if loss limits breached.
         dd_breached, dd_reason = self.drawdown_breaker.check(self.portfolio_db)
         if dd_breached:
-            logger.warning("Drawdown breaker activated: %s", dd_reason)
+            msg = f"DRAWDOWN BREAKER TRIPPED: {dd_reason}"
+            logger.warning(msg)
+            from logging_setup import send_discord_alert
+            send_discord_alert(msg, urgent=True)
             return [self._reject(s, dd_reason, {"source": "DrawdownBreaker", "time": datetime.now(timezone.utc).isoformat()}) for s in raw_signals]
 
         # Market-wide panic brake: evaluated once for the whole batch.
@@ -18412,14 +18494,17 @@ async def run_pipeline_async() -> None:
 
     # --- Core Phase: Smart DCA on the MSCI World ETF (immune to VIX veto) ---
     core_signal = core_engine.evaluate_cw8(
-        tsdb, portfolio.cash_available, portfolio.total_equity
+        tsdb, portfolio.cash_available, portfolio.total_equity, portfolio
     )
-    if core_signal and (core_signal.target_qty or 0) > 0:
-        core_signal.status = SignalStatus.APPROVED
-        processed.append(core_signal)
-        logger.info(
-            "Core DCA APPROVED: buy %d %s.", core_signal.target_qty, core_ticker
-        )
+    if core_signal:
+        from logging_setup import send_discord_alert
+        if (core_signal.target_qty or 0) > 0:
+            core_signal.status = SignalStatus.APPROVED
+            processed.append(core_signal)
+            logger.info("Core DCA APPROVED: buy %d %s.", core_signal.target_qty, core_ticker)
+            send_discord_alert(f"Core DCA: {core_signal.reason}", urgent=False)
+        else:
+            send_discord_alert(f"Core DCA: CALM ({core_signal.reason})", urgent=False)
 
     # --- Revocation Phase: anti-stale on existing PENDING signals ------------
     revoker = RevocationEngine(_CONFIG_DIR)
@@ -18481,11 +18566,12 @@ async def run_pipeline_async() -> None:
 
     # --- Alert Phase ---
     alertable = [
-        s for s in processed
-        if s.status in (SignalStatus.APPROVED, SignalStatus.REVOKED)
+        s for s in processed if s.status in (SignalStatus.APPROVED, SignalStatus.REVOKED)
     ]
     if not alertable:
         logger.info("No APPROVED/REVOKED signals to push to Discord this pass.")
+        from logging_setup import send_discord_alert
+        send_discord_alert("0 signals generated this pass.", urgent=False)
         return
 
     if not os.getenv("DISCORD_WEBHOOK_URL"):
@@ -18506,8 +18592,8 @@ async def run_pipeline_async() -> None:
             
             # Direct webhook alert for asynchronous paper trading
             from logging_setup import send_discord_alert
-            alert_msg = f"🚀 **PAPER TRADE APPROVED**\n**Ticker:** {signal.ticker}\n**Action:** {signal.signal_type.value}\n**Quantity:** {signal.target_qty} shares\n**Price:** {price:.2f} EUR\n**Reason:** {signal.reason}"
-            send_discord_alert(alert_msg)
+            alert_msg = f"🛒 **PAPER TRADE APPROVED**\n**Ticker:** {signal.ticker}\n**Action:** {signal.signal_type.value}\n**Quantity:** {signal.target_qty} shares\n**Price:** {price:.2f} EUR\n**Reason:** {signal.reason}"
+            send_discord_alert(alert_msg, urgent=True)
             
             # Also try the rich copilot alert if bot is connected
             try:
@@ -18534,6 +18620,8 @@ def run_analysis_pass() -> None:
 
     started = time.perf_counter()
     logger.info("=== Analysis pass starting ===")
+    from logging_setup import send_discord_alert
+    send_discord_alert("=== Analysis pass starting ===", urgent=False)
     try:
         asyncio.run(run_pipeline_async())
         elapsed = time.perf_counter() - started
