@@ -315,21 +315,14 @@ def _sector_for_ticker(ticker: str) -> str:
     return "UNKNOWN"
 
 
-def render_shap_waterfall(ticker: str, score: float) -> go.Figure:
-    """Mock SHAP waterfall/bar chart for feature attribution."""
+def render_shap_waterfall(ticker: str, shap_dict: dict) -> go.Figure:
+    """SHAP waterfall/bar chart for feature attribution."""
     import plotly.graph_objects as go
-    import random
-
-    features = ["Piotroski F-Score", "Insider Net Score", "RSI 14", "Z-Score 50d", "News Sentiment", "EV/EBITDA", "Analyst Neglect", "Vol 5d/60d"]
-    bias = (score - 50) / 10.0 
     
-    shap_vals = {}
-    for f in features:
-        val = random.uniform(-2.5, 2.5) + (bias * 0.5)
-        if abs(val) > 0.3:
-            shap_vals[f] = val
-            
-    sorted_shaps = sorted([(k, v) for k, v in shap_vals.items()], key=lambda x: x[1])
+    if not shap_dict:
+        return go.Figure()
+        
+    sorted_shaps = sorted([(k, v) for k, v in shap_dict.items()], key=lambda x: x[1])
     
     y_labels = [x[0] for x in sorted_shaps]
     x_vals = [x[1] for x in sorted_shaps]
@@ -462,8 +455,21 @@ def render_pending_trade_cards(pending_df: pd.DataFrame, portfolio_obj) -> None:
             unsafe_allow_html=True,
         )
         
+        import json
+        shap_dict = {}
+        lineage_str = row.get("lineage")
+        if lineage_str:
+            try:
+                if isinstance(lineage_str, dict):
+                    lin_dict = lineage_str
+                else:
+                    lin_dict = json.loads(lineage_str)
+                shap_dict = lin_dict.get("shap_breakdown", {})
+            except Exception:
+                pass
+
         with st.expander(f"🧠 Explicabilité IA (SHAP) pour {ticker}"):
-            st.plotly_chart(render_shap_waterfall(ticker, score), use_container_width=True)
+            st.plotly_chart(render_shap_waterfall(ticker, shap_dict), use_container_width=True)
 
         # Command Center: native Streamlit approve / reject (complements Discord)
         if sig_id:
@@ -3821,21 +3827,23 @@ with tab_market_pulse:
 
 def get_company_info(ticker: str) -> dict:
     try:
-        import sqlite3
+        import json
         db = get_portfolio_db()
         with db._connect() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT name, sector, industry, country, summary FROM ticker_profiles WHERE ticker = ?", (ticker,))
+            cursor.execute("SELECT profile_json FROM ticker_profiles WHERE ticker = ?", (ticker,))
             row = cursor.fetchone()
-            if row:
+            if row and row[0]:
+                data = json.loads(row[0])
+                # Ensure the keys match the UI expectations
                 return {
-                    "longName": row["name"] if "name" in row.keys() else row[0],
-                    "sector": row["sector"] if "sector" in row.keys() else row[1],
-                    "industry": row["industry"] if "industry" in row.keys() else row[2],
-                    "country": row["country"] if "country" in row.keys() else row[3],
-                    "longBusinessSummary": row["summary"] if "summary" in row.keys() else row[4]
+                    "longName": data.get("longName", ticker),
+                    "sector": data.get("sector", "Inconnu"),
+                    "industry": data.get("industry", "Inconnu"),
+                    "country": data.get("country", "Europe"),
+                    "longBusinessSummary": data.get("longBusinessSummary", "Description statique non renseignée dans le système local.")
                 }
-    except Exception as e:
+    except Exception:
         pass
         
     return {

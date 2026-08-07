@@ -1017,6 +1017,7 @@ This is a pure ingestion layer: no indicator math, risk, or trading logic.
 
 import logging
 import os
+import random
 import requests
 from datetime import datetime, timedelta
 from typing import Any, List
@@ -1090,29 +1091,16 @@ class MarketDataFetcher:
                 pass
 
             try:
-                import time
-                import pandas as pd
-                chunk_size = 20
-                all_yf_dfs = []
-                for i in range(0, len(remaining_tickers), chunk_size):
-                    chunk = remaining_tickers[i:i + chunk_size]
-                    raw = yf.download(
-                        chunk,
-                        start=start_date,
-                        progress=False,
-                        auto_adjust=True,
-                        group_by="column",
-                        threads=True,
-                    )
-                    if raw is not None and not raw.empty:
-                        flat_chunk = self._flatten(raw, chunk)
-                        all_yf_dfs.append(flat_chunk)
-                    
-                    if i + chunk_size < len(remaining_tickers):
-                        time.sleep(2)
-                
-                if all_yf_dfs:
-                    yf_df = pd.concat(all_yf_dfs, axis=0, ignore_index=True)
+                raw = yf.download(
+                    remaining_tickers,
+                    start=start_date,
+                    progress=False,
+                    auto_adjust=True,
+                    group_by="column",
+                    threads=True,
+                )
+                if raw is not None and not raw.empty:
+                    yf_df = self._flatten(raw, remaining_tickers)
             except Exception:  # noqa: BLE001 - never let an API error crash caller.
                 logger.exception("yf.download failed for tickers: %s", remaining_tickers)
 
@@ -1301,86 +1289,95 @@ class MarketDataFetcher:
 
     def update_database(
         self, db_manager: Any, tickers: List[str], lookback_days: int = 3650
-    ) -> bool:
-        """Fetch OHLCV and upsert it into a ``TimeSeriesDB`` instance.
+    ) -> Any:
+        """Fetch OHLCV and upsert it into a `TimeSeriesDB` instance.
 
         Args:
-            db_manager: A Phase 2 ``TimeSeriesDB`` (must expose ``upsert_ohlcv``).
+            db_manager: A Phase 2 `TimeSeriesDB` (must expose `upsert_ohlcv`).
             tickers: Ticker symbols to ingest.
             lookback_days: Calendar days of history to request (default 252).
 
         Returns:
-            bool: ``True`` on success, ``False`` if any exception occurred.
+            int: Number of rows upserted on success, `False` if any exception occurred.
         """
         try:
-            # Phase 49: Strict Incremental Ingestion
-            latest_dates = getattr(db_manager, "get_latest_dates", lambda t: {})(tickers)
-            max_gap_days = 0
+            import time
+            total_rows_upserted = 0
+            chunk_size = 20
             now = datetime.now()
             
-            for t in tickers:
-                last_dt_str = latest_dates.get(t)
-                if not last_dt_str:
-                    max_gap_days = max(max_gap_days, lookback_days)
+            for i in range(0, len(tickers), chunk_size):
+                chunk = tickers[i:i + chunk_size]
+                latest_dates = getattr(db_manager, "get_latest_dates", lambda t: {})(chunk)
+                max_gap_days = 0
+                
+                for t in chunk:
+                    last_dt_str = latest_dates.get(t)
+                    if not last_dt_str:
+                        max_gap_days = max(max_gap_days, lookback_days)
+                        continue
+                    try:
+                        last_dt = datetime.strptime(last_dt_str, "%Y-%m-%d")
+                        gap = (now - last_dt).days + 1
+                        max_gap_days = max(max_gap_days, gap)
+                    except ValueError:
+                        max_gap_days = max(max_gap_days, lookback_days)
+                
+                final_lookback = min(max_gap_days, lookback_days)
+                if final_lookback <= 0:
+                    final_lookback = 3  # Always fetch a few days to ensure no missed updates
+                    
+                logger.info("Incremental fetch for chunk %d/%d: requested %d days, optimized to %d days.", 
+                            (i // chunk_size) + 1, (len(tickers) + chunk_size - 1) // chunk_size, lookback_days, final_lookback)
+                
+                df = self.fetch_daily_ohlcv(chunk, lookback_days=final_lookback)
+                if df.empty:
+                    logger.warning("No data fetched for chunk; skipping.")
                     continue
-                try:
-                    last_dt = datetime.strptime(last_dt_str, "%Y-%m-%d")
-                    gap = (now - last_dt).days + 1
-                    max_gap_days = max(max_gap_days, gap)
-                except ValueError:
-                    max_gap_days = max(max_gap_days, lookback_days)
-            
-            final_lookback = min(max_gap_days, lookback_days)
-            if final_lookback <= 0:
-                final_lookback = 3  # Always fetch a few days to ensure no missed updates
-                
-            logger.info("Incremental fetch: requested %d days, optimized to %d days.", lookback_days, final_lookback)
-            
-            df = self.fetch_daily_ohlcv(tickers, lookback_days=final_lookback)
-            if df.empty:
-                logger.warning("No data fetched; nothing to ingest.")
-                return False
 
-            # --- Sanity Outlier Filter (Phase 53+) ---
-            # Drop rows with > +50% or < -40% daily return to prevent yfinance bugs
-            # from corrupting the ML models.
-            df = df.sort_values(["Ticker", "Date"])
-            # Calculate pct_change per ticker
-            df["_pct_chg"] = df.groupby("Ticker")["Close"].pct_change()
-            
-            # Phase 60: Dynamic Tick Anomaly Detection using IsolationForest
-            abnormal_mask = pd.Series(False, index=df.index)
-            if not df["_pct_chg"].isna().all():
-                try:
-                    from sklearn.ensemble import IsolationForest
-                    valid_idx = df["_pct_chg"].dropna().index
-                    if len(valid_idx) > 50:
-                        iso = IsolationForest(contamination=0.005, random_state=42)
-                        preds = iso.fit_predict(df.loc[valid_idx, ["_pct_chg"]])
-                        abnormal_mask.loc[valid_idx] = (preds == -1)
-                    else:
-                        # Fallback if too few rows for IsolationForest
-                        abnormal_mask = (df["_pct_chg"] > 0.50) | (df["_pct_chg"] < -0.40)
-                except Exception as exc:
-                    logger.debug("IsolationForest failed, falling back to static anomaly threshold: %s", exc)
-                    abnormal_mask = (df["_pct_chg"] > 0.50) | (df["_pct_chg"] < -0.40)
-            
-            if abnormal_mask.any():
-                abnormal_tickers = df[abnormal_mask]["Ticker"].unique()
-                logger.warning("Sanity Outlier Filter triggered for: %s. Dropping abnormal rows.", abnormal_tickers.tolist())
-                # Forward fill the previous row's close for these abnormal rows by dropping them
-                # Since duckdb upsert handles missing dates gracefully (or they just won't be inserted)
-                # It's safer to just drop the abnormal rows so they don't get into DB.
-                df = df[~abnormal_mask]
+                # --- Sanity Outlier Filter (Phase 53+) ---
+                # Drop rows with > +50% or < -40% daily return to prevent yfinance bugs
+                # from corrupting the ML models.
+                df = df.sort_values(["Ticker", "Date"])
+                # Calculate pct_change per ticker
+                df["_pct_chg"] = df.groupby("Ticker")["Close"].pct_change()
                 
-            df = df.drop(columns=["_pct_chg"])
+                # Phase 60: Dynamic Tick Anomaly Detection using IsolationForest
+                abnormal_mask = pd.Series(False, index=df.index)
+                if not df["_pct_chg"].isna().all():
+                    try:
+                        from sklearn.ensemble import IsolationForest
+                        valid_idx = df["_pct_chg"].dropna().index
+                        if len(valid_idx) > 50:
+                            iso = IsolationForest(contamination=0.005, random_state=42)
+                            preds = iso.fit_predict(df.loc[valid_idx, ["_pct_chg"]])
+                            abnormal_mask.loc[valid_idx] = (preds == -1)
+                        else:
+                            # Fallback if too few rows for IsolationForest
+                            abnormal_mask = (df["_pct_chg"] > 0.50) | (df["_pct_chg"] < -0.40)
+                    except Exception as exc:
+                        logger.debug("IsolationForest failed, falling back to static anomaly threshold: %s", exc)
+                        abnormal_mask = (df["_pct_chg"] > 0.50) | (df["_pct_chg"] < -0.40)
+                
+                if abnormal_mask.any():
+                    abnormal_tickers = df[abnormal_mask]["Ticker"].unique()
+                    logger.warning("Sanity Outlier Filter triggered for: %s. Dropping abnormal rows.", abnormal_tickers.tolist())
+                    df = df[~abnormal_mask]
+                    
+                df = df.drop(columns=["_pct_chg"])
+                
+                rows = db_manager.upsert_ohlcv(df)
+                total_rows_upserted += rows
+                n_tickers = df["Ticker"].nunique()
+                logger.info(
+                    "Successfully ingested %d rows for %d ticker(s) in chunk.", rows, n_tickers
+                )
+                
+                if i + chunk_size < len(tickers):
+                    time.sleep(random.uniform(2.5, 6.2))
             
-            rows = db_manager.upsert_ohlcv(df)
-            n_tickers = df["Ticker"].nunique()
-            logger.info(
-                "Successfully ingested %d rows for %d ticker(s).", rows, n_tickers
-            )
-            return True
+            logger.info("Finished incremental update. Total rows upserted: %d", total_rows_upserted)
+            return total_rows_upserted
         except Exception as exc:  # noqa: BLE001 - ingestion must never crash the daemon.
             logger.exception("Database update failed for tickers: %s", tickers)
             try:
@@ -1394,7 +1391,6 @@ class MarketDataFetcher:
             except Exception:
                 pass
             return False
-
 
 if __name__ == "__main__":
     logging.basicConfig(
@@ -7018,6 +7014,7 @@ def build_ml_feature_row(
     pdb: Any = None,
     asof_idx: int | None = None,
     offline_mode: bool = False,
+    sector_mean_ret1d: float = 0.0,
 ) -> dict:
     """Engineer one feature row for ``ticker``."""
     series = close.astype(float).dropna() if close is not None else pd.Series(dtype=float)
@@ -7137,6 +7134,13 @@ def build_ml_feature_row(
         if np.isfinite(fwd_structural):
             label_structural = int(fwd_structural > _TARGET_RETURN * 4.0)
 
+    ticker_ret1d = 0.0
+    if len(series) >= 2 and idx >= 1:
+        base = float(series.iloc[idx - 1])
+        if base > 0:
+            ticker_ret1d = float(series.iloc[idx] / base - 1.0)
+    sector_rel_ret = ticker_ret1d - sector_mean_ret1d
+
     return {
         "asof_date": str(series.index[idx].date()) if hasattr(series.index[idx], 'date') else str(series.index[idx]),
         "ticker": ticker,
@@ -7158,6 +7162,7 @@ def build_ml_feature_row(
         "ndx_ret1d": spillover.get("^IXIC_ret1d", np.nan),
         "eurusd_ret1d": spillover.get("EURUSD=X_ret1d", np.nan),
         "oat_ret1d": spillover.get("OAT.PA_ret1d", np.nan),
+        "sector_relative_ret1d": sector_rel_ret,
         "target_tactical_30d": label_tactical,
         "target_structural_126d": label_structural,
     }
@@ -7200,12 +7205,18 @@ def build_training_dataset(
             tickers.append(t)
 
     # 3. Pre-fetch exog for speed
-    try:
-        cw8_hist = tdb.get_historical_prices("CW8.PA", days=3650)
-    except Exception:
-        cw8_hist = pd.DataFrame()
-    cw8_close = cw8_hist["Close"] if not cw8_hist.empty and "Close" in cw8_hist.columns else pd.Series(dtype=float)
-    cw8_ret1d = cw8_close.pct_change(1) if not cw8_close.empty else pd.Series(dtype=float)
+    macro_symbols = ["^GSPC", "^IXIC", "EURUSD=X", "OAT.PA"]
+    macro_returns = {}
+    for sym in macro_symbols:
+        try:
+            h = tdb.get_historical_prices(sym, days=3650)
+            if not h.empty and "Close" in h.columns and "Date" in h.columns:
+                ret1d = h.set_index("Date")["Close"].pct_change(1)
+                macro_returns[sym] = ret1d
+            else:
+                macro_returns[sym] = pd.Series(dtype=float)
+        except Exception:
+            macro_returns[sym] = pd.Series(dtype=float)
 
     logger.info("Building historical ML dataset for %d valid equity tickers (Vectorized)...", len(tickers))
 
@@ -7257,15 +7268,19 @@ def build_training_dataset(
         df_ind["ecb_euribor_3m"] = 0.0
         df_ind["gex_proxy"] = 0.0
         
-        # Match CW8 return by Date
-        if "Date" in df_ind.columns and not cw8_ret1d.empty:
-            df_ind["sp500_ret1d"] = df_ind["Date"].map(cw8_ret1d).fillna(0.0)
+        # Match Macro return by Date
+        df_ind["ret1d"] = df_ind["Close"].pct_change()
+        if "Date" in df_ind.columns:
+            date_col = df_ind["Date"]
+            df_ind["sp500_ret1d"] = date_col.map(macro_returns["^GSPC"]).fillna(0.0) if not macro_returns["^GSPC"].empty else 0.0
+            df_ind["ndx_ret1d"] = date_col.map(macro_returns["^IXIC"]).fillna(0.0) if not macro_returns["^IXIC"].empty else 0.0
+            df_ind["eurusd_ret1d"] = date_col.map(macro_returns["EURUSD=X"]).fillna(0.0) if not macro_returns["EURUSD=X"].empty else 0.0
+            df_ind["oat_ret1d"] = date_col.map(macro_returns["OAT.PA"]).fillna(0.0) if not macro_returns["OAT.PA"].empty else 0.0
         else:
             df_ind["sp500_ret1d"] = 0.0
-            
-        df_ind["ndx_ret1d"] = 0.0
-        df_ind["eurusd_ret1d"] = 0.0
-        df_ind["oat_ret1d"] = 0.0
+            df_ind["ndx_ret1d"] = 0.0
+            df_ind["eurusd_ret1d"] = 0.0
+            df_ind["oat_ret1d"] = 0.0
         
         # Format mapping names to match expected FEATURES
         df_ind["rsi14"] = df_ind["RSI_14"] if "RSI_14" in df_ind.columns else np.nan
@@ -7288,6 +7303,29 @@ def build_training_dataset(
         return pd.DataFrame()
         
     df = pd.concat(dfs, ignore_index=True)
+    df['Date'] = pd.to_datetime(df['Date'])
+
+    # Sector StatArb Logic
+    try:
+        import yaml
+        with open(_ROOT / "config" / "pea_universe.yaml", "r", encoding="utf-8") as f:
+            uni = yaml.safe_load(f).get("universe", {})
+        ticker_to_sector = {}
+        for sector, items in uni.items():
+            for item in items:
+                ticker_to_sector[item["ticker"]] = sector
+                
+        df['sector'] = df['ticker'].map(ticker_to_sector)
+        sector_mean = df.groupby(['Date', 'sector'])['ret1d'].mean().reset_index()
+        sector_mean = sector_mean.rename(columns={'ret1d': 'sector_mean_ret1d'})
+        
+        df = pd.merge(df, sector_mean, on=['Date', 'sector'], how='left')
+        df['sector_relative_ret1d'] = df['ret1d'] - df['sector_mean_ret1d']
+        df['sector_relative_ret1d'] = df['sector_relative_ret1d'].fillna(0.0)
+        df = df.drop(columns=['sector', 'ret1d', 'sector_mean_ret1d'])
+    except Exception as e:
+        logger.warning("StatArb sector relative logic failed: %s", e)
+        df['sector_relative_ret1d'] = 0.0
 
     # Merge Daily Sentiment (3-day rolling average)
     try:
@@ -7386,22 +7424,12 @@ FEATURE_COLS = [
     "rsi14",
     "zscore_50",
     "vol_20d_ann",
-    "insider_net_score",
-    "finnhub_roe",
-    "finnhub_pe",
-    "ev_to_ebitda",
-    "news_sentiment",
-    "earnings_qa_sentiment",
-    "amf_short_interest",
-    "amf_threshold_crossing",
-    "ecb_euribor_3m",
-    "gex_proxy",
     "frac_diff_04",
     "sp500_ret1d",
     "ndx_ret1d",
     "eurusd_ret1d",
     "oat_ret1d",
-    "news_sentiment_3d",
+    "sector_relative_ret1d",
 ]
 TARGET_TACTICAL = "target_tactical_30d"
 TARGET_STRUCTURAL = "target_structural_126d"
@@ -13610,21 +13638,14 @@ def _sector_for_ticker(ticker: str) -> str:
     return "UNKNOWN"
 
 
-def render_shap_waterfall(ticker: str, score: float) -> go.Figure:
-    """Mock SHAP waterfall/bar chart for feature attribution."""
+def render_shap_waterfall(ticker: str, shap_dict: dict) -> go.Figure:
+    """SHAP waterfall/bar chart for feature attribution."""
     import plotly.graph_objects as go
-    import random
-
-    features = ["Piotroski F-Score", "Insider Net Score", "RSI 14", "Z-Score 50d", "News Sentiment", "EV/EBITDA", "Analyst Neglect", "Vol 5d/60d"]
-    bias = (score - 50) / 10.0 
     
-    shap_vals = {}
-    for f in features:
-        val = random.uniform(-2.5, 2.5) + (bias * 0.5)
-        if abs(val) > 0.3:
-            shap_vals[f] = val
-            
-    sorted_shaps = sorted([(k, v) for k, v in shap_vals.items()], key=lambda x: x[1])
+    if not shap_dict:
+        return go.Figure()
+        
+    sorted_shaps = sorted([(k, v) for k, v in shap_dict.items()], key=lambda x: x[1])
     
     y_labels = [x[0] for x in sorted_shaps]
     x_vals = [x[1] for x in sorted_shaps]
@@ -13757,8 +13778,21 @@ def render_pending_trade_cards(pending_df: pd.DataFrame, portfolio_obj) -> None:
             unsafe_allow_html=True,
         )
         
+        import json
+        shap_dict = {}
+        lineage_str = row.get("lineage")
+        if lineage_str:
+            try:
+                if isinstance(lineage_str, dict):
+                    lin_dict = lineage_str
+                else:
+                    lin_dict = json.loads(lineage_str)
+                shap_dict = lin_dict.get("shap_breakdown", {})
+            except Exception:
+                pass
+
         with st.expander(f"🧠 Explicabilité IA (SHAP) pour {ticker}"):
-            st.plotly_chart(render_shap_waterfall(ticker, score), use_container_width=True)
+            st.plotly_chart(render_shap_waterfall(ticker, shap_dict), use_container_width=True)
 
         # Command Center: native Streamlit approve / reject (complements Discord)
         if sig_id:
@@ -17116,21 +17150,23 @@ with tab_market_pulse:
 
 def get_company_info(ticker: str) -> dict:
     try:
-        import sqlite3
+        import json
         db = get_portfolio_db()
         with db._connect() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT name, sector, industry, country, summary FROM ticker_profiles WHERE ticker = ?", (ticker,))
+            cursor.execute("SELECT profile_json FROM ticker_profiles WHERE ticker = ?", (ticker,))
             row = cursor.fetchone()
-            if row:
+            if row and row[0]:
+                data = json.loads(row[0])
+                # Ensure the keys match the UI expectations
                 return {
-                    "longName": row["name"] if "name" in row.keys() else row[0],
-                    "sector": row["sector"] if "sector" in row.keys() else row[1],
-                    "industry": row["industry"] if "industry" in row.keys() else row[2],
-                    "country": row["country"] if "country" in row.keys() else row[3],
-                    "longBusinessSummary": row["summary"] if "summary" in row.keys() else row[4]
+                    "longName": data.get("longName", ticker),
+                    "sector": data.get("sector", "Inconnu"),
+                    "industry": data.get("industry", "Inconnu"),
+                    "country": data.get("country", "Europe"),
+                    "longBusinessSummary": data.get("longBusinessSummary", "Description statique non renseignée dans le système local.")
                 }
-    except Exception as e:
+    except Exception:
         pass
         
     return {
@@ -18353,12 +18389,46 @@ async def run_pipeline_async() -> None:
             except Exception:
                 cw8_close = None
 
+            # Compute daily sector means for StatArb
+            try:
+                import yaml
+                from pathlib import Path
+                with open(Path("config") / "pea_universe.yaml", "r", encoding="utf-8") as f:
+                    uni = yaml.safe_load(f).get("universe", {})
+                ticker_to_sector = {}
+                for sector, items in uni.items():
+                    for item in items:
+                        ticker_to_sector[item["ticker"]] = sector
+                
+                daily_sector_means = {}
+                sector_rets = {}
+                for t in tickers:
+                    try:
+                        df_t = tsdb.get_historical_prices(t, days=5)
+                        if df_t is not None and len(df_t) >= 2:
+                            c = df_t["Close"].astype(float).values
+                            if c[-2] > 0:
+                                ret = c[-1] / c[-2] - 1.0
+                                sec = ticker_to_sector.get(t, "Unknown")
+                                sector_rets.setdefault(sec, []).append(ret)
+                    except Exception:
+                        pass
+                for sec, rets in sector_rets.items():
+                    daily_sector_means[sec] = sum(rets) / len(rets)
+                logger.info("Computed StatArb sector means for %d sectors.", len(daily_sector_means))
+            except Exception as e:
+                logger.warning("Failed to compute daily sector means: %s", e)
+                ticker_to_sector = {}
+                daily_sector_means = {}
+
             filtered_signals = []
             for sig in raw_signals:
                 try:
                     df = tsdb.get_historical_prices(sig.ticker, days=252)
                     if df is None or df.empty:
                         continue
+                    sec = ticker_to_sector.get(sig.ticker, "Unknown")
+                    mean_ret = daily_sector_means.get(sec, 0.0)
                     feat = build_ml_feature_row(
                         sig.ticker,
                         close=df["Close"].astype(float),
@@ -18366,7 +18436,8 @@ async def run_pipeline_async() -> None:
                         exog_closes=exog_dfs,
                         reason="live inference",
                         pdb=pdb,
-                        asof_idx=-1
+                        asof_idx=-1,
+                        sector_mean_ret1d=mean_ret
                     )
                     from ml_trainer import predict_probability_with_shap
                     
@@ -18375,6 +18446,7 @@ async def run_pipeline_async() -> None:
                     if proba is not None and shap_vals is not None:
                         # Set shap vals directly on the signal for later consumption by the UI
                         sig.shap_breakdown = shap_vals
+                        sig.lineage["shap_breakdown"] = shap_vals
                         sig.ml_probability = proba
                         
                         contributions = list(shap_vals.items())
@@ -19570,6 +19642,85 @@ with codecs.open('05_interfaces/terminal_dashboard.py', 'w', encoding='utf-8') a
 
 ```
 
+## File: .\patch_dash.py
+
+```python
+﻿import codecs
+
+with codecs.open('05_interfaces/terminal_dashboard.py', 'r', encoding='utf-8') as f:
+    text = f.read().replace('\r\n', '\n')
+
+old_render = '''def render_shap_waterfall(ticker: str, score: float) -> go.Figure:
+    \"\"\"Mock SHAP waterfall/bar chart for feature attribution.\"\"\"
+    import plotly.graph_objects as go
+    import random
+
+    features = ["Piotroski F-Score", "Insider Net Score", "RSI 14", "Z-Score 50d", "News Sentiment", "EV/EBITDA", "Analyst Neglect", "Vol 5d/60d"]
+    bias = (score - 50) / 10.0 
+    
+    shap_vals = {}
+    for f in features:
+        val = random.uniform(-2.5, 2.5) + (bias * 0.5)
+        if abs(val) > 0.3:
+            shap_vals[f] = val
+            
+    sorted_shaps = sorted([(k, v) for k, v in shap_vals.items()], key=lambda x: x[1])
+    
+    y_labels = [x[0] for x in sorted_shaps]
+    x_vals = [x[1] for x in sorted_shaps]
+    colors = [_NEON if x > 0 else _RED for x in x_vals]
+    
+    fig = go.Figure(go.Bar(
+        x=x_vals,
+        y=y_labels,'''
+
+new_render = '''def render_shap_waterfall(ticker: str, shap_dict: dict) -> go.Figure:
+    \"\"\"SHAP waterfall/bar chart for feature attribution.\"\"\"
+    import plotly.graph_objects as go
+
+    if not shap_dict:
+        # Fallback if no SHAP dict is provided
+        return go.Figure()
+            
+    sorted_shaps = sorted([(k, v) for k, v in shap_dict.items()], key=lambda x: x[1])
+    
+    y_labels = [x[0] for x in sorted_shaps]
+    x_vals = [x[1] for x in sorted_shaps]
+    colors = [_NEON if x > 0 else _RED for x in x_vals]
+    
+    fig = go.Figure(go.Bar(
+        x=x_vals,
+        y=y_labels,'''
+
+text = text.replace(old_render, new_render)
+
+old_caller = '''        with st.expander(f"🧠 Explicabilité IA (SHAP) pour {ticker}"):
+            st.plotly_chart(render_shap_waterfall(ticker, score), use_container_width=True)'''
+
+new_caller = '''        import json
+        shap_dict = {}
+        lineage_str = row.get("lineage")
+        if lineage_str:
+            try:
+                if isinstance(lineage_str, dict):
+                    lin_dict = lineage_str
+                else:
+                    lin_dict = json.loads(lineage_str)
+                shap_dict = lin_dict.get("shap_breakdown", {})
+            except Exception:
+                pass
+
+        with st.expander(f"🧠 Explicabilité IA (SHAP) pour {ticker}"):
+            st.plotly_chart(render_shap_waterfall(ticker, shap_dict), use_container_width=True)'''
+            
+text = text.replace(old_caller, new_caller)
+
+with codecs.open('05_interfaces/terminal_dashboard.py', 'w', encoding='utf-8') as f:
+    f.write(text)
+
+
+```
+
 ## File: .\patch_db_lines.py
 
 ```python
@@ -20762,6 +20913,362 @@ print("success")
 
 ```
 
+## File: .\patch_incremental.py
+
+```python
+﻿import codecs
+
+with codecs.open('00_data_sensors/market_prices_api.py', 'r', encoding='utf-8') as f:
+    text = f.read().replace('\r\n', '\n')
+
+old_fetch = '''            try:
+                import time
+                import pandas as pd
+                chunk_size = 20
+                all_yf_dfs = []
+                for i in range(0, len(remaining_tickers), chunk_size):
+                    chunk = remaining_tickers[i:i + chunk_size]
+                    raw = yf.download(
+                        chunk,
+                        start=start_date,
+                        progress=False,
+                        auto_adjust=True,
+                        group_by="column",
+                        threads=True,
+                    )
+                    if raw is not None and not raw.empty:
+                        flat_chunk = self._flatten(raw, chunk)
+                        all_yf_dfs.append(flat_chunk)
+                    
+                    if i + chunk_size < len(remaining_tickers):
+                        time.sleep(2)
+                
+                if all_yf_dfs:
+                    yf_df = pd.concat(all_yf_dfs, axis=0, ignore_index=True)
+            except Exception:'''
+
+new_fetch = '''            try:
+                raw = yf.download(
+                    remaining_tickers,
+                    start=start_date,
+                    progress=False,
+                    auto_adjust=True,
+                    group_by="column",
+                    threads=True,
+                )
+                if raw is not None and not raw.empty:
+                    yf_df = self._flatten(raw, remaining_tickers)
+            except Exception:'''
+            
+text = text.replace(old_fetch, new_fetch)
+
+start_db_idx = text.find('    def update_database(')
+end_db_idx = text.find('if __name__ == "__main__":')
+
+new_update_database = '''    def update_database(
+        self, db_manager: Any, tickers: List[str], lookback_days: int = 3650
+    ) -> Any:
+        """Fetch OHLCV and upsert it into a `TimeSeriesDB` instance.
+
+        Args:
+            db_manager: A Phase 2 `TimeSeriesDB` (must expose `upsert_ohlcv`).
+            tickers: Ticker symbols to ingest.
+            lookback_days: Calendar days of history to request (default 252).
+
+        Returns:
+            int: Number of rows upserted on success, `False` if any exception occurred.
+        """
+        try:
+            import time
+            total_rows_upserted = 0
+            chunk_size = 20
+            now = datetime.now()
+            
+            for i in range(0, len(tickers), chunk_size):
+                chunk = tickers[i:i + chunk_size]
+                latest_dates = getattr(db_manager, "get_latest_dates", lambda t: {})(chunk)
+                max_gap_days = 0
+                
+                for t in chunk:
+                    last_dt_str = latest_dates.get(t)
+                    if not last_dt_str:
+                        max_gap_days = max(max_gap_days, lookback_days)
+                        continue
+                    try:
+                        last_dt = datetime.strptime(last_dt_str, "%Y-%m-%d")
+                        gap = (now - last_dt).days + 1
+                        max_gap_days = max(max_gap_days, gap)
+                    except ValueError:
+                        max_gap_days = max(max_gap_days, lookback_days)
+                
+                final_lookback = min(max_gap_days, lookback_days)
+                if final_lookback <= 0:
+                    final_lookback = 3  # Always fetch a few days to ensure no missed updates
+                    
+                logger.info("Incremental fetch for chunk %d/%d: requested %d days, optimized to %d days.", 
+                            (i // chunk_size) + 1, (len(tickers) + chunk_size - 1) // chunk_size, lookback_days, final_lookback)
+                
+                df = self.fetch_daily_ohlcv(chunk, lookback_days=final_lookback)
+                if df.empty:
+                    logger.warning("No data fetched for chunk; skipping.")
+                    continue
+
+                # --- Sanity Outlier Filter (Phase 53+) ---
+                # Drop rows with > +50% or < -40% daily return to prevent yfinance bugs
+                # from corrupting the ML models.
+                df = df.sort_values(["Ticker", "Date"])
+                # Calculate pct_change per ticker
+                df["_pct_chg"] = df.groupby("Ticker")["Close"].pct_change()
+                
+                # Phase 60: Dynamic Tick Anomaly Detection using IsolationForest
+                abnormal_mask = pd.Series(False, index=df.index)
+                if not df["_pct_chg"].isna().all():
+                    try:
+                        from sklearn.ensemble import IsolationForest
+                        valid_idx = df["_pct_chg"].dropna().index
+                        if len(valid_idx) > 50:
+                            iso = IsolationForest(contamination=0.005, random_state=42)
+                            preds = iso.fit_predict(df.loc[valid_idx, ["_pct_chg"]])
+                            abnormal_mask.loc[valid_idx] = (preds == -1)
+                        else:
+                            # Fallback if too few rows for IsolationForest
+                            abnormal_mask = (df["_pct_chg"] > 0.50) | (df["_pct_chg"] < -0.40)
+                    except Exception as exc:
+                        logger.debug("IsolationForest failed, falling back to static anomaly threshold: %s", exc)
+                        abnormal_mask = (df["_pct_chg"] > 0.50) | (df["_pct_chg"] < -0.40)
+                
+                if abnormal_mask.any():
+                    abnormal_tickers = df[abnormal_mask]["Ticker"].unique()
+                    logger.warning("Sanity Outlier Filter triggered for: %s. Dropping abnormal rows.", abnormal_tickers.tolist())
+                    df = df[~abnormal_mask]
+                    
+                df = df.drop(columns=["_pct_chg"])
+                
+                rows = db_manager.upsert_ohlcv(df)
+                total_rows_upserted += rows
+                n_tickers = df["Ticker"].nunique()
+                logger.info(
+                    "Successfully ingested %d rows for %d ticker(s) in chunk.", rows, n_tickers
+                )
+                
+                if i + chunk_size < len(tickers):
+                    time.sleep(3)
+            
+            logger.info("Finished incremental update. Total rows upserted: %d", total_rows_upserted)
+            return total_rows_upserted
+        except Exception as exc:  # noqa: BLE001 - ingestion must never crash the daemon.
+            logger.exception("Database update failed for tickers: %s", tickers)
+            try:
+                import sys
+                from pathlib import Path
+                _ROOT = Path(__file__).resolve().parent.parent
+                if str(_ROOT / "01_memory_core") not in sys.path:
+                    sys.path.insert(0, str(_ROOT / "01_memory_core"))
+                from logging_setup import update_pipeline_status
+                update_pipeline_status({"data_degraded_mode": True, "degraded_reason": f"market_prices_api.py: {exc}"})
+            except Exception:
+                pass
+            return False
+
+if __name__ == "__main__":'''
+
+text = text[:start_db_idx] + new_update_database + text[end_db_idx+len('if __name__ == "__main__":'):]
+
+with codecs.open('00_data_sensors/market_prices_api.py', 'w', encoding='utf-8') as f:
+    f.write(text)
+
+```
+
+## File: .\patch_json_schema.py
+
+```python
+﻿import codecs
+import re
+
+# 1. Fix seed_profiles.py
+with codecs.open('tools/seed_profiles.py', 'r', encoding='utf-8') as f:
+    text = f.read().replace('\r\n', '\n')
+
+old_seed = '''    with connect_func() as conn:
+        conn.execute(\'\'\'
+            CREATE TABLE IF NOT EXISTS ticker_profiles (
+                ticker TEXT PRIMARY KEY,
+                name TEXT,
+                sector TEXT,
+                industry TEXT,
+                country TEXT,
+                summary TEXT
+            )
+        \'\'\')
+        
+        for ticker, data in HARDCODED_PROFILES.items():
+            conn.execute(\'\'\'
+                INSERT OR REPLACE INTO ticker_profiles (ticker, name, sector, industry, country, summary)
+                VALUES (?, ?, ?, ?, ?, ?)
+            \'\'\', (ticker, data["longName"], data["sector"], data["industry"], data["country"], data["longBusinessSummary"]))'''
+
+new_seed = '''    import json
+    with connect_func() as conn:
+        # Recreate table with correct schema in case the previous script made a flat one
+        conn.execute('DROP TABLE IF EXISTS ticker_profiles')
+        conn.execute(\'\'\'
+            CREATE TABLE IF NOT EXISTS ticker_profiles (
+                ticker TEXT PRIMARY KEY,
+                profile_json TEXT,
+                last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        \'\'\')
+        
+        for ticker, data in HARDCODED_PROFILES.items():
+            json_string = json.dumps(data, ensure_ascii=False)
+            conn.execute(\'\'\'
+                INSERT OR REPLACE INTO ticker_profiles (ticker, profile_json, last_updated)
+                VALUES (?, ?, CURRENT_TIMESTAMP)
+            \'\'\', (ticker, json_string))'''
+
+text = text.replace(old_seed, new_seed)
+
+with codecs.open('tools/seed_profiles.py', 'w', encoding='utf-8') as f:
+    f.write(text)
+
+
+# 2. Fix terminal_dashboard.py
+with codecs.open('05_interfaces/terminal_dashboard.py', 'r', encoding='utf-8') as f:
+    text_ui = f.read().replace('\r\n', '\n')
+
+start_idx = text_ui.find('def get_company_info(ticker: str) -> dict:')
+end_idx = text_ui.find('with tab_ticker_deep_dive:')
+
+new_ui = '''def get_company_info(ticker: str) -> dict:
+    try:
+        import json
+        db = get_portfolio_db()
+        with db._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT profile_json FROM ticker_profiles WHERE ticker = ?", (ticker,))
+            row = cursor.fetchone()
+            if row and row[0]:
+                data = json.loads(row[0])
+                # Ensure the keys match the UI expectations
+                return {
+                    "longName": data.get("longName", ticker),
+                    "sector": data.get("sector", "Inconnu"),
+                    "industry": data.get("industry", "Inconnu"),
+                    "country": data.get("country", "Europe"),
+                    "longBusinessSummary": data.get("longBusinessSummary", "Description statique non renseignée dans le système local.")
+                }
+    except Exception:
+        pass
+        
+    return {
+        "longName": ticker,
+        "sector": "Inconnu",
+        "industry": "Inconnu",
+        "country": "Europe",
+        "longBusinessSummary": "Description non disponible en base."
+    }
+
+'''
+
+if start_idx != -1 and end_idx != -1:
+    text_ui = text_ui[:start_idx] + new_ui + text_ui[end_idx:]
+
+with codecs.open('05_interfaces/terminal_dashboard.py', 'w', encoding='utf-8') as f:
+    f.write(text_ui)
+
+
+```
+
+## File: .\patch_main.py
+
+```python
+﻿import codecs
+
+with codecs.open('main_scheduler.py', 'r', encoding='utf-8') as f:
+    text = f.read().replace('\r\n', '\n')
+
+old_live_feat = '''            filtered_signals = []
+            for sig in raw_signals:
+                try:
+                    df = tsdb.get_historical_prices(sig.ticker, days=252)
+                    if df is None or df.empty:
+                        continue
+                    feat = build_ml_feature_row(
+                        sig.ticker,
+                        close=df["Close"].astype(float),
+                        cw8_close=cw8_close,
+                        exog_closes=exog_dfs,
+                        reason="live inference",
+                        pdb=pdb,
+                        asof_idx=-1
+                    )'''
+new_live_feat = '''            # Compute daily sector means for StatArb
+            try:
+                import yaml
+                from pathlib import Path
+                with open(Path("config") / "pea_universe.yaml", "r", encoding="utf-8") as f:
+                    uni = yaml.safe_load(f).get("universe", {})
+                ticker_to_sector = {}
+                for sector, items in uni.items():
+                    for item in items:
+                        ticker_to_sector[item["ticker"]] = sector
+                
+                daily_sector_means = {}
+                sector_rets = {}
+                for t in tickers:
+                    try:
+                        df_t = tsdb.get_historical_prices(t, days=5)
+                        if df_t is not None and len(df_t) >= 2:
+                            c = df_t["Close"].astype(float).values
+                            if c[-2] > 0:
+                                ret = c[-1] / c[-2] - 1.0
+                                sec = ticker_to_sector.get(t, "Unknown")
+                                sector_rets.setdefault(sec, []).append(ret)
+                    except Exception:
+                        pass
+                for sec, rets in sector_rets.items():
+                    daily_sector_means[sec] = sum(rets) / len(rets)
+                logger.info("Computed StatArb sector means for %d sectors.", len(daily_sector_means))
+            except Exception as e:
+                logger.warning("Failed to compute daily sector means: %s", e)
+                ticker_to_sector = {}
+                daily_sector_means = {}
+
+            filtered_signals = []
+            for sig in raw_signals:
+                try:
+                    df = tsdb.get_historical_prices(sig.ticker, days=252)
+                    if df is None or df.empty:
+                        continue
+                    sec = ticker_to_sector.get(sig.ticker, "Unknown")
+                    mean_ret = daily_sector_means.get(sec, 0.0)
+                    feat = build_ml_feature_row(
+                        sig.ticker,
+                        close=df["Close"].astype(float),
+                        cw8_close=cw8_close,
+                        exog_closes=exog_dfs,
+                        reason="live inference",
+                        pdb=pdb,
+                        asof_idx=-1,
+                        sector_mean_ret1d=mean_ret
+                    )'''
+text = text.replace(old_live_feat, new_live_feat)
+
+old_shap = '''                    if proba is not None and shap_vals is not None:
+                        # Set shap vals directly on the signal for later consumption by the UI
+                        sig.shap_breakdown = shap_vals'''
+new_shap = '''                    if proba is not None and shap_vals is not None:
+                        # Set shap vals directly on the signal for later consumption by the UI
+                        sig.shap_breakdown = shap_vals
+                        sig.lineage["shap_breakdown"] = shap_vals'''
+text = text.replace(old_shap, new_shap)
+
+with codecs.open('main_scheduler.py', 'w', encoding='utf-8') as f:
+    f.write(text)
+
+
+```
+
 ## File: .\patch_opp.py
 
 ```python
@@ -20900,6 +21407,193 @@ with codecs.open('05_interfaces/terminal_dashboard.py', 'w', encoding='utf-8') a
 
 ```
 
+## File: .\patch_readme.py
+
+```python
+﻿import codecs
+
+with codecs.open('README.md', 'r', encoding='utf-8') as f:
+    text = f.read().replace('\r\n', '\n')
+
+old_text = '''- **Live Alpha Analytics**: Real-time institutional performance tracking (Jensen's Alpha, Beta, Information Ratio) benchmarked against MSCI World (CW8.PA).
+- **Smart DCA (Core/Satellite)**: Automated risk-parity scaling. Accumulate the CW8.PA core aggressively when the market is below its 200-day SMA, and carefully build Satellite positions with excess budget.'''
+
+new_text = '''- **Live Alpha Analytics**: Real-time institutional performance tracking (Jensen's Alpha, Beta, Information Ratio) benchmarked against MSCI World (CW8.PA).
+- **Smart DCA (Core/Satellite)**: Automated risk-parity scaling. Accumulate the CW8.PA core aggressively when the market is below its 200-day SMA, and carefully build Satellite positions with excess budget.
+- **Machine Learning & StatArb**: XGBoost meta-labeling trained on point-in-time Technicals, robust Macro indices (^FCHI, ^GSPC, EURUSD=X), and dynamic Sector Relative Strength (StatArb).
+- **Real SHAP Explainability**: The Streamlit interface displays true SHAP value feature attributions directly from the XGBoost explainer, revealing the exact neural logic behind AI trade approvals.'''
+
+text = text.replace(old_text, new_text)
+
+with codecs.open('README.md', 'w', encoding='utf-8') as f:
+    f.write(text)
+
+```
+
+## File: .\patch_store.py
+
+```python
+﻿import codecs
+import re
+
+with codecs.open('02_quant_engine/ml_feature_store.py', 'r', encoding='utf-8') as f:
+    text = f.read().replace('\r\n', '\n')
+
+# 1. Patch build_ml_feature_row signature and sector relative logic
+old_sig = '''def build_ml_feature_row(
+    ticker: str,
+    *,
+    close: pd.Series | None = None,
+    cw8_close: pd.Series | None = None,
+    exog_closes: dict[str, pd.Series] | None = None,
+    reason: str = "",
+    pdb: Any = None,
+    asof_idx: int | None = None,
+    offline_mode: bool = False,
+) -> dict:'''
+new_sig = '''def build_ml_feature_row(
+    ticker: str,
+    *,
+    close: pd.Series | None = None,
+    cw8_close: pd.Series | None = None,
+    exog_closes: dict[str, pd.Series] | None = None,
+    reason: str = "",
+    pdb: Any = None,
+    asof_idx: int | None = None,
+    offline_mode: bool = False,
+    sector_mean_ret1d: float = 0.0,
+) -> dict:'''
+text = text.replace(old_sig, new_sig)
+
+# Add sector relative logic in build_ml_feature_row before returning
+# Find 'target_tactical_30d' and 'target_structural_126d' assignment in build_ml_feature_row
+old_fwd = '''        if np.isfinite(fwd_structural):
+            label_structural = int(fwd_structural > _TARGET_RETURN * 4.0)
+
+    return {'''
+new_fwd = '''        if np.isfinite(fwd_structural):
+            label_structural = int(fwd_structural > _TARGET_RETURN * 4.0)
+
+    ticker_ret1d = 0.0
+    if len(series) >= 2 and idx >= 1:
+        base = float(series.iloc[idx - 1])
+        if base > 0:
+            ticker_ret1d = float(series.iloc[idx] / base - 1.0)
+    sector_rel_ret = ticker_ret1d - sector_mean_ret1d
+
+    return {'''
+text = text.replace(old_fwd, new_fwd)
+
+# Add it to the dict
+old_dict = '''        "oat_ret1d": spillover.get("OAT.PA_ret1d", np.nan),
+        "target_tactical_30d": label_tactical,
+        "target_structural_126d": label_structural,'''
+new_dict = '''        "oat_ret1d": spillover.get("OAT.PA_ret1d", np.nan),
+        "sector_relative_ret1d": sector_rel_ret,
+        "target_tactical_30d": label_tactical,
+        "target_structural_126d": label_structural,'''
+text = text.replace(old_dict, new_dict)
+
+
+# 2. Patch build_training_dataset macro pull
+old_macro_pull = '''    # 3. Pre-fetch exog for speed
+    try:
+        cw8_hist = tdb.get_historical_prices("CW8.PA", days=3650)
+    except Exception:
+        cw8_hist = pd.DataFrame()
+    cw8_close = cw8_hist["Close"] if not cw8_hist.empty and "Close" in cw8_hist.columns else pd.Series(dtype=float)
+    cw8_ret1d = cw8_close.pct_change(1) if not cw8_close.empty else pd.Series(dtype=float)
+
+    logger.info("Building historical ML dataset for %d valid equity tickers (Vectorized)...", len(tickers))'''
+
+new_macro_pull = '''    # 3. Pre-fetch exog for speed
+    macro_symbols = ["^GSPC", "^IXIC", "EURUSD=X", "OAT.PA"]
+    macro_returns = {}
+    for sym in macro_symbols:
+        try:
+            h = tdb.get_historical_prices(sym, days=3650)
+            if not h.empty and "Close" in h.columns and "Date" in h.columns:
+                ret1d = h.set_index("Date")["Close"].pct_change(1)
+                macro_returns[sym] = ret1d
+            else:
+                macro_returns[sym] = pd.Series(dtype=float)
+        except Exception:
+            macro_returns[sym] = pd.Series(dtype=float)
+
+    logger.info("Building historical ML dataset for %d valid equity tickers (Vectorized)...", len(tickers))'''
+text = text.replace(old_macro_pull, new_macro_pull)
+
+# Patch the inner loop assignment
+old_inner_macro = '''        # Match CW8 return by Date
+        if "Date" in df_ind.columns and not cw8_ret1d.empty:
+            df_ind["sp500_ret1d"] = df_ind["Date"].map(cw8_ret1d).fillna(0.0)
+        else:
+            df_ind["sp500_ret1d"] = 0.0
+            
+        df_ind["ndx_ret1d"] = 0.0
+        df_ind["eurusd_ret1d"] = 0.0
+        df_ind["oat_ret1d"] = 0.0'''
+
+new_inner_macro = '''        # Match Macro return by Date
+        df_ind["ret1d"] = df_ind["Close"].pct_change()
+        if "Date" in df_ind.columns:
+            date_col = df_ind["Date"]
+            df_ind["sp500_ret1d"] = date_col.map(macro_returns["^GSPC"]).fillna(0.0) if not macro_returns["^GSPC"].empty else 0.0
+            df_ind["ndx_ret1d"] = date_col.map(macro_returns["^IXIC"]).fillna(0.0) if not macro_returns["^IXIC"].empty else 0.0
+            df_ind["eurusd_ret1d"] = date_col.map(macro_returns["EURUSD=X"]).fillna(0.0) if not macro_returns["EURUSD=X"].empty else 0.0
+            df_ind["oat_ret1d"] = date_col.map(macro_returns["OAT.PA"]).fillna(0.0) if not macro_returns["OAT.PA"].empty else 0.0
+        else:
+            df_ind["sp500_ret1d"] = 0.0
+            df_ind["ndx_ret1d"] = 0.0
+            df_ind["eurusd_ret1d"] = 0.0
+            df_ind["oat_ret1d"] = 0.0'''
+text = text.replace(old_inner_macro, new_inner_macro)
+
+# Patch the concatenation and statarb
+old_concat = '''    if not dfs:
+        return pd.DataFrame()
+        
+    df = pd.concat(dfs, ignore_index=True)
+
+    # Merge Daily Sentiment (3-day rolling average)'''
+
+new_concat = '''    if not dfs:
+        return pd.DataFrame()
+        
+    df = pd.concat(dfs, ignore_index=True)
+    df['Date'] = pd.to_datetime(df['Date'])
+
+    # Sector StatArb Logic
+    try:
+        import yaml
+        with open(_ROOT / "config" / "pea_universe.yaml", "r", encoding="utf-8") as f:
+            uni = yaml.safe_load(f).get("universe", {})
+        ticker_to_sector = {}
+        for sector, items in uni.items():
+            for item in items:
+                ticker_to_sector[item["ticker"]] = sector
+                
+        df['sector'] = df['ticker'].map(ticker_to_sector)
+        sector_mean = df.groupby(['Date', 'sector'])['ret1d'].mean().reset_index()
+        sector_mean = sector_mean.rename(columns={'ret1d': 'sector_mean_ret1d'})
+        
+        df = pd.merge(df, sector_mean, on=['Date', 'sector'], how='left')
+        df['sector_relative_ret1d'] = df['ret1d'] - df['sector_mean_ret1d']
+        df['sector_relative_ret1d'] = df['sector_relative_ret1d'].fillna(0.0)
+        df = df.drop(columns=['sector', 'ret1d', 'sector_mean_ret1d'])
+    except Exception as e:
+        logger.warning("StatArb sector relative logic failed: %s", e)
+        df['sector_relative_ret1d'] = 0.0
+
+    # Merge Daily Sentiment (3-day rolling average)'''
+text = text.replace(old_concat, new_concat)
+
+with codecs.open('02_quant_engine/ml_feature_store.py', 'w', encoding='utf-8') as f:
+    f.write(text)
+
+
+```
+
 ## File: .\patch_ta.py
 
 ```python
@@ -21015,6 +21709,55 @@ with open(path2, 'w', encoding='utf-8') as f:
     f.write(code2)
 
 print("Patch completed!")
+
+```
+
+## File: .\patch_trainer.py
+
+```python
+﻿import codecs
+
+with codecs.open('02_quant_engine/ml_trainer.py', 'r', encoding='utf-8') as f:
+    text = f.read().replace('\r\n', '\n')
+
+old_cols = '''FEATURE_COLS = [
+    "rsi14",
+    "zscore_50",
+    "vol_20d_ann",
+    "insider_net_score",
+    "finnhub_roe",
+    "finnhub_pe",
+    "ev_to_ebitda",
+    "news_sentiment",
+    "earnings_qa_sentiment",
+    "amf_short_interest",
+    "amf_threshold_crossing",
+    "ecb_euribor_3m",
+    "gex_proxy",
+    "frac_diff_04",
+    "sp500_ret1d",
+    "ndx_ret1d",
+    "eurusd_ret1d",
+    "oat_ret1d",
+    "news_sentiment_3d",
+]'''
+
+new_cols = '''FEATURE_COLS = [
+    "rsi14",
+    "zscore_50",
+    "vol_20d_ann",
+    "frac_diff_04",
+    "sp500_ret1d",
+    "ndx_ret1d",
+    "eurusd_ret1d",
+    "oat_ret1d",
+    "sector_relative_ret1d",
+]'''
+
+text = text.replace(old_cols, new_cols)
+
+with codecs.open('02_quant_engine/ml_trainer.py', 'w', encoding='utf-8') as f:
+    f.write(text)
 
 ```
 
@@ -21180,6 +21923,37 @@ text = text.replace(old_deep_dive_end, new_deep_dive_end)
 
 with codecs.open(path, 'w', encoding='utf-8') as f:
     f.write(text)
+
+```
+
+## File: .\patch_yaml.py
+
+```python
+﻿import codecs
+
+with codecs.open('config/pea_universe.yaml', 'r', encoding='utf-8') as f:
+    text = f.read().replace('\r\n', '\n')
+
+macro_block = '''  Macro:
+  - ticker: ^FCHI
+    name: CAC 40
+  - ticker: ^GSPC
+    name: S&P 500
+  - ticker: ^IXIC
+    name: NASDAQ
+  - ticker: ^V2TX
+    name: VSTOXX
+  - ticker: EURUSD=X
+    name: EUR/USD
+  - ticker: OAT.PA
+    name: OAT 10Y France
+'''
+
+text = text.replace('universe:\n', 'universe:\n' + macro_block)
+
+with codecs.open('config/pea_universe.yaml', 'w', encoding='utf-8') as f:
+    f.write(text)
+
 
 ```
 
@@ -23907,23 +24681,24 @@ def seed():
                 conn.close()
         connect_func = fallback_connect
 
+    import json
     with connect_func() as conn:
+        # Recreate table with correct schema in case the previous script made a flat one
+        conn.execute('DROP TABLE IF EXISTS ticker_profiles')
         conn.execute('''
             CREATE TABLE IF NOT EXISTS ticker_profiles (
                 ticker TEXT PRIMARY KEY,
-                name TEXT,
-                sector TEXT,
-                industry TEXT,
-                country TEXT,
-                summary TEXT
+                profile_json TEXT,
+                last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
         
         for ticker, data in HARDCODED_PROFILES.items():
+            json_string = json.dumps(data, ensure_ascii=False)
             conn.execute('''
-                INSERT OR REPLACE INTO ticker_profiles (ticker, name, sector, industry, country, summary)
-                VALUES (?, ?, ?, ?, ?, ?)
-            ''', (ticker, data["longName"], data["sector"], data["industry"], data["country"], data["longBusinessSummary"]))
+                INSERT OR REPLACE INTO ticker_profiles (ticker, profile_json, last_updated)
+                VALUES (?, ?, CURRENT_TIMESTAMP)
+            ''', (ticker, json_string))
             
         conn.commit()
         

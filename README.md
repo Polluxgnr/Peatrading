@@ -21,6 +21,8 @@
 - **Interactive Discord Copilot**: A bi-directional assistant allowing you to approve or reject signals directly from Discord using Slash commands (`/approve`, `/reject`).
 - **Live Alpha Analytics**: Real-time institutional performance tracking (Jensen's Alpha, Beta, Information Ratio) benchmarked against MSCI World (`CW8.PA`).
 - **Smart DCA (Core/Satellite)**: Automated risk-parity scaling. Accumulate the `CW8.PA` core aggressively when the market is below its 200-day SMA, and carefully build Satellite positions with excess budget.
+- **Machine Learning & StatArb**: XGBoost meta-labeling trained on point-in-time Technicals, robust Macro indices (`^FCHI`, `^GSPC`, `EURUSD=X`), and dynamic Sector Relative Strength (StatArb).
+- **Real SHAP Explainability**: The Streamlit interface displays true SHAP value feature attributions directly from the XGBoost explainer, revealing the exact neural logic behind AI trade approvals.
 
 ---
 
