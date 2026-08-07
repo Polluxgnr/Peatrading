@@ -10,6 +10,7 @@ This is a pure ingestion layer: no indicator math, risk, or trading logic.
 import logging
 import os
 import random
+import time
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
