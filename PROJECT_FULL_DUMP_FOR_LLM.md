@@ -6948,16 +6948,18 @@ def build_ml_feature_row(
     ecb_euribor = macro.get_ecb_euribor() if not offline_mode else 0.0
     threshold_cross = macro.get_threshold_crossings(ticker) if not offline_mode else 0
     gex_proxy = macro.get_gamma_exposure(ticker) if not offline_mode else 0.0
-    from quantitative_math import frac_diff_ffd
     
-    # Fractional Differentiation feature (d=0.4)
-    # Computed dynamically if we have enough history.
-    frac_val = np.nan
+    # 20-day Z-score of returns
+    zscore_val = np.nan
     if len(series) >= 20:
-        frac_series = frac_diff_ffd(series, d=0.4)
-        if not frac_series.empty and idx >= 0:
-            frac_val = float(frac_series.iloc[idx])
-            
+        rets = series.pct_change().dropna()
+        if len(rets) >= 20:
+            roll_mean = rets.rolling(20).mean()
+            roll_std = rets.rolling(20).std()
+            z_series = (rets - roll_mean) / roll_std.replace(0, np.nan)
+            if not z_series.empty and idx >= 0:
+                zscore_val = float(z_series.iloc[idx])
+                
     # Cross-Asset Spillover features
     spillover = {}
     if exog_closes:
@@ -7039,7 +7041,7 @@ def build_ml_feature_row(
         "amf_threshold_crossing": threshold_cross,
         "ecb_euribor_3m": ecb_euribor,
         "gex_proxy": gex_proxy,
-        "frac_diff_04": frac_val,
+        "zscore_20d": zscore_val,
         "sp500_ret1d": spillover.get("^GSPC_ret1d", np.nan),
         "ndx_ret1d": spillover.get("^IXIC_ret1d", np.nan),
         "eurusd_ret1d": spillover.get("EURUSD=X_ret1d", np.nan),
@@ -7128,6 +7130,7 @@ def build_training_dataset(
         pl.col("Close").rolling_std(window_size=50, ddof=0).over("Ticker").alias("std50"),
         _pl_rsi(pl.col("Close"), 14).over("Ticker").alias("rsi14"),
         (pl.col("Close").pct_change().over("Ticker") * np.sqrt(252.0)).rolling_std(window_size=20, ddof=0).over("Ticker").alias("vol_20d_ann"),
+        ((pl.col("Close").pct_change().over("Ticker")) - (pl.col("Close").pct_change().over("Ticker")).rolling_mean(20).over("Ticker")) / (pl.col("Close").pct_change().over("Ticker")).rolling_std(20, ddof=0).over("Ticker").alias("zscore_20d"),
         (pl.col("Close").shift(-30).over("Ticker") / pl.col("Close") - 1.0).alias("target_tactical_30d"),
         (pl.col("Close").shift(-126).over("Ticker") / pl.col("Close") - 1.0).alias("target_structural_126d"),
         pl.col("Close").pct_change().over("Ticker").alias("ret1d")
@@ -7203,11 +7206,8 @@ def build_training_dataset(
     df["ev_to_ebitda"] = df["ticker"].map(lambda t: fund_cache[t][2])
     df["news_sentiment"] = df["ticker"].map(lambda t: fund_cache[t][3])
     
-    # Frac Diff FFD (expensive, applied per ticker)
-    sys.path.insert(0, str(_ROOT / "02_quant_engine"))
-    from quantitative_math import frac_diff_ffd
-    df["frac_diff_04"] = df.groupby("ticker")["Close"].transform(lambda x: frac_diff_ffd(x, d=0.4))
-
+    # Removed Pandas FFD calculation as requested
+    
     # StatArb Sector Relative Return
     try:
         import yaml
@@ -7314,7 +7314,7 @@ FEATURE_COLS = [
     "rsi14",
     "zscore_50",
     "vol_20d_ann",
-    "frac_diff_04",
+    "zscore_20d",
     "sp500_ret1d",
     "ndx_ret1d",
     "eurusd_ret1d",
@@ -8191,7 +8191,7 @@ class SmartDcaCore:
         if portfolio and hasattr(portfolio, "positions"):
             for pos in portfolio.positions:
                 if pos.ticker == self.core_ticker:
-                    current_core_value += float(pos.shares * pos.current_price)
+                    current_core_value += float(pos.qty_shares * pos.current_price)
                     
         remaining_target = max(0.0, target_value - current_core_value)
         if remaining_target <= 0.0:
@@ -8649,6 +8649,7 @@ class SignalGenerator:
         macro_sensor: Any | None = None,
         is_historical: bool = False,
         cs_rank: float = 50.0,
+        daily_sector_means: dict[str, float] | None = None,
     ) -> dict[str, Any]:
         """Committee-style multi-model score (0..100 total)."""
         empty = {
@@ -8955,7 +8956,10 @@ class SignalGenerator:
         ml_interval_str = ""
         try:
             from ml_feature_store import build_ml_feature_row  # noqa: WPS433
-            from ml_trainer import predict_probability_with_shap  # noqa: WPS433
+            from ml_trainer import predict_probability_with_shap, predict_anomaly  # noqa: WPS433
+            
+            sector = self.portfolio_db.get_sector(ticker) if hasattr(self.portfolio_db, "get_sector") else "Unknown"
+            sec_mean = daily_sector_means.get(sector, 0.0) if daily_sector_means else 0.0
 
             feat_row = build_ml_feature_row(
                 ticker,
@@ -8963,6 +8967,7 @@ class SignalGenerator:
                 reason="",
                 pdb=None,
                 offline_mode=is_historical,
+                sector_mean_ret1d=sec_mean,
             )
             ml_prob, _, ml_interval = predict_probability_with_shap(feat_row, horizon="tactical", regime=self.regime)
             if ml_prob is not None:
@@ -8974,8 +8979,16 @@ class SignalGenerator:
                     factors.append(f"ML+5 prob={ml_prob:.2f}{ml_interval_str}")
                 elif ml_prob <= 0.35:
                     factors.append(f"ML-5 prob={ml_prob:.2f}{ml_interval_str}")
+                    
+            if predict_anomaly(feat_row):
+                factors.append("⚠️ ANOMALY VETO (Isolation Forest)")
+                # We will subtract 20.0 from total later, so we just set a flag
+                anomaly_veto = True
+            else:
+                anomaly_veto = False
         except Exception as exc:  # noqa: BLE001
             logger.debug("ML modifier skipped for %s: %s", ticker, exc)
+            anomaly_veto = False
 
         # Polymarket removed from per-ticker scoring (Phase 42): macro-only.
         poly_component = 50.0
@@ -9018,6 +9031,9 @@ class SignalGenerator:
             total = heuristic_total
             
         total = float(max(0.0, min(100.0, total)))
+        
+        if anomaly_veto:
+            total -= 20.0
 
         # Phase 55: Boost Achats d'Insidés & PEA-PME
         pb = fundamentals.get("pb_ratio")
@@ -9067,6 +9083,7 @@ class SignalGenerator:
         timeseries_db: Any,
         tickers: list[str],
         conviction_floor: float | None = None,
+        daily_sector_means: dict[str, float] | None = None,
     ) -> list[Signal]:
         """Evaluate each ticker; emit BUY when ensemble conviction ≥ floor.
 
@@ -9117,7 +9134,7 @@ class SignalGenerator:
                 return None
             
             cs_rank = float(cs_ranks.get(ticker, 50.0))
-            conv = self.evaluate(ticker, df, macro_sensor=macro, cs_rank=cs_rank)
+            conv = self.evaluate(ticker, df, macro_sensor=macro, cs_rank=cs_rank, daily_sector_means=daily_sector_means)
             total = float(conv.get("total") or 0.0)
             actual_floor = conviction_floor if conviction_floor is not None else self.conviction_floor
             
@@ -9130,7 +9147,10 @@ class SignalGenerator:
                 from ml_feature_store import build_ml_feature_row
                 from ml_trainer import predict_meta_probability
                 
-                features = build_ml_feature_row(ticker, df, pdb=self.portfolio_db, offline_mode=self.offline_mode)
+                sector = self.portfolio_db.get_sector(ticker) if hasattr(self.portfolio_db, "get_sector") else "Unknown"
+                sec_mean = daily_sector_means.get(sector, 0.0) if daily_sector_means else 0.0
+                
+                features = build_ml_feature_row(ticker, df, pdb=self.portfolio_db, offline_mode=self.offline_mode, sector_mean_ret1d=sec_mean)
                 meta_prob = predict_meta_probability(features)
                 
                 if meta_prob is not None and meta_prob < 0.65:
@@ -17875,195 +17895,6 @@ def render_signal_card(
 
 ```
 
-## File: .\clean_readme.py
-
-```python
-﻿import codecs
-import re
-
-path = 'README.md'
-with codecs.open(path, 'r', encoding='utf-8', errors='ignore') as f:
-    text = f.read()
-
-idx = text.find('## Recent Updates (August 2026)')
-if idx != -1:
-    text = text[:idx]
-
-new_text = '''
-## Recent Updates (August 2026)
-- **UI/UX Bloomberg Overhaul**: Streamlit interface restructured into 4 clean Workspaces (Market Pulse, Ticker Deep-Dive, Quant Engine, Portfolio & Ledger). Replaced deprecated width="stretch" with use_container_width=True on buttons.
-- **Dependency & AWS Docker Fixes**: 
-  - Pinned starlette<0.36.0 to resolve GZipResponder Streamlit crash on boot.
-  - Purged pandas-ta library entirely and replaced it with native Pure Pandas indicators (SMA, RSI, MACD, BBands, ATR) to permanently resolve 
-umpy 2.0 / scipy dependency conflicts.
-  - Fixed syntax error in sqlite_portfolio.py caused by invalid docstring formatting.
-'''
-
-text += new_text.strip() + '\n'
-
-with codecs.open(path, 'w', encoding='utf-8') as f:
-    f.write(text)
-
-```
-
-## File: .\deep_dive.txt
-
-```text
-with tab_ticker_deep_dive:
-    st.markdown("## 🔍 Ticker Deep-Dive (Data & History)")
-    
-    # Universal Search
-    try:
-        tickers = universe_df["Ticker"].unique().tolist() if "universe_df" in globals() else []
-    except Exception:
-        tickers = []
-        
-    selected_ticker = st.selectbox("Search PEA Universe", options=tickers, index=0 if tickers else None)
-    
-    if selected_ticker:
-        # Fetch data using existing functions or new logic
-        try:
-            import plotly.graph_objects as go
-            import pandas as pd
-            
-            # Fetch OHLCV
-            hist = _db_hist(selected_ticker, 180) # Last 6 months
-            
-            if hist is not None and not hist.empty:
-                # Calculate IsolationForest anomalies
-                abnormal_mask = pd.Series(False, index=hist.index)
-                try:
-                    from sklearn.ensemble import IsolationForest
-                    import numpy as np
-                    hist["_pct_chg"] = hist["Close"].pct_change()
-                    valid_idx = hist["_pct_chg"].dropna().index
-                    if len(valid_idx) > 50:
-                        iso = IsolationForest(contamination=0.015, random_state=42)
-                        preds = iso.fit_predict(hist.loc[valid_idx, ["_pct_chg"]])
-                        abnormal_mask.loc[valid_idx] = (preds == -1)
-                except Exception:
-                    pass
-                
-                # Candlestick
-                fig = go.Figure(data=[go.Candlestick(
-                    x=hist.index,
-                    open=hist['Open'],
-                    high=hist['High'],
-                    low=hist['Low'],
-                    close=hist['Close'],
-                    name='Price'
-                )])
-                
-                # Overlay anomalies
-                anomalies = hist[abnormal_mask]
-                if not anomalies.empty:
-                    fig.add_trace(go.Scatter(
-                        x=anomalies.index,
-                        y=anomalies['Close'],
-                        mode='markers',
-                        marker=dict(color='yellow', size=10, symbol='x'),
-                        name='Anomaly (IF)'
-                    ))
-                    
-                fig.update_layout(
-                    title=f"{selected_ticker} Price Action & Anomalies",
-                    template="plotly_dark",
-                    margin=dict(t=40, b=0, l=0, r=0),
-                    height=400,
-                    xaxis_rangeslider_visible=False
-                )
-                st.plotly_chart(fig, use_container_width=True)
-                
-                # Signal & Uncertainty
-                st.markdown("### 🤖 Signal & Uncertainty")
-                try:
-                    from technical_scorer import SignalGenerator
-                    from ml_feature_store import build_ml_feature_row
-                    from ml_trainer import predict_probability_with_shap
-                    from market_regime import MarketRegimeClassifier
-                    
-                    regime = MarketRegimeClassifier().get_regime()
-                    feat_row = build_ml_feature_row(selected_ticker, close=float(hist["Close"].iloc[-1]), reason="", pdb=None, offline_mode=False)
-                    prob, shap_vals, interval = predict_probability_with_shap(feat_row, horizon="tactical", regime=regime)
-                    
-                    if prob is not None:
-                        prob_pct = prob * 100
-                        prob_color = _NEON if prob >= 0.65 else (_RED if prob <= 0.35 else _AMBER)
-                        interval_str = f"± {abs((interval[1] - prob) * 100):.1f}%" if interval else ""
-                        
-                        st.markdown(f"""
-                        <div style="padding:15px; background:#1A1A1A; border:1px solid #333; border-radius:8px; text-align:center;">
-                            <h4 style="color:#888;">Conformal Prediction (Tactical)</h4>
-                            <h1 style="color:{prob_color}; margin:0;">Confidence: {prob_pct:.1f}% {interval_str}</h1>
-                            <p style="color:#555; margin-top:5px;">Regime Model Active: <strong>XGBoost_{regime}</strong></p>
-                        </div>
-                        """, unsafe_allow_html=True)
-                    else:
-                        st.info("ML Prediction not available. Model might not be trained.")
-                        
-                except Exception as e:
-                    st.error(f"Failed to load ML Signal: {e}")
-                
-                # Raw Data
-                with st.expander("📊 View Raw OHLCV & Feature Data (DuckDB)"):
-                    st.dataframe(hist, use_container_width=True)
-                    
-            else:
-                st.warning(f"No historical data found for {selected_ticker}.")
-                
-            st.markdown("---")
-            st.markdown("### 🧬 Fundamental & Alternative Data")
-            col_alt1, col_alt2 = st.columns(2)
-            
-            with col_alt1:
-                st.markdown("#### 🎯 Quant Strategy Radar")
-                try:
-                    fingerprint = get_strategy_fingerprint(selected_ticker)
-                    if fingerprint:
-                        render_strategy_radar(fingerprint, selected_ticker)
-                    else:
-                        st.caption("Strategy radar data unavailable.")
-                except Exception as e:
-                    st.caption(f"Module unavailable or no data. ({e})")
-                    
-                st.markdown("#### 📊 Fundamentals & Valuation")
-                try:
-                    val_metrics = get_valuation_metrics(selected_ticker)
-                    if val_metrics:
-                        c1, c2 = st.columns(2)
-                        with c1:
-                            metric_box("P/E Ratio", val_metrics.get("pe_ratio", "N/A"))
-                            metric_box("1M Return", f"{val_metrics.get('ret_1m', 0.0):.1%}")
-                        with c2:
-                            metric_box("P/B Ratio", val_metrics.get("pb_ratio", "N/A"))
-                            metric_box("1Y Return", f"{val_metrics.get('ret_1y', 0.0):.1%}")
-                    else:
-                        st.caption("Fundamental data unavailable.")
-                except Exception as e:
-                    st.caption(f"Module unavailable or no data. ({e})")
-                    
-            with col_alt2:
-                st.markdown("#### 🏛️ AMF Insider Flow")
-                try:
-                    insider_df = get_insider_data(selected_ticker)
-                    if insider_df is not None and not insider_df.empty:
-                        summary = summarize_insider_activity(insider_df)
-                        st.markdown(f"**Activity Summary:** {summary.get('text', 'N/A')} (Score: {summary.get('score', 0)})")
-                        st.dataframe(insider_df, use_container_width=True, hide_index=True)
-                    else:
-                        st.caption("No recent AMF insider activity reported.")
-                except Exception as e:
-                    st.caption(f"Module unavailable or no data. ({e})")
-                
-        except Exception as e:
-            st.error(f"Failed to load ticker data: {e}")
-    else:
-        st.info("Select a ticker from the dropdown above to view details.")
-
-
-
-```
-
 ## File: .\docker-compose.yml
 
 ```yaml
@@ -18455,8 +18286,40 @@ async def run_pipeline_async() -> None:
     # --- Macro Phase: European VIX emergency brake ---
     vix_level = macro_alpha.get_european_vix()
 
+    # --- Compute daily sector means for StatArb ---
+    try:
+        import yaml
+        from pathlib import Path
+        with open(Path("config") / "pea_universe.yaml", "r", encoding="utf-8") as f:
+            uni = yaml.safe_load(f).get("universe", {})
+        ticker_to_sector = {}
+        for sector, items in uni.items():
+            for item in items:
+                ticker_to_sector[item["ticker"]] = sector
+        
+        daily_sector_means = {}
+        sector_rets = {}
+        for t in tickers:
+            try:
+                df_t = tsdb.get_historical_prices(t, days=5)
+                if df_t is not None and len(df_t) >= 2:
+                    c = df_t["Close"].astype(float).values
+                    if c[-2] > 0:
+                        ret = c[-1] / c[-2] - 1.0
+                        sec = ticker_to_sector.get(t, "Unknown")
+                        sector_rets.setdefault(sec, []).append(ret)
+            except Exception:
+                pass
+        for sec, rets in sector_rets.items():
+            daily_sector_means[sec] = sum(rets) / len(rets)
+        logger.info("Computed StatArb sector means for %d sectors.", len(daily_sector_means))
+    except Exception as e:
+        logger.warning("Failed to compute daily sector means: %s", e)
+        ticker_to_sector = {}
+        daily_sector_means = {}
+
     # --- Quant Phase ---
-    raw_signals = generator.generate_raw_signals(tsdb, tickers)
+    raw_signals = generator.generate_raw_signals(tsdb, tickers, daily_sector_means=daily_sector_means)
     logger.info("Quant engine produced %d raw signal(s).", len(raw_signals))
 
     # --- Meta-Labeling (XGBoost) & SHAP Explainability Phase ---
@@ -18487,38 +18350,6 @@ async def run_pipeline_async() -> None:
                 cw8_close = cw8_df["Close"].astype(float) if cw8_df is not None and not cw8_df.empty else None
             except Exception:
                 cw8_close = None
-
-            # Compute daily sector means for StatArb
-            try:
-                import yaml
-                from pathlib import Path
-                with open(Path("config") / "pea_universe.yaml", "r", encoding="utf-8") as f:
-                    uni = yaml.safe_load(f).get("universe", {})
-                ticker_to_sector = {}
-                for sector, items in uni.items():
-                    for item in items:
-                        ticker_to_sector[item["ticker"]] = sector
-                
-                daily_sector_means = {}
-                sector_rets = {}
-                for t in tickers:
-                    try:
-                        df_t = tsdb.get_historical_prices(t, days=5)
-                        if df_t is not None and len(df_t) >= 2:
-                            c = df_t["Close"].astype(float).values
-                            if c[-2] > 0:
-                                ret = c[-1] / c[-2] - 1.0
-                                sec = ticker_to_sector.get(t, "Unknown")
-                                sector_rets.setdefault(sec, []).append(ret)
-                    except Exception:
-                        pass
-                for sec, rets in sector_rets.items():
-                    daily_sector_means[sec] = sum(rets) / len(rets)
-                logger.info("Computed StatArb sector means for %d sectors.", len(daily_sector_means))
-            except Exception as e:
-                logger.warning("Failed to compute daily sector means: %s", e)
-                ticker_to_sector = {}
-                daily_sector_means = {}
 
             filtered_signals = []
             for sig in raw_signals:
@@ -19228,416 +19059,6 @@ if __name__ == "__main__":
 
 ```
 
-## File: .\new_deep_dive.txt
-
-```text
-@st.cache_data(ttl=900, show_spinner=False)
-def fetch_ticker_info(ticker: str) -> dict:
-    try:
-        import yfinance as yf
-        info = yf.Ticker(ticker).info
-        return info or {}
-    except Exception:
-        return {}
-
-with tab_ticker_deep_dive:
-    st.markdown("## 🔍 Ticker Deep-Dive (Instant Terminal)")
-    
-    # Universal Search & Quick Buttons
-    try:
-        tickers = universe_df["Ticker"].unique().tolist() if "universe_df" in globals() else []
-    except Exception:
-        tickers = []
-        
-    st.markdown("### ⚡ Quick Select")
-    quick_tickers = ["AIR.PA", "MC.PA", "TTE.PA", "SAN.PA", "BNP.PA"]
-    cols_qb = st.columns(len(quick_tickers))
-    for i, qt in enumerate(quick_tickers):
-        with cols_qb[i]:
-            if st.button(qt, use_container_width=True):
-                st.session_state["deep_dive_ticker"] = qt
-                
-    default_index = 0
-    if st.session_state.get("deep_dive_ticker") in tickers:
-        default_index = tickers.index(st.session_state["deep_dive_ticker"])
-        
-    selected_ticker = st.selectbox("Search PEA Universe", options=tickers, index=default_index if tickers else None)
-    if selected_ticker:
-        st.session_state["deep_dive_ticker"] = selected_ticker
-        
-        with st.spinner("⚡ Fetching Quant Data..."):
-            # 1. Header & Corporate Profile
-            try:
-                info = fetch_ticker_info(selected_ticker)
-                name = info.get("longName", selected_ticker)
-                sector = info.get("sector", "Unknown Sector")
-                industry = info.get("industry", "Unknown Industry")
-                country = info.get("country", "")
-                mcap = info.get("marketCap", 0)
-                summary = info.get("longBusinessSummary", "No business summary available.")
-                
-                st.markdown(f"## {name} ({selected_ticker})")
-                st.markdown(f"**{sector} | {industry} | {country} | MCap: {mcap:,.0f}**")
-                st.caption(summary[:300] + "..." if len(summary) > 300 else summary)
-                
-                c1, c2, c3, c4, c5 = st.columns(5)
-                with c1:
-                    metric_box("P/E", f"{info.get('forwardPE', info.get('trailingPE', 'N/A'))}")
-                with c2:
-                    metric_box("P/B", f"{info.get('priceToBook', 'N/A')}")
-                with c3:
-                    yld = info.get("dividendYield")
-                    metric_box("Div Yield", f"{yld*100:.2f}%" if yld else "N/A")
-                with c4:
-                    metric_box("EV/EBITDA", f"{info.get('enterpriseToEbitda', 'N/A')}")
-                with c5:
-                    h52 = info.get("fiftyTwoWeekHigh", 0)
-                    l52 = info.get("fiftyTwoWeekLow", 0)
-                    metric_box("52W H/L", f"{h52:.1f} / {l52:.1f}")
-                    
-            except Exception as e:
-                st.caption(f"Profile unavailable: {e}")
-                
-            st.markdown("---")
-            
-            # 2. Interactive Price History & Technical Radar
-            col_chart, col_radar = st.columns([0.7, 0.3])
-            with col_chart:
-                st.markdown("#### 📈 Price Action & Technicals (1Y)")
-                try:
-                    import plotly.graph_objects as go
-                    import pandas as pd
-                    import numpy as np
-                    
-                    hist = _db_hist(selected_ticker, 252)
-                    if hist is not None and not hist.empty:
-                        hist["SMA50"] = hist["Close"].rolling(50).mean()
-                        hist["SMA200"] = hist["Close"].rolling(200).mean()
-                        delta = hist["Close"].diff()
-                        gain = (delta.where(delta > 0, 0)).rolling(14).mean()
-                        loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
-                        rs = gain / loss
-                        hist["RSI"] = 100 - (100 / (1 + rs))
-                        
-                        fig = go.Figure(data=[go.Candlestick(
-                            x=hist.index,
-                            open=hist['Open'],
-                            high=hist['High'],
-                            low=hist['Low'],
-                            close=hist['Close'],
-                            name='Price'
-                        )])
-                        fig.add_trace(go.Scatter(x=hist.index, y=hist['SMA50'], mode='lines', name='SMA50', line=dict(color='cyan', width=1)))
-                        fig.add_trace(go.Scatter(x=hist.index, y=hist['SMA200'], mode='lines', name='SMA200', line=dict(color='orange', width=1)))
-                        
-                        fig.update_layout(template="plotly_dark", margin=dict(t=10, b=10, l=10, r=10), height=350, xaxis_rangeslider_visible=False)
-                        st.plotly_chart(fig, use_container_width=True)
-                        
-                        rsi_last = hist["RSI"].iloc[-1]
-                        st.caption(f"RSI(14): {rsi_last:.1f} | SMA50: {hist['SMA50'].iloc[-1]:.1f} | SMA200: {hist['SMA200'].iloc[-1]:.1f}")
-                    else:
-                        st.warning("Historical data unavailable.")
-                except Exception as e:
-                    st.caption(f"Chart unavailable: {e}")
-                    
-            with col_radar:
-                st.markdown("#### 🎯 Quant Radar")
-                try:
-                    fingerprint = get_strategy_fingerprint(selected_ticker)
-                    if fingerprint:
-                        render_strategy_radar(fingerprint, selected_ticker)
-                    else:
-                        st.caption("Radar data unavailable.")
-                except Exception as e:
-                    st.caption(f"Radar unavailable: {e}")
-                    
-            st.markdown("---")
-            
-            # 3. AI Synthesis & Multi-Scenario Future Theories
-            st.markdown("#### 🧠 AI Synthesis & Future Scenarios")
-            try:
-                from technical_scorer import SignalGenerator
-                from ml_feature_store import build_ml_feature_row
-                from ml_trainer import predict_probability_with_shap
-                from market_regime import MarketRegimeClassifier
-                import numpy as np
-                
-                regime_obj = MarketRegimeClassifier().get_regime()
-                feat_row = build_ml_feature_row(selected_ticker, close=float(hist["Close"].iloc[-1]) if 'hist' in locals() and not hist.empty else 0, reason="", pdb=None, offline_mode=False)
-                prob, shap_vals, interval = predict_probability_with_shap(feat_row, horizon="tactical", regime=regime_obj)
-                
-                st.info("Algorithm dynamically assessing RSI, Momentum, Volatility, and XGBoost regime probabilities...")
-                
-                c_bull, c_base, c_bear = st.columns(3)
-                
-                with c_bull:
-                    st.markdown(f"<div style='padding:15px; background:#0A1F0A; border-top:4px solid {_NEON}; border-radius:5px; height: 180px;'>"
-                                f"<h4 style='color:{_NEON};'>🐂 Bull Thesis</h4>"
-                                "<p style='font-size:13px; color:#CCC;'>Upside scenario driven by positive momentum, fundamental undervaluation, or strong institutional buying.</p>"
-                                "</div>", unsafe_allow_html=True)
-                                
-                with c_base:
-                    vol20 = hist["Close"].pct_change().rolling(20).std().iloc[-1] * np.sqrt(252) if 'hist' in locals() and not hist.empty else 0
-                    st.markdown(f"<div style='padding:15px; background:#111; border-top:4px solid {_CYAN}; border-radius:5px; height: 180px;'>"
-                                f"<h4 style='color:{_CYAN};'>⚖️ Quant Base</h4>"
-                                f"<p style='font-size:13px; color:#CCC;'>ML Tactical Confidence: <b>{(prob or 0)*100:.1f}%</b><br>Historical Vol (20D ann): <b>{vol20*100:.1f}%</b><br>Expected 30D Range: ±{vol20/np.sqrt(12)*100:.1f}%</p>"
-                                "</div>", unsafe_allow_html=True)
-                                
-                with c_bear:
-                    st.markdown(f"<div style='padding:15px; background:#2A0A0A; border-top:4px solid {_RED}; border-radius:5px; height: 180px;'>"
-                                f"<h4 style='color:{_RED};'>🐻 Bear Thesis</h4>"
-                                "<p style='font-size:13px; color:#CCC;'>Downside scenario highlighting macro pressures, technical resistance, or deteriorating sentiment.</p>"
-                                "</div>", unsafe_allow_html=True)
-            except Exception as e:
-                st.caption(f"AI Synthesis unavailable: {e}")
-                
-            st.markdown("---")
-            
-            # 4. News & Insider Flow
-            col_news, col_insider = st.columns(2)
-            
-            with col_news:
-                st.markdown("#### 📰 Ticker News & Sentiment")
-                try:
-                    import sqlite3
-                    import pandas as pd
-                    conn = sqlite3.connect("data/portfolio.db")
-                    try:
-                        n_query = "SELECT published_at, title, url, sentiment_score, source FROM news_master WHERE ticker = ? ORDER BY published_at DESC LIMIT 10"
-                        n_df = pd.read_sql(n_query, conn, params=(selected_ticker,))
-                    except sqlite3.OperationalError:
-                        try:
-                            n_query = "SELECT published_at, title, url, sentiment_score, source FROM news_history WHERE ticker = ? ORDER BY published_at DESC LIMIT 10"
-                            n_df = pd.read_sql(n_query, conn, params=(selected_ticker,))
-                        except sqlite3.OperationalError:
-                            n_df = pd.DataFrame()
-                    conn.close()
-                    
-                    if not n_df.empty:
-                        agg_score = n_df['sentiment_score'].astype(float).mean()
-                        agg_color = _NEON if agg_score > 0 else (_RED if agg_score < 0 else _MUTED)
-                        st.markdown(f"**Aggregate Sentiment (30D):** <span style='color:{agg_color}; font-weight:bold;'>{agg_score:+.2f}</span>", unsafe_allow_html=True)
-                        
-                        with st.container(height=300):
-                            for _, r in n_df.iterrows():
-                                score = float(r["sentiment_score"] or 0)
-                                if score > 0.2:
-                                    bc, bt = _NEON, "BULL"
-                                elif score < -0.2:
-                                    bc, bt = _RED, "BEAR"
-                                else:
-                                    bc, bt = _MUTED, "NEUT"
-                                    
-                                date = str(r["published_at"])[:10]
-                                html = f"""
-                                <div style="margin-bottom:8px; padding-bottom:8px; border-bottom:1px solid #333;">
-                                    <span style="color:{bc}; font-size:10px; border:1px solid {bc}; padding:1px 4px; border-radius:3px;">{bt}</span>
-                                    <span style="color:#888; font-size:12px;"> {date} | {r['source']}</span><br>
-                                    <a href="{r['url']}" target="_blank" style="color:#DDD; text-decoration:none; font-size:13px;">{r['title']}</a>
-                                </div>
-                                """
-                                st.markdown(html, unsafe_allow_html=True)
-                    else:
-                        st.info("No recent news found for this ticker.")
-                except Exception as e:
-                    st.caption(f"News unavailable: {e}")
-                    
-            with col_insider:
-                st.markdown("#### 🏛️ AMF Insider Flow")
-                try:
-                    insider_df = get_insider_data(selected_ticker)
-                    if insider_df is not None and not insider_df.empty:
-                        summary = summarize_insider_activity(insider_df)
-                        st.markdown(f"**Activity Summary:** {summary.get('text', 'N/A')}")
-                        st.dataframe(insider_df, use_container_width=True, hide_index=True)
-                    else:
-                        st.info("No recent AMF filings for this ticker.")
-                except Exception as e:
-                    st.caption(f"Insider flow unavailable: {e}")
-                    
-    else:
-        st.info("Select a ticker from the dropdown above or use Quick Select to view details.")
-
-with tab_quant_engine:
-
-```
-
-## File: .\new_deep_dive_v3.txt
-
-```text
-@st.cache_data(ttl=86400, show_spinner=False)
-def fetch_ticker_info(ticker: str) -> dict:
-    try:
-        import yfinance as yf
-        info = yf.Ticker(ticker).info
-        return info or {}
-    except Exception:
-        return {}
-        
-@st.cache_data(ttl=3600, show_spinner=False)
-def fetch_ticker_history(ticker: str) -> pd.DataFrame:
-    try:
-        hist = _db_hist(ticker, 252)
-        if hist is not None and not hist.empty:
-            return hist
-    except Exception:
-        pass
-    return pd.DataFrame()
-
-with tab_ticker_deep_dive:
-    st.markdown("## 🔍 Ticker Deep-Dive (Instant Terminal)")
-    
-    # 1. Instant Search & Smart Select
-    default_top_40 = [
-        "MC.PA", "AIR.PA", "TTE.PA", "SAN.PA", "ASML.AS", 
-        "OR.PA", "RMS.PA", "AI.PA", "SU.PA", "BNP.PA",
-        "CS.PA", "DG.PA", "SAF.PA", "EL.PA", "LR.PA",
-        "CAP.PA", "ACA.PA", "ORA.PA", "SGO.PA", "ENGI.PA",
-        "RI.PA", "ML.PA", "BN.PA", "VIE.PA", "HO.PA",
-        "CA.PA", "EN.PA", "PUB.PA", "GLE.PA", "STM.PA",
-        "TEP.PA", "KER.PA", "ALV.DE", "SAP.DE", "SIE.DE",
-        "IBE.MC", "ITX.MC", "ENEL.MI", "ISP.MI", "ABI.BR"
-    ]
-    try:
-        tickers = universe_df["Ticker"].unique().tolist() if "universe_df" in globals() else default_top_40
-        if "universe_df" in globals():
-            tickers = [t for t in default_top_40 if t in tickers] + [t for t in tickers if t not in default_top_40]
-    except Exception:
-        tickers = default_top_40
-        
-    selected_ticker = st.selectbox("Search PEA Universe (Top 40 Predefined)", options=tickers, index=0 if tickers else None)
-    if selected_ticker:
-        
-        with st.spinner("⚡ Fetching Quant Data..."):
-            # 2. The Tear-Sheet Header (Origin & Description)
-            try:
-                info = fetch_ticker_info(selected_ticker)
-                name = info.get("longName", selected_ticker)
-                sector = info.get("sector", "Unknown Sector")
-                industry = info.get("industry", "Unknown Industry")
-                country = info.get("country", "Unknown Country")
-                summary = info.get("longBusinessSummary", "No business summary available.")
-                
-                col_info_left, col_info_right = st.columns([0.4, 0.6])
-                with col_info_left:
-                    st.markdown(f"### {name}")
-                    st.markdown(f"**🌍 Origin:** {country}")
-                    st.markdown(f"**🏭 Sector:** {sector}")
-                    st.markdown(f"**⚙️ Industry:** {industry}")
-                with col_info_right:
-                    trunc_summary = summary[:400] + "..." if len(summary) > 400 else summary
-                    st.markdown(f"**📖 Business Summary:**<br>_{trunc_summary}_", unsafe_allow_html=True)
-                    
-                st.markdown("---")
-            except Exception as e:
-                st.warning(f"Profile unavailable: {e}")
-            
-            # 3. Instant Price History & Technicals
-            st.markdown("#### 📈 Price Action & Technicals (1Y)")
-            try:
-                import plotly.graph_objects as go
-                import pandas as pd
-                import numpy as np
-                
-                hist = fetch_ticker_history(selected_ticker)
-                if hist is not None and not hist.empty:
-                    hist["SMA50"] = hist["Close"].rolling(50).mean()
-                    hist["SMA200"] = hist["Close"].rolling(200).mean()
-                    
-                    fig = go.Figure(data=[go.Candlestick(
-                        x=hist.index,
-                        open=hist['Open'],
-                        high=hist['High'],
-                        low=hist['Low'],
-                        close=hist['Close'],
-                        name='Price'
-                    )])
-                    fig.add_trace(go.Scatter(x=hist.index, y=hist['SMA50'], mode='lines', name='SMA50', line=dict(color='cyan', width=1)))
-                    fig.add_trace(go.Scatter(x=hist.index, y=hist['SMA200'], mode='lines', name='SMA200', line=dict(color='orange', width=1)))
-                    
-                    fig.update_layout(template="plotly_dark", margin=dict(t=10, b=10, l=10, r=10), height=400, xaxis_rangeslider_visible=False)
-                    st.plotly_chart(fig, use_container_width=True)
-                else:
-                    st.warning("Historical data unavailable.")
-            except Exception as e:
-                st.warning(f"Chart unavailable: {e}")
-                
-            st.markdown("---")
-            
-            col_scen, col_news = st.columns([0.6, 0.4])
-            
-            # 5. AI Synthesis & Multi-Scenario Theories
-            with col_scen:
-                st.markdown("#### 🧠 AI Projection & Scenarios")
-                try:
-                    pe_ratio = info.get('forwardPE', info.get('trailingPE', 15)) if 'info' in locals() else 15
-                    pe_str = f"undervalued P/E ({pe_ratio:.1f})" if isinstance(pe_ratio, (int, float)) and pe_ratio < 15 else f"strong fundamentals"
-                    
-                    st.success(f"**🐂 Bull Thesis:** Upside scenario driven by recent positive momentum, potential institutional buying, and {pe_str}. Technicals suggest potential for upward breakout if macro conditions remain favorable.")
-                    
-                    st.error(f"**🐻 Bear Thesis:** Downside risk elevated by technical resistance levels and broader market volatility (VIX). Negative news sentiment or macroeconomic pressures could trigger a retracement to the SMA200 support.")
-                    
-                    from market_regime import MarketRegimeClassifier
-                    try:
-                        regime_obj = MarketRegimeClassifier().get_regime()
-                        r_name = regime_obj.get("name", "Unknown") if isinstance(regime_obj, dict) else "Unknown"
-                    except:
-                        r_name = "Unknown"
-                        
-                    st.info(f"**⚖️ Quant Base:** The XGBoost model's current stance evaluates this ticker under the active **{r_name}** regime, adjusting expected returns based on rolling historical volatility and mean-reversion metrics.")
-                except Exception as e:
-                    st.warning(f"AI Synthesis unavailable: {e}")
-                    
-            # 4. Targeted News & Sentiment Feed
-            with col_news:
-                st.markdown("#### 📰 Targeted News & Sentiment Feed")
-                try:
-                    import sqlite3
-                    import pandas as pd
-                    conn = sqlite3.connect("data/portfolio.db")
-                    try:
-                        n_query = "SELECT published_at, title, url, sentiment_score, source FROM news_master WHERE ticker = ? ORDER BY published_at DESC LIMIT 5"
-                        n_df = pd.read_sql(n_query, conn, params=(selected_ticker,))
-                    except sqlite3.OperationalError:
-                        try:
-                            n_query = "SELECT published_at, title, url, sentiment_score, source FROM news_history WHERE ticker = ? ORDER BY published_at DESC LIMIT 5"
-                            n_df = pd.read_sql(n_query, conn, params=(selected_ticker,))
-                        except sqlite3.OperationalError:
-                            n_df = pd.DataFrame()
-                    conn.close()
-                    
-                    if not n_df.empty:
-                        with st.container(height=350):
-                            for _, r in n_df.iterrows():
-                                score = float(r["sentiment_score"] or 0)
-                                if score > 0.2:
-                                    bc, bt = _NEON, "BULLISH"
-                                elif score < -0.2:
-                                    bc, bt = _RED, "BEARISH"
-                                else:
-                                    bc, bt = _MUTED, "NEUTRAL"
-                                    
-                                date = str(r["published_at"])[:10]
-                                html = f"""
-                                <div style="margin-bottom:10px; padding-bottom:10px; border-bottom:1px solid #333;">
-                                    <span style="color:#888; font-size:12px;">🗓️ {date}</span> 
-                                    <span style="color:{bc}; font-size:11px; font-weight:bold; border:1px solid {bc}; padding:2px 6px; border-radius:4px; margin-left:8px;">{bt}</span><br>
-                                    <a href="{r['url']}" target="_blank" style="color:#DDD; text-decoration:none; font-size:14px; display:inline-block; margin-top:4px;">{r['title']}</a>
-                                </div>
-                                """
-                                st.markdown(html, unsafe_allow_html=True)
-                    else:
-                        st.info("No recent news found for this ticker.")
-                except Exception as e:
-                    st.warning(f"News feed unavailable: {e}")
-                    
-    else:
-        st.info("Select a ticker from the dropdown above to view details.")
-
-with tab_quant_engine:
-
-```
-
 ## File: .\requirements.txt
 
 ```text
@@ -20110,122 +19531,6 @@ print("Applied sub-tabs!")
 
 ```
 
-## File: .\scratch_extract.py
-
-```python
-import ast
-import astor
-
-with open('c:/Users/PolluxGronier/Downloads/pea_sniper_terminal/05_interfaces/terminal_dashboard.py', 'r', encoding='utf-8') as f:
-    source = f.read()
-
-tree = ast.parse(source)
-funcs = ['get_fundamental_metrics', 'get_deep_news_synthesis', '_fetch_news_from_apis', '_french_dossier_summary', 'get_ticker_dossier']
-
-extracted = []
-for node in tree.body:
-    if isinstance(node, ast.FunctionDef) and node.name in funcs:
-        node.decorator_list = []
-        extracted.append(astor.to_source(node))
-
-header = """\"\"\"Profile builder logic extracted from dashboard for Night Run.\"\"\"
-import sys
-import logging
-import json
-from pathlib import Path
-from datetime import datetime, timezone
-
-_ROOT = Path(__file__).resolve().parent.parent
-
-if str(_ROOT / "01_memory_core") not in sys.path:
-    sys.path.insert(0, str(_ROOT / "01_memory_core"))
-from sqlite_portfolio import PortfolioDB, get_portfolio_db
-from duckdb_manager import get_ts_db
-
-if str(_ROOT / "04_orchestrator_ai") not in sys.path:
-    sys.path.insert(0, str(_ROOT / "04_orchestrator_ai"))
-from llm_explainer import NarrativeExplainer
-
-import yfinance as yf
-_CORE_TICKER = "CW8.PA"
-
-def short_name(ticker: str) -> str:
-    return ticker.split(".")[0]
-
-def format_name(ticker: str) -> str:
-    return ticker
-
-def get_valuation_metrics(ticker: str) -> dict:
-    return {}
-
-def build_and_save_ticker_profile(ticker: str, include_llm: bool = False) -> dict:
-    db = get_portfolio_db()
-    dossier_data = get_ticker_dossier(ticker)
-    fmeta = get_fundamental_metrics(ticker)
-    ts_db = get_ts_db()
-    ohlcv_df = ts_db.get_historical_prices(ticker, days=30)
-    if ohlcv_df is not None and not ohlcv_df.empty:
-        ohlcv = json.loads(ohlcv_df.to_json(orient='records', date_format='iso'))
-    else:
-        ohlcv = []
-        
-    news_items = _fetch_news_from_apis(ticker, limit=12)
-    headlines = tuple(str(n.get("title") or "").strip() for n in news_items if str(n.get("title") or "").strip())
-    
-    if include_llm:
-        try:
-            synth = get_deep_news_synthesis(ticker, headlines[:15])
-        except Exception as e:
-            synth = f"Erreur Synthèse: {e}"
-    else:
-        synth = "Synthèse non générée. Cliquez sur 'Générer Synthèse IA' pour l'analyser."
-        
-    new_prof = {
-        "ticker": ticker,
-        "dossier": dossier_data,
-        "fundamentals": fmeta,
-        "ohlcv": ohlcv,
-        "synthesis": synth,
-        "news_count": len(headlines)
-    }
-    db.upsert_ticker_profile(ticker, new_prof)
-    return new_prof
-
-"""
-
-with open('c:/Users/PolluxGronier/Downloads/pea_sniper_terminal/01_memory_core/profile_builder.py', 'w', encoding='utf-8') as f:
-    f.write(header + '\n'.join(extracted))
-
-```
-
-## File: .\scratch_regex.py
-
-```python
-import re
-
-with open('05_interfaces/terminal_dashboard.py', 'r', encoding='utf-8') as f:
-    content = f.read()
-
-# Replace get_fundamental_metrics
-content = re.sub(r'(@st\.cache_data[^\n]*\n)*def get_fundamental_metrics.*?return \{.*?\n    \}\n', '', content, flags=re.DOTALL)
-
-# Replace get_deep_news_synthesis
-content = re.sub(r'(@st\.cache_data[^\n]*\n)*def get_deep_news_synthesis.*?return f\"Erreur Synthèse: \{exc\}\"\n', '', content, flags=re.DOTALL)
-
-# Replace _fetch_news_from_apis
-content = re.sub(r'(@st\.cache_data[^\n]*\n)*def _fetch_news_from_apis.*?return collected\[:limit\]\n', '', content, flags=re.DOTALL)
-
-# Replace _french_dossier_summary
-content = re.sub(r'def _french_dossier_summary.*?return text\[:700\]\n', '', content, flags=re.DOTALL)
-
-# Replace get_ticker_dossier
-content = re.sub(r'def get_ticker_dossier.*?return out\n', '', content, flags=re.DOTALL)
-
-with open('05_interfaces/terminal_dashboard.py', 'w', encoding='utf-8') as f:
-    f.write(content)
-
-```
-
 ## File: .\seed_account.py
 
 ```python
@@ -20358,24 +19663,6 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-```
-
-## File: .\test_find.py
-
-```python
-﻿import codecs
-
-with codecs.open('05_interfaces/terminal_dashboard.py', 'r', encoding='utf-8') as f:
-    text = f.read()
-
-news_start = text.find('    # 2. Global News Terminal')
-news_end = text.find('    st.markdown("---")\r\n    st.markdown("### 🚀 Top Opportunities')
-print('News Start:', news_start, 'News End:', news_end)
-
-dd_start = text.find('@st.cache_data(ttl=900, show_spinner=False)\r\ndef fetch_ticker_info')
-dd_end = text.find('with tab_quant_engine:')
-print('DD Start:', dd_start, 'DD End:', dd_end)
 
 ```
 

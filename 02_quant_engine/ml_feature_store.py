@@ -218,16 +218,18 @@ def build_ml_feature_row(
     ecb_euribor = macro.get_ecb_euribor() if not offline_mode else 0.0
     threshold_cross = macro.get_threshold_crossings(ticker) if not offline_mode else 0
     gex_proxy = macro.get_gamma_exposure(ticker) if not offline_mode else 0.0
-    from quantitative_math import frac_diff_ffd
     
-    # Fractional Differentiation feature (d=0.4)
-    # Computed dynamically if we have enough history.
-    frac_val = np.nan
+    # 20-day Z-score of returns
+    zscore_val = np.nan
     if len(series) >= 20:
-        frac_series = frac_diff_ffd(series, d=0.4)
-        if not frac_series.empty and idx >= 0:
-            frac_val = float(frac_series.iloc[idx])
-            
+        rets = series.pct_change().dropna()
+        if len(rets) >= 20:
+            roll_mean = rets.rolling(20).mean()
+            roll_std = rets.rolling(20).std()
+            z_series = (rets - roll_mean) / roll_std.replace(0, np.nan)
+            if not z_series.empty and idx >= 0:
+                zscore_val = float(z_series.iloc[idx])
+                
     # Cross-Asset Spillover features
     spillover = {}
     if exog_closes:
@@ -309,7 +311,7 @@ def build_ml_feature_row(
         "amf_threshold_crossing": threshold_cross,
         "ecb_euribor_3m": ecb_euribor,
         "gex_proxy": gex_proxy,
-        "frac_diff_04": frac_val,
+        "zscore_20d": zscore_val,
         "sp500_ret1d": spillover.get("^GSPC_ret1d", np.nan),
         "ndx_ret1d": spillover.get("^IXIC_ret1d", np.nan),
         "eurusd_ret1d": spillover.get("EURUSD=X_ret1d", np.nan),
@@ -398,6 +400,7 @@ def build_training_dataset(
         pl.col("Close").rolling_std(window_size=50, ddof=0).over("Ticker").alias("std50"),
         _pl_rsi(pl.col("Close"), 14).over("Ticker").alias("rsi14"),
         (pl.col("Close").pct_change().over("Ticker") * np.sqrt(252.0)).rolling_std(window_size=20, ddof=0).over("Ticker").alias("vol_20d_ann"),
+        ((pl.col("Close").pct_change().over("Ticker")) - (pl.col("Close").pct_change().over("Ticker")).rolling_mean(20).over("Ticker")) / (pl.col("Close").pct_change().over("Ticker")).rolling_std(20, ddof=0).over("Ticker").alias("zscore_20d"),
         (pl.col("Close").shift(-30).over("Ticker") / pl.col("Close") - 1.0).alias("target_tactical_30d"),
         (pl.col("Close").shift(-126).over("Ticker") / pl.col("Close") - 1.0).alias("target_structural_126d"),
         pl.col("Close").pct_change().over("Ticker").alias("ret1d")
@@ -473,11 +476,8 @@ def build_training_dataset(
     df["ev_to_ebitda"] = df["ticker"].map(lambda t: fund_cache[t][2])
     df["news_sentiment"] = df["ticker"].map(lambda t: fund_cache[t][3])
     
-    # Frac Diff FFD (expensive, applied per ticker)
-    sys.path.insert(0, str(_ROOT / "02_quant_engine"))
-    from quantitative_math import frac_diff_ffd
-    df["frac_diff_04"] = df.groupby("ticker")["Close"].transform(lambda x: frac_diff_ffd(x, d=0.4))
-
+    # Removed Pandas FFD calculation as requested
+    
     # StatArb Sector Relative Return
     try:
         import yaml

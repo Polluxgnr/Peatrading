@@ -23,8 +23,8 @@ Manages data persistence and state.
 Performs feature engineering and generates trading signals.
 - `ml_feature_store.py`: Extracts DuckDB data and engineers target variables (30d, 126d forward returns), rolling statistics, and StatArb Sector Relative Strength metrics. 
 - `ml_trainer.py`: Uses XGBoost for Meta-Labeling signals based on quantitative features. Employs `IsolationForest` for anomaly detection (fitted exclusively on training sets to prevent leakage).
-- `technical_scorer.py`: Generates the baseline conviction score (0-100) using a multi-model ensemble (Mean Reversion, Trend/Momentum, Breakout, Context). Includes CUSUM detection (`detect_cusum_downward_break`) to veto structural breakdowns.
-- `quantitative_math.py`: Implements advanced analytics including Fractional Differentiation, Cornish-Fisher VaR (Extreme Value Theory), and (soon) Ledoit-Wolf Shrinkage.
+  - `technical_scorer.py`: Generates the baseline conviction score (0-100) using a multi-model ensemble (Mean Reversion, Trend/Momentum, Breakout, Context). Includes CUSUM detection (`detect_cusum_downward_break`) and IsolationForest anomaly detection to veto structural breakdowns.
+- `quantitative_math.py`: Implements advanced analytics including Cornish-Fisher VaR (Extreme Value Theory) and Ledoit-Wolf Shrinkage.
 
 ### Layer 03: Risk & Portfolio (`03_risk_portfolio/`)
 Enforces capital constraints and exposure limits.

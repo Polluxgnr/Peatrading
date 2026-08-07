@@ -572,7 +572,7 @@ class SignalGenerator:
         ml_interval_str = ""
         try:
             from ml_feature_store import build_ml_feature_row  # noqa: WPS433
-            from ml_trainer import predict_probability_with_shap  # noqa: WPS433
+            from ml_trainer import predict_probability_with_shap, predict_anomaly  # noqa: WPS433
             
             sector = self.portfolio_db.get_sector(ticker) if hasattr(self.portfolio_db, "get_sector") else "Unknown"
             sec_mean = daily_sector_means.get(sector, 0.0) if daily_sector_means else 0.0
@@ -595,8 +595,16 @@ class SignalGenerator:
                     factors.append(f"ML+5 prob={ml_prob:.2f}{ml_interval_str}")
                 elif ml_prob <= 0.35:
                     factors.append(f"ML-5 prob={ml_prob:.2f}{ml_interval_str}")
+                    
+            if predict_anomaly(feat_row):
+                factors.append("⚠️ ANOMALY VETO (Isolation Forest)")
+                # We will subtract 20.0 from total later, so we just set a flag
+                anomaly_veto = True
+            else:
+                anomaly_veto = False
         except Exception as exc:  # noqa: BLE001
             logger.debug("ML modifier skipped for %s: %s", ticker, exc)
+            anomaly_veto = False
 
         # Polymarket removed from per-ticker scoring (Phase 42): macro-only.
         poly_component = 50.0
@@ -639,6 +647,9 @@ class SignalGenerator:
             total = heuristic_total
             
         total = float(max(0.0, min(100.0, total)))
+        
+        if anomaly_veto:
+            total -= 20.0
 
         # Phase 55: Boost Achats d'Insidés & PEA-PME
         pb = fundamentals.get("pb_ratio")

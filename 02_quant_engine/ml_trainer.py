@@ -30,7 +30,7 @@ FEATURE_COLS = [
     "rsi14",
     "zscore_50",
     "vol_20d_ann",
-    "frac_diff_04",
+    "zscore_20d",
     "sp500_ret1d",
     "ndx_ret1d",
     "eurusd_ret1d",
