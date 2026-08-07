@@ -22,6 +22,8 @@ from typing import Callable
 
 import pandas as pd
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 import yfinance as yf
 
 # Optional French scrapers (isolated; failures must never crash the daemon).
@@ -107,11 +109,39 @@ class MacroAlphaSensor:
         """
         self.neutral_vix = float(neutral_vix)
 
+    def _get_stealth_session(self) -> requests.Session:
+        """Create a stealthy requests session to bypass rate limits."""
+        session = requests.Session()
+        session.headers.update({
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+            "Accept-Language": "en-US,en;q=0.9,fr;q=0.8",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Sec-Ch-Ua": '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+            "Sec-Ch-Ua-Mobile": "?0",
+            "Sec-Ch-Ua-Platform": '"Windows"',
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "none",
+            "Sec-Fetch-User": "?1",
+            "Upgrade-Insecure-Requests": "1"
+        })
+        retry = Retry(
+            total=3,
+            backoff_factor=1,
+            status_forcelist=[429, 500, 502, 503, 504],
+            allowed_methods=["HEAD", "GET", "OPTIONS"]
+        )
+        adapter = HTTPAdapter(max_retries=retry)
+        session.mount("http://", adapter)
+        session.mount("https://", adapter)
+        return session
+
     # ---------------------------------------------------------------- VIX ----
     @_retry(attempts=2, base_delay=1.0)
     def _download_vix(self, ticker: str) -> float:
         """Return the latest close for a volatility ticker (raises to retry)."""
-        data = yf.Ticker(ticker).history(period="5d", interval="1d")
+        data = yf.Ticker(ticker, session=self._get_stealth_session()).history(period="5d", interval="1d")
         if data is None or data.empty or "Close" not in data:
             raise ValueError(f"empty VIX frame for {ticker}")
         value = float(data["Close"].dropna().iloc[-1])

@@ -83,28 +83,40 @@ class MarketDataFetcher:
             "%Y-%m-%d"
         )
         logger.info(
-            "Downloading OHLCV for %d ticker(s) since %s.",
+            "Downloading OHLCV for %d ticker(s) since %s (SNIPER MODE).",
             len(tickers),
             start_date,
         )
 
-        yf_df = None
-        try:
-            raw = yf.download(
-                tickers,
-                start=start_date,
-                progress=False,
-                auto_adjust=True,
-                group_by="column",
-                threads=False,
-                session=self._get_stealth_session(),
-            )
-            if raw is not None and not raw.empty:
-                yf_df = self._flatten(raw, tickers)
-        except Exception:  # noqa: BLE001 - never let an API error crash caller.
-            logger.exception("yf.download failed for tickers: %s", tickers)
+        frames = []
+        stealth_session = self._get_stealth_session()
+        
+        for ticker in tickers:
+            try:
+                t_obj = yf.Ticker(ticker, session=stealth_session)
+                df_ticker = t_obj.history(start=start_date, auto_adjust=True)
+                
+                if df_ticker is not None and not df_ticker.empty:
+                    df_ticker = df_ticker.reset_index()
+                    if "Date" in df_ticker.columns and pd.api.types.is_datetime64tz_dtype(df_ticker["Date"]):
+                        df_ticker["Date"] = df_ticker["Date"].dt.tz_localize(None)
+                    
+                    df_ticker["Ticker"] = ticker
+                    
+                    missing = [c for c in _FLAT_COLUMNS if c not in df_ticker.columns]
+                    for m in missing:
+                        df_ticker[m] = 0.0
+                        
+                    frames.append(df_ticker[_FLAT_COLUMNS])
+                else:
+                    logger.debug("No data for %s", ticker)
+            except Exception as e:
+                logger.warning("Failed fetching %s: %s", ticker, e)
+                
+            time.sleep(random.uniform(1.5, 3.5))
 
-        if yf_df is not None and not yf_df.empty:
+        if frames:
+            yf_df = pd.concat(frames, ignore_index=True)
             return self._clean(yf_df)
             
         return pd.DataFrame(columns=_FLAT_COLUMNS)

@@ -13,8 +13,10 @@ structlog==24.1.0
 # sqlite3 is part of the Python standard library.
 
 # --- Data sensors (Phase 3) ---
-yfinance==0.2.40
+yfinance>=0.2.40
 requests==2.31
+requests_cache
+platformdirs
 beautifulsoup4==4.12
 feedparser==6.0
 
