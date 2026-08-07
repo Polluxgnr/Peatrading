@@ -322,7 +322,8 @@ def render_shap_waterfall(ticker: str, shap_dict: dict) -> go.Figure:
     if not shap_dict:
         return go.Figure()
         
-    sorted_shaps = sorted([(k, v) for k, v in shap_dict.items()], key=lambda x: x[1])
+    filtered_shaps = {k: v for k, v in shap_dict.items() if abs(v) > 1e-9}
+    sorted_shaps = sorted([(k, v) for k, v in filtered_shaps.items()], key=lambda x: x[1])
     
     y_labels = [x[0] for x in sorted_shaps]
     x_vals = [x[1] for x in sorted_shaps]
@@ -3719,8 +3720,11 @@ with tab_market_pulse:
             # OAT vs Bund Spread
             try:
                 spread = MacroAlphaSensor().get_oat_bund_spread()
-                spread_color = _RED if spread > 0.8 else (_NEON if spread < 0.5 else _AMBER)
-                st.markdown(f"<div style='padding:15px; background:#1E1E1E; border-radius:5px; border-left:5px solid {spread_color}'><h4>OAT/Bund Spread</h4><h2 style='color:{spread_color}'>{spread:.2f}%</h2></div>", unsafe_allow_html=True)
+                if spread is not None:
+                    spread_color = _RED if spread > 0.8 else (_NEON if spread < 0.5 else _AMBER)
+                    st.markdown(f"<div style='padding:15px; background:#1E1E1E; border-radius:5px; border-left:5px solid {spread_color}'><h4>OAT/Bund Spread</h4><h2 style='color:{spread_color}'>{spread:.2f}%</h2></div>", unsafe_allow_html=True)
+                else:
+                    st.markdown("<div style='padding:15px; background:#1E1E1E; border-radius:5px; border-left:5px solid #888'><h4>OAT/Bund Spread</h4><h2 style='color:#888'>N/A</h2></div>", unsafe_allow_html=True)
             except Exception:
                 st.metric("OAT/Bund Spread", "N/A")
                 
@@ -4036,34 +4040,41 @@ with tab_quant_engine:
         
         col1, col2 = st.columns(2)
         
-        # 2. Dynamic Ensemble Weights
+        # 2. Dynamic Ensemble Weights -> Model Accuracy Gauge
         with col1:
-            st.markdown("### ⚖️ Dynamic Ensemble Weights")
+            st.markdown("### 🎯 Model Accuracy (Out-of-Sample)")
             try:
-                # Removed from pipeline_config import ML_MODIFIERS to prevent ImportError
-                weights = {"xgboost_tactical_weight": 50, "xgboost_structural_weight": 30, "isolation_forest_penalty": 20, "heuristic_breakout_weight": 10, "heuristic_mean_rev_weight": 10}
-                labels = [
-                    "XGBoost Tactical",
-                    "XGBoost Structural",
-                    "IsolationForest Anomaly",
-                    "Trend Breakout (Heuristic)",
-                    "Mean Reversion (Heuristic)"
-                ]
-                values = [
-                    weights.get("xgboost_tactical_weight", 50),
-                    weights.get("xgboost_structural_weight", 30),
-                    weights.get("isolation_forest_penalty", 20),
-                    weights.get("heuristic_breakout_weight", 10),
-                    weights.get("heuristic_mean_rev_weight", 10)
-                ]
+                model_key = f"tactical_{regime}"
+                acc = 50.0
+                if metrics and model_key in metrics:
+                    acc = float(metrics[model_key].get("accuracy", 0.50)) * 100.0
                 
-                fig = go.Figure(data=[go.Pie(
-                    labels=labels, 
-                    values=values, 
-                    hole=.4,
-                    marker=dict(colors=["#636EFA", "#EF553B", "#00CC96", "#AB63FA", "#FFA15A"])
-                )])
-                fig.update_layout(margin=dict(t=20, b=20, l=20, r=20), height=350, template="plotly_dark", showlegend=False)
+                if acc > 55:
+                    gauge_color = _NEON
+                elif acc > 50:
+                    gauge_color = _AMBER
+                else:
+                    gauge_color = _RED
+                    
+                fig = go.Figure(go.Indicator(
+                    mode = "gauge+number",
+                    value = acc,
+                    number = {'suffix': "%", 'font': {'size': 40}},
+                    domain = {'x': [0, 1], 'y': [0, 1]},
+                    title = {'text': f"{regime} Model", 'font': {'size': 18}},
+                    gauge = {
+                        'axis': {'range': [0, 100], 'tickwidth': 1, 'tickcolor': "darkblue"},
+                        'bar': {'color': gauge_color},
+                        'bgcolor': "black",
+                        'borderwidth': 2,
+                        'bordercolor': "gray",
+                        'steps': [
+                            {'range': [0, 50], 'color': 'rgba(255,0,0,0.2)'},
+                            {'range': [50, 55], 'color': 'rgba(255,165,0,0.2)'},
+                            {'range': [55, 100], 'color': 'rgba(0,255,0,0.2)'}],
+                    }
+                ))
+                fig.update_layout(margin=dict(t=50, b=20, l=20, r=20), height=350, template="plotly_dark")
                 st.plotly_chart(fig, use_container_width=True)
             except Exception as e:
                 st.warning(f"Could not load ensemble weights: {e}")
