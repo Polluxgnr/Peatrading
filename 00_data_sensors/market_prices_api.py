@@ -82,29 +82,16 @@ class MarketDataFetcher:
                 pass
 
             try:
-                import time
-                import pandas as pd
-                chunk_size = 20
-                all_yf_dfs = []
-                for i in range(0, len(remaining_tickers), chunk_size):
-                    chunk = remaining_tickers[i:i + chunk_size]
-                    raw = yf.download(
-                        chunk,
-                        start=start_date,
-                        progress=False,
-                        auto_adjust=True,
-                        group_by="column",
-                        threads=True,
-                    )
-                    if raw is not None and not raw.empty:
-                        flat_chunk = self._flatten(raw, chunk)
-                        all_yf_dfs.append(flat_chunk)
-                    
-                    if i + chunk_size < len(remaining_tickers):
-                        time.sleep(2)
-                
-                if all_yf_dfs:
-                    yf_df = pd.concat(all_yf_dfs, axis=0, ignore_index=True)
+                raw = yf.download(
+                    remaining_tickers,
+                    start=start_date,
+                    progress=False,
+                    auto_adjust=True,
+                    group_by="column",
+                    threads=True,
+                )
+                if raw is not None and not raw.empty:
+                    yf_df = self._flatten(raw, remaining_tickers)
             except Exception:  # noqa: BLE001 - never let an API error crash caller.
                 logger.exception("yf.download failed for tickers: %s", remaining_tickers)
 
@@ -293,86 +280,95 @@ class MarketDataFetcher:
 
     def update_database(
         self, db_manager: Any, tickers: List[str], lookback_days: int = 3650
-    ) -> bool:
-        """Fetch OHLCV and upsert it into a ``TimeSeriesDB`` instance.
+    ) -> Any:
+        """Fetch OHLCV and upsert it into a `TimeSeriesDB` instance.
 
         Args:
-            db_manager: A Phase 2 ``TimeSeriesDB`` (must expose ``upsert_ohlcv``).
+            db_manager: A Phase 2 `TimeSeriesDB` (must expose `upsert_ohlcv`).
             tickers: Ticker symbols to ingest.
             lookback_days: Calendar days of history to request (default 252).
 
         Returns:
-            bool: ``True`` on success, ``False`` if any exception occurred.
+            int: Number of rows upserted on success, `False` if any exception occurred.
         """
         try:
-            # Phase 49: Strict Incremental Ingestion
-            latest_dates = getattr(db_manager, "get_latest_dates", lambda t: {})(tickers)
-            max_gap_days = 0
+            import time
+            total_rows_upserted = 0
+            chunk_size = 20
             now = datetime.now()
             
-            for t in tickers:
-                last_dt_str = latest_dates.get(t)
-                if not last_dt_str:
-                    max_gap_days = max(max_gap_days, lookback_days)
+            for i in range(0, len(tickers), chunk_size):
+                chunk = tickers[i:i + chunk_size]
+                latest_dates = getattr(db_manager, "get_latest_dates", lambda t: {})(chunk)
+                max_gap_days = 0
+                
+                for t in chunk:
+                    last_dt_str = latest_dates.get(t)
+                    if not last_dt_str:
+                        max_gap_days = max(max_gap_days, lookback_days)
+                        continue
+                    try:
+                        last_dt = datetime.strptime(last_dt_str, "%Y-%m-%d")
+                        gap = (now - last_dt).days + 1
+                        max_gap_days = max(max_gap_days, gap)
+                    except ValueError:
+                        max_gap_days = max(max_gap_days, lookback_days)
+                
+                final_lookback = min(max_gap_days, lookback_days)
+                if final_lookback <= 0:
+                    final_lookback = 3  # Always fetch a few days to ensure no missed updates
+                    
+                logger.info("Incremental fetch for chunk %d/%d: requested %d days, optimized to %d days.", 
+                            (i // chunk_size) + 1, (len(tickers) + chunk_size - 1) // chunk_size, lookback_days, final_lookback)
+                
+                df = self.fetch_daily_ohlcv(chunk, lookback_days=final_lookback)
+                if df.empty:
+                    logger.warning("No data fetched for chunk; skipping.")
                     continue
-                try:
-                    last_dt = datetime.strptime(last_dt_str, "%Y-%m-%d")
-                    gap = (now - last_dt).days + 1
-                    max_gap_days = max(max_gap_days, gap)
-                except ValueError:
-                    max_gap_days = max(max_gap_days, lookback_days)
-            
-            final_lookback = min(max_gap_days, lookback_days)
-            if final_lookback <= 0:
-                final_lookback = 3  # Always fetch a few days to ensure no missed updates
-                
-            logger.info("Incremental fetch: requested %d days, optimized to %d days.", lookback_days, final_lookback)
-            
-            df = self.fetch_daily_ohlcv(tickers, lookback_days=final_lookback)
-            if df.empty:
-                logger.warning("No data fetched; nothing to ingest.")
-                return False
 
-            # --- Sanity Outlier Filter (Phase 53+) ---
-            # Drop rows with > +50% or < -40% daily return to prevent yfinance bugs
-            # from corrupting the ML models.
-            df = df.sort_values(["Ticker", "Date"])
-            # Calculate pct_change per ticker
-            df["_pct_chg"] = df.groupby("Ticker")["Close"].pct_change()
-            
-            # Phase 60: Dynamic Tick Anomaly Detection using IsolationForest
-            abnormal_mask = pd.Series(False, index=df.index)
-            if not df["_pct_chg"].isna().all():
-                try:
-                    from sklearn.ensemble import IsolationForest
-                    valid_idx = df["_pct_chg"].dropna().index
-                    if len(valid_idx) > 50:
-                        iso = IsolationForest(contamination=0.005, random_state=42)
-                        preds = iso.fit_predict(df.loc[valid_idx, ["_pct_chg"]])
-                        abnormal_mask.loc[valid_idx] = (preds == -1)
-                    else:
-                        # Fallback if too few rows for IsolationForest
-                        abnormal_mask = (df["_pct_chg"] > 0.50) | (df["_pct_chg"] < -0.40)
-                except Exception as exc:
-                    logger.debug("IsolationForest failed, falling back to static anomaly threshold: %s", exc)
-                    abnormal_mask = (df["_pct_chg"] > 0.50) | (df["_pct_chg"] < -0.40)
-            
-            if abnormal_mask.any():
-                abnormal_tickers = df[abnormal_mask]["Ticker"].unique()
-                logger.warning("Sanity Outlier Filter triggered for: %s. Dropping abnormal rows.", abnormal_tickers.tolist())
-                # Forward fill the previous row's close for these abnormal rows by dropping them
-                # Since duckdb upsert handles missing dates gracefully (or they just won't be inserted)
-                # It's safer to just drop the abnormal rows so they don't get into DB.
-                df = df[~abnormal_mask]
+                # --- Sanity Outlier Filter (Phase 53+) ---
+                # Drop rows with > +50% or < -40% daily return to prevent yfinance bugs
+                # from corrupting the ML models.
+                df = df.sort_values(["Ticker", "Date"])
+                # Calculate pct_change per ticker
+                df["_pct_chg"] = df.groupby("Ticker")["Close"].pct_change()
                 
-            df = df.drop(columns=["_pct_chg"])
+                # Phase 60: Dynamic Tick Anomaly Detection using IsolationForest
+                abnormal_mask = pd.Series(False, index=df.index)
+                if not df["_pct_chg"].isna().all():
+                    try:
+                        from sklearn.ensemble import IsolationForest
+                        valid_idx = df["_pct_chg"].dropna().index
+                        if len(valid_idx) > 50:
+                            iso = IsolationForest(contamination=0.005, random_state=42)
+                            preds = iso.fit_predict(df.loc[valid_idx, ["_pct_chg"]])
+                            abnormal_mask.loc[valid_idx] = (preds == -1)
+                        else:
+                            # Fallback if too few rows for IsolationForest
+                            abnormal_mask = (df["_pct_chg"] > 0.50) | (df["_pct_chg"] < -0.40)
+                    except Exception as exc:
+                        logger.debug("IsolationForest failed, falling back to static anomaly threshold: %s", exc)
+                        abnormal_mask = (df["_pct_chg"] > 0.50) | (df["_pct_chg"] < -0.40)
+                
+                if abnormal_mask.any():
+                    abnormal_tickers = df[abnormal_mask]["Ticker"].unique()
+                    logger.warning("Sanity Outlier Filter triggered for: %s. Dropping abnormal rows.", abnormal_tickers.tolist())
+                    df = df[~abnormal_mask]
+                    
+                df = df.drop(columns=["_pct_chg"])
+                
+                rows = db_manager.upsert_ohlcv(df)
+                total_rows_upserted += rows
+                n_tickers = df["Ticker"].nunique()
+                logger.info(
+                    "Successfully ingested %d rows for %d ticker(s) in chunk.", rows, n_tickers
+                )
+                
+                if i + chunk_size < len(tickers):
+                    time.sleep(3)
             
-            rows = db_manager.upsert_ohlcv(df)
-            n_tickers = df["Ticker"].nunique()
-            logger.info(
-                "Successfully ingested %d rows for %d ticker(s).", rows, n_tickers
-            )
-            return True
+            logger.info("Finished incremental update. Total rows upserted: %d", total_rows_upserted)
+            return total_rows_upserted
         except Exception as exc:  # noqa: BLE001 - ingestion must never crash the daemon.
             logger.exception("Database update failed for tickers: %s", tickers)
             try:
@@ -386,7 +382,6 @@ class MarketDataFetcher:
             except Exception:
                 pass
             return False
-
 
 if __name__ == "__main__":
     logging.basicConfig(
