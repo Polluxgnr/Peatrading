@@ -305,12 +305,46 @@ async def run_pipeline_async() -> None:
             except Exception:
                 cw8_close = None
 
+            # Compute daily sector means for StatArb
+            try:
+                import yaml
+                from pathlib import Path
+                with open(Path("config") / "pea_universe.yaml", "r", encoding="utf-8") as f:
+                    uni = yaml.safe_load(f).get("universe", {})
+                ticker_to_sector = {}
+                for sector, items in uni.items():
+                    for item in items:
+                        ticker_to_sector[item["ticker"]] = sector
+                
+                daily_sector_means = {}
+                sector_rets = {}
+                for t in tickers:
+                    try:
+                        df_t = tsdb.get_historical_prices(t, days=5)
+                        if df_t is not None and len(df_t) >= 2:
+                            c = df_t["Close"].astype(float).values
+                            if c[-2] > 0:
+                                ret = c[-1] / c[-2] - 1.0
+                                sec = ticker_to_sector.get(t, "Unknown")
+                                sector_rets.setdefault(sec, []).append(ret)
+                    except Exception:
+                        pass
+                for sec, rets in sector_rets.items():
+                    daily_sector_means[sec] = sum(rets) / len(rets)
+                logger.info("Computed StatArb sector means for %d sectors.", len(daily_sector_means))
+            except Exception as e:
+                logger.warning("Failed to compute daily sector means: %s", e)
+                ticker_to_sector = {}
+                daily_sector_means = {}
+
             filtered_signals = []
             for sig in raw_signals:
                 try:
                     df = tsdb.get_historical_prices(sig.ticker, days=252)
                     if df is None or df.empty:
                         continue
+                    sec = ticker_to_sector.get(sig.ticker, "Unknown")
+                    mean_ret = daily_sector_means.get(sec, 0.0)
                     feat = build_ml_feature_row(
                         sig.ticker,
                         close=df["Close"].astype(float),
@@ -318,7 +352,8 @@ async def run_pipeline_async() -> None:
                         exog_closes=exog_dfs,
                         reason="live inference",
                         pdb=pdb,
-                        asof_idx=-1
+                        asof_idx=-1,
+                        sector_mean_ret1d=mean_ret
                     )
                     from ml_trainer import predict_probability_with_shap
                     
@@ -327,6 +362,7 @@ async def run_pipeline_async() -> None:
                     if proba is not None and shap_vals is not None:
                         # Set shap vals directly on the signal for later consumption by the UI
                         sig.shap_breakdown = shap_vals
+                        sig.lineage["shap_breakdown"] = shap_vals
                         sig.ml_probability = proba
                         
                         contributions = list(shap_vals.items())

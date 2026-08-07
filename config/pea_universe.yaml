@@ -3,6 +3,19 @@
 # Extra flags: srd=true (liquid SRD), pea_pme=true.
 
 universe:
+  Macro:
+  - ticker: ^FCHI
+    name: CAC 40
+  - ticker: ^GSPC
+    name: S&P 500
+  - ticker: ^IXIC
+    name: NASDAQ
+  - ticker: ^V2TX
+    name: VSTOXX
+  - ticker: EURUSD=X
+    name: EUR/USD
+  - ticker: OAT.PA
+    name: OAT 10Y France
   Basic Materials:
   - ticker: AI.PA
     name: Air Liquide

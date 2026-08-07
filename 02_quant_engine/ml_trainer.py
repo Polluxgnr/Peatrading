@@ -30,22 +30,12 @@ FEATURE_COLS = [
     "rsi14",
     "zscore_50",
     "vol_20d_ann",
-    "insider_net_score",
-    "finnhub_roe",
-    "finnhub_pe",
-    "ev_to_ebitda",
-    "news_sentiment",
-    "earnings_qa_sentiment",
-    "amf_short_interest",
-    "amf_threshold_crossing",
-    "ecb_euribor_3m",
-    "gex_proxy",
     "frac_diff_04",
     "sp500_ret1d",
     "ndx_ret1d",
     "eurusd_ret1d",
     "oat_ret1d",
-    "news_sentiment_3d",
+    "sector_relative_ret1d",
 ]
 TARGET_TACTICAL = "target_tactical_30d"
 TARGET_STRUCTURAL = "target_structural_126d"

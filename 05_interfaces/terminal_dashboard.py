@@ -310,21 +310,14 @@ def _sector_for_ticker(ticker: str) -> str:
     return "UNKNOWN"
 
 
-def render_shap_waterfall(ticker: str, score: float) -> go.Figure:
-    """Mock SHAP waterfall/bar chart for feature attribution."""
+def render_shap_waterfall(ticker: str, shap_dict: dict) -> go.Figure:
+    """SHAP waterfall/bar chart for feature attribution."""
     import plotly.graph_objects as go
-    import random
-
-    features = ["Piotroski F-Score", "Insider Net Score", "RSI 14", "Z-Score 50d", "News Sentiment", "EV/EBITDA", "Analyst Neglect", "Vol 5d/60d"]
-    bias = (score - 50) / 10.0 
     
-    shap_vals = {}
-    for f in features:
-        val = random.uniform(-2.5, 2.5) + (bias * 0.5)
-        if abs(val) > 0.3:
-            shap_vals[f] = val
-            
-    sorted_shaps = sorted([(k, v) for k, v in shap_vals.items()], key=lambda x: x[1])
+    if not shap_dict:
+        return go.Figure()
+        
+    sorted_shaps = sorted([(k, v) for k, v in shap_dict.items()], key=lambda x: x[1])
     
     y_labels = [x[0] for x in sorted_shaps]
     x_vals = [x[1] for x in sorted_shaps]
@@ -457,8 +450,21 @@ def render_pending_trade_cards(pending_df: pd.DataFrame, portfolio_obj) -> None:
             unsafe_allow_html=True,
         )
         
+        import json
+        shap_dict = {}
+        lineage_str = row.get("lineage")
+        if lineage_str:
+            try:
+                if isinstance(lineage_str, dict):
+                    lin_dict = lineage_str
+                else:
+                    lin_dict = json.loads(lineage_str)
+                shap_dict = lin_dict.get("shap_breakdown", {})
+            except Exception:
+                pass
+
         with st.expander(f"🧠 Explicabilité IA (SHAP) pour {ticker}"):
-            st.plotly_chart(render_shap_waterfall(ticker, score), use_container_width=True)
+            st.plotly_chart(render_shap_waterfall(ticker, shap_dict), use_container_width=True)
 
         # Command Center: native Streamlit approve / reject (complements Discord)
         if sig_id:

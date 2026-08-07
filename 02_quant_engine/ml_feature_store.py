@@ -166,6 +166,7 @@ def build_ml_feature_row(
     pdb: Any = None,
     asof_idx: int | None = None,
     offline_mode: bool = False,
+    sector_mean_ret1d: float = 0.0,
 ) -> dict:
     """Engineer one feature row for ``ticker``."""
     series = close.astype(float).dropna() if close is not None else pd.Series(dtype=float)
@@ -285,6 +286,13 @@ def build_ml_feature_row(
         if np.isfinite(fwd_structural):
             label_structural = int(fwd_structural > _TARGET_RETURN * 4.0)
 
+    ticker_ret1d = 0.0
+    if len(series) >= 2 and idx >= 1:
+        base = float(series.iloc[idx - 1])
+        if base > 0:
+            ticker_ret1d = float(series.iloc[idx] / base - 1.0)
+    sector_rel_ret = ticker_ret1d - sector_mean_ret1d
+
     return {
         "asof_date": str(series.index[idx].date()) if hasattr(series.index[idx], 'date') else str(series.index[idx]),
         "ticker": ticker,
@@ -306,6 +314,7 @@ def build_ml_feature_row(
         "ndx_ret1d": spillover.get("^IXIC_ret1d", np.nan),
         "eurusd_ret1d": spillover.get("EURUSD=X_ret1d", np.nan),
         "oat_ret1d": spillover.get("OAT.PA_ret1d", np.nan),
+        "sector_relative_ret1d": sector_rel_ret,
         "target_tactical_30d": label_tactical,
         "target_structural_126d": label_structural,
     }
@@ -348,12 +357,18 @@ def build_training_dataset(
             tickers.append(t)
 
     # 3. Pre-fetch exog for speed
-    try:
-        cw8_hist = tdb.get_historical_prices("CW8.PA", days=3650)
-    except Exception:
-        cw8_hist = pd.DataFrame()
-    cw8_close = cw8_hist["Close"] if not cw8_hist.empty and "Close" in cw8_hist.columns else pd.Series(dtype=float)
-    cw8_ret1d = cw8_close.pct_change(1) if not cw8_close.empty else pd.Series(dtype=float)
+    macro_symbols = ["^GSPC", "^IXIC", "EURUSD=X", "OAT.PA"]
+    macro_returns = {}
+    for sym in macro_symbols:
+        try:
+            h = tdb.get_historical_prices(sym, days=3650)
+            if not h.empty and "Close" in h.columns and "Date" in h.columns:
+                ret1d = h.set_index("Date")["Close"].pct_change(1)
+                macro_returns[sym] = ret1d
+            else:
+                macro_returns[sym] = pd.Series(dtype=float)
+        except Exception:
+            macro_returns[sym] = pd.Series(dtype=float)
 
     logger.info("Building historical ML dataset for %d valid equity tickers (Vectorized)...", len(tickers))
 
@@ -405,15 +420,19 @@ def build_training_dataset(
         df_ind["ecb_euribor_3m"] = 0.0
         df_ind["gex_proxy"] = 0.0
         
-        # Match CW8 return by Date
-        if "Date" in df_ind.columns and not cw8_ret1d.empty:
-            df_ind["sp500_ret1d"] = df_ind["Date"].map(cw8_ret1d).fillna(0.0)
+        # Match Macro return by Date
+        df_ind["ret1d"] = df_ind["Close"].pct_change()
+        if "Date" in df_ind.columns:
+            date_col = df_ind["Date"]
+            df_ind["sp500_ret1d"] = date_col.map(macro_returns["^GSPC"]).fillna(0.0) if not macro_returns["^GSPC"].empty else 0.0
+            df_ind["ndx_ret1d"] = date_col.map(macro_returns["^IXIC"]).fillna(0.0) if not macro_returns["^IXIC"].empty else 0.0
+            df_ind["eurusd_ret1d"] = date_col.map(macro_returns["EURUSD=X"]).fillna(0.0) if not macro_returns["EURUSD=X"].empty else 0.0
+            df_ind["oat_ret1d"] = date_col.map(macro_returns["OAT.PA"]).fillna(0.0) if not macro_returns["OAT.PA"].empty else 0.0
         else:
             df_ind["sp500_ret1d"] = 0.0
-            
-        df_ind["ndx_ret1d"] = 0.0
-        df_ind["eurusd_ret1d"] = 0.0
-        df_ind["oat_ret1d"] = 0.0
+            df_ind["ndx_ret1d"] = 0.0
+            df_ind["eurusd_ret1d"] = 0.0
+            df_ind["oat_ret1d"] = 0.0
         
         # Format mapping names to match expected FEATURES
         df_ind["rsi14"] = df_ind["RSI_14"] if "RSI_14" in df_ind.columns else np.nan
@@ -436,6 +455,29 @@ def build_training_dataset(
         return pd.DataFrame()
         
     df = pd.concat(dfs, ignore_index=True)
+    df['Date'] = pd.to_datetime(df['Date'])
+
+    # Sector StatArb Logic
+    try:
+        import yaml
+        with open(_ROOT / "config" / "pea_universe.yaml", "r", encoding="utf-8") as f:
+            uni = yaml.safe_load(f).get("universe", {})
+        ticker_to_sector = {}
+        for sector, items in uni.items():
+            for item in items:
+                ticker_to_sector[item["ticker"]] = sector
+                
+        df['sector'] = df['ticker'].map(ticker_to_sector)
+        sector_mean = df.groupby(['Date', 'sector'])['ret1d'].mean().reset_index()
+        sector_mean = sector_mean.rename(columns={'ret1d': 'sector_mean_ret1d'})
+        
+        df = pd.merge(df, sector_mean, on=['Date', 'sector'], how='left')
+        df['sector_relative_ret1d'] = df['ret1d'] - df['sector_mean_ret1d']
+        df['sector_relative_ret1d'] = df['sector_relative_ret1d'].fillna(0.0)
+        df = df.drop(columns=['sector', 'ret1d', 'sector_mean_ret1d'])
+    except Exception as e:
+        logger.warning("StatArb sector relative logic failed: %s", e)
+        df['sector_relative_ret1d'] = 0.0
 
     # Merge Daily Sentiment (3-day rolling average)
     try:
