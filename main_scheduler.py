@@ -872,32 +872,18 @@ def run_nightly_profile_batch() -> None:
         write_pipeline_status({"night_run_status": f"Failed: {exc}"})
 
 
-def run_weekend_retraining() -> None:
-    """Run model retraining on weekends, checked by drift monitor."""
-    logger.info("Starting weekend retraining job...")
-    
-    import sys
-    sys.path.insert(0, str(_ROOT / "04_orchestrator_ai"))
+def run_weekly_retraining() -> None:
+    """Weekly ML Retraining triggered: adapting models to latest market regime."""
+    logger.info("Weekly ML Retraining triggered: adapting models to latest market regime.")
     try:
-        from model_drift_monitor import check_model_drift
-        has_drift = check_model_drift()
-        if not has_drift:
-            # We can force retrain anyway, but for now we log that we're retraining to stay fresh
-            logger.info("No critical drift detected, but retraining to keep models fresh on new data.")
+        import sys
+        if str(_ROOT / "02_quant_engine") not in sys.path:
+            sys.path.insert(0, str(_ROOT / "02_quant_engine"))
+        from ml_trainer import train_model
+        train_model()
+        logger.info("Weekly retraining completed successfully.")
     except Exception as e:
-        logger.warning(f"Drift monitor failed: {e}. Retraining anyway.")
-
-    try:
-        import subprocess
-        cmd = [sys.executable, str(_ROOT / "02_quant_engine" / "ml_trainer.py")]
-        result = subprocess.run(cmd, check=True, text=True, capture_output=True)
-        for line in result.stdout.splitlines():
-            logger.info("[ML_TRAINER] %s", line)
-        logger.info("Weekend retraining completed successfully.")
-    except subprocess.CalledProcessError as e:
-        logger.error("Weekend retraining failed with code %d", e.returncode)
-        for line in e.stderr.splitlines():
-            logger.error("[ML_TRAINER ERR] %s", line)
+        logger.error("Weekly ML Retraining failed: %s", e)
     except Exception as e:
         logger.exception("Unexpected error during weekend retraining: %s", e)
 
@@ -916,10 +902,10 @@ def _schedule_passes() -> None:
     # Night Run: Mass profile pre-calculation
     schedule.every().day.at("04:00", _TIMEZONE).do(run_nightly_profile_batch)
     # Weekend Auto-Retraining
-    schedule.every().saturday.at("02:00", _TIMEZONE).do(run_weekend_retraining)
+    schedule.every().friday.at("22:00", _TIMEZONE).do(run_weekly_retraining)
     logger.info(
         "Scheduled: passes at %s; weekly report Fri %s; morning briefing %s; "
-        "monthly probe %s; ATR stops %s; Night Run 04:00 (%s).",
+        "monthly probe %s; ATR stops %s; Weekly ML 22:00 (Fri), Night Run 04:00 (%s).",
         ", ".join(_PASS_TIMES),
         _WEEKLY_REPORT_TIME,
         _MORNING_BRIEFING_TIME,
