@@ -9,6 +9,7 @@ This is a pure ingestion layer: no indicator math, risk, or trading logic.
 
 import logging
 import os
+import random
 import requests
 from datetime import datetime, timedelta
 from typing import Any, List
@@ -365,7 +366,7 @@ class MarketDataFetcher:
                 )
                 
                 if i + chunk_size < len(tickers):
-                    time.sleep(3)
+                    time.sleep(random.uniform(2.5, 6.2))
             
             logger.info("Finished incremental update. Total rows upserted: %d", total_rows_upserted)
             return total_rows_upserted
