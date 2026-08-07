@@ -70,24 +70,32 @@ def _assign_regimes(df: pd.DataFrame) -> pd.DataFrame:
         fchi = fchi.set_index("Date")
         close = fchi["Close"].astype(float).dropna()
         returns = close.pct_change().dropna()
-        vol = returns.rolling(10).std().dropna()
-        common_idx = returns.index.intersection(vol.index)
         
-        X = np.column_stack([returns[common_idx].values, vol[common_idx].values])
-        model = GaussianHMM(n_components=3, covariance_type="diag", n_iter=100, random_state=42)
-        model.fit(X)
-        hidden_states = model.predict(X)
+        # Calculate rolling stats to avoid lookahead bias
+        vol_ann = returns.rolling(20).std() * np.sqrt(252)
+        trend = close.rolling(126).mean()
+        common_idx = returns.index.intersection(vol_ann.index).intersection(trend.index)
         
-        means = model.means_
-        volatile_state = np.argmax(means[:, 1])
-        other_states = [i for i in range(3) if i != volatile_state]
-        if means[other_states[0], 0] > means[other_states[1], 0]:
-            bull_state, bear_state = other_states[0], other_states[1]
-        else:
-            bull_state, bear_state = other_states[1], other_states[0]
+        # Calculate an expanding 75th percentile for high volatility threshold
+        vol_threshold = vol_ann.expanding(min_periods=126).quantile(0.75)
+        
+        regimes = []
+        for date in common_idx:
+            v = vol_ann.loc[date]
+            t = trend.loc[date]
+            c = close.loc[date]
+            v_thresh = vol_threshold.loc[date]
             
-        state_map = {volatile_state: "VOLATILE", bull_state: "BULL", bear_state: "BEAR"}
-        regime_series = pd.Series([state_map[s] for s in hidden_states], index=common_idx)
+            if pd.isna(v) or pd.isna(t) or pd.isna(v_thresh):
+                regimes.append("VOLATILE")
+            elif v > v_thresh:
+                regimes.append("VOLATILE")
+            elif c > t:
+                regimes.append("BULL")
+            else:
+                regimes.append("BEAR")
+                
+        regime_series = pd.Series(regimes, index=common_idx)
         
         if "Date" in df.columns:
             df["Date"] = pd.to_datetime(df["Date"])
@@ -225,14 +233,26 @@ def train_model(
                 import joblib
                 from sklearn.ensemble import IsolationForest
                 
+                # Fit anomaly detection only on the training set to prevent data leakage
+                df_sorted = df.copy()
+                if "created_at" in df_sorted.columns:
+                    df_sorted = df_sorted.sort_values("created_at")
+                elif "Date" in df_sorted.columns:
+                    df_sorted = df_sorted.sort_values("Date")
+                    
+                split = int(len(df_sorted) * 0.8)
+                embargo = 30
+                train_end = max(1, split - embargo)
+                df_train = df_sorted.iloc[:train_end]
+                
                 iso_model = IsolationForest(contamination=0.01, random_state=42)
-                X_all = df[FEATURE_COLS].values.astype(float)
-                X_all = np.nan_to_num(X_all)
-                iso_model.fit(X_all)
+                X_train_iso = df_train[FEATURE_COLS].values.astype(float)
+                X_train_iso = np.nan_to_num(X_train_iso)
+                iso_model.fit(X_train_iso)
                 
                 iso_path = _ROOT / "database" / "isolation_forest.joblib"
                 joblib.dump(iso_model, iso_path)
-                logger.info("[unsupervised] Isolation Forest trained with 1.5%% contamination.")
+                logger.info("[unsupervised] Isolation Forest trained with 1%% contamination on %d training rows.", len(X_train_iso))
             except ImportError:
                 logger.warning("scikit-learn required for Isolation Forest. pip install scikit-learn")
 

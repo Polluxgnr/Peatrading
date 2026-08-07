@@ -81,7 +81,7 @@ class SmartDcaCore:
         )
 
     def evaluate_cw8(
-        self, db_manager: Any, current_cash: float, total_equity: float
+        self, db_manager: Any, current_cash: float, total_equity: float, portfolio: Any = None
     ) -> Signal:
         """Produce a Smart-DCA accumulation signal for the Core ETF.
 
@@ -90,6 +90,7 @@ class SmartDcaCore:
                 ``get_historical_prices(ticker, days)``.
             current_cash: Uninvested cash available in EUR.
             total_equity: Total account value in EUR.
+            portfolio: The current PortfolioState containing holdings.
 
         Returns:
             Signal: A BUY signal for the Core ETF. ``target_qty`` is the whole
@@ -128,7 +129,19 @@ class SmartDcaCore:
         score = 90.0 if crash_regime else 65.0
 
         target_value = target_pct * total_equity
-        tranche_cash = min(current_cash, tranche_pct * total_equity, target_value)
+        
+        # Determine existing exposure to avoid infinite scaling
+        current_core_value = 0.0
+        if portfolio and hasattr(portfolio, "positions"):
+            for pos in portfolio.positions:
+                if pos.ticker == self.core_ticker:
+                    current_core_value += float(pos.shares * pos.current_price)
+                    
+        remaining_target = max(0.0, target_value - current_core_value)
+        if remaining_target <= 0.0:
+            return self._neutral_signal(f"Core DCA skipped: currently hold {current_core_value:.0f} EUR vs target {target_value:.0f} EUR.")
+
+        tranche_cash = min(current_cash, tranche_pct * total_equity, remaining_target)
 
         # Phase 40 — zero cash drag: sweep idle cash above MAX_IDLE_CASH_PCT
         # into the Core ETF (whole shares only; PEA forbids fractions).

@@ -436,7 +436,7 @@ async def run_pipeline_async() -> None:
 
     # --- Core Phase: Smart DCA on the MSCI World ETF (immune to VIX veto) ---
     core_signal = core_engine.evaluate_cw8(
-        tsdb, portfolio.cash_available, portfolio.total_equity
+        tsdb, portfolio.cash_available, portfolio.total_equity, portfolio
     )
     if core_signal and (core_signal.target_qty or 0) > 0:
         core_signal.status = SignalStatus.APPROVED

@@ -438,6 +438,10 @@ def build_training_dataset(
         df_ind["rsi14"] = df_ind["RSI_14"] if "RSI_14" in df_ind.columns else np.nan
         df_ind["zscore_50"] = df_ind["Z_SCORE_50"] if "Z_SCORE_50" in df_ind.columns else np.nan
         
+        # Calculate targets (Future Return) on the DAILY timeframe before sampling
+        df_ind['target_tactical_30d'] = df_ind['Close'].shift(-30) / df_ind['Close'] - 1.0
+        df_ind['target_structural_126d'] = df_ind['Close'].shift(-126) / df_ind['Close'] - 1.0
+        
         # We sample end-of-week (e.g. step=5) to avoid huge correlation
         # We also skip the first 200 rows due to SMA200 warm-up
         if len(df_ind) > 200:
@@ -494,10 +498,6 @@ def build_training_dataset(
 
     # 1. Strict sorting and index reset
     df = df.sort_values(['ticker', 'Date']).reset_index(drop=True)
-
-    # 2. Calculate targets (Future Return)
-    df['target_tactical_30d'] = df.groupby('ticker')['Close'].shift(-30) / df['Close'] - 1.0
-    df['target_structural_126d'] = df.groupby('ticker')['Close'].shift(-126) / df['Close'] - 1.0
 
     # 3. Force numeric types (coercing any weird values to NaN)
     df['target_tactical_30d'] = pd.to_numeric(df['target_tactical_30d'], errors='coerce')
