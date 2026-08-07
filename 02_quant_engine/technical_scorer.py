@@ -265,6 +265,7 @@ class SignalGenerator:
         macro_sensor: Any | None = None,
         is_historical: bool = False,
         cs_rank: float = 50.0,
+        daily_sector_means: dict[str, float] | None = None,
     ) -> dict[str, Any]:
         """Committee-style multi-model score (0..100 total)."""
         empty = {
@@ -572,6 +573,9 @@ class SignalGenerator:
         try:
             from ml_feature_store import build_ml_feature_row  # noqa: WPS433
             from ml_trainer import predict_probability_with_shap  # noqa: WPS433
+            
+            sector = self.portfolio_db.get_sector(ticker) if hasattr(self.portfolio_db, "get_sector") else "Unknown"
+            sec_mean = daily_sector_means.get(sector, 0.0) if daily_sector_means else 0.0
 
             feat_row = build_ml_feature_row(
                 ticker,
@@ -579,6 +583,7 @@ class SignalGenerator:
                 reason="",
                 pdb=None,
                 offline_mode=is_historical,
+                sector_mean_ret1d=sec_mean,
             )
             ml_prob, _, ml_interval = predict_probability_with_shap(feat_row, horizon="tactical", regime=self.regime)
             if ml_prob is not None:
@@ -683,6 +688,7 @@ class SignalGenerator:
         timeseries_db: Any,
         tickers: list[str],
         conviction_floor: float | None = None,
+        daily_sector_means: dict[str, float] | None = None,
     ) -> list[Signal]:
         """Evaluate each ticker; emit BUY when ensemble conviction ≥ floor.
 
@@ -733,7 +739,7 @@ class SignalGenerator:
                 return None
             
             cs_rank = float(cs_ranks.get(ticker, 50.0))
-            conv = self.evaluate(ticker, df, macro_sensor=macro, cs_rank=cs_rank)
+            conv = self.evaluate(ticker, df, macro_sensor=macro, cs_rank=cs_rank, daily_sector_means=daily_sector_means)
             total = float(conv.get("total") or 0.0)
             actual_floor = conviction_floor if conviction_floor is not None else self.conviction_floor
             
@@ -746,7 +752,10 @@ class SignalGenerator:
                 from ml_feature_store import build_ml_feature_row
                 from ml_trainer import predict_meta_probability
                 
-                features = build_ml_feature_row(ticker, df, pdb=self.portfolio_db, offline_mode=self.offline_mode)
+                sector = self.portfolio_db.get_sector(ticker) if hasattr(self.portfolio_db, "get_sector") else "Unknown"
+                sec_mean = daily_sector_means.get(sector, 0.0) if daily_sector_means else 0.0
+                
+                features = build_ml_feature_row(ticker, df, pdb=self.portfolio_db, offline_mode=self.offline_mode, sector_mean_ret1d=sec_mean)
                 meta_prob = predict_meta_probability(features)
                 
                 if meta_prob is not None and meta_prob < 0.65:

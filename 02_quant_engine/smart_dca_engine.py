@@ -135,7 +135,7 @@ class SmartDcaCore:
         if portfolio and hasattr(portfolio, "positions"):
             for pos in portfolio.positions:
                 if pos.ticker == self.core_ticker:
-                    current_core_value += float(pos.shares * pos.current_price)
+                    current_core_value += float(pos.qty_shares * pos.current_price)
                     
         remaining_target = max(0.0, target_value - current_core_value)
         if remaining_target <= 0.0:

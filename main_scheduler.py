@@ -272,8 +272,40 @@ async def run_pipeline_async() -> None:
     # --- Macro Phase: European VIX emergency brake ---
     vix_level = macro_alpha.get_european_vix()
 
+    # --- Compute daily sector means for StatArb ---
+    try:
+        import yaml
+        from pathlib import Path
+        with open(Path("config") / "pea_universe.yaml", "r", encoding="utf-8") as f:
+            uni = yaml.safe_load(f).get("universe", {})
+        ticker_to_sector = {}
+        for sector, items in uni.items():
+            for item in items:
+                ticker_to_sector[item["ticker"]] = sector
+        
+        daily_sector_means = {}
+        sector_rets = {}
+        for t in tickers:
+            try:
+                df_t = tsdb.get_historical_prices(t, days=5)
+                if df_t is not None and len(df_t) >= 2:
+                    c = df_t["Close"].astype(float).values
+                    if c[-2] > 0:
+                        ret = c[-1] / c[-2] - 1.0
+                        sec = ticker_to_sector.get(t, "Unknown")
+                        sector_rets.setdefault(sec, []).append(ret)
+            except Exception:
+                pass
+        for sec, rets in sector_rets.items():
+            daily_sector_means[sec] = sum(rets) / len(rets)
+        logger.info("Computed StatArb sector means for %d sectors.", len(daily_sector_means))
+    except Exception as e:
+        logger.warning("Failed to compute daily sector means: %s", e)
+        ticker_to_sector = {}
+        daily_sector_means = {}
+
     # --- Quant Phase ---
-    raw_signals = generator.generate_raw_signals(tsdb, tickers)
+    raw_signals = generator.generate_raw_signals(tsdb, tickers, daily_sector_means=daily_sector_means)
     logger.info("Quant engine produced %d raw signal(s).", len(raw_signals))
 
     # --- Meta-Labeling (XGBoost) & SHAP Explainability Phase ---
@@ -304,38 +336,6 @@ async def run_pipeline_async() -> None:
                 cw8_close = cw8_df["Close"].astype(float) if cw8_df is not None and not cw8_df.empty else None
             except Exception:
                 cw8_close = None
-
-            # Compute daily sector means for StatArb
-            try:
-                import yaml
-                from pathlib import Path
-                with open(Path("config") / "pea_universe.yaml", "r", encoding="utf-8") as f:
-                    uni = yaml.safe_load(f).get("universe", {})
-                ticker_to_sector = {}
-                for sector, items in uni.items():
-                    for item in items:
-                        ticker_to_sector[item["ticker"]] = sector
-                
-                daily_sector_means = {}
-                sector_rets = {}
-                for t in tickers:
-                    try:
-                        df_t = tsdb.get_historical_prices(t, days=5)
-                        if df_t is not None and len(df_t) >= 2:
-                            c = df_t["Close"].astype(float).values
-                            if c[-2] > 0:
-                                ret = c[-1] / c[-2] - 1.0
-                                sec = ticker_to_sector.get(t, "Unknown")
-                                sector_rets.setdefault(sec, []).append(ret)
-                    except Exception:
-                        pass
-                for sec, rets in sector_rets.items():
-                    daily_sector_means[sec] = sum(rets) / len(rets)
-                logger.info("Computed StatArb sector means for %d sectors.", len(daily_sector_means))
-            except Exception as e:
-                logger.warning("Failed to compute daily sector means: %s", e)
-                ticker_to_sector = {}
-                daily_sector_means = {}
 
             filtered_signals = []
             for sig in raw_signals:
