@@ -573,12 +573,12 @@ class MacroAlphaSensor:
         # Disabled due to option chain unavailability for EU small caps.
         return 0.0
 
-    def get_oat_bund_spread(self) -> float:
+    def get_oat_bund_spread(self) -> float | None:
         """Fetch the 10-year French OAT vs German Bund yield spread.
         
         Uses OAT.PA and ^DE10Y.
         Returns the spread in percentage points (e.g. 0.50 means 50 bps).
-        Returns a neutral 0.50 if unable to fetch.
+        Returns None if unable to fetch.
         """
         try:
             import yfinance as yf
@@ -593,11 +593,20 @@ class MacroAlphaSensor:
                 de_yield = float(de["Close"].iloc[-1])
                 return fr_yield - de_yield
                 
-            # If OAT.PA fails, try to use a static proxy or macro API
-            return 0.50
+            raise ValueError("OAT.PA or ^DE10Y history is empty.")
         except Exception as exc:
-            logger.debug("Failed to fetch OAT vs Bund spread: %s", exc)
-            return 0.50
+            logger.warning("Failed to fetch OAT vs Bund spread: %s", exc)
+            try:
+                import sys
+                from pathlib import Path
+                _ROOT = Path(__file__).resolve().parent.parent
+                if str(_ROOT / "01_memory_core") not in sys.path:
+                    sys.path.insert(0, str(_ROOT / "01_memory_core"))
+                from logging_setup import update_pipeline_status
+                update_pipeline_status({"data_degraded_mode": True, "degraded_reason": "OAT/Bund spread fetch failed."})
+            except Exception:
+                pass
+            return None
 
 if __name__ == "__main__":
     logging.basicConfig(

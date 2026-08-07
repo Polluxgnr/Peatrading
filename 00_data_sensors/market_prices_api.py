@@ -213,7 +213,7 @@ class MarketDataFetcher:
                         from sklearn.ensemble import IsolationForest
                         valid_idx = df["_pct_chg"].dropna().index
                         if len(valid_idx) > 50:
-                            iso = IsolationForest(contamination=0.005, random_state=42)
+                            iso = IsolationForest(contamination=0.01, random_state=42)
                             preds = iso.fit_predict(df.loc[valid_idx, ["_pct_chg"]])
                             abnormal_mask.loc[valid_idx] = (preds == -1)
                         else:

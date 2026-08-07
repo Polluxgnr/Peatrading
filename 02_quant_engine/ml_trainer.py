@@ -225,7 +225,7 @@ def train_model(
                 import joblib
                 from sklearn.ensemble import IsolationForest
                 
-                iso_model = IsolationForest(contamination=0.015, random_state=42)
+                iso_model = IsolationForest(contamination=0.01, random_state=42)
                 X_all = df[FEATURE_COLS].values.astype(float)
                 X_all = np.nan_to_num(X_all)
                 iso_model.fit(X_all)

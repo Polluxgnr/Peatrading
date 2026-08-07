@@ -3715,8 +3715,11 @@ with tab_market_pulse:
             # OAT vs Bund Spread
             try:
                 spread = MacroAlphaSensor().get_oat_bund_spread()
-                spread_color = _RED if spread > 0.8 else (_NEON if spread < 0.5 else _AMBER)
-                st.markdown(f"<div style='padding:15px; background:#1E1E1E; border-radius:5px; border-left:5px solid {spread_color}'><h4>OAT/Bund Spread</h4><h2 style='color:{spread_color}'>{spread:.2f}%</h2></div>", unsafe_allow_html=True)
+                if spread is not None:
+                    spread_color = _RED if spread > 0.8 else (_NEON if spread < 0.5 else _AMBER)
+                    st.markdown(f"<div style='padding:15px; background:#1E1E1E; border-radius:5px; border-left:5px solid {spread_color}'><h4>OAT/Bund Spread</h4><h2 style='color:{spread_color}'>{spread:.2f}%</h2></div>", unsafe_allow_html=True)
+                else:
+                    st.markdown("<div style='padding:15px; background:#1E1E1E; border-radius:5px; border-left:5px solid #888'><h4>OAT/Bund Spread</h4><h2 style='color:#888'>N/A</h2></div>", unsafe_allow_html=True)
             except Exception:
                 st.metric("OAT/Bund Spread", "N/A")
                 

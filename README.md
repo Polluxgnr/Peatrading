@@ -74,7 +74,7 @@ Implemented in `signal_priority_cascade.py`. Checked in order before sizing:
 2. **Macro & Earnings Blackout**: No buying before ECB/CPI/NFP or corporate earnings dates.
 3. **Liquidity / Max Positions**: Prevents micro-fragmentation of the satellite budget.
 4. **Sector & Correlation**: Prevents over-exposure to a single theme.
-5. **Sizing**: Hierarchical Risk Parity (HRP) / Half-Kelly × inverse-vol parity.
+5. **Sizing**: Hierarchical Risk Parity (HRP) / Half-Kelly × inverse-vol parity. The system groups correlated assets into clusters using machine learning, and then assigns inverse-volatility weights across those clusters. This guarantees that highly correlated assets (e.g., LVMH, Hermès, Kering) share a single cluster risk budget, preventing catastrophic portfolio exposure to a single economic theme.
 
 ---
 
