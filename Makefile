@@ -1,4 +1,8 @@
-.PHONY: deploy update train test api mcp dashboard scheduler
+.PHONY: deploy update train test api mcp dashboard scheduler dump
+
+# Regenerates full monolithic and domain-specific LLM context dumps
+dump:
+	python tools/build_llm_dump.py
 
 # Runs the Internal Recommendation API (FastAPI)
 api:

@@ -1,42 +1,33 @@
-# PEA Sniper Terminal — V-Prime 3.0 (Phase 18)
+# PEA Pollux — Institutional Systematic Trading & Recommendation Terminal
 
-> **Sovereign execution. Kinetic risk management. Absolute quantitative transparency.**
+> **Sovereign execution. Continuous kinetic risk management. Absolute quantitative transparency.**
+> Zero-leverage quantitative **decision support engine** for personal French **PEA** (Plan d'Épargne en Actions).
 
-Zero-leverage quantitative **decision support** for a personal French **PEA**
-(Plan d'Épargne en Actions). The stack ingests market data, runs a deterministic
-quant engine, filters every idea through a multi-layer risk cascade, then surfaces
-highly curated proposals to a **Discord Copilot** for **manual** execution. A
-Bloomberg-inspired **Streamlit** terminal is the day-to-day command center
-(Mission Control, equity curve, rich trade cards, log viewer).
+The system continuously ingests market quotes, macro spreads, insider filings, and news sentiment, evaluates quantitative factors (Mean-Reversion, Trend Quality $R^2$, 3-State Gaussian HMM CAC 40 regimes), filters signals through an unyielding 7-stage risk cascade, and surfaces curated **Quantitative Recommendations** to the portfolio manager via a **Streamlit Bloomberg HUD**, **Internal FastAPI SSOT**, and **Claude Desktop MCP Server**.
 
-**The system never sends orders to a broker.** Maths decides *what* is worth
-considering; AI only *explains* (rationale, news score, weekly CIO digest).
-**This is not investment advice.**
+**The system never sends orders to a broker autonomously.** Mathematical models recommend; the human portfolio manager retains sovereign execution authority.
 
-Repo: [github.com/Polluxgnr/Peatrading](https://github.com/Polluxgnr/Peatrading)
+[![CI](https://github.com/Polluxgnr/Peatrading/actions/workflows/ci.yml/badge.svg)](https://github.com/Polluxgnr/Peatrading/actions/workflows/ci.yml)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.110-009688.svg?style=flat&logo=fastapi)](https://fastapi.tiangolo.com)
+[![MCP](https://img.shields.io/badge/MCP-Ready-blue.svg)](https://modelcontextprotocol.io)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
+
+Repository: [github.com/Polluxgnr/Peatrading](https://github.com/Polluxgnr/Peatrading)
 
 ---
 
-## Table of contents
+## Table of Contents
 
-1. [Philosophy](#-philosophy)
-2. [Feature map](#-feature-map)
-3. [Strategy in depth](#-strategy-in-depth)
-4. [Architecture](#-architecture)
-5. [Logging & observability](#-logging--observability)
-6. [Module reference](#-module-reference)
-7. [APIs that work](#-apis-that-work)
-8. [Installation](#-installation)
-9. [Configuration](#-configuration)
-10. [Usage](#-usage)
-11. [Dashboard](#-dashboard)
-12. [Experiments / sandboxes](#-experiments--sandboxes)
-13. [LLM full dump](#-llm-full-dump)
-14. [Deployment](#-deployment)
-15. [Scheduling](#-scheduling)
-16. [Roadmap](#-roadmap--future-improvements)
-17. [Troubleshooting](#-troubleshooting)
-18. [Disclaimer](#-disclaimer)
+1. [System Architecture & Specifications](docs/ARCHITECTURE.md)
+2. [Multi-Agent Blueprint & Roadmap (Devis)](docs/MULTI_AGENT_BLUEPRINT_AND_ROADMAP.md)
+3. [Core Philosophy & Recommendation Paradigm](#-philosophy)
+4. [Feature Map & Institutional Layers](#-feature-map)
+5. [Quantitative Strategy & Risk Cascade](#-strategy-in-depth)
+6. [Internal API & MCP Server](#-internal-api--mcp-server)
+7. [Installation & Launch Guide (`Makefile`)](#-installation)
+8. [LLM Context Dumps & Prompts](#-llm-context-dumps)
+9. [Verification & Test Suites](#-tests)
+10. [Disclaimer](#-disclaimer)
 
 ---
 
