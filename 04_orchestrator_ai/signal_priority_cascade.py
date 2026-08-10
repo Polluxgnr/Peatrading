@@ -81,9 +81,13 @@ class SignalOrchestrator:
 
     @staticmethod
     def _reject(signal: Signal, reason: str) -> Signal:
-        """Mark a signal REJECTED and append the reason."""
         signal.status = SignalStatus.REJECTED
-        signal.reason = f"{signal.reason} | {reason}".strip(" |")
+        signal.reason = (f"{signal.reason} | {reason}").strip(" |")
+        signal.target_qty = 0
+        if hasattr(signal, "lineage") and isinstance(signal.lineage, dict):
+            signal.lineage["rejection_reason"] = reason
+            signal.lineage["status"] = SignalStatus.REJECTED.value
+        logger.info("%s %s: %s", signal.ticker, signal.id[:8], reason)
         return signal
 
     def _historical_volatility(self, ticker: str, days: int = 60) -> float | None:
@@ -287,6 +291,17 @@ class SignalOrchestrator:
                 f"poids {sizing.get('weight_pct', 0):.2f}% equity "
                 f"({sizing.get('notional', 0):,.0f} €)"
             ).strip(" |")
+
+            if hasattr(signal, "lineage") and isinstance(signal.lineage, dict):
+                signal.lineage.update({
+                    "status": SignalStatus.APPROVED.value,
+                    "target_qty": target_qty,
+                    "execution_price": price,
+                    "sizing": sizing,
+                    "kinetic_multiplier": kinetic_mult,
+                    "vix": vix,
+                })
+
             logger.info(
                 "APPROVED %s: %d share(s) @ %.2f EUR (score=%.1f, weight=%.2f%%).",
                 ticker,

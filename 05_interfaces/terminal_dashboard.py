@@ -343,16 +343,50 @@ st.markdown(
         border-left: 4px solid {_AMBER}; background-color: #0A0D12; border-radius: 4px; }}
 
     /* --- Tabs --- */
-    .stTabs [data-baseweb="tab-list"] {{ gap: 4px; border-bottom: 1px solid #222; }}
-    .stTabs [data-baseweb="tab"] {{ background-color: {_PANEL};
-        color: {_MUTED}; font-family: 'Courier New', monospace; border-radius: 4px 4px 0 0; }}
-    .stTabs [aria-selected="true"] {{ color: {_WHITE} !important;
-        border-bottom: 2px solid {_AMBER}; background-color: #161B22; }}
-    .mission {{ background:#080B10; border:1px solid #252D38; padding:14px 16px;
-        margin-bottom:14px; font-family:'Courier New',monospace; border-radius: 4px; }}
-    .mission-title {{ color:{_CYAN}; font-size:11px; letter-spacing:2px;
-        text-transform:uppercase; margin-bottom:8px; }}
-    .go-row input {{ font-family:'Courier New',monospace !important; }}
+    .stTabs [data-baseweb="tab-list"] { gap: 4px; border-bottom: 1px solid #222; }
+    .stTabs [data-baseweb="tab"] { background-color: #000000;
+        color: #718096; font-family: 'Courier New', monospace; border-radius: 4px 4px 0 0; }
+    .stTabs [aria-selected="true"] { color: #E0E0E0 !important;
+        border-bottom: 2px solid #FFB000; background-color: #161B22; }
+    .mission { background:#080B10; border:1px solid #252D38; padding:14px 16px;
+        margin-bottom:14px; font-family:'Courier New',monospace; border-radius: 4px; }
+    .mission-title { color:#00B4D8; font-size:11px; letter-spacing:2px;
+        text-transform:uppercase; margin-bottom:8px; }
+    .go-row input { font-family:'Courier New',monospace !important; }
+
+    /* --- InsiderFinance & Data Source Badges --- */
+    .source-badge {
+        background: #111622;
+        color: #00B4D8 !important;
+        border: 1px solid #1E293B;
+        padding: 4px 10px;
+        border-radius: 4px;
+        font-family: 'Courier New', monospace;
+        font-size: 11px;
+        text-decoration: none !important;
+        font-weight: 600;
+        transition: all 0.2s ease;
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+    }
+    .source-badge:hover {
+        background: #1E293B;
+        color: #00FF00 !important;
+        border-color: #00FF00;
+    }
+    .section-header-banner {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        background: linear-gradient(90deg, #10141D 0%, #0A0D14 100%);
+        border: 1px solid #212936;
+        border-left: 4px solid #00B4D8;
+        padding: 10px 16px;
+        border-radius: 4px;
+        margin: 16px 0 10px 0;
+        font-family: 'Courier New', monospace;
+    }
 </style>
 """,
     unsafe_allow_html=True,
@@ -3346,27 +3380,72 @@ with tab_pf:
         } for r in closed_logs])
         st.dataframe(disp_ledger, use_container_width=True, hide_index=True)
 
-# --- Tab: Universe & Screener ------------------------------------------------
+# --- Tab: Universe & Screener (InsiderFinance Flow Edition) -----------------
 with tab_screener:
     st.markdown(
-        "<div class='info-text'><b>Screener Quantitatif Multidimensionnel</b> : "
-        "Filtre et classe l'intégralité de l'univers PEA selon les performances 1M, 3M, 1Y, "
-        "la position vs SMA200, le RSI(14), et le score Aegis de Trend Quality.</div>",
+        """
+        <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px;">
+            <a href="https://bdif.amf-france.org/" target="_blank" class="source-badge">🏛️ AMF BDIF</a>
+            <a href="https://www.boursorama.com/bourse/actions/cours/1rPCAC/" target="_blank" class="source-badge">📊 Boursorama CAC 40</a>
+            <a href="https://finance.yahoo.com/" target="_blank" class="source-badge">⚡ Yahoo Finance</a>
+            <a href="https://finnhub.io/" target="_blank" class="source-badge">📡 Finnhub News API</a>
+            <a href="https://openinsider.com/" target="_blank" class="source-badge">🕵️ OpenInsider EU</a>
+            <a href="https://www.insiderscreener.com/" target="_blank" class="source-badge">🎯 InsiderScreener Europe</a>
+            <a href="https://sdw.ecb.europa.eu/" target="_blank" class="source-badge">🇪🇺 BCE SDW</a>
+        </div>
+        """,
         unsafe_allow_html=True,
     )
+
+    # -------------------------------------------------------------------------
+    # SECTION 1 (TOP): Smart Market Insight by Ticker
+    # -------------------------------------------------------------------------
+    st.markdown(
+        """
+        <div class="section-header-banner">
+            <span style="color:#00B4D8; font-weight:700; font-size:13px; letter-spacing:1px;">
+                ⚡ SMART MARKET INSIGHT BY TICKER
+            </span>
+            <span style="color:#718096; font-size:11px;">MRE Multi-Horizon Signals · RSI · HMM Regime · Trend Quality</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # Filter Pills / Buttons
+    filter_choice = st.radio(
+        "Filtre Intelligent",
+        ["Tous 🌐", "Haussier (SMA200) 🟢", "Oversold Setup (RSI < 35) 🎯", "High Momentum (> +10% 1M) 🚀", "Score Qualité 💎", "Baissier 🔴"],
+        horizontal=True,
+        key="scr_pills_filter",
+    )
+
     sc1, sc2 = st.columns([1, 2])
     with sc1:
         screener_search = st.text_input("🔍 Recherche rapide (Nom ou Ticker)", value="", placeholder="ex: LVMH ou MC.PA", key="scr_search")
     with sc2:
         screener_sectors = st.multiselect("Filtrer par secteur", sorted(universe_df["Sector"].unique()), key="scr_sectors")
 
-    with st.spinner("Calcul des indicateurs du Screener Univers…"):
+    with st.spinner("Calcul des métriques du Screener Univers…"):
         scr_df = get_universe_screener_metrics(universe_df)
 
     if scr_df.empty:
         render_empty_state("Calcul du Screener en cours d'ingestion par le Sniper Daemon. Nécessite 200 jours d'historique.")
     else:
         view_scr = scr_df.copy()
+
+        # Apply pill filters
+        if "Haussier" in filter_choice:
+            view_scr = view_scr[view_scr["Tendance SMA200"] == "HAUSSIER"]
+        elif "Oversold" in filter_choice:
+            view_scr = view_scr[view_scr["RSI(14)"] < 35.0]
+        elif "High Momentum" in filter_choice:
+            view_scr = view_scr[view_scr["Perf 1M (%)"] > 10.0]
+        elif "Score Qualité" in filter_choice:
+            view_scr = view_scr[view_scr["Trend Quality"] >= 0.20]
+        elif "Baissier" in filter_choice:
+            view_scr = view_scr[view_scr["Tendance SMA200"] == "BAISSIER"]
+
         if screener_search.strip():
             pat = screener_search.strip().lower()
             view_scr = view_scr[
@@ -3376,7 +3455,7 @@ with tab_screener:
         if screener_sectors:
             view_scr = view_scr[view_scr["Secteur"].isin(screener_sectors)]
 
-        st.caption(f"{len(view_scr)} titre(s) affiché(s) sur {len(scr_df)} calculés.")
+        st.caption(f"Affichage de **{len(view_scr)}** titre(s) sur **{len(scr_df)}** calculés dans l'univers.")
         st.dataframe(
             view_scr,
             use_container_width=True,
@@ -3391,9 +3470,89 @@ with tab_screener:
                 "Perf 1Y (%)": st.column_config.NumberColumn("1Y (%)", format="%+.1f%%"),
                 "RSI(14)": st.column_config.NumberColumn("RSI(14)", format="%.1f"),
                 "Tendance SMA200": st.column_config.TextColumn("Tendance SMA200"),
-                "Trend Quality": st.column_config.NumberColumn("Trend Quality (Aegis)", format="%.2f"),
+                "Trend Quality": st.column_config.NumberColumn("Trend Quality", format="%.2f"),
             }
         )
+
+    # -------------------------------------------------------------------------
+    # SECTION 2 (BOTTOM): Realtime Data Flow & News Terminal
+    # -------------------------------------------------------------------------
+    st.markdown(
+        """
+        <div class="section-header-banner" style="margin-top:28px;">
+            <span style="color:#00B4D8; font-weight:700; font-size:13px; letter-spacing:1px;">
+                📡 REALTIME DATA FLOW & NEWS TERMINAL
+            </span>
+            <span style="color:#718096; font-size:11px;">Streaming Feeds · Sentiment Scoring IA · Cross-Verified Insiders</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    news_filter = st.radio(
+        "Filtre des Flux",
+        ["Tous les flux 🌐", "Très Favorable (> +20) 🟢", "Très Défavorable (< -20) 🔴", "Top 50 Récents ⚡"],
+        horizontal=True,
+        key="scr_news_filter",
+    )
+
+    try:
+        raw_news = db.fetch_news_master(limit=80)
+    except Exception:
+        raw_news = []
+
+    if not raw_news:
+        # Fallback to general bundle if DB news is empty
+        held_tickers_list = tuple(p.ticker for p in positions) or tuple(universe_df["Ticker"].head(10))
+        raw_news = get_general_news_bundle(held_tickers_list)
+
+    if not raw_news:
+        render_empty_state("Flux d'actualités en attente du prochain cycle d'ingestion.")
+    else:
+        news_records = []
+        for it in raw_news:
+            score_val = it.get("sentiment_score")
+            score_num = float(score_val) if score_val is not None else heuristic_news_score(it.get("title", ""))
+            
+            # Sentiment text / badge
+            if score_num >= 20.0:
+                sent_tag = f"🟢 +{score_num:.0f} (Favorable)"
+            elif score_num <= -20.0:
+                sent_tag = f"🔴 {score_num:.0f} (Défavorable)"
+            else:
+                sent_tag = f"⚪ {score_num:.0f} (Neutre)"
+
+            # Filter logic
+            if "Très Favorable" in news_filter and score_num < 20.0:
+                continue
+            if "Très Défavorable" in news_filter and score_num > -20.0:
+                continue
+
+            news_records.append({
+                "Horodatage": str(it.get("published_at") or it.get("created_at") or "")[:16],
+                "Source": str(it.get("source", "Flux")).upper(),
+                "Ticker": str(it.get("ticker") or "MARCHÉ"),
+                "Titre / Headline": str(it.get("title", ""))[:120],
+                "Sentiment IA": sent_tag,
+                "Lien": str(it.get("url") or f"https://finance.yahoo.com/quote/{it.get('ticker', 'MC.PA')}"),
+            })
+
+        if not news_records:
+            st.info("Aucune actualité ne correspond à ce filtre.")
+        else:
+            st.dataframe(
+                pd.DataFrame(news_records),
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Horodatage": st.column_config.TextColumn("Horodatage", width="small"),
+                    "Source": st.column_config.TextColumn("Source", width="small"),
+                    "Ticker": st.column_config.TextColumn("Ticker", width="small"),
+                    "Titre / Headline": st.column_config.TextColumn("Titre / Headline", width="large"),
+                    "Sentiment IA": st.column_config.TextColumn("Sentiment IA", width="medium"),
+                    "Lien": st.column_config.LinkColumn("Lien Direct", width="small"),
+                }
+            )
 
 # --- Tab: Exploration (market + ticker radar) --------------------------------
 with tab_mkt:

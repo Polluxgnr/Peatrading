@@ -159,3 +159,4 @@ class Signal(BaseModel):
     )
     created_at: datetime = Field(default_factory=_utcnow)
     reason: str = Field(default="", description="Explanation for the UI.")
+    lineage: dict = Field(default_factory=dict, description="Feature snapshot dump for ML training replay.")

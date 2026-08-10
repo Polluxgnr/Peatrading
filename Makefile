@@ -1,4 +1,24 @@
-.PHONY: deploy update train test
+.PHONY: deploy update train test api mcp dashboard scheduler
+
+# Runs the Internal Recommendation API (FastAPI)
+api:
+	uvicorn 06_api.internal_api:app --host 0.0.0.0 --port 8000 --reload
+
+# Runs the Model Context Protocol (MCP) Server for Claude Desktop
+mcp:
+	python 07_mcp/pollux_mcp.py
+
+# Runs the Streamlit Bloomberg HUD Terminal
+dashboard:
+	streamlit run 05_interfaces/terminal_dashboard.py
+
+# Runs the continuous Paris market scheduler daemon
+scheduler:
+	python main_scheduler.py
+
+# Runs the full institutional test suite
+test:
+	python -m unittest discover tests
 
 # Fetches latest code from GitHub and restarts the Docker containers
 deploy:
@@ -17,7 +37,3 @@ update:
 # Forces an ML training pass
 train:
 	sudo docker compose exec daemon python 02_quant_engine/ml_trainer.py
-
-# Forces a live data ingestion and analysis pass
-test:
-	sudo docker compose exec daemon python main_scheduler.py --now

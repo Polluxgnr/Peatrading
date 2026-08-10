@@ -1,10 +1,10 @@
 """LLM narrative explainer for PEA Sniper Terminal V-Prime.
 
 Wraps OpenRouter (async, via ``aiohttp``) to turn an already-approved,
-already-sized ``Signal`` into a short, human-readable rationale for Discord.
+already-sized quantitative ``Signal`` into a short, human-readable recommendation rationale for Discord & UI.
 
-STRICT: the LLM has ZERO decision power. It only produces the ``explanation``
-string. It never reads or writes ``status``, ``target_qty`` or any math.
+STRICT: The system solely produces Quantitative Recommendations.
+The LLM has ZERO decision power; execution authority rests strictly with the human portfolio manager.
 
 .env requirements (config/api_keys.env):
     OPENROUTER_API_KEY   - required; without it the fallback string is used.

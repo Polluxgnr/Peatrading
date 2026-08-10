@@ -115,7 +115,8 @@ class PortfolioDB:
                         reason       TEXT,
                         created_at   TEXT NOT NULL,
                         quantity     INTEGER DEFAULT 0,
-                        price        REAL DEFAULT 0.0
+                        price        REAL DEFAULT 0.0,
+                        lineage_json TEXT
                     );
                     """
                 )
@@ -125,6 +126,8 @@ class PortfolioDB:
                     conn.execute("ALTER TABLE audit_logs ADD COLUMN quantity INTEGER DEFAULT 0;")
                 if "price" not in cols:
                     conn.execute("ALTER TABLE audit_logs ADD COLUMN price REAL DEFAULT 0.0;")
+                if "lineage_json" not in cols:
+                    conn.execute("ALTER TABLE audit_logs ADD COLUMN lineage_json TEXT;")
 
                 conn.execute(
                     """
@@ -158,6 +161,28 @@ class PortfolioDB:
                         score       REAL,
                         source      TEXT,
                         headline    TEXT
+                    );
+                    """
+                )
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS universe_snapshots (
+                        date    TEXT NOT NULL,
+                        ticker  TEXT NOT NULL,
+                        sector  TEXT,
+                        PRIMARY KEY (date, ticker)
+                    );
+                    """
+                )
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS model_training_runs (
+                        id                      TEXT PRIMARY KEY,
+                        trained_at              TEXT NOT NULL,
+                        model_type              TEXT NOT NULL,
+                        accuracy                REAL,
+                        brier_score             REAL,
+                        feature_importance_json TEXT
                     );
                     """
                 )
@@ -317,21 +342,24 @@ class PortfolioDB:
             signal: The signal to record. Upsert key is ``signal.id``.
             price: Optional execution or trigger price.
         """
+        import json
         try:
             qty = signal.target_qty if signal.target_qty is not None else 0
+            lineage_str = json.dumps(signal.lineage or {}) if hasattr(signal, "lineage") else "{}"
             with self._connect() as conn:
                 conn.execute(
                     """
                     INSERT INTO audit_logs
                         (id, ticker, signal_type, status, score, reason,
-                         created_at, quantity, price)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         created_at, quantity, price, lineage_json)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(id) DO UPDATE SET
-                        status   = excluded.status,
-                        score    = excluded.score,
-                        reason   = excluded.reason,
-                        quantity = excluded.quantity,
-                        price    = excluded.price;
+                        status       = excluded.status,
+                        score        = excluded.score,
+                        reason       = excluded.reason,
+                        quantity     = excluded.quantity,
+                        price        = excluded.price,
+                        lineage_json = excluded.lineage_json;
                     """,
                     (
                         signal.id,
@@ -343,6 +371,7 @@ class PortfolioDB:
                         signal.created_at.isoformat(),
                         qty,
                         price,
+                        lineage_str,
                     ),
                 )
             logger.info(
@@ -559,3 +588,82 @@ class PortfolioDB:
         except sqlite3.Error:
             logger.exception("Failed to fetch sentiment history for %s", ticker)
             return []
+
+    def snapshot_universe(
+        self,
+        universe_yaml_path: Optional[str | Path] = None,
+        date_str: Optional[str] = None,
+    ) -> int:
+        """Snapshot current universe definition to prevent survivorship bias in historical replays.
+
+        Args:
+            universe_yaml_path: Optional path to pea_universe.yaml.
+            date_str: Date string YYYY-MM-DD (defaults to UTC today).
+
+        Returns:
+            int: Number of ticker rows snapshotted.
+        """
+        import yaml
+        target_path = Path(universe_yaml_path) if universe_yaml_path else (_PROJECT_ROOT / "config" / "pea_universe.yaml")
+        if not target_path.exists():
+            logger.warning("Universe file not found at %s; skipping snapshot.", target_path)
+            return 0
+
+        today = date_str or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        try:
+            with open(target_path, "r", encoding="utf-8") as fh:
+                data = yaml.safe_load(fh) or {}
+            tickers = data.get("tickers", [])
+            if not tickers:
+                return 0
+
+            records = []
+            for t in tickers:
+                if isinstance(t, dict):
+                    records.append((today, str(t.get("ticker", "")), str(t.get("sector", "Unknown"))))
+                elif isinstance(t, str):
+                    records.append((today, t, "Unknown"))
+
+            with self._connect() as conn:
+                conn.executemany(
+                    """
+                    INSERT OR IGNORE INTO universe_snapshots (date, ticker, sector)
+                    VALUES (?, ?, ?);
+                    """,
+                    records,
+                )
+            logger.info("Snapshotted %d universe tickers for %s.", len(records), today)
+            return len(records)
+        except Exception as exc:
+            logger.exception("Failed to snapshot universe for %s: %s", today, exc)
+            return 0
+
+    def log_model_training_run(
+        self,
+        model_type: str,
+        accuracy: float,
+        brier_score: float,
+        feature_importance: dict,
+    ) -> str:
+        """Log ML training metrics and feature importances for audit and provenance."""
+        import json
+        import uuid
+        run_id = f"RUN_{uuid.uuid4().hex[:10]}"
+        now = datetime.now(timezone.utc).isoformat()
+        feat_json = json.dumps(feature_importance or {})
+
+        try:
+            with self._connect() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO model_training_runs
+                    (id, trained_at, model_type, accuracy, brier_score, feature_importance_json)
+                    VALUES (?, ?, ?, ?, ?, ?);
+                    """,
+                    (run_id, now, model_type, float(accuracy), float(brier_score), feat_json),
+                )
+            logger.info("Logged ML training run %s (%s, acc=%.3f, brier=%.4f).", run_id, model_type, accuracy, brier_score)
+            return run_id
+        except sqlite3.Error:
+            logger.exception("Failed to log model training run.")
+            return ""

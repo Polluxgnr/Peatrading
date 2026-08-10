@@ -251,6 +251,27 @@ class SignalGenerator:
                 final_score = float(min(100.0, base_score + qual_bonus))
 
                 qual_txt = f" · Trend Quality +{qual_bonus:.1f}pts (TQ={t_qual:.2f})" if qual_bonus > 0 else ""
+                # Complete feature snapshot dump for ML training replay
+                atr_14 = float(enriched.ta.atr(length=14).iloc[-1]) if hasattr(enriched, "ta") and "High" in enriched.columns else 0.0
+                vol_s = enriched["Volume"] if "Volume" in enriched.columns else pd.Series([1000] * len(enriched))
+                vol_z = float((vol_s.iloc[-1] - vol_s.tail(20).mean()) / (vol_s.tail(20).std() + 1e-6))
+
+                feature_snapshot = {
+                    "ticker": ticker,
+                    "close": float(close),
+                    "sma_5": float(sma_5) if not pd.isna(sma_5) else 0.0,
+                    "sma_50": float(last.get("SMA_50", 0.0)) if not pd.isna(last.get("SMA_50")) else 0.0,
+                    "sma_200": float(sma_200),
+                    "rsi_14": float(rsi_14),
+                    "trend_quality": float(t_qual),
+                    "qual_bonus": float(qual_bonus),
+                    "atr_14": atr_14,
+                    "volume_zscore": vol_z,
+                    "trailing_eps": float(self._trailing_eps(ticker) or 0.0),
+                    "base_score": float(base_score),
+                    "final_score": float(final_score),
+                }
+
                 signal = Signal(
                     id=str(uuid.uuid4()),
                     ticker=ticker,
@@ -263,6 +284,7 @@ class SignalGenerator:
                         f"RSI < {self.rsi_oversold:.0f} (Value: {rsi_14:.1f}) while Price > SMA200 "
                         f"({close:.2f} > {sma_200:.2f}){qual_txt}. Mean-reversion setup."
                     ),
+                    lineage=feature_snapshot,
                 )
                 signals.append(signal)
                 logger.info(

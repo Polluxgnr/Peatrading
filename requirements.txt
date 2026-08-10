@@ -30,9 +30,10 @@ shap>=0.44.0
 # accessor. Upstream `pandas-ta` 0.4.x requires numba (no py3.13/arm64 wheel).
 pandas-ta-classic>=0.6.0
 
-# --- Interfaces & Internal API (Phases 7-8) ---
+# --- Interfaces, Internal API & MCP (Phases 7-8) ---
 fastapi>=0.110.0
 uvicorn>=0.28.0
+mcp>=1.0.0
 discord.py>=2.3
 plotly>=5.20
 matplotlib>=3.8   # required by pandas Styler.background_gradient in the dashboard
