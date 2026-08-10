@@ -83,6 +83,16 @@ def dump_bronze_json(
     return file_path
 
 
+def save_raw_response(
+    source: str,
+    ticker: str,
+    payload: Union[dict, list, str, bytes],
+    base_dir: Union[Path, str] = _DEFAULT_BRONZE_DIR,
+) -> Path:
+    """Alias for dump_bronze_json using ticker as the endpoint identifier."""
+    return dump_bronze_json(source=source, endpoint=ticker, payload=payload, base_dir=base_dir)
+
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     p = dump_bronze_json("finnhub", "company_news_MC.PA", {"headlines": ["LVMH growth accelerates"]})

@@ -1,5 +1,5 @@
 # PEA Pollux — Memory Core, State Persistence & Data Contracts
-Generated: `2026-08-10 17:02 UTC` | File Count: `8`
+Generated: `2026-08-10 17:10 UTC` | File Count: `8`
 Institutional Systematic Decision Support Architecture for French PEA.
 ---
 ## Included Files Index
@@ -15,7 +15,21 @@ Institutional Systematic Decision Support Architecture for French PEA.
 ---
 ## FILE: 01_memory_core/__init__.py
 ```python
+"""Memory Core & State Persistence package for PEA Pollux."""
 
+from .data_models import PortfolioState, Position, Signal, SignalStatus, SignalType
+from .duckdb_manager import TimeSeriesDB
+from .sqlite_portfolio import PortfolioDB
+
+__all__ = [
+    "PortfolioDB",
+    "TimeSeriesDB",
+    "PortfolioState",
+    "Position",
+    "Signal",
+    "SignalStatus",
+    "SignalType",
+]
 ```
 
 ## FILE: 01_memory_core/config_validator.py

@@ -1,5 +1,5 @@
 # PEA Pollux — Interfaces, Streamlit Bloomberg Terminal HUD & Discord Copilot
-Generated: `2026-08-10 17:02 UTC` | File Count: `8`
+Generated: `2026-08-10 17:10 UTC` | File Count: `8`
 Institutional Systematic Decision Support Architecture for French PEA.
 ---
 ## Included Files Index
@@ -5152,6 +5152,9 @@ def atr_risk_line(
         return "Risque stop ATR: n/a (historique insuffisant)"
     risk_eur = float(qty) * atr_mult * float(atr)
     risk_pct = (risk_eur / equity * 100.0) if equity > 0 else 0.0
+    return f"Risque stop ATR: −{risk_eur:,.0f} € ({risk_pct:.2f}% equity)"
+
+
 def market_impact_line(
     adv: Optional[float],
     notional: float,

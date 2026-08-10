@@ -1,5 +1,5 @@
 # PEA Pollux — Configuration Yaml, Test Suites, Root Ops & Documentation
-Generated: `2026-08-10 17:02 UTC` | File Count: `35`
+Generated: `2026-08-10 17:10 UTC` | File Count: `27`
 Institutional Systematic Decision Support Architecture for French PEA.
 ---
 ## Included Files Index
@@ -11,7 +11,6 @@ Institutional Systematic Decision Support Architecture for French PEA.
 - [config/risk_params.yaml](#file-config-risk_params-yaml)
 - [docker-compose.yml](#file-docker-compose-yml)
 - [Dockerfile](#file-Dockerfile)
-- [experiments/newsletter_ingest/README.md](#file-experiments-newsletter_ingest-README-md)
 - [main_scheduler.py](#file-main_scheduler-py)
 - [Makefile](#file-Makefile)
 - [README.md](#file-README-md)
@@ -24,20 +23,13 @@ Institutional Systematic Decision Support Architecture for French PEA.
 - [tests/test_newsletter_whitelist.py](#file-tests-test_newsletter_whitelist-py)
 - [tests/test_phase16_foundations.py](#file-tests-test_phase16_foundations-py)
 - [tests/test_ui_and_sandbox.py](#file-tests-test_ui_and_sandbox-py)
-- [tools/add_backtest_ui.py](#file-tools-add_backtest_ui-py)
-- [tools/add_deployment.py](#file-tools-add_deployment-py)
 - [tools/backup_databases.py](#file-tools-backup_databases-py)
 - [tools/bootstrap_ml_dataset.py](#file-tools-bootstrap_ml_dataset-py)
-- [tools/build_dashboard_dump.py](#file-tools-build_dashboard_dump-py)
 - [tools/build_llm_dump.py](#file-tools-build_llm_dump-py)
 - [tools/build_universe.py](#file-tools-build_universe-py)
-- [tools/fix_indent.py](#file-tools-fix_indent-py)
-- [tools/rebrand_pea_pollux.py](#file-tools-rebrand_pea_pollux-py)
-- [tools/refactor_ui.py](#file-tools-refactor_ui-py)
 - [tools/run_wfo.py](#file-tools-run_wfo-py)
 - [tools/seed_profiles.py](#file-tools-seed_profiles-py)
 - [tools/sync_universe_from_bourso.py](#file-tools-sync_universe_from_bourso-py)
-- [tools/train_rl_sizer.py](#file-tools-train_rl_sizer-py)
 
 ---
 ## FILE: .github/workflows/ci.yml
@@ -2208,36 +2200,6 @@ EXPOSE 8501
 CMD ["python", "main_scheduler.py"]
 ```
 
-## FILE: experiments/newsletter_ingest/README.md
-```markdown
-# Newsletter ingest sandbox (Yahoo Mail IMAP → local JSON)
-
-Isolated from `00_`–`05_` production code. **No SQLite/DuckDB writes.**
-
-## Setup
-
-1. Enable Yahoo 2FA and create an **app password**.
-2. `cp .env.example .env` and fill `YAHOO_MAIL_USER` / `YAHOO_MAIL_APP_PASSWORD`.
-3. Create a Yahoo Mail folder/label (e.g. `Finance`) and route newsletters into it.
-4. Run:
-
-``​`bash
-python experiments/newsletter_ingest/run_ingest.py --limit 20 --folder Finance
-python experiments/newsletter_ingest/run_ingest.py --dry-run --limit 5
-``​`
-
-Output JSON lands in `experiments/newsletter_ingest/output/`.
-
-## Acceptance
-
-- IMAP connects and always closes.
-- **Sender whitelist** — only listed newsletter From addresses are parsed;
-  receipts / security mail are skipped (`ingest/whitelist.py`).
-- Titles/links extracted from varied HTML digests.
-- Deduper collapses obvious same-day reprints.
-- Zero mailbox mutations; zero production DB I/O.
-```
-
 ## FILE: main_scheduler.py
 ```python
 """Root daemon scheduler for PEA Sniper Terminal V-Prime.
@@ -3991,15 +3953,16 @@ if __name__ == "__main__":
 
 ## FILE: tests/test_newsletter_whitelist.py
 ```python
-"""Whitelist sender filter for newsletter ingest."""
+"""Whitelist sender filter test for newsletter ingest."""
 
 from __future__ import annotations
 
 import sys
+import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "experiments" / "newsletter_ingest"))
+sys.path.insert(0, str(ROOT / "00_data_sensors" / "newsletter_ingest"))
 
 from ingest.whitelist import (  # noqa: E402
     extract_sender_email,
@@ -4007,14 +3970,22 @@ from ingest.whitelist import (  # noqa: E402
 )
 
 
-def test_extract_and_allow_known_senders():
-    assert extract_sender_email('TLDR <dan@tldrnewsletter.com>') == (
-        "dan@tldrnewsletter.com"
-    )
-    assert is_allowed_sender("dan@tldrnewsletter.com")
-    assert is_allowed_sender("Brief <hello@brief.me>")
-    assert not is_allowed_sender("Yahoo <noreply@yahoo.com>")
-    assert not is_allowed_sender("Security Alert <account-protection@yahoo.com>")
+class TestNewsletterWhitelist(unittest.TestCase):
+
+    def test_extract_and_allow_known_senders(self):
+        self.assertEqual(
+            extract_sender_email("Brief <hello@brief.me>"),
+            "hello@brief.me",
+        )
+        self.assertTrue(is_allowed_sender("hello@brief.me"))
+        self.assertTrue(is_allowed_sender("Brief <hello@brief.me>"))
+        self.assertTrue(is_allowed_sender("contact@cafedelabourse.com"))
+        self.assertFalse(is_allowed_sender("Yahoo <noreply@yahoo.com>"))
+        self.assertFalse(is_allowed_sender("Security Alert <account-protection@yahoo.com>"))
+
+
+if __name__ == "__main__":
+    unittest.main()
 ```
 
 ## FILE: tests/test_phase16_foundations.py
@@ -4025,11 +3996,12 @@ from __future__ import annotations
 
 import os
 import sys
-from datetime import datetime, timezone
+import tempfile
+import unittest
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 import pandas as pd
-import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 for sub in ("01_memory_core", "03_risk_portfolio", "04_orchestrator_ai"):
@@ -4045,72 +4017,77 @@ from earnings_blackout import EarningsBlackoutEngine  # noqa: E402
 from data_models import Position, PortfolioState  # noqa: E402
 
 
-def test_max_drawdown_and_sharpe_on_synthetic_curve():
-    dates = pd.date_range("2025-01-01", periods=60, freq="B")
-    # Rise then 20% drawdown then recover partially.
-    eq = pd.Series(
-        [100.0] * 10
-        + list(range(100, 120))
-        + [120 * 0.8] * 10
-        + [100.0] * 20,
-        index=dates[:60],
-    )
-    # Pad/trim to 60
-    eq = eq.iloc[:60]
-    dd = max_drawdown(eq)
-    assert dd <= -0.15
-    m = compute_equity_metrics(pd.DataFrame({"date": eq.index, "equity": eq.values}))
-    assert m["n_points"] == 60
-    assert m["max_drawdown"] <= -0.15
-    assert m["sharpe"] is None or isinstance(m["sharpe"], float)
+class TestPhase16Foundations(unittest.TestCase):
+
+    def test_max_drawdown_and_sharpe_on_synthetic_curve(self):
+        dates = pd.date_range("2025-01-01", periods=60, freq="B")
+        # Rise then 20% drawdown then recover partially.
+        eq = pd.Series(
+            [100.0] * 10
+            + list(range(100, 120))
+            + [120 * 0.8] * 10
+            + [100.0] * 20,
+            index=dates[:60],
+        )
+        eq = eq.iloc[:60]
+        dd = max_drawdown(eq)
+        self.assertLessEqual(dd, -0.15)
+        m = compute_equity_metrics(pd.DataFrame({"date": eq.index, "equity": eq.values}))
+        self.assertEqual(m["n_points"], 60)
+        self.assertLessEqual(m["max_drawdown"], -0.15)
+        self.assertTrue(m["sharpe"] is None or isinstance(m["sharpe"], float))
+
+    def test_rebalancer_modes_split_without_tsdb(self):
+        cfg = ROOT / "config"
+        rb = PortfolioRebalancer(cfg, timeseries_db=None)
+        portfolio = PortfolioState(
+            cash_available=1000,
+            total_equity=5000,
+            positions=[
+                Position(
+                    ticker="MC.PA",
+                    qty_shares=10,
+                    avg_entry_price=100.0,
+                    current_price=125.0,
+                    sector="Luxury",
+                ),
+                Position(
+                    ticker="STLAP.PA",
+                    qty_shares=8,
+                    avg_entry_price=20.0,
+                    current_price=17.0,
+                    sector="Auto",
+                ),
+            ],
+            last_updated=datetime.now(timezone.utc),
+        )
+        shaves = rb.generate_profit_shave_signals(portfolio)
+        atrs = rb.generate_atr_stop_signals(portfolio)
+        self.assertEqual(len(shaves), 1)
+        self.assertEqual(shaves[0].ticker, "MC.PA")
+        self.assertEqual(atrs, [])
+
+    def test_earnings_blackout_window(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            risk = tmp_path / "risk_params.yaml"
+            risk.write_text("EARNINGS_BLACKOUT_DAYS: 2\n", encoding="utf-8")
+            cal = tmp_path / "earnings_calendar.yaml"
+            cal.write_text(
+                "events:\n  MC.PA:\n    2026-07-25: \"Q2 earnings\"\n",
+                encoding="utf-8",
+            )
+            eng = EarningsBlackoutEngine(tmp_path)
+
+            veto, reason = eng.check_veto("MC.PA", date(2026, 7, 24))
+            self.assertTrue(veto)
+            self.assertIn("Q2", reason)
+            clear, _ = eng.check_veto("OR.PA", date(2026, 7, 24))
+            self.assertFalse(clear)
 
 
-def test_rebalancer_modes_split_without_tsdb():
-    cfg = ROOT / "config"
-    rb = PortfolioRebalancer(cfg, timeseries_db=None)
-    portfolio = PortfolioState(
-        cash_available=1000,
-        total_equity=5000,
-        positions=[
-            Position(
-                ticker="MC.PA",
-                qty_shares=10,
-                avg_entry_price=100.0,
-                current_price=125.0,
-                sector="Luxury",
-            ),
-            Position(
-                ticker="STLAP.PA",
-                qty_shares=8,
-                avg_entry_price=20.0,
-                current_price=17.0,
-                sector="Auto",
-            ),
-        ],
-        last_updated=datetime.now(timezone.utc),
-    )
-    shaves = rb.generate_profit_shave_signals(portfolio)
-    atrs = rb.generate_atr_stop_signals(portfolio)
-    assert len(shaves) == 1 and shaves[0].ticker == "MC.PA"
-    # No DuckDB -> ATR stops cannot fire.
-    assert atrs == []
-
-
-def test_earnings_blackout_window(tmp_path):
-    risk = tmp_path / "risk_params.yaml"
-    risk.write_text("EARNINGS_BLACKOUT_DAYS: 2\n", encoding="utf-8")
-    cal = tmp_path / "earnings_calendar.yaml"
-    cal.write_text(
-        "events:\n  MC.PA:\n    2026-07-25: \"Q2 earnings\"\n",
-        encoding="utf-8",
-    )
-    eng = EarningsBlackoutEngine(tmp_path)
-    from datetime import date
-
-    veto, reason = eng.check_veto("MC.PA", date(2026, 7, 24))
-    assert veto and "Q2" in reason
-    clear, _ = eng.check_veto("OR.PA", date(2026, 7, 24))
-    assert not clear
+if __name__ == "__main__":
+    unittest.main()
 ```
 
 ## FILE: tests/test_ui_and_sandbox.py
@@ -4120,13 +4097,14 @@ def test_earnings_blackout_window(tmp_path):
 from __future__ import annotations
 
 import sys
+import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 for sub in ("01_memory_core", "03_risk_portfolio", "05_interfaces"):
     sys.path.insert(0, str(ROOT / sub))
-sys.path.insert(0, str(ROOT / "experiments" / "newsletter_ingest"))
+sys.path.insert(0, str(ROOT / "00_data_sensors" / "newsletter_ingest"))
 
 from data_models import Position, PortfolioState, Signal, SignalType  # noqa: E402
 from pea_position_sizer import PeaSizer  # noqa: E402
@@ -4134,192 +4112,58 @@ from trade_cards import conviction_tier, atr_risk_line, sector_impact_line  # no
 from ingest.dedupe import dedupe_articles  # noqa: E402
 
 
-def test_sizing_explanation_keys():
-    sizer = PeaSizer(ROOT / "config")
-    pf = PortfolioState(
-        cash_available=8000,
-        total_equity=20000,
-        positions=[],
-        last_updated=datetime.now(timezone.utc),
-    )
-    sig = Signal(ticker="AI.PA", signal_type=SignalType.BUY, score=90.0)
-    qty, meta = sizer.size_with_explanation(sig, pf, 180.0, historical_volatility=0.25)
-    assert qty >= 0
-    assert "kelly_fraction" in meta and "weight_pct" in meta
-    assert meta["vol_factor"] > 0
+class TestUiAndSandbox(unittest.TestCase):
+
+    def test_sizing_explanation_keys(self):
+        sizer = PeaSizer(ROOT / "config")
+        pf = PortfolioState(
+            cash_available=8000,
+            total_equity=20000,
+            positions=[],
+            last_updated=datetime.now(timezone.utc),
+        )
+        sig = Signal(ticker="AI.PA", signal_type=SignalType.BUY, score=90.0)
+        qty, meta = sizer.size_with_explanation(sig, pf, 180.0, historical_volatility=0.25)
+        self.assertGreaterEqual(qty, 0)
+        self.assertIn("kelly_fraction", meta)
+        self.assertIn("weight_pct", meta)
+        self.assertGreater(meta["vol_factor"], 0)
+
+    def test_conviction_and_atr_risk_copy(self):
+        self.assertEqual(conviction_tier(92)[0], "Tier A")
+        self.assertEqual(conviction_tier(80)[0], "Tier B")
+        line = atr_risk_line(10, 2.0, 2.5, 10000)
+        self.assertTrue("−" in line or "-" in line)
+        self.assertTrue("equity" in line.lower() or "Equity" in line or "%" in line)
+
+    def test_sector_impact_sentence(self):
+        pf = PortfolioState(
+            cash_available=1000,
+            total_equity=10000,
+            positions=[
+                Position(
+                    ticker="MC.PA", qty_shares=1, avg_entry_price=600,
+                    current_price=600, sector="Luxury",
+                )
+            ],
+            last_updated=datetime.now(timezone.utc),
+        )
+        line = sector_impact_line(pf, "KER.PA", "Luxury", 500, 10000, 25)
+        self.assertIn("Luxury", line)
+        self.assertIn("→", line)
+
+    def test_newsletter_dedupe_collapses_near_dupes(self):
+        arts = [
+            {"title": "LVMH beats estimates on strong US demand", "url": "https://a/1"},
+            {"title": "LVMH beats estimates on strong U.S. demand!", "url": "https://b/2"},
+            {"title": "Air Liquide wins big industrial contract", "url": "https://c/3"},
+        ]
+        out = dedupe_articles(arts)
+        self.assertEqual(len(out), 2)
 
 
-def test_conviction_and_atr_risk_copy():
-    assert conviction_tier(92)[0] == "Tier A"
-    assert conviction_tier(80)[0] == "Tier B"
-    line = atr_risk_line(10, 2.0, 2.5, 10000)
-    assert "−" in line or "-" in line
-    assert "equity" in line.lower() or "Equity" in line or "%" in line
-
-
-def test_sector_impact_sentence():
-    pf = PortfolioState(
-        cash_available=1000,
-        total_equity=10000,
-        positions=[
-            Position(
-                ticker="MC.PA", qty_shares=1, avg_entry_price=600,
-                current_price=600, sector="Luxury",
-            )
-        ],
-        last_updated=datetime.now(timezone.utc),
-    )
-    line = sector_impact_line(pf, "KER.PA", "Luxury", 500, 10000, 25)
-    assert "Luxury" in line and "→" in line
-
-
-def test_newsletter_dedupe_collapses_near_dupes():
-    arts = [
-        {"title": "LVMH beats estimates on strong US demand", "url": "https://a/1"},
-        {"title": "LVMH beats estimates on strong U.S. demand!", "url": "https://b/2"},
-        {"title": "Air Liquide wins big industrial contract", "url": "https://c/3"},
-    ]
-    out = dedupe_articles(arts)
-    assert len(out) == 2
-```
-
-## FILE: tools/add_backtest_ui.py
-```python
-import os
-
-path = "05_interfaces/terminal_dashboard.py"
-with open(path, "r", encoding="utf-8") as f:
-    content = f.read()
-
-backtest_code = """
-def render_autonomous_backtest():
-    st.markdown("---")
-    st.markdown("### 🤖 Simulation de Performance (Execution Autonome)")
-    st.markdown("Cette simulation teste l'exécution autonome des signaux générés (score > 70) avec une gestion dynamique de la taille (basée sur le score) et 0.5% de slippage (frais).")
-    
-    csv_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'database', 'ml_training_dataset.csv')
-    if not os.path.exists(csv_path):
-        st.warning("Fichier d'entraînement ML non trouvé. Veuillez d'abord exécuter le bootstrapper.")
-        return
-        
-    try:
-        df = pd.read_csv(csv_path)
-    except Exception as e:
-        st.error(f"Erreur de lecture: {e}")
-        return
-        
-    if df.empty or 'Date' not in df.columns or 'Score' not in df.columns:
-        st.warning("Le dataset ML ne contient pas de signaux valides.")
-        return
-        
-    df['Date'] = pd.to_datetime(df['Date'])
-    df = df.sort_values('Date')
-    
-    st.info("Simulation du backtest à partir de ml_training_dataset.csv (Approximation sans historique journalier de prix pour tous les assets)")
-    
-    # We create a dummy equity curve for demonstration, because accurate backtesting requires
-    # full price history which is too heavy to load synchronously in Streamlit here.
-    dates = pd.date_range(start='2014-01-01', end=pd.Timestamp.today(), freq='B')
-    curve_df = pd.DataFrame({'Date': dates})
-    import numpy as np
-    curve_df['CW8'] = 10000 * (1 + 0.0003).cumprod()
-    curve_df['Bot Autonome'] = 10000 * (1 + 0.0004 + np.random.normal(0, 0.005, len(dates))).cumprod()
-    
-    fig = pex.line(
-        curve_df.melt(id_vars=['Date'], var_name='Stratégie', value_name='Capital (€)'), 
-        x='Date', y='Capital (€)', color='Stratégie',
-        title='Bot Autonome vs Buy & Hold (Simulation approx)'
-    )
-    fig.update_layout(plot_bgcolor=_BG, paper_bgcolor=_BG, font=dict(color=_WHITE))
-    st.plotly_chart(fig, use_container_width=True)
-
-    # Calculate some metrics
-    st.markdown("### Statistiques du modèle ML")
-    st.markdown(f"- **Nombre de signaux historiques**: {len(df)}")
-    if 'label_fwd_gt_2pct' in df.columns:
-        win_rate = df['label_fwd_gt_2pct'].mean() * 100
-        st.markdown(f"- **Win Rate Théorique (>2% en 30j)**: {win_rate:.1f}%")
-
-render_autonomous_backtest()
-"""
-
-# replace near the end of the file where render_architecture_logs() is.
-# Wait, architecture & logs is rendered inside the tabs block.
-# Let's just append it to the end of `render_architecture_logs()` function.
-# Or find:
-#         except Exception:
-#             st.caption("Table audit_log indisponible.")
-# and put it right after.
-
-target = """        except Exception:
-            st.caption("Table audit_log indisponible.")"""
-
-if target in content:
-    content = content.replace(target, target + "\n" + backtest_code)
-else:
-    print("TARGET NOT FOUND!")
-
-with open(path, "w", encoding="utf-8") as f:
-    f.write(content)
-
-print("Done")
-```
-
-## FILE: tools/add_deployment.py
-```python
-import os
-
-path = "main_scheduler.py"
-with open(path, "r", encoding="utf-8") as f:
-    content = f.read()
-
-deployment_code = """    # --- Phase 49: Intelligent Capital Deployment (80% Rule) ---
-    from pea_position_sizer import PeaSizer
-    inv_rate = PeaSizer.investment_rate(portfolio)
-    if inv_rate < 0.80:
-        market_reg = getattr(macro_alpha, "_last_regime_result", None)
-        is_bad_regime = False
-        if market_reg:
-            rm = market_reg.get("regime", "").upper()
-            if rm in ("BEAR", "VOLATILE"):
-                is_bad_regime = True
-        
-        if not is_bad_regime:
-            logger.info("Invested capital (%.1f%%) < 80%%. Activating strategic deployment.", inv_rate * 100)
-            # Find signals that were rejected ONLY because of score threshold
-            rejected_for_score = [s for s in processed if s.status == SignalStatus.REJECTED and ("Score" in s.reason or "< 65" in s.reason)]
-            rejected_for_score.sort(key=lambda x: x.score, reverse=True)
-            
-            deployed = 0
-            for sig in rejected_for_score:
-                if deployed >= 3:
-                    break
-                price = current_prices.get(sig.ticker, 0.0)
-                if price > 0:
-                    target_qty, sizing = orchestrator.sizer.size_with_explanation(sig, portfolio, price)
-                    if target_qty > 0:
-                        sig.target_qty = target_qty
-                        sig.status = SignalStatus.APPROVED
-                        sig.reason = f"DÉPLOIEMENT STRATÉGIQUE (Cash: {100 - inv_rate*100:.1f}%) | {target_qty} actions @ {price:.2f} EUR (Score: {sig.score:.1f})"
-                        logger.info("Strategic deployment APPROVED %s (score=%.1f)", sig.ticker, sig.score)
-                        deployed += 1
-"""
-
-target = """    approved = [s for s in processed if s.status == SignalStatus.APPROVED]
-    logger.info(
-        "Orchestrator finalized %d signal(s): %d APPROVED (VIX=%.1f).",
-        len(processed),
-        len(approved),
-        vix_level,
-    )"""
-
-if target in content:
-    content = content.replace(target, target + "\n" + deployment_code)
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(content)
-    print("Deployment logic inserted successfully.")
-else:
-    print("Target block not found.")
+if __name__ == "__main__":
+    unittest.main()
 ```
 
 ## FILE: tools/backup_databases.py
@@ -4586,243 +4430,6 @@ def main() -> None:
         logger.info("Training complete.")
     except Exception as e:
         logger.exception("Failed to train model.")
-
-if __name__ == "__main__":
-    main()
-```
-
-## FILE: tools/build_dashboard_dump.py
-```python
-#!/usr/bin/env python3
-"""Regenerate PROJECT_FULL_DUMP_FOR_LLM.md for one-shot LLM context.
-
-Usage (from repo root):
-    python tools/build_llm_dump.py
-    python tools/build_llm_dump.py --no-summary   # skip architecture preamble
-"""
-
-from __future__ import annotations
-
-import argparse
-import re
-from collections import defaultdict
-from datetime import datetime, timezone
-from pathlib import Path
-
-ROOT = Path(__file__).resolve().parent.parent
-OUT = ROOT / "DASHBOARD_FULL_DUMP_FOR_LLM.md"
-README = ROOT / "README.md"
-
-SKIP_DIRS = {
-    ".git",
-    "venv_x64",
-    "venv",
-    ".venv",
-    "__pycache__",
-    ".pytest_cache",
-    "node_modules",
-    ".cursor",
-    "database",
-    "mcps",
-    "agent-transcripts",
-    "terminals",
-    "tests",
-    "scratch",
-    "tools",
-    "docs",
-    "notebooks",
-}
-
-EXTS = {
-    ".py",
-    ".yaml",
-    ".yml",
-    ".toml",
-    ".md",
-    ".txt",
-    ".ps1",
-    ".json",
-    ".ini",
-    ".cfg",
-    ".css",
-    ".html",
-}
-
-NAME_ALLOW = {
-    "Dockerfile",
-    "docker-compose.yml",
-    "requirements.txt",
-    "api_keys.env.example",
-    ".gitignore",
-}
-
-SKIP_FILES = {
-    "PROJECT_FULL_DUMP_FOR_LLM.md",
-    "DASHBOARD_FULL_DUMP_FOR_LLM.md",
-}
-
-# High-signal files surfaced first in the index (read these before the rest).
-PRIORITY_FILES = [
-    "README.md",
-    "config/risk_params.yaml",
-    "config/pea_universe.yaml",
-    "05_interfaces/terminal_dashboard.py",
-    "01_memory_core/data_models.py",
-    "01_memory_core/sqlite_portfolio.py",
-    "01_memory_core/duckdb_manager.py",
-    "04_orchestrator_ai/news_sentiment_llm.py",
-]
-
-ARCHITECTURE_SUMMARY = """\
-## Architecture snapshot (for agents)
-
-| Layer | Path | Role |
-|-------|------|------|
-| Sensors | `00_data_sensors/` | OHLCV, VIX, insiders (AMF→FMP→YF), Polymarket, Bourso scrapers, newsletter IMAP |
-| Memory | `01_memory_core/` | Pydantic models, SQLite (`portfolio`, `audit_logs`, `portfolio_history`, **`news_history`**), DuckDB OHLCV |
-| Quant | `02_quant_engine/` | Ensemble conviction scorer (MR + vol + insider + inst + **news/poly modifiers**), Smart DCA |
-| Risk | `03_risk_portfolio/` | Cascade vetoes, Half-Kelly sizing, correlation firewall, ATR rebalancer |
-| Orchestrator | `04_orchestrator_ai/` | Pipeline conductor, earnings blackout, macro veto, revocation, weekly historian |
-| UI | `05_interfaces/` | Streamlit Mission Control — **native HTML ticker tape**, exploration 600+ tickers, live telemetry tab |
-| Ops | `main_scheduler.py` | Paris daemon (09:00 / 13:30 / 17:10 + briefing 08:25 + ATR 08:35) |
-
-**Dashboard highlights (Phase 26–28):**
-- Auto-sync on session open (`load_universe`, `get_last_prices`, `get_vix`)
-- Native CSS marquee tape (no TradingView widget for `.PA`)
-- `news_history` SQLite archive — exact timestamps, cross-session memory
-- Portfolio tab: explicit ATR 2.5× stop table
-- Exploration: universal ticker search, order ticket, decision checklist
-- Architecture tab: live source health + active `risk_params.yaml` + logic expanders
-
-**Hard rules:** no auto-broker execution · LLM explains only · conviction emit ≥ 65 · manual Discord/Streamlit approve.
-"""
-
-
-def _read_phase_from_readme() -> str:
-    try:
-        first = README.read_text(encoding="utf-8").splitlines()[0]
-        m = re.search(r"Phase\s+[\d–\-]+", first)
-        return m.group(0) if m else "PEA Pollux"
-    except OSError:
-        return "PEA Pollux"
-
-
-def _lang(path: Path) -> str:
-    return {
-        ".py": "python",
-        ".yaml": "yaml",
-        ".yml": "yaml",
-        ".toml": "toml",
-        ".md": "markdown",
-        ".txt": "text",
-        ".ps1": "powershell",
-        ".json": "json",
-        ".ini": "ini",
-        ".cfg": "ini",
-    }.get(path.suffix.lower(), "text")
-
-
-def _should_include(path: Path) -> bool:
-    if path.name in SKIP_FILES:
-        return False
-    if any(part in SKIP_DIRS for part in path.parts):
-        return False
-    if path.name in NAME_ALLOW:
-        return True
-    if path.suffix.lower() in EXTS:
-        if path.suffix.lower() == ".env" or path.name.endswith(".env"):
-            return path.name.endswith(".env.example")
-        return True
-    return False
-
-
-def collect_files() -> list[Path]:
-    files: list[Path] = []
-    for path in sorted(ROOT.rglob("*")):
-        if not path.is_file():
-            continue
-        rel = path.relative_to(ROOT)
-        if _should_include(rel):
-            files.append(rel)
-    return files
-
-
-def _group_index(files: list[Path]) -> list[str]:
-    by_dir: dict[str, list[Path]] = defaultdict(list)
-    for rel in files:
-        parent = rel.parent.as_posix() if rel.parent != Path(".") else "(root)"
-        by_dir[parent].append(rel)
-
-    lines: list[str] = []
-    for parent in sorted(by_dir.keys(), key=lambda x: (x != "(root)", x)):
-        lines.append(f"### `{parent}/`")
-        for rel in sorted(by_dir[parent], key=lambda p: p.name.lower()):
-            try:
-                nlines = len((ROOT / rel).read_text(encoding="utf-8", errors="replace").splitlines())
-            except OSError:
-                nlines = 0
-            prio = " ⭐" if rel.as_posix() in PRIORITY_FILES else ""
-            lines.append(f"- `{rel.as_posix()}` ({nlines} lines){prio}")
-        lines.append("")
-    return lines
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Build PROJECT_FULL_DUMP_FOR_LLM.md")
-    parser.add_argument(
-        "--no-summary",
-        action="store_true",
-        help="Omit architecture snapshot preamble",
-    )
-    args = parser.parse_args()
-
-    files = collect_files()
-    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    phase = _read_phase_from_readme()
-
-    lines: list[str] = [
-        "# PEA Pollux — Full Project Dump for LLM",
-        "",
-        f"> **{phase}** · Generated `{stamp}` · Root `{ROOT}`",
-        "",
-        "One-shot context for external LLM agents. Includes source, configs, and docs.",
-        "Excludes: `venv*`, `database/*.db`, secrets, nested dump, agent transcripts.",
-        "",
-        "---",
-    ]
-
-    if not args.no_summary:
-        lines.append(ARCHITECTURE_SUMMARY)
-        lines.append("---")
-        lines.append("")
-        lines.append("### Priority files (read first)")
-        for p in PRIORITY_FILES:
-            if (ROOT / p).exists():
-                lines.append(f"- `{p}`")
-        lines.append("")
-        lines.append("---")
-
-    lines.append(f"## File index ({len(files)} files)")
-    lines.extend(_group_index(files))
-    lines.append("---")
-
-    for rel in files:
-        abs_path = ROOT / rel
-        try:
-            text = abs_path.read_text(encoding="utf-8")
-        except UnicodeDecodeError:
-            text = abs_path.read_text(encoding="utf-8", errors="replace")
-        safe = text.replace("``​`", "``\u200b`")
-        nlines = len(text.splitlines())
-        lines.append(f"## FILE: {rel.as_posix()} ({nlines} lines)")
-        lines.append(f"``​`{_lang(rel)}")
-        lines.append(safe.rstrip() + "\n``​`")
-        lines.append("")
-
-    OUT.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
-    size_kb = OUT.stat().st_size / 1024
-    print(f"Wrote {OUT.name}: {len(files)} files, {size_kb:.0f} KB ({phase})")
-
 
 if __name__ == "__main__":
     main()
@@ -5316,270 +4923,6 @@ if __name__ == "__main__":
     main()
 ```
 
-## FILE: tools/fix_indent.py
-```python
-import os
-
-path = "05_interfaces/terminal_dashboard.py"
-with open(path, "r", encoding="utf-8") as f:
-    lines = f.readlines()
-
-for i, line in enumerate(lines):
-    if "st.markdown" in line and "###" in line:
-        if i > 0 and lines[i-1].strip() == "if True:":
-            spaces = len(lines[i-1]) - len(lines[i-1].lstrip())
-            # Ensure line[i] has 4 more spaces than line[i-1]
-            lines[i] = (" " * (spaces + 4)) + line.lstrip()
-
-with open(path, "w", encoding="utf-8") as f:
-    f.writelines(lines)
-```
-
-## FILE: tools/rebrand_pea_pollux.py
-```python
-#!/usr/bin/env python3
-"""One-shot UTF-8 safe rebrand: PEA Pollux -> PEA Pollux."""
-
-from __future__ import annotations
-
-from pathlib import Path
-
-ROOT = Path(__file__).resolve().parent.parent
-
-SKIP_DIRS = {
-    ".git",
-    "venv_x64",
-    "venv",
-    ".venv",
-    "__pycache__",
-    ".pytest_cache",
-    "database",
-    "logs",
-    "node_modules",
-}
-
-EXTS = {".py", ".yaml", ".yml", ".md", ".ps1", ".txt", ".json", ".ini", ".cfg"}
-NAMES = {"Dockerfile", "docker-compose.yml", "requirements.txt", ".gitignore"}
-
-REPLACEMENTS = [
-    ("PEA Pollux", "PEA Pollux"),
-    ("PEA Pollux", "PEA Pollux"),
-    ("pea_pollux", "pea_pollux"),
-    ("pea_pollux_all.log", "pea_pollux_all.log"),
-    ("PEA-Pollux", "PEA-Pollux"),
-    ("PEA Pollux | Terminal", "PEA Pollux | Terminal"),
-    ("PEA Pollux", "PEA Pollux"),
-    ("PEA Pollux", "PEA Pollux"),
-    ("Pollux Gronier — PEA Pollux", "Pollux Gronier — PEA Pollux"),
-    ("Pollux Gronier — PEA Pollux", "Pollux Gronier — PEA Pollux"),
-]
-
-
-def should_touch(path: Path) -> bool:
-    if path.name == "PROJECT_FULL_DUMP_FOR_LLM.md":
-        return False
-    if any(p in SKIP_DIRS for p in path.parts):
-        return False
-    if path.name in NAMES:
-        return True
-    return path.suffix.lower() in EXTS
-
-
-def main() -> None:
-    changed = 0
-    for path in sorted(ROOT.rglob("*")):
-        if not path.is_file() or not should_touch(path):
-            continue
-        text = path.read_text(encoding="utf-8")
-        orig = text
-        for old, new in REPLACEMENTS:
-            text = text.replace(old, new)
-        if text != orig:
-            path.write_text(text, encoding="utf-8", newline="\n")
-            changed += 1
-    print(f"Rebranded {changed} files.")
-
-
-if __name__ == "__main__":
-    main()
-```
-
-## FILE: tools/refactor_ui.py
-```python
-import re
-import os
-
-path = "05_interfaces/terminal_dashboard.py"
-with open(path, "r", encoding="utf-8") as f:
-    content = f.read()
-
-breadth_func_new = """@st.cache_data(ttl=900, show_spinner=False)
-def get_market_breadth(universe_df: pd.DataFrame, db_manager) -> dict:
-    try:
-        from duckdb_manager import TimeSeriesDB
-        if universe_df is None or universe_df.empty: return {"pct_sma50": None, "pct_sma200": None, "valid": 0, "list_200": []}
-        db = TimeSeriesDB(db_path=str(db_manager), read_only=True)
-        tickers = universe_df.get("Ticker", pd.Series([], dtype=str)).dropna().astype(str).unique().tolist()
-        candidates = [t for t in tickers if t][:160]
-        valid, above50, above200 = 0, 0, 0
-        list_200 = []
-        for t in candidates:
-            hist = db.get_historical_prices(t, days=200)
-            if hist is None or hist.empty or "Close" not in hist.columns or len(hist) < 200: continue
-            close = pd.to_numeric(hist["Close"], errors="coerce").dropna()
-            if close.empty or len(close) < 200: continue
-            last = float(close.iloc[-1])
-            sma50, sma200 = float(close.tail(50).mean()), float(close.tail(200).mean())
-            valid += 1
-            if last > sma50: above50 += 1
-            if last > sma200: 
-                above200 += 1
-                list_200.append(t)
-            if valid >= 100: break
-        if valid <= 0: return {"pct_sma50": None, "pct_sma200": None, "valid": 0, "list_200": []}
-        return {"pct_sma50": above50 / valid * 100.0, "pct_sma200": above200 / valid * 100.0, "valid": valid, "list_200": list_200}
-    except Exception: return {"pct_sma50": None, "pct_sma200": None, "valid": 0, "list_200": []}
-"""
-content = re.sub(r'@st\.cache_data\(ttl=900, show_spinner=False\)\ndef get_market_breadth.*?    except Exception:  # noqa: BLE001\n        return \{"pct_sma50": None, "pct_sma200": None, "valid": 0\}', breadth_func_new, content, flags=re.DOTALL)
-
-old_r1_r5 = """r1, r2, r3, r4, r5 = st.columns(5)
-with r1:
-    vsub = ("\\U0001F6A8 PANIC - achats satellites geles" if vix_panic
-            else f"Calme (seuil {_VIX_PANIC:.0f})")
-    st.markdown(metric_box(
-        "Volatilite (VIX)", f"{vix:.1f}", sub=vsub,
-        accent="red" if vix_panic else "", sub_cls="sub-red" if vix_panic else "sub-green",
-        help_text="L'indice de la peur. Au-dessus de 30, le marche panique et le "
-                  "bot bloque les nouveaux achats risques pour proteger le capital.",
-    ), unsafe_allow_html=True)
-with r2:
-    if regime:
-        crash = regime["crash"]
-        rsub = ("\\U0001F534 SOUS SMA200 - DCA agressif" if crash
-                else "\\U0001F7E2 SUR SMA200 - DCA standard")
-        st.markdown(metric_box(
-            f"Regime Core ({_CORE_TICKER})", f"{regime['gap_pct']:+.1f}%", sub=rsub,
-            accent="red" if crash else "", sub_cls="sub-red" if crash else "sub-green",
-            help_text="Indique si le marche global est en tendance haussiere "
-                      "(au-dessus de sa moyenne 200 jours) ou en crise (en dessous). "
-                      "En crise, le bot accumule l'ETF Monde plus agressivement.",
-        ), unsafe_allow_html=True)
-    else:
-        st.markdown(metric_box(
-            f"Regime Core ({_CORE_TICKER})", "n/a", sub="Donnees indisponibles",
-            accent="muted", sub_cls="sub-muted",
-            help_text="Regime du marche global (prix vs moyenne 200 jours). "
-                      "Donnees temporairement indisponibles.",
-        ), unsafe_allow_html=True)
-with r3:
-    breadth_val = (
-        f"{_pct50_f:.0f}% / {_pct200_f:.0f}%" if _pct200_f is not None else "n/a"
-    )
-    st.markdown(metric_box(
-        "Market Breadth (SMA50/200)",
-        breadth_val,
-        sub=f"{int(_valid)} titres validés · Close>SMA50/SMA200",
-        accent=_breadth_accent,
-        sub_cls=_breadth_sub_cls,
-        help_text=(
-            "Broad market measure : % des noms PEA ayant "
-            "Close > SMA50 et Close > SMA200 (hist. DuckDB ~200j)."
-        ),
-    ), unsafe_allow_html=True)
-
-with r4:
-    over = sat_used_pct > 100
-    ssub = f"{satellite_value:,.0f} / {sat_budget_eur:,.0f} \u20ac (max {_SAT_BUDGET*100:.0f}%)"
-    st.markdown(metric_box(
-        "Budget Satellite Utilise", f"{sat_used_pct:.0f}%", sub=ssub,
-        accent="red" if over else "cyan", sub_cls="sub-red" if over else "sub-muted",
-        help_text="Capital alloue aux actions individuelles (max 30% du "
-                  "portefeuille). S'il est depasse, le bot refuse de nouveaux "
-                  "achats individuels.",
-    ), unsafe_allow_html=True)
-with r5:
-    c_acc = "red" if max_sector_val >= _MAX_SECTOR * 100 else "cyan"
-    c_sub = "sub-red" if max_sector_val >= _MAX_SECTOR * 100 else "sub-muted"
-    st.markdown(metric_box(
-        "Concentration Secteur (Max)", f"{max_sector_val:.1f}%",
-        sub=f"{max_sector} (cap {_MAX_SECTOR*100:.0f}%)",
-        accent=c_acc, sub_cls=c_sub,
-        help_text="Le secteur le plus lourd du portefeuille. S'il depasse le "
-                  "plafond, le bot rejettera toute opportunite dans ce meme secteur.",
-    ), unsafe_allow_html=True)"""
-
-new_r1_r5 = """r1, r2, r3, r4, r5 = st.columns(5)
-with r1:
-    vsub = ("\\U0001F6A8 PANIC - achats satellites geles" if vix_panic else f"Calme (seuil {_VIX_PANIC:.0f})")
-    with st.popover(f"VIX | {vix:.1f}", use_container_width=True):
-        st.markdown(metric_box(
-            "Volatilite (VIX)", f"{vix:.1f}", sub=vsub,
-            accent="red" if vix_panic else "", sub_cls="sub-red" if vix_panic else "sub-green",
-        ), unsafe_allow_html=True)
-        vix_hist = _db_hist("^V2TX", 30)
-        if not vix_hist.empty:
-            fig = pex.line(vix_hist, x="Date", y="Close", title="VIX 30-Day History")
-            fig.update_layout(margin=dict(l=0, r=0, t=30, b=0), height=200, plot_bgcolor=_BG, paper_bgcolor=_BG, font=dict(color=_WHITE))
-            st.plotly_chart(fig, use_container_width=True)
-
-with r2:
-    if regime:
-        crash = regime["crash"]
-        rsub = ("\\U0001F534 SOUS SMA200" if crash else "\\U0001F7E2 SUR SMA200")
-        with st.popover(f"Regime | {regime['gap_pct']:+.1f}%", use_container_width=True):
-            st.markdown(metric_box(
-                f"Regime Core ({_CORE_TICKER})", f"{regime['gap_pct']:+.1f}%", sub=rsub,
-                accent="red" if crash else "", sub_cls="sub-red" if crash else "sub-green",
-            ), unsafe_allow_html=True)
-    else:
-        st.markdown(metric_box(f"Regime Core ({_CORE_TICKER})", "n/a", sub="Donnees indisponibles", accent="muted", sub_cls="sub-muted"), unsafe_allow_html=True)
-
-with r3:
-    breadth_val = f"{_pct50_f:.0f}% / {_pct200_f:.0f}%" if _pct200_f is not None else "n/a"
-    with st.popover(f"Breadth | {breadth_val}", use_container_width=True):
-        st.markdown(metric_box(
-            "Market Breadth (SMA50/200)", breadth_val,
-            sub=f"{int(_valid)} titres", accent=_breadth_accent, sub_cls=_breadth_sub_cls,
-        ), unsafe_allow_html=True)
-        st.markdown("### Stocks > SMA200")
-        list_200 = _breadth.get("list_200", [])
-        if list_200:
-            st.dataframe(pd.DataFrame({"Ticker": list_200}), hide_index=True, use_container_width=True)
-
-with r4:
-    over = sat_used_pct > 100
-    ssub = f"{satellite_value:,.0f} / {sat_budget_eur:,.0f} \\u20ac"
-    with st.popover(f"Sat | {sat_used_pct:.0f}%", use_container_width=True):
-        st.markdown(metric_box(
-            "Budget Satellite", f"{sat_used_pct:.0f}%", sub=ssub,
-            accent="red" if over else "cyan", sub_cls="sub-red" if over else "sub-muted",
-        ), unsafe_allow_html=True)
-
-with r5:
-    c_acc = "red" if max_sector_val >= _MAX_SECTOR * 100 else "cyan"
-    c_sub = "sub-red" if max_sector_val >= _MAX_SECTOR * 100 else "sub-muted"
-    with st.popover(f"Sector | {max_sector_val:.1f}%", use_container_width=True):
-        st.markdown(metric_box(
-            "Concentration Secteur (Max)", f"{max_sector_val:.1f}%",
-            sub=f"{max_sector}", accent=c_acc, sub_cls=c_sub,
-        ), unsafe_allow_html=True)
-        if sector_weights:
-            pie_df = pd.DataFrame(list(sector_weights.items()), columns=["Sector", "Value"])
-            fig = pex.pie(pie_df, names="Sector", values="Value", hole=0.4)
-            fig.update_layout(margin=dict(l=0, r=0, t=0, b=0), height=250, plot_bgcolor=_BG, paper_bgcolor=_BG, font=dict(color=_WHITE))
-            st.plotly_chart(fig, use_container_width=True)
-"""
-content = content.replace(old_r1_r5, new_r1_r5)
-
-# Replace single-line expanders with standard markdown/containers
-# Using regex to catch any single line expander blocks that are simple
-content = re.sub(r'with st\.expander\("Voir les sources \(Newsletters\)", expanded=False\):', 'if True:', content)
-content = re.sub(r'with st\.expander\("([^"]+)", expanded=False\):', r'if True:\n        st.markdown("### \1")', content)
-
-with open(path, "w", encoding="utf-8") as f:
-    f.write(content)
-```
-
 ## FILE: tools/run_wfo.py
 ```python
 """Walk-Forward Optimization (WFO) for RSI_OVERSOLD.
@@ -5962,88 +5305,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-```
-
-## FILE: tools/train_rl_sizer.py
-```python
-"""Train PPO Reinforcement Learning model for Position Sizing.
-
-This script creates a mock Gym environment where the agent learns
-to output an optimal Kelly Fraction based on (signal_score, volatility)
-in order to maximize Sharpe ratio (reward).
-"""
-import sys
-import logging
-from pathlib import Path
-import numpy as np
-
-try:
-    import gymnasium as gym
-    from stable_baselines3 import PPO
-except ImportError:
-    print("Please install stable-baselines3 and gymnasium.")
-    sys.exit(1)
-
-logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
-logger = logging.getLogger(__name__)
-
-_ROOT = Path(__file__).resolve().parent.parent
-_MODEL_PATH = _ROOT / "database" / "rl_sizer_model.zip"
-
-class SizingEnv(gym.Env):
-    """Custom Environment for Sizing."""
-    def __init__(self):
-        super(SizingEnv, self).__init__()
-        # Action space: [-1, 1] mapped to [0, 1] in inference
-        self.action_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(1,), dtype=np.float32)
-        # Observation space: [signal_score/100, volatility]
-        self.observation_space = gym.spaces.Box(low=0.0, high=2.0, shape=(2,), dtype=np.float32)
-        
-        self.current_step = 0
-        self.max_steps = 1000
-        
-    def reset(self, seed=None, options=None):
-        super().reset(seed=seed)
-        self.current_step = 0
-        return self._next_obs(), {}
-        
-    def _next_obs(self):
-        score = np.random.uniform(0.65, 1.0)
-        vol = np.random.uniform(0.10, 0.40)
-        return np.array([score, vol], dtype=np.float32)
-        
-    def step(self, action):
-        self.current_step += 1
-        kelly = np.clip((action[0] + 1.0) / 2.0, 0.0, 1.0)
-        
-        # Reward logic: high kelly on high score + low vol is good.
-        # High kelly on high vol is dangerous (drawdown penalty).
-        obs = self._next_obs()
-        score, vol = obs
-        
-        expected_return = (score - 0.5) * 2.0  # scaled
-        risk_penalty = vol * kelly * 2.0
-        reward = expected_return * kelly - risk_penalty
-        
-        done = self.current_step >= self.max_steps
-        truncated = False
-        
-        return obs, float(reward), done, truncated, {}
-
-def train_agent():
-    logger.info("Initializing PPO Sizing Agent...")
-    env = SizingEnv()
-    
-    # In production, we'd train on thousands of historical trades.
-    model = PPO("MlpPolicy", env, verbose=1)
-    
-    logger.info("Training PPO agent...")
-    model.learn(total_timesteps=5000)
-    
-    _MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
-    model.save(str(_MODEL_PATH))
-    logger.info("Model saved to %s", _MODEL_PATH)
-
-if __name__ == "__main__":
-    train_agent()
 ```

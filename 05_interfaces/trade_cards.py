@@ -70,6 +70,9 @@ def atr_risk_line(
         return "Risque stop ATR: n/a (historique insuffisant)"
     risk_eur = float(qty) * atr_mult * float(atr)
     risk_pct = (risk_eur / equity * 100.0) if equity > 0 else 0.0
+    return f"Risque stop ATR: −{risk_eur:,.0f} € ({risk_pct:.2f}% equity)"
+
+
 def market_impact_line(
     adv: Optional[float],
     notional: float,

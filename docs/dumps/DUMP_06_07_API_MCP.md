@@ -1,5 +1,5 @@
 # PEA Pollux — Internal FastAPI Gateway & Claude Desktop MCP Server
-Generated: `2026-08-10 17:02 UTC` | File Count: `4`
+Generated: `2026-08-10 17:10 UTC` | File Count: `4`
 Institutional Systematic Decision Support Architecture for French PEA.
 ---
 ## Included Files Index
