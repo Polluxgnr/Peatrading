@@ -1,5 +1,5 @@
 # PEA Pollux — Complete Monolithic Repository Dump
-Generated: `2026-08-10 17:10 UTC` | File Count: `121`
+Generated: `2026-08-10 17:30 UTC` | File Count: `121`
 Institutional Systematic Decision Support Architecture for French PEA.
 ---
 ## Included Files Index
@@ -5494,6 +5494,26 @@ class PortfolioDB:
                 return [dict(r) for r in rows]
         except sqlite3.Error:
             logger.exception("Failed to fetch news from news_master.")
+            return []
+
+    def fetch_recent_post_mortems(self, limit: int = 50) -> list[dict]:
+        """Fetch historical post-mortems from trade_post_mortems table."""
+        try:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    """
+                    SELECT id, ticker, entry_date, exit_date, holding_days,
+                           entry_price, exit_price, pnl_eur, pnl_pct, exit_reason,
+                           entry_score, mae_pct, mfe_pct, lessons_learned, created_at
+                    FROM trade_post_mortems
+                    ORDER BY exit_date DESC, created_at DESC
+                    LIMIT ?;
+                    """,
+                    (limit,),
+                ).fetchall()
+                return [dict(r) for r in rows]
+        except sqlite3.Error:
+            logger.debug("Failed to fetch trade_post_mortems from SQLite.")
             return []
 
     def fetch_closed_signals(self, limit: int = 50) -> list[dict]:
@@ -12441,6 +12461,47 @@ def _sector_for_ticker(ticker: str) -> str:
     return "UNKNOWN"
 
 
+def get_data_lake_health() -> dict:
+    """Inspect SQLite universe_snapshots and news_master for freshness telemetry."""
+    try:
+        db = PortfolioDB()
+        with db._connect() as conn:
+            row_snap = conn.execute(
+                "SELECT MAX(date) as last_date, COUNT(*) as cnt FROM universe_snapshots;"
+            ).fetchone()
+            row_news = conn.execute(
+                "SELECT MAX(created_at) as last_news, COUNT(*) as cnt FROM news_master;"
+            ).fetchone()
+
+        last_snap = row_snap["last_date"] if row_snap and row_snap["last_date"] else None
+        last_news = row_news["last_news"] if row_news and row_news["last_news"] else None
+
+        is_fresh = True
+        stale_reasons = []
+        now_utc = datetime.now(timezone.utc)
+
+        if last_news:
+            try:
+                d_news = datetime.fromisoformat(last_news[:19]).replace(tzinfo=timezone.utc)
+                if (now_utc - d_news).total_seconds() > 86400:
+                    is_fresh = False
+                    stale_reasons.append("News > 24h")
+            except Exception:
+                pass
+        else:
+            is_fresh = False
+            stale_reasons.append("News manquantes")
+
+        return {
+            "is_fresh": is_fresh,
+            "last_snap": last_snap or "Aucun",
+            "last_news": last_news[:16] if last_news else "Aucun",
+            "stale_reasons": ", ".join(stale_reasons) if stale_reasons else "Données à jour (<24h)",
+        }
+    except Exception as exc:
+        return {"is_fresh": True, "last_snap": "N/A", "last_news": "N/A", "stale_reasons": str(exc)}
+
+
 def render_pending_trade_cards(pending_df: pd.DataFrame, portfolio_obj) -> None:
     """Rich cards for PENDING Discord signals (sizing / ATR risk / sector)."""
     if pending_df is None or pending_df.empty:
@@ -14919,26 +14980,47 @@ with r4:
 
 # --- Sidebar: settings & controls -------------------------------------------
 with st.sidebar:
-    st.markdown("### \u2699\uFE0F Parametres")
+    st.markdown("### ⚙️ Parametres")
     auto_refresh = st.checkbox("Rafraichissement auto", value=False)
     refresh_secs = st.slider("Intervalle (s)", 30, 600, 120, 30,
                              disabled=not auto_refresh)
-    if st.button("\U0001F504 Vider le cache & recharger", width="stretch"):
+    if st.button("🔄 Vider le cache & recharger", width="stretch"):
         st.cache_data.clear()
         st.rerun()
     st.markdown("---")
-    st.markdown("### \U0001F4CA Etat Systeme")
+    st.markdown("### 📊 Etat Systeme")
     st.metric("Univers", f"{len(universe_df)} titres",
               help="Nombre total d'actions/ETF eligibles PEA suivis par le bot.")
     st.metric("Derniere MAJ", portfolio.last_updated.strftime("%d/%m %H:%M"),
-              help="Horodatage de la derniere passe du Main Scheduler ayant "
-                   "actualise les cours et l'equity.")
+              help="Horodatage de la derniere passe du Main Scheduler ayant actualise les cours et l'equity.")
+    
+    # Data Steward Telemetry
+    st.markdown("---")
+    st.markdown("### 🛡️ Data Lake Telemetry")
+    dl_health = get_data_lake_health()
+    if dl_health["is_fresh"]:
+        st.markdown(
+            f"<div style='background:rgba(0,255,0,0.08);border-left:3px solid {_NEON};padding:8px 10px;font-size:12px;color:{_NEON};margin-bottom:8px;'>"
+            f"🟢 <b>Data Lake : Frais & Opérationnel</b><br>"
+            f"<span style='color:{_MUTED};font-size:11px;'>Snapshots : {dl_health['last_snap']} · News : {dl_health['last_news']}</span>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            f"<div style='background:rgba(255,59,48,0.12);border-left:3px solid {_RED};padding:8px 10px;font-size:12px;color:{_RED};margin-bottom:8px;'>"
+            f"⚠️ <b>Mode Dégradé : Données Obsolètes</b><br>"
+            f"<span style='color:{_AMBER};font-size:11px;'>{dl_health['stale_reasons']} (News: {dl_health['last_news']})</span>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
     st.caption(
         "Amorcer le capital :\n\n`python seed_account.py --cash 10000`\n\n"
         "Lancer une passe :\n\n`python main_scheduler.py --now`"
     )
     if auto_refresh:
-        st.caption(f"\u23F1\uFE0F Auto-refresh dans {refresh_secs}s")
+        st.caption(f"⏱️ Auto-refresh dans {refresh_secs}s")
 
 st.write("---")
 
@@ -14971,6 +15053,9 @@ _health_color = {
     "green": _NEON, "amber": _AMBER, "red": _RED
 }.get(_pipe_health, _AMBER)
 _mkt_color = _NEON if _mkt_health == "green" else _AMBER
+_dl_info = get_data_lake_health()
+_dl_badge_color = _NEON if _dl_info["is_fresh"] else _RED
+_dl_badge_txt = "Frais" if _dl_info["is_fresh"] else "⚠️ Dégradé"
 
 st.markdown(
     f"""
@@ -14980,6 +15065,7 @@ st.markdown(
     <div>Marché <b style="color:{_mkt_color};">{_mkt_label}</b></div>
     <div>Dernière passe
       <b style="color:{_health_color};">{_pipe_txt}</b></div>
+    <div>Data Lake <b style="color:{_dl_badge_color};">{_dl_badge_txt}</b></div>
     <div>Equity
       <b>{portfolio.total_equity:,.0f} €</b>
       <span style="color:{_NEON if (_day_delta or 0) >= 0 else _RED};">
@@ -15028,11 +15114,12 @@ if _go_click and _go_raw.strip():
 # =============================================================================
 # Tabs
 # =============================================================================
-tab_gen, tab_pf, tab_screener, tab_mkt, tab_uni, tab_arch = st.tabs([
+tab_gen, tab_pf, tab_screener, tab_mkt, tab_postmortem, tab_uni, tab_arch = st.tabs([
     "📊 General & Signaux",
     "🎯 Portefeuille & Allocation",
     "🌌 Universe & Screener",
     "🌍 Exploration",
+    "📓 Ledger & Post-Mortems",
     "📋 Univers Complet",
     "🧠 Architecture & Logs",
 ])
@@ -15958,23 +16045,73 @@ with tab_mkt:
     alpha = get_alpha_signals(selected)
     bprofile = get_bourso_profile(selected)
 
-    # Prominent AI Synthesis Trigger Button
-    c_btn1, c_btn2 = st.columns([1.2, 2.8])
+    # Prominent Red Team Investment Committee Trigger Button
+    st.markdown("---")
+    st.markdown("#### ⚖️ Comité d'Investissement & Débat Contradictoire (Red Team)")
+    st.markdown(
+        "<div class='info-text'>Débat automatisé multi-agents entre l'<b>Analyste Bullish</b>, "
+        "l'<b>Officier de Risque Bearish</b> et le <b>Juge du Comité</b> pour challenger le dossier sans complaisance.</div>",
+        unsafe_allow_html=True,
+    )
+    c_btn1, c_btn2 = st.columns([1.8, 2.2])
     with c_btn1:
-        if st.button("🧠 Générer Synthèse IA", type="primary", key=f"btn_ai_synth_{selected}", use_container_width=True):
-            st.session_state[f"ai_synth_{selected}"] = True
+        if st.button("⚖️ Convoquer le Comité d'Investissement (Red Team)", type="primary", key=f"btn_red_team_{selected}", use_container_width=True):
+            st.session_state[f"red_team_{selected}"] = True
 
-    if st.session_state.get(f"ai_synth_{selected}"):
-        with st.spinner(f"Génération de la note de recherche IA pour {selected}…"):
-            val_m = get_valuation_metrics(selected)
-            ai_memo = generate_ai_ticker_summary(selected, dossier, ind, val_m, bprofile)
-            st.markdown(
-                f"<div class='eli5' style='border-left:4px solid {_NEON}; background: linear-gradient(180deg, #0E1614 0%, #080D0C 100%); margin-bottom:18px;'>"
-                f"<div style='color:{_NEON}; font-size:13px; font-weight:700; letter-spacing:1px; margin-bottom:8px;'>🧠 NOTE DE SYNTHÈSE IA — {format_name(selected)}</div>"
-                f"<div style='color:#E2E8F0; font-size:13px; line-height:1.7;'>{ai_memo}</div>"
-                f"</div>",
-                unsafe_allow_html=True,
-            )
+    if st.session_state.get(f"red_team_{selected}"):
+        with st.spinner(f"Délibération du Comité d'Investissement en cours pour {selected}…"):
+            try:
+                from red_team_agent import RedTeamDebateAgent
+                from data_models import Signal, SignalType
+
+                score_val = float(ind.get("rsi", 50.0)) if ind else 50.0
+                cand_sig = Signal(
+                    ticker=selected,
+                    signal_type=SignalType.BUY,
+                    score=max(60.0, 100.0 - score_val),
+                    reason=f"MRE Evaluation on {selected} (RSI {ind.get('rsi', 'N/A') if ind else 'N/A'})",
+                )
+                rt_agent = RedTeamDebateAgent()
+                debate_res = asyncio.run(rt_agent.evaluate_signal(cand_sig, portfolio))
+
+                v_color = _NEON if debate_res.get("verdict") == "GO" else (_AMBER if debate_res.get("verdict") == "REDUCE_SIZE" else _RED)
+                st.markdown(
+                    f"<div style='border:1px solid #333;background:#0A0A0A;padding:12px;margin:12px 0 16px 0;border-left:4px solid {v_color};'>"
+                    f"<div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;'>"
+                    f"<span style='font-size:15px;font-weight:bold;color:{_WHITE};'>VERDICT FINAL : <b style='color:{v_color};'>{debate_res.get('verdict', 'NEUTRAL')}</b></span>"
+                    f"<span style='color:{_MUTED};font-size:12px;font-family:Courier New;'>Conviction Score: {debate_res.get('risk_score', 0):.1f}/100</span>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+
+                col_b, col_r, col_j = st.columns(3)
+                with col_b:
+                    st.markdown(
+                        f"<div style='background:rgba(0,255,0,0.04);border:1px solid rgba(0,255,0,0.2);border-top:3px solid {_NEON};padding:12px;min-height:240px;'>"
+                        f"<div style='color:{_NEON};font-size:12px;font-weight:bold;margin-bottom:8px;'>🟢 BULL ANALYST</div>"
+                        f"<div style='color:#E0E0E0;font-size:12px;line-height:1.6;'>{debate_res.get('bull_thesis', 'N/A')}</div>"
+                        f"</div>",
+                        unsafe_allow_html=True,
+                    )
+                with col_r:
+                    st.markdown(
+                        f"<div style='background:rgba(255,59,48,0.04);border:1px solid rgba(255,59,48,0.2);border-top:3px solid {_RED};padding:12px;min-height:240px;'>"
+                        f"<div style='color:{_RED};font-size:12px;font-weight:bold;margin-bottom:8px;'>🔴 BEAR RISK OFFICER</div>"
+                        f"<div style='color:#E0E0E0;font-size:12px;line-height:1.6;'>{debate_res.get('bear_antithesis', 'N/A')}</div>"
+                        f"</div>",
+                        unsafe_allow_html=True,
+                    )
+                with col_j:
+                    st.markdown(
+                        f"<div style='background:rgba(0,180,216,0.04);border:1px solid rgba(0,180,216,0.2);border-top:3px solid {_CYAN};padding:12px;min-height:240px;'>"
+                        f"<div style='color:{_CYAN};font-size:12px;font-weight:bold;margin-bottom:8px;'>⚖️ JUDGE SYNTHESIS</div>"
+                        f"<div style='color:#E0E0E0;font-size:12px;line-height:1.6;'>{debate_res.get('judge_synthesis', 'N/A')}</div>"
+                        f"</div>",
+                        unsafe_allow_html=True,
+                    )
+                st.markdown("</div>", unsafe_allow_html=True)
+            except Exception as exc:
+                st.error(f"Erreur lors de l'exécution du comité Red Team : {exc}")
 
     cat1, cat2 = st.columns(2)
     with cat1:
@@ -16296,6 +16433,45 @@ with tab_mkt:
     else:
         st.caption("Aucune actualite majeure recente pour cet actif.")
 
+    # --- NLP Sentiment Time-Series ---
+    st.markdown("---")
+    st.markdown(f"#### 📈 Courbe de Sentiment NLP — {short_name(selected)}")
+    db_sent = PortfolioDB()
+    sent_hist = db_sent.get_sentiment_history(selected, days=30)
+    if sent_hist:
+        df_sent = pd.DataFrame(sent_hist)
+        df_sent["date"] = pd.to_datetime(df_sent["date_scored"])
+        df_sent = df_sent.sort_values("date")
+
+        fig_sent = go.Figure()
+        colors_sent = [_NEON if float(s) > 15 else (_RED if float(s) < -15 else _MUTED) for s in df_sent["score"]]
+
+        fig_sent.add_trace(go.Scatter(
+            x=df_sent["date"],
+            y=df_sent["score"],
+            mode="lines+markers",
+            name="Score NLP",
+            line=dict(color=_CYAN, width=2.2),
+            marker=dict(size=8, color=colors_sent),
+            hovertext=df_sent["headline"],
+            hoverinfo="x+y+text",
+        ))
+
+        fig_sent.add_hline(y=0, line_dash="dash", line_color=_MUTED, annotation_text="Neutre (0)")
+        fig_sent.add_hrect(y0=20, y1=100, fillcolor="green", opacity=0.06, line_width=0)
+        fig_sent.add_hrect(y0=-100, y1=-20, fillcolor="red", opacity=0.06, line_width=0)
+
+        _style_dark_fig(fig_sent, height=280)
+        fig_sent.update_layout(
+            yaxis_title="Score NLP (-100 à +100)",
+            xaxis_title="Date de Scoring",
+            margin=dict(t=10, l=10, r=10, b=10),
+            yaxis=dict(range=[-105, 105]),
+        )
+        st.plotly_chart(fig_sent, width="stretch")
+    else:
+        st.caption(f"Aucun historique de sentiment NLP disponible pour {selected} sur les 30 derniers jours.")
+
     # Insiders — AMF first (official), then FMP, then Yahoo
     st.markdown("---")
     st.markdown("#### 🕵️ Activite des dirigeants (insiders)")
@@ -16388,6 +16564,99 @@ with tab_mkt:
                 f"{ev.get('impact', '—')} | [ouvrir]({ev.get('url')}) |"
             )
         st.markdown("\n".join(lines))
+
+# --- Tab: Ledger & Post-Mortems -------------------------------------------
+with tab_postmortem:
+    st.markdown(
+        "<div class='info-text'><b>Auditeur Algorithmique & Post-Mortems de Trading</b> : "
+        "Analyse rétrospective systématique de chaque position débouclée "
+        "(stop ATR ou prise de bénéfices). Métriques d'excursion (MAE/MFE) et leçons apprises par l'IA.</div>",
+        unsafe_allow_html=True,
+    )
+
+    db_pm = PortfolioDB()
+    pm_list = db_pm.fetch_recent_post_mortems(limit=50)
+
+    if pm_list:
+        df_pm = pd.DataFrame(pm_list)
+        total_closed = len(df_pm)
+        winning_trades = df_pm[df_pm["pnl_eur"] > 0]
+        win_rate = (len(winning_trades) / total_closed * 100.0) if total_closed > 0 else 0.0
+        avg_pnl = float(df_pm["pnl_eur"].mean())
+        total_pnl = float(df_pm["pnl_eur"].sum())
+        avg_holding = float(df_pm["holding_days"].mean())
+
+        k1, k2, k3, k4, k5 = st.columns(5)
+        k1.metric("Trades Clôturés", f"{total_closed}")
+        k2.metric("Taux de Gain (Win Rate)", f"{win_rate:.1f}%")
+        k3.metric("PnL Moyen / Trade", f"{avg_pnl:+,.2f} €", delta=f"{df_pm['pnl_pct'].mean():+.1f}%")
+        k4.metric("PnL Cumulé Réalisé", f"{total_pnl:+,.2f} €")
+        k5.metric("Durée Moy. Rétention", f"{avg_holding:.0f} j")
+
+        st.markdown("---")
+        st.markdown("#### 📋 Historique Détaillé des Positions Débouclées")
+        pnl_colors = [_NEON if v >= 0 else _RED for v in df_pm["pnl_eur"]]
+        disp_pm = pd.DataFrame({
+            "ID": df_pm["id"],
+            "Titre": [format_name(t) for t in df_pm["ticker"]],
+            "Entrée": df_pm["entry_date"].astype(str).str[:10],
+            "Sortie": df_pm["exit_date"].astype(str).str[:10],
+            "Jours": df_pm["holding_days"],
+            "Prix Achat": [f"{float(v):.2f} €" for v in df_pm["entry_price"]],
+            "Prix Vente": [f"{float(v):.2f} €" for v in df_pm["exit_price"]],
+            "PnL (€)": [f"{float(v):+,.2f} €" for v in df_pm["pnl_eur"]],
+            "PnL (%)": [f"{float(v):+.2f}%" for v in df_pm["pnl_pct"]],
+            "Motif Sortie": df_pm["exit_reason"],
+        })
+        st.plotly_chart(
+            dark_table(
+                disp_pm,
+                height=min(420, 48 + 30 * max(len(disp_pm), 1)),
+                font_color_map={"PnL (€)": pnl_colors, "PnL (%)": pnl_colors},
+                col_widths=[1, 1.8, 1, 1, 0.7, 1, 1, 1.1, 1, 1.8],
+            ),
+            width="stretch",
+        )
+
+        st.markdown("---")
+        st.markdown("#### 🧠 Leçons Apprises & Retours d'Expérience (Post-Mortem IA)")
+        for _, row in df_pm.iterrows():
+            badge_color = _NEON if float(row["pnl_eur"]) >= 0 else _RED
+            with st.expander(f"🔎 {row['id']} · {format_name(row['ticker'])} · {float(row['pnl_eur']):+,.2f} € ({float(row['pnl_pct']):+.1f}%) · {row['exit_reason']}"):
+                col_a, col_b = st.columns([1, 2])
+                with col_a:
+                    st.markdown(f"**Période :** `{str(row['entry_date'])[:10]}` ➔ `{str(row['exit_date'])[:10]}` ({row['holding_days']} jours)")
+                    st.markdown(f"**Prix :** Achat `{float(row['entry_price']):.2f} €` ➔ Vente `{float(row['exit_price']):.2f} €`")
+                    mae_val = float(row['mae_pct']) if pd.notna(row.get('mae_pct')) else 0.0
+                    mfe_val = float(row['mfe_pct']) if pd.notna(row.get('mfe_pct')) else 0.0
+                    st.markdown(f"**MAE :** `{mae_val:.2f}%` · **MFE :** `{mfe_val:.2f}%`")
+                with col_b:
+                    st.markdown(
+                        f"<div style='background:rgba(255,255,255,0.03);border-left:3px solid {badge_color};padding:10px;color:#E0E0E0;font-size:13px;line-height:1.6;'>"
+                        f"<b>Analyse & Leçon Algorithmique :</b><br>{row.get('lessons_learned', 'Aucune leçon enregistrée.')}"
+                        f"</div>",
+                        unsafe_allow_html=True,
+                    )
+    else:
+        st.info("Aucun post-mortem de trade enregistré pour le moment. Dès qu'une position sera débouclée (prise de bénéfice ou stop ATR), l'Auditeur générera automatiquement son analyse rétrospective.")
+
+    st.markdown("---")
+    st.markdown("#### 📜 Registre Global des Signaux Exécutés & Clôturés (Audit Logs)")
+    closed_logs = db_pm.fetch_closed_signals(limit=30)
+    if closed_logs:
+        df_logs = pd.DataFrame(closed_logs)
+        disp_logs = pd.DataFrame({
+            "ID": df_logs["id"],
+            "Titre": [format_name(t) for t in df_logs["ticker"]],
+            "Type": df_logs["signal_type"],
+            "Quantité": df_logs["quantity"],
+            "Prix": [f"{float(v):.2f} €" if v is not None and pd.notna(v) else "—" for v in df_logs["price"]],
+            "Score": [f"{float(v):.1f}" if v is not None and pd.notna(v) else "—" for v in df_logs["score"]],
+            "Raison": df_logs["reason"],
+            "Date": df_logs["created_at"].astype(str).str[:16],
+        })
+        st.plotly_chart(dark_table(disp_logs, height=280), width="stretch")
+
 
 # --- Tab: Full Universe ------------------------------------------------------
 with tab_uni:

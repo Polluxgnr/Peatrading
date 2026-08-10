@@ -1,5 +1,5 @@
 # PEA Pollux — Configuration Yaml, Test Suites, Root Ops & Documentation
-Generated: `2026-08-10 17:10 UTC` | File Count: `27`
+Generated: `2026-08-10 17:30 UTC` | File Count: `27`
 Institutional Systematic Decision Support Architecture for French PEA.
 ---
 ## Included Files Index

@@ -464,6 +464,26 @@ class PortfolioDB:
             logger.exception("Failed to fetch news from news_master.")
             return []
 
+    def fetch_recent_post_mortems(self, limit: int = 50) -> list[dict]:
+        """Fetch historical post-mortems from trade_post_mortems table."""
+        try:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    """
+                    SELECT id, ticker, entry_date, exit_date, holding_days,
+                           entry_price, exit_price, pnl_eur, pnl_pct, exit_reason,
+                           entry_score, mae_pct, mfe_pct, lessons_learned, created_at
+                    FROM trade_post_mortems
+                    ORDER BY exit_date DESC, created_at DESC
+                    LIMIT ?;
+                    """,
+                    (limit,),
+                ).fetchall()
+                return [dict(r) for r in rows]
+        except sqlite3.Error:
+            logger.debug("Failed to fetch trade_post_mortems from SQLite.")
+            return []
+
     def fetch_closed_signals(self, limit: int = 50) -> list[dict]:
         """Query closed/executed audit log entries for the Portfolio Ledger."""
         try:
