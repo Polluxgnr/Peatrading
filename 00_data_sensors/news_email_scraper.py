@@ -1,118 +1,114 @@
-import os
-import imaplib
-import email
-from email.header import decode_header
+"""News Email / Newsletter Scraper for PEA Sniper Terminal.
+
+Ingests financial newsletters via IMAP or from local JSON output exports,
+normalizes them, and persists them into SQLite ``news_master``.
+"""
+
+from __future__ import annotations
+
 import hashlib
-from datetime import datetime
-from dotenv import load_dotenv
-
-import sys
+import json
+import logging
+import os
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any, List
+
+logger = logging.getLogger(__name__)
+
 _ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_ROOT / "01_memory_core"))
+_OUTPUT_DIR = _ROOT / "experiments" / "newsletter_ingest" / "output"
 
-from logging_setup import get_logger
-from sqlite_portfolio import SQLitePortfolioDB
 
-logger = get_logger("news_email_scraper")
+def _hash_id(source: str, title: str, published_at: str) -> str:
+    raw = f"{source}_{title}_{published_at}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
 
-load_dotenv(_ROOT / ".env")
 
-IMAP_SERVER = os.getenv("IMAP_SERVER", "imap.gmail.com")
-IMAP_USER = os.getenv("IMAP_USER")
-IMAP_PASS = os.getenv("IMAP_PASS")
-IMAP_FOLDER = os.getenv("IMAP_FOLDER", "INBOX")
+def ingest_local_newsletter_files() -> List[dict]:
+    """Read parsed newsletter JSONs produced by the sandbox ingestor."""
+    items: List[dict] = []
+    if not _OUTPUT_DIR.exists():
+        return items
 
-def get_text_from_email(msg):
-    """Extract plain text from an email message."""
-    text_content = ""
-    if msg.is_multipart():
-        for part in msg.walk():
-            content_type = part.get_content_type()
-            content_disposition = str(part.get("Content-Disposition"))
-            if content_type == "text/plain" and "attachment" not in content_disposition:
-                try:
-                    text_content += part.get_payload(decode=True).decode()
-                except Exception:
-                    pass
-    else:
-        if msg.get_content_type() == "text/plain":
-            try:
-                text_content = msg.get_payload(decode=True).decode()
-            except Exception:
-                pass
-    return text_content.strip()
-
-def fetch_email_newsletters() -> list[dict]:
-    """Fetch unread newsletters via IMAP."""
-    if not IMAP_USER or not IMAP_PASS:
-        logger.warning("IMAP_USER or IMAP_PASS not configured. Skipping email scraper.")
-        return []
-        
-    news_items = []
-    
-    try:
-        mail = imaplib.IMAP4_SSL(IMAP_SERVER)
-        mail.login(IMAP_USER, IMAP_PASS)
-        mail.select(IMAP_FOLDER)
-        
-        # Search for unread emails
-        status, messages = mail.search(None, "UNSEEN")
-        if status != "OK":
-            logger.error("Failed to search emails: %s", status)
-            return []
-            
-        email_ids = messages[0].split()
-        for eid in email_ids:
-            res, msg_data = mail.fetch(eid, "(RFC822)")
-            if res != "OK":
+    for json_file in _OUTPUT_DIR.glob("*.json"):
+        try:
+            content = json.loads(json_file.read_text(encoding="utf-8"))
+            if isinstance(content, list):
+                raw_items = content
+            elif isinstance(content, dict):
+                raw_items = content.get("articles") or content.get("items") or [content]
+            else:
                 continue
-                
-            for response_part in msg_data:
-                if isinstance(response_part, tuple):
-                    msg = email.message_from_bytes(response_part[1])
-                    
-                    subject, encoding = decode_header(msg["Subject"])[0]
-                    if isinstance(subject, bytes):
-                        subject = subject.decode(encoding if encoding else "utf-8")
-                        
-                    content = get_text_from_email(msg)
-                    if not content:
-                        continue
-                        
-                    uid = hashlib.sha256((subject + content[:100]).encode("utf-8")).hexdigest()
-                    
-                    news_items.append({
-                        "id": uid,
-                        "published_at": datetime.utcnow().isoformat(),
-                        "ticker": None,
-                        "source": "EMAIL_Newsletter",
-                        "url": "email://internal",
-                        "title": subject,
-                        "content": content[:2000]  # Store up to 2000 chars of email
-                    })
-                    
-            # Mark as read (implicitly done by fetching RFC822 usually, but just in case)
-            mail.store(eid, '+FLAGS', '\Seen')
-            
-        mail.close()
-        mail.logout()
-        
-    except imaplib.IMAP4.error as e:
-        logger.warning("IMAP authentication failed: %s", e)
-    except Exception as e:
-        logger.warning("Error during email scraping: %s", e)
-        
-    return news_items
 
-def run_email_scraper(db: SQLitePortfolioDB):
-    news = fetch_email_newsletters()
-    if news:
-        db.upsert_news_master(news)
-        logger.info("Email Scraper finished: inserted %d items.", len(news))
-    else:
-        logger.info("Email Scraper finished: no items found or IMAP not configured.")
+            for row in raw_items:
+                title = str(row.get("subject") or row.get("title") or "").strip()
+                if not title:
+                    continue
+                sender = str(row.get("sender") or row.get("source") or "Newsletter")
+                pub = str(row.get("date") or row.get("published_at") or datetime.now(timezone.utc).isoformat())
+                items.append({
+                    "id": _hash_id("newsletter", title, pub),
+                    "ticker": row.get("ticker"),
+                    "title": title,
+                    "source": sender,
+                    "url": str(row.get("url") or ""),
+                    "published_at": pub,
+                    "sentiment_score": None,
+                })
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Failed reading newsletter json %s: %s", json_file.name, exc)
+
+    return items
+
+
+def run_email_scraper(portfolio_db: Any) -> int:
+    """Entry point: pull email newsletter content and save to news_master.
+
+    Args:
+        portfolio_db: PortfolioDB instance.
+
+    Returns:
+        int: Number of items saved.
+    """
+    logger.info("Running News Email / Newsletter Scraper...")
+    items: List[dict] = []
+
+    # 1. Try running live IMAP ingest if configured
+    try:
+        from experiments.newsletter_ingest.run_ingest import run_ingest_pipeline
+        # If env variables are set, this will download and write output JSONs
+        res = run_ingest_pipeline()
+        if isinstance(res, list):
+            for r in res:
+                title = str(r.get("subject") or r.get("title") or "").strip()
+                if title:
+                    pub = str(r.get("date") or datetime.now(timezone.utc).isoformat())
+                    items.append({
+                        "id": _hash_id("newsletter_live", title, pub),
+                        "ticker": r.get("ticker"),
+                        "title": title,
+                        "source": str(r.get("sender") or "Newsletter"),
+                        "url": str(r.get("url") or ""),
+                        "published_at": pub,
+                        "sentiment_score": None,
+                    })
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Live email IMAP ingest skipped/failed: %s", exc)
+
+    # 2. Ingest existing output files
+    file_items = ingest_local_newsletter_files()
+    items.extend(file_items)
+
+    if portfolio_db is not None and hasattr(portfolio_db, "save_news_items"):
+        count = portfolio_db.save_news_items(items)
+        logger.info("News Email Scraper completed: %d items persisted.", count)
+        return count
+
+    return len(items)
+
 
 if __name__ == "__main__":
-    db = SQLitePortfolioDB()
-    run_email_scraper(db)
+    logging.basicConfig(level=logging.INFO)
+    n = run_email_scraper(None)
+    print(f"Discovered {n} newsletter items.")

@@ -1,4 +1,4 @@
-"""Smart DCA core engine for PEA Pollux (Phase 10).
+"""Smart DCA core engine for PEA Sniper Terminal V-Prime (Phase 10).
 
 The Core/Satellite model parks the bulk of capital in a broad MSCI World PEA ETF
 (``CW8.PA``) and accumulates it with a *Smart* Dollar-Cost-Averaging rule:
@@ -28,7 +28,6 @@ _CORE_DIR = os.path.join(
 sys.path.insert(0, _CORE_DIR)
 
 from data_models import Signal, SignalStatus, SignalType  # noqa: E402
-from config_validator import load_risk_config  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -48,26 +47,31 @@ class SmartDcaCore:
             config_path: Path to the ``config`` directory (or a risk_params
                 YAML file). Defaults to ``<project_root>/config``.
         """
-        risk = load_risk_config(config_path)
-        self.core_ticker: str = str(risk.CORE_TICKER)
-        self.target_pct: float = float(risk.CORE_TARGET_PCT)
-        self.crash_target_pct: float = float(risk.CORE_CRASH_TARGET_PCT)
-        self.max_tranche_pct: float = float(risk.CORE_DCA_MAX_TRANCHE_PCT)
-        # Phase 40: idle cash above this fraction of equity is swept into Core.
-        self.max_idle_cash_pct: float = float(risk.MAX_IDLE_CASH_PCT)
+        risk = self._load_risk_params(config_path)
+        self.core_ticker: str = str(risk.get("CORE_TICKER", "CW8.PA"))
+        self.target_pct: float = float(risk.get("CORE_TARGET_PCT", 0.70))
+        self.crash_target_pct: float = float(risk.get("CORE_CRASH_TARGET_PCT", 0.75))
+        self.max_tranche_pct: float = float(risk.get("CORE_DCA_MAX_TRANCHE_PCT", 0.05))
         logger.debug(
-            "SmartDcaCore loaded: %s target=%.2f crash=%.2f tranche<=%.2f idle<=%.2f",
+            "SmartDcaCore loaded: %s target=%.2f crash=%.2f tranche<=%.2f",
             self.core_ticker,
             self.target_pct,
             self.crash_target_pct,
             self.max_tranche_pct,
-            self.max_idle_cash_pct,
         )
 
     @staticmethod
-    def _load_risk_params(config_path: str | Path | None):
-        """Resolve and load validated risk config."""
-        return load_risk_config(config_path)
+    def _load_risk_params(config_path: str | Path | None) -> dict:
+        """Resolve and load the risk_params YAML into a dict."""
+        if config_path is None:
+            path = _DEFAULT_CONFIG_DIR / "risk_params.yaml"
+        else:
+            p = Path(config_path)
+            path = p if p.is_file() else p / "risk_params.yaml"
+        if not path.exists():
+            raise FileNotFoundError(f"Config file not found: {path}")
+        with open(path, "r", encoding="utf-8") as fh:
+            return yaml.safe_load(fh)
 
     def _neutral_signal(self, reason: str) -> Signal:
         """Return a do-nothing (score 0, qty 0) core signal with a reason."""
@@ -81,7 +85,11 @@ class SmartDcaCore:
         )
 
     def evaluate_cw8(
-        self, db_manager: Any, current_cash: float, total_equity: float, portfolio: Any = None
+        self,
+        db_manager: Any,
+        current_cash: float,
+        total_equity: float,
+        kinetic_multiplier: float = 1.0,
     ) -> Signal:
         """Produce a Smart-DCA accumulation signal for the Core ETF.
 
@@ -90,7 +98,7 @@ class SmartDcaCore:
                 ``get_historical_prices(ticker, days)``.
             current_cash: Uninvested cash available in EUR.
             total_equity: Total account value in EUR.
-            portfolio: The current PortfolioState containing holdings.
+            kinetic_multiplier: Dynamic drawdown multiplier [0.0..1.0] from DrawdownBreaker.
 
         Returns:
             Signal: A BUY signal for the Core ETF. ``target_qty`` is the whole
@@ -100,6 +108,11 @@ class SmartDcaCore:
         if total_equity <= 0 or current_cash <= 0:
             return self._neutral_signal(
                 "Core DCA skipped: no cash/equity available."
+            )
+
+        if kinetic_multiplier <= 0.0:
+            return self._neutral_signal(
+                "Core DCA halted: Kinetic Brake active (0.0x exposure)."
             )
 
         try:
@@ -125,36 +138,13 @@ class SmartDcaCore:
         crash_regime = price < sma200
         target_pct = self.crash_target_pct if crash_regime else self.target_pct
         # Bigger, more urgent tranche when the market is fearful.
-        tranche_pct = self.max_tranche_pct if crash_regime else self.max_tranche_pct / 2.0
+        base_tranche_pct = self.max_tranche_pct if crash_regime else self.max_tranche_pct / 2.0
+        # Kinetic Brake scales DCA tranche dynamically during sharp drawdown
+        tranche_pct = base_tranche_pct * max(0.0, min(1.0, float(kinetic_multiplier)))
         score = 90.0 if crash_regime else 65.0
 
         target_value = target_pct * total_equity
-        
-        # Determine existing exposure to avoid infinite scaling
-        current_core_value = 0.0
-        if portfolio and hasattr(portfolio, "positions"):
-            for pos in portfolio.positions:
-                if pos.ticker == self.core_ticker:
-                    current_core_value += float(pos.qty_shares * pos.current_price)
-                    
-        remaining_target = max(0.0, target_value - current_core_value)
-        if remaining_target <= 0.0:
-            return self._neutral_signal(f"Core DCA skipped: currently hold {current_core_value:.0f} EUR vs target {target_value:.0f} EUR.")
-
-        tranche_cash = min(current_cash, tranche_pct * total_equity, remaining_target)
-
-        # Phase 40 — zero cash drag: sweep idle cash above MAX_IDLE_CASH_PCT
-        # into the Core ETF (whole shares only; PEA forbids fractions).
-        max_idle = self.max_idle_cash_pct * total_equity
-        excess_cash = max(0.0, float(current_cash) - max_idle)
-        sweep_note = ""
-        if excess_cash >= price:
-            tranche_cash = max(tranche_cash, excess_cash)
-            sweep_note = (
-                f" Cash sweep: idle {current_cash / total_equity * 100:.1f}% > "
-                f"{self.max_idle_cash_pct * 100:.0f}% → deploy {excess_cash:.0f} EUR."
-            )
-
+        tranche_cash = min(current_cash, tranche_pct * total_equity, target_value)
         qty = int(math.floor(tranche_cash / price)) if tranche_cash > 0 else 0
 
         regime_txt = (
@@ -162,11 +152,12 @@ class SmartDcaCore:
             if crash_regime
             else "CALM regime (price > SMA200): standard drip"
         )
+        kinetic_txt = f" · Kinetic Brake {kinetic_multiplier:.2f}x" if kinetic_multiplier < 1.0 else ""
         reason = (
-            f"Smart DCA {self.core_ticker}: {regime_txt}. "
+            f"Smart DCA {self.core_ticker}: {regime_txt}{kinetic_txt}. "
             f"Price {price:.2f} vs SMA200 {sma200:.2f}. "
             f"Target core weight {target_pct * 100:.0f}% -> buy {qty} share(s) "
-            f"(~{qty * price:.0f} EUR tranche).{sweep_note}"
+            f"(~{qty * price:.0f} EUR tranche)."
         )
 
         signal = Signal(
@@ -178,11 +169,12 @@ class SmartDcaCore:
             reason=reason,
         )
         logger.info(
-            "Core DCA %s: %s (qty=%d, score=%.0f).",
+            "Core DCA %s: %s (qty=%d, score=%.0f, kinetic=%.2f).",
             self.core_ticker,
             "CRASH" if crash_regime else "CALM",
             qty,
             score,
+            kinetic_multiplier,
         )
         return signal
 

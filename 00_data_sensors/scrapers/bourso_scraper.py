@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import datetime
 from typing import Any
 from urllib.parse import urljoin
 
@@ -127,29 +126,6 @@ class BoursoramaScraper:
         })
         return out
 
-    def get_isin(self, ticker: str) -> str | None:
-        """Lightweight fetch just for ISIN to avoid HTML parsing overhead."""
-        try:
-            slug = yahoo_to_bourso_slug(ticker)
-            if not slug:
-                return None
-            url = f"{_BOURSO_BASE}/cours/{slug}/"
-            resp = safe_get(
-                url,
-                session=self._session,
-                headers={**stealth_headers(), "Referer": f"{_BOURSO_BASE}/"},
-            )
-            if resp is None:
-                return None
-            
-            m = re.search(r'"fv_code_isin":"([^"]*)"', resp.text)
-            if m:
-                isin_raw = m.group(1)
-                return isin_raw.split("_")[0] if isin_raw else None
-        except Exception:
-            return None
-        return None
-
     def get_instrument_profile(self, ticker: str) -> dict[str, Any]:
         """Parse the full instrument page (eligibility, ISIN, news, consensus)."""
         try:
@@ -202,48 +178,6 @@ class BoursoramaScraper:
         except Exception as exc:  # noqa: BLE001
             logger.warning("Boursorama profile failed for %s: %s", ticker, exc)
             return {}
-
-    async def get_instrument_profiles_async(self, tickers: list[str]) -> dict[str, dict]:
-        """Fetch profiles for multiple tickers concurrently using aiohttp."""
-        from scrapers._http import async_safe_get, stealth_headers
-        import asyncio
-        import aiohttp
-        
-        results = {}
-        sem = asyncio.Semaphore(3)
-        
-        async def fetch_one(session, ticker: str):
-            slug = yahoo_to_bourso_slug(ticker)
-            if not slug:
-                return ticker, {}
-            url = f"https://www.boursorama.com/cours/{slug}/"
-            html = await async_safe_get(url, session, sem)
-            if not html:
-                return ticker, {}
-                
-            from bs4 import BeautifulSoup
-            soup = BeautifulSoup(html, "html.parser")
-            meta = self._parse_tracking_json(html)
-            
-            try:
-                prof = {
-                    "isin": meta.get("isin"),
-                    "name": meta.get("name"),
-                    "sector": meta.get("sector"),
-                    "market": meta.get("market"),
-                    "currency": meta.get("currency", "EUR"),
-                }
-                return ticker, prof
-            except Exception:
-                return ticker, {}
-                
-        async with aiohttp.ClientSession() as session:
-            tasks = [fetch_one(session, t) for t in tickers]
-            for coro in asyncio.as_completed(tasks):
-                t, prof = await coro
-                results[t] = prof
-                
-        return results
 
     def get_pea_universe(
         self,
@@ -378,24 +312,27 @@ class BoursoramaScraper:
     def _parse_tracking_json(html: str) -> dict[str, Any]:
         """Extract fv_* analytics fields embedded in the instrument page."""
         meta: dict[str, Any] = {}
-        def _get(key):
-            m = re.search(f'"{key}":"([^"]*)"', html)
-            return m.group(1) if m else None
-            
-        meta["sector"] = _get("fv_secteur_activite")
-        meta["isin"] = _get("fv_code_isin")
-        meta["slug"] = _get("fv_symb_societe")
-        meta["index"] = _get("fv_indice_principal")
-        meta["exchange"] = _get("fv_bourse_label")
-        
-        m_elig = re.search(r'"fv_eligibilite":(\[[^\]]*\])', html)
-        if m_elig:
+        m = re.search(
+            r'"fv_secteur_activite":"([^"]*)".*?"fv_code_isin":"([^"]*)".*?'
+            r'"fv_symb_societe":"([^"]*)".*?"fv_eligibilite":(\[[^\]]*\]).*?'
+            r'"fv_indice_principal":"([^"]*)".*?"fv_bourse_label":"([^"]*)"',
+            html,
+            flags=re.S,
+        )
+        if m:
+            sector, isin, slug, elig_raw, index, exchange = m.groups()
             try:
-                meta["eligibility"] = re.findall(r'"([^"]+)"', m_elig.group(1))
-            except Exception:
-                meta["eligibility"] = []
-        else:
-            meta["eligibility"] = []
+                eligibility = re.findall(r'"([^"]+)"', elig_raw)
+            except Exception:  # noqa: BLE001
+                eligibility = []
+            meta.update({
+                "sector": sector,
+                "isin": isin,
+                "slug": slug,
+                "eligibility": eligibility,
+                "index": index,
+                "exchange": exchange,
+            })
         # Name from <title>
         tm = re.search(r"<title>([^|<]+)", html, re.I)
         if tm:
@@ -433,8 +370,6 @@ class BoursoramaScraper:
                 )
                 if dm:
                     date = dm.group(0)
-            if not date or str(date).strip().lower() == "recent":
-                date = datetime.now().strftime("%Y-%m-%d %H:%M")
             provider = ""
             if parent is not None:
                 pm = re.search(
@@ -447,7 +382,7 @@ class BoursoramaScraper:
             items.append({
                 "title": title,
                 "link": urljoin(_BOURSO_BASE, href),
-                "date": date,
+                "date": date or "Recent",
                 "provider": provider or "Boursorama",
             })
             if len(items) >= limit:

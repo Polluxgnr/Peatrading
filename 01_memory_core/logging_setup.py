@@ -1,4 +1,4 @@
-"""Central logging setup for PEA Pollux.
+"""Central logging setup for PEA Sniper Terminal.
 
 One place to configure human-readable, copy-friendly logs:
 
@@ -19,11 +19,9 @@ from __future__ import annotations
 
 import logging
 import os
-import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Optional
-import structlog
 
 _ROOT = Path(__file__).resolve().parent.parent
 _LOG_DIR = _ROOT / "logs"
@@ -55,22 +53,13 @@ def setup_app_logging(
         level: Root level (INFO recommended; DEBUG for deep dives).
         console: Attach a StreamHandler when True.
     """
+    import warnings
+    warnings.filterwarnings("ignore", category=FutureWarning, module="yfinance")
+    warnings.filterwarnings("ignore", category=FutureWarning, module="pandas")
+
     global _CONFIGURED
     if _CONFIGURED:
         return
-
-    # Structlog JSON configuration
-    structlog.configure(
-        processors=[
-            structlog.stdlib.add_log_level,
-            structlog.stdlib.add_logger_name,
-            structlog.processors.TimeStamper(fmt="iso"),
-            structlog.processors.JSONRenderer()
-        ],
-        logger_factory=structlog.stdlib.LoggerFactory(),
-        wrapper_class=structlog.stdlib.BoundLogger,
-        cache_logger_on_first_use=True,
-    )
 
     root = logging.getLogger()
     root.setLevel(logging.DEBUG)  # handlers filter; keep DEBUG available to files
@@ -92,8 +81,7 @@ def setup_app_logging(
         root.addHandler(sh)
 
     # Shared "all" trail — every component fans into this too.
-    all_path = log_dir() / "pea_pollux_all.log"
-    json_path = log_dir() / "app_json.log"
+    all_path = log_dir() / "pea_sniper_all.log"
     if not any(
         isinstance(h, RotatingFileHandler) and getattr(h, "baseFilename", "") == str(all_path)
         for h in root.handlers
@@ -105,28 +93,9 @@ def setup_app_logging(
         fh.setFormatter(logging.Formatter(_FILE_FMT, datefmt=_DATE_FMT))
         root.addHandler(fh)
 
-        # JSON handler using structlog formatter for backend querying
-        json_fh = RotatingFileHandler(
-            json_path, maxBytes=5_000_000, backupCount=3, encoding="utf-8"
-        )
-        json_fh.setLevel(logging.DEBUG)
-        class StructlogJsonFormatter(logging.Formatter):
-            def __init__(self):
-                super().__init__()
-            def format(self, record):
-                return structlog.stdlib.ProcessorFormatter.wrap_for_formatter(
-                    self, record.getLoggerName(), record.levelno, record.getMessage(),
-                )
-        
-        processor_formatter = structlog.stdlib.ProcessorFormatter(
-            processor=structlog.processors.JSONRenderer(),
-        )
-        json_fh.setFormatter(processor_formatter)
-        root.addHandler(json_fh)
-
     _CONFIGURED = True
     logging.getLogger("logging_setup").info(
-        "Logging ready — console=%s, files under %s (including app_json.log)", console, log_dir()
+        "Logging ready — console=%s, files under %s", console, log_dir()
     )
 
 
@@ -195,17 +164,11 @@ def tail_log(path: Path | str, n_lines: int = 200) -> str:
     return "\n".join(lines[-max(1, n_lines) :])
 
 
-def write_pipeline_status(
-    payload: dict,
-    data_degraded_mode: bool = False,
-    degraded_reason: str = ""
-) -> Path:
+def write_pipeline_status(payload: dict) -> Path:
     """Persist a tiny JSON heartbeat the dashboard can read (mission control).
 
     Args:
         payload: Must be JSON-serializable (status, timestamps, counts…).
-        data_degraded_mode: True if system is running on fallback data.
-        degraded_reason: Reason for the degraded mode.
 
     Returns:
         Path: Written file under ``database/pipeline_status.json``.
@@ -218,40 +181,11 @@ def write_pipeline_status(
     path = out_dir / "pipeline_status.json"
     body = {
         **payload,
-        "data_degraded_mode": data_degraded_mode,
-        "degraded_reason": degraded_reason,
         "written_at": datetime.now(timezone.utc).isoformat(),
     }
     path.write_text(json.dumps(body, indent=2, default=str), encoding="utf-8")
     return path
 
-def update_pipeline_status(updates: dict) -> Path:
-    """Merge updates into the existing pipeline status JSON.
-
-    Args:
-        updates: A dictionary of keys to update.
-
-    Returns:
-        Path: Written file.
-    """
-    import json
-    from datetime import datetime, timezone
-
-    out_dir = _ROOT / "database"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    path = out_dir / "pipeline_status.json"
-    
-    body = {}
-    if path.exists():
-        try:
-            body = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            pass
-            
-    body.update(updates)
-    body["written_at"] = datetime.now(timezone.utc).isoformat()
-    path.write_text(json.dumps(body, indent=2, default=str), encoding="utf-8")
-    return path
 
 def read_pipeline_status() -> Optional[dict]:
     """Load the last pipeline heartbeat, or ``None`` if missing/corrupt."""
@@ -264,23 +198,3 @@ def read_pipeline_status() -> Optional[dict]:
         return json.loads(path.read_text(encoding="utf-8"))
     except Exception:  # noqa: BLE001
         return None
-
-
-def send_discord_alert(message: str, urgent: bool = False) -> None:
-    """Send an alert to the Discord webhook if configured."""
-    import requests
-    from env_loader import load_api_keys
-
-    load_api_keys(Path(__file__).resolve().parent.parent / "config" / "api_keys.env")
-    webhook_url = os.getenv("DISCORD_WEBHOOK_URL")
-    if not webhook_url:
-        logging.getLogger(__name__).debug("DISCORD_WEBHOOK_URL not set; skipping alert.")
-        return
-
-    try:
-        content = f"@everyone {message}" if urgent else message
-        payload = {"content": content}
-        resp = requests.post(webhook_url, json=payload, timeout=5)
-        resp.raise_for_status()
-    except Exception as exc:
-        logging.getLogger(__name__).warning("Failed to send Discord alert: %s", exc)

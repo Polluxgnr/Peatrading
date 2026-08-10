@@ -1,4 +1,4 @@
-"""Strict data contracts for PEA Pollux.
+"""Strict data contracts for PEA Sniper Terminal V-Prime.
 
 This module defines the Pydantic V2 models that flow between every layer of the
 system (data sensors -> quant engine -> risk portfolio -> orchestrator ->
@@ -159,4 +159,3 @@ class Signal(BaseModel):
     )
     created_at: datetime = Field(default_factory=_utcnow)
     reason: str = Field(default="", description="Explanation for the UI.")
-    lineage: dict = Field(default_factory=dict, description="Data provenance trace.")

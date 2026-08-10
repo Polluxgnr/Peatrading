@@ -1,4 +1,4 @@
-"""Web Terminal (Streamlit dashboard) for PEA Pollux.
+"""Web Terminal (Streamlit dashboard) for PEA Sniper Terminal V-Prime.
 
 BLOOMBERG TERMINAL EDITION - command center on a pure-black, high-contrast UI.
 
@@ -21,54 +21,23 @@ Run (auto-opens browser):
 """
 
 import asyncio
-import os
 import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 import plotly.express as pex
 import plotly.graph_objects as go
 import streamlit as st
-from streamlit_autorefresh import st_autorefresh
 import streamlit.components.v1 as components
 import yaml
 import yfinance as yf
 
-# =============================================================================
-# Page config & Auto-Refresh
-# =============================================================================
-st.set_page_config(
-    page_title="PEA Pollux | Terminal",
-    layout="wide",
-    page_icon="🛡️",
-    initial_sidebar_state="collapsed",
-)
-
-st_autorefresh(interval=60000, key="live_terminal_tick")
-
 # --- Cross-package imports (dirs start with digits) --------------------------
 _ROOT = Path(__file__).resolve().parent.parent
-# Native .env loader (no python-dotenv) — force keys into os.environ.
-_env_path = _ROOT / "config" / "api_keys.env"
-if _env_path.exists():
-    with open(_env_path, "r", encoding="utf-8") as f:
-        for line in f:
-            if "=" in line and not line.strip().startswith("#"):
-                k, v = line.strip().split("=", 1)
-                os.environ[k.strip()] = v.strip().strip(" '\"")
-
 for _sub in ("00_data_sensors", "01_memory_core", "02_quant_engine",
              "03_risk_portfolio", "04_orchestrator_ai", "05_interfaces"):
     sys.path.insert(0, str(_ROOT / _sub))
-
-try:
-    from env_loader import load_api_keys  # noqa: E402
-
-    load_api_keys(_env_path)
-except Exception:  # noqa: BLE001
-    pass
 
 from sqlite_portfolio import PortfolioDB  # noqa: E402
 from data_models import Position, PortfolioState  # noqa: E402
@@ -99,7 +68,6 @@ try:
         atr_risk_line,
         render_signal_card,
         sector_impact_line,
-        market_impact_line,
     )
 except Exception:  # noqa: BLE001
     atr_risk_line = None  # type: ignore[assignment]
@@ -111,11 +79,6 @@ try:
 except Exception:  # noqa: BLE001
     PeaSizer = None  # type: ignore[assignment]
 
-try:
-    from monthly_rebalancer import PortfolioRebalancer  # noqa: E402
-except Exception:  # noqa: BLE001
-    PortfolioRebalancer = None  # type: ignore[assignment]
-
 try:  # Optional sensors — the dashboard still works if a network dep is missing.
     from macro_alpha_api import MacroAlphaSensor  # noqa: E402
 except Exception:  # noqa: BLE001
@@ -125,29 +88,6 @@ try:
     from news_sentiment_llm import NewsSentimentScorer  # noqa: E402
 except Exception:  # noqa: BLE001
     NewsSentimentScorer = None  # type: ignore[assignment]
-
-try:
-    from quantitative_math import (  # noqa: E402
-        calculate_historical_var,
-        calculate_cvar,
-        calculate_annualized_volatility,
-        calculate_portfolio_variance,
-    )
-except Exception:  # noqa: BLE001
-    calculate_historical_var = None  # type: ignore[assignment]
-    calculate_cvar = None  # type: ignore[assignment]
-    calculate_annualized_volatility = None  # type: ignore[assignment]
-    calculate_portfolio_variance = None  # type: ignore[assignment]
-
-try:
-    from stochastic_models import run_correlated_monte_carlo  # noqa: E402
-except Exception:  # noqa: BLE001
-    run_correlated_monte_carlo = None  # type: ignore[assignment]
-
-try:
-    from stress_tester import simulate_historical_shocks  # noqa: E402
-except Exception:  # noqa: BLE001
-    simulate_historical_shocks = None  # type: ignore[assignment]
 
 _DB_DIR = _ROOT / "database"
 _SQLITE_PATH = _DB_DIR / "portfolio.db"
@@ -229,74 +169,43 @@ def euronext_session_status() -> tuple[str, str]:
     return f"FERME · {now.strftime('%H:%M')} Paris", "amber"
 
 
-def _period_to_days(period: str | None) -> int:
-    """Map Yahoo-style period strings to trading-day lookbacks."""
-    return {
-        "1d": 5,
-        "5d": 7,
-        "1mo": 30,
-        "3mo": 90,
-        "6mo": 180,
-        "1y": 252,
-        "2y": 504,
-        "5y": 1260,
-        "10y": 2520,
-    }.get(period or "1mo", 30)
-
-
-
-@st.cache_resource(show_spinner=False)
-def get_portfolio_db():
-    from sqlite_portfolio import PortfolioDB
-    return PortfolioDB(db_path=_SQLITE_PATH)
-
-@st.cache_resource(show_spinner=False)
-def get_ts_db():
-    from duckdb_manager import TimeSeriesDB
-    return TimeSeriesDB(read_only=True)
-
-@st.cache_data(ttl=300, show_spinner=False)
-def _db_hist(ticker: str, days: int = 252) -> pd.DataFrame:
-    """OHLCV history from DuckDB (single source of truth for dashboard prices)."""
-    try:
-        from duckdb_manager import TimeSeriesDB
-
-        db = get_ts_db()
-        hist = db.get_historical_prices(ticker, days=days)
-        return hist if hist is not None else pd.DataFrame()
-    except Exception:  # noqa: BLE001
-        return pd.DataFrame()
-
-
 @st.cache_data(ttl=600, show_spinner=False)
 def _latest_atr14_approx(ticker: str) -> float | None:
-    """ATR(14) via quant engine indicators (TimeSeriesDB — no yfinance)."""
-    hist = _db_hist(ticker, 60)
-    if hist is None or hist.empty or len(hist) < 20:
-        return None
+    """Best-effort ATR(14) for risk cards (DuckDB, else yfinance)."""
     try:
-        from technical_scorer import SignalGenerator
-
-        enriched = SignalGenerator().calculate_indicators(hist)
-        atr_col = next((c for c in enriched.columns if "ATR" in str(c).upper()), None)
-        if not atr_col:
+        from duckdb_manager import TimeSeriesDB
+        db = TimeSeriesDB()
+        hist = db.get_historical_prices(ticker, days=60)
+        if hist is not None and not hist.empty and len(hist) >= 20:
+            try:
+                import pandas_ta_classic as ta  # noqa: F401
+            except ImportError:
+                import pandas_ta as ta  # noqa: F401
+            work = hist.copy()
+            atr = work.ta.atr(
+                high=work["High"], low=work["Low"], close=work["Close"], length=14
+            )
+            if atr is not None:
+                if isinstance(atr, pd.DataFrame):
+                    atr = atr.iloc[:, 0]
+                val = float(atr.dropna().iloc[-1])
+                return val if val > 0 else None
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        hist = yf.Ticker(ticker).history(period="3mo")
+        if hist is None or hist.empty:
             return None
-        val = float(enriched[atr_col].dropna().iloc[-1])
+        try:
+            import pandas_ta_classic as ta  # noqa: F401
+        except ImportError:
+            import pandas_ta as ta  # noqa: F401
+        atr = hist.ta.atr(length=14)
+        if atr is None:
+            return None
+        val = float(atr.dropna().iloc[-1])
         return val if val > 0 else None
     except Exception:  # noqa: BLE001
-        return None
-
-
-@st.cache_data(ttl=600, show_spinner=False)
-def _latest_adv(ticker: str) -> float | None:
-    """ADV (Average Daily Volume) over the last 20 days."""
-    hist = _db_hist(ticker, 30)
-    if hist is None or hist.empty or len(hist) < 20 or "Volume" not in hist.columns:
-        return None
-    try:
-        adv = float(hist["Volume"].tail(20).mean())
-        return adv if adv > 0 else None
-    except Exception:
         return None
 
 
@@ -310,47 +219,12 @@ def _sector_for_ticker(ticker: str) -> str:
     return "UNKNOWN"
 
 
-def render_shap_waterfall(ticker: str, shap_dict: dict) -> go.Figure:
-    """SHAP waterfall/bar chart for feature attribution."""
-    import plotly.graph_objects as go
-    
-    if not shap_dict:
-        return go.Figure()
-        
-    filtered_shaps = {k: v for k, v in shap_dict.items() if abs(v) > 1e-9}
-    sorted_shaps = sorted([(k, v) for k, v in filtered_shaps.items()], key=lambda x: x[1])
-    
-    y_labels = [x[0] for x in sorted_shaps]
-    x_vals = [x[1] for x in sorted_shaps]
-    colors = [_NEON if x > 0 else _RED for x in x_vals]
-    
-    fig = go.Figure(go.Bar(
-        x=x_vals, y=y_labels, orientation='h',
-        marker_color=colors,
-        text=[f"+{x:.1f}%" if x > 0 else f"{x:.1f}%" for x in x_vals],
-        textposition="auto"
-    ))
-    fig.update_layout(
-        title=f"Attribution des features (SHAP) - {ticker}",
-        xaxis_title="Impact sur le Score ML",
-        yaxis_title="",
-        template="plotly_dark",
-        plot_bgcolor="rgba(0,0,0,0)",
-        paper_bgcolor="rgba(0,0,0,0)",
-        margin=dict(l=20, r=20, t=40, b=20),
-        height=280
-    )
-    return fig
-
-
-@st.fragment
 def render_pending_trade_cards(pending_df: pd.DataFrame, portfolio_obj) -> None:
-    """Rich cards for PENDING Discord/Streamlit signals (sizing / ATR / approve)."""
+    """Rich cards for PENDING Discord signals (sizing / ATR risk / sector)."""
     if pending_df is None or pending_df.empty:
-        render_empty_state(
-            "Aucun signal en attente. Soit le marche n'offre pas de setup "
-            "ensemble (conviction < 65), soit un veto (VIX / macro / liquidite) "
-            "a tout bloque."
+        st.info(
+            "Aucun signal en attente. Soit le marche n'offre pas de setup MRE, "
+            "soit un veto (VIX / macro / liquidite) a tout bloque."
         )
         return
     if render_signal_card is None:
@@ -361,40 +235,9 @@ def render_pending_trade_cards(pending_df: pd.DataFrame, portfolio_obj) -> None:
     sizer = PeaSizer(_ROOT / "config") if PeaSizer is not None else None
     prices = get_last_prices(tuple(str(t) for t in pending_df["ticker"].tolist()))
 
-    # Score gradient table (65–75 amber, 76–100 neon)
-    score_colors = []
-    for s in pending_df["score"].tolist():
-        try:
-            sc = float(s or 0)
-        except (TypeError, ValueError):
-            sc = 0.0
-        if sc >= 76:
-            score_colors.append(_NEON)
-        elif sc >= 65:
-            score_colors.append(_AMBER)
-        else:
-            score_colors.append(_MUTED)
-    disp = pd.DataFrame({
-        "Titre": [format_name(t) for t in pending_df["ticker"]],
-        "Score": [f"{float(s or 0):.0f}" for s in pending_df["score"]],
-        "Type": pending_df["signal_type"],
-        "Date": [str(x)[:16] for x in pending_df["created_at"]],
-    })
-    st.plotly_chart(
-        dark_table(
-            disp.head(12),
-            height=min(280, 56 + 28 * min(12, len(disp))),
-            font_color_map={"Score": score_colors[: len(disp)]},
-            col_widths=[2.2, 0.7, 0.8, 1.2],
-        ),
-        use_container_width=True,
-        key="gen_pending_score_table",
-    )
-
     for _, row in pending_df.head(8).iterrows():
         ticker = str(row.get("ticker", ""))
         score = float(row.get("score") or 0)
-        sig_id = str(row.get("id") or "")
         qty = row.get("target_qty")
         try:
             qty_i = int(qty) if qty is not None and str(qty) not in ("", "None", "nan") else None
@@ -422,18 +265,11 @@ def render_pending_trade_cards(pending_df: pd.DataFrame, portfolio_obj) -> None:
                 sector_cap_pct=_MAX_SECTOR * 100,
             )
         risk_line = ""
-        impact_line = ""
         if atr_risk_line is not None and qty_i:
             atr = _latest_atr14_approx(ticker)
-            if atr:
-                risk_line = atr_risk_line(
-                    qty_i, atr, atr_mult, float(portfolio_obj.total_equity)
-                )
-                
-            adv = _latest_adv(ticker)
-            if adv and atr and market_impact_line is not None:
-                impact_line = market_impact_line(qty_i, price, adv, atr)
-                
+            risk_line = atr_risk_line(
+                qty_i, atr, atr_mult, float(portfolio_obj.total_equity)
+            )
         st.markdown(
             render_signal_card(
                 ticker=ticker,
@@ -445,100 +281,44 @@ def render_pending_trade_cards(pending_df: pd.DataFrame, portfolio_obj) -> None:
                 sizing=sizing,
                 sector_line=sec_line,
                 risk_line=risk_line,
-                impact_line=impact_line,
                 created_at=str(row.get("created_at", ""))[:19],
             ),
             unsafe_allow_html=True,
         )
-        
-        import json
-        shap_dict = {}
-        lineage_str = row.get("lineage")
-        if lineage_str:
-            try:
-                if isinstance(lineage_str, dict):
-                    lin_dict = lineage_str
-                else:
-                    lin_dict = json.loads(lineage_str)
-                shap_dict = lin_dict.get("shap_breakdown", {})
-            except Exception:
-                pass
-
-        with st.expander(f"🧠 Explicabilité IA (SHAP) pour {ticker}"):
-            st.plotly_chart(render_shap_waterfall(ticker, shap_dict), use_container_width=True)
-
-        # Command Center: native Streamlit approve / reject (complements Discord)
-        if sig_id:
-            b1, b2, _ = st.columns([1, 1, 2])
-            with b1:
-                if st.button(
-                    "Approuver",
-                    type="primary",
-                    key=f"approve_{sig_id[:12]}",
-                    help="Met à jour SQLite → APPROVED (pas d'ordre broker).",
-                ):
-                    ok = get_portfolio_db().update_signal_status(
-                        sig_id, "APPROVED", "Streamlit Command Center approve"
-                    )
-                    if ok:
-                        st.success(f"{format_name(ticker)} → APPROVED")
-                        st.cache_data.clear()
-                        st.rerun()
-                    else:
-                        st.warning("Mise à jour SQLite échouée.")
-            with b2:
-                if st.button(
-                    "Rejeter",
-                    key=f"reject_{sig_id[:12]}",
-                    help="Met à jour SQLite → REJECTED.",
-                ):
-                    ok = get_portfolio_db().update_signal_status(
-                        sig_id, "REJECTED", "Streamlit Command Center reject"
-                    )
-                    if ok:
-                        render_empty_state(f"{format_name(ticker)} → REJECTED")
-                        st.cache_data.clear()
-                        st.rerun()
-                    else:
-                        st.warning("Mise à jour SQLite échouée.")
 
 
-if "ticker" in st.query_params:
-    _qp_ticker = st.query_params["ticker"]
-    if isinstance(_qp_ticker, list):
-        _qp_ticker = _qp_ticker[0] if _qp_ticker else ""
-    _qp_ticker = str(_qp_ticker).strip()
-    if _qp_ticker:
-        st.session_state["selected_ticker"] = _qp_ticker
-        st.session_state["focus_ticker"] = _qp_ticker
-    st.query_params.clear()
+# =============================================================================
+# Page config & Bloomberg CSS
+# =============================================================================
+st.set_page_config(
+    page_title="PEA Sniper Terminal | V-Prime",
+    layout="wide",
+    page_icon="\U0001F6E1\uFE0F",
+    initial_sidebar_state="collapsed",
+)
 
 st.markdown(
     f"""
 <style>
-    /* Pure Terminal Immersion */
-    #MainMenu {{visibility: hidden;}}
-    footer {{visibility: hidden;}}
-    .block-container {{padding-top: 1rem; padding-bottom: 0rem;}}
-
     .stApp {{ background-color: {_BG}; }}
     section[data-testid="stSidebar"] {{ background-color: {_PANEL};
         border-right: 1px solid #222; }}
     h1, h2, h3, h4 {{ color: {_WHITE} !important;
         font-family: 'Courier New', monospace; letter-spacing: 1px; }}
 
-    /* --- Custom metric boxes (HUD) --- */
-    .metric-box {{ background-color: {_PANEL}; padding: 15px 18px;
-        border: 1px solid #333333; border-left: 4px solid {_CYAN};
-        margin-bottom: 10px; font-family: 'Courier New', monospace; }}
+    /* --- Upgraded Bloomberg metric boxes (HUD) --- */
+    .metric-box {{ background: linear-gradient(180deg, #12151B 0%, #0A0D12 100%); padding: 14px 18px;
+        border: 1px solid #2A313D; border-left: 4px solid {_CYAN}; border-radius: 4px;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.45);
+        margin-bottom: 12px; font-family: 'Courier New', monospace; transition: all 0.2s ease; }}
     .metric-box.green {{ border-left-color: {_NEON}; }}
     .metric-box.amber {{ border-left-color: {_AMBER}; }}
     .metric-box.cyan  {{ border-left-color: {_CYAN}; }}
     .metric-box.red   {{ border-left-color: {_RED}; }}
-    .metric-box.muted {{ border-left-color: #555555; }}
-    .metric-box:hover {{ border-color: #555555; cursor: help; }}
+    .metric-box.muted {{ border-left-color: #4B5563; }}
+    .metric-box:hover {{ border-color: #4A5568; transform: translateY(-1px); }}
     .metric-title {{ color: {_CYAN}; font-size: 12px; text-transform: uppercase;
-        letter-spacing: 1.5px; }}
+        letter-spacing: 1.5px; font-weight: 600; }}
     .metric-value {{ color: {_WHITE}; font-size: 22px; font-weight: 700;
         margin-top: 4px; word-break: break-word; line-height: 1.25; }}
     .metric-sub {{ font-size: 12px; margin-top: 4px; font-weight: 600;
@@ -556,68 +336,97 @@ st.markdown(
 
     /* --- Info / explanation banners --- */
     .info-text {{ color: #C8D0D8; font-size: 14px; margin-bottom: 14px;
-        padding: 8px 12px; border-left: 3px solid {_CYAN};
-        background-color: #0A0A0A; }}
+        padding: 10px 14px; border-left: 3px solid {_CYAN};
+        background-color: #0A0E14; border-radius: 3px; }}
     .eli5 {{ color: {_WHITE}; font-size: 14px; line-height: 1.6;
-        margin-bottom: 14px; padding: 12px 16px; border: 1px solid #333333;
-        border-left: 4px solid {_AMBER}; background-color: #0A0A0A; }}
+        margin-bottom: 14px; padding: 14px 18px; border: 1px solid #28313E;
+        border-left: 4px solid {_AMBER}; background-color: #0A0D12; border-radius: 4px; }}
 
     /* --- Tabs --- */
-    .stTabs [data-baseweb="tab-list"] {{ gap: 2px; border-bottom: 1px solid #222; }}
+    .stTabs [data-baseweb="tab-list"] {{ gap: 4px; border-bottom: 1px solid #222; }}
     .stTabs [data-baseweb="tab"] {{ background-color: {_PANEL};
-        color: {_MUTED}; font-family: 'Courier New', monospace; }}
+        color: {_MUTED}; font-family: 'Courier New', monospace; border-radius: 4px 4px 0 0; }}
     .stTabs [aria-selected="true"] {{ color: {_WHITE} !important;
-        border-bottom: 2px solid {_AMBER}; }}
-    .mission {{ background:#080808; border:1px solid #2A2A2A; padding:14px 16px;
-        margin-bottom:14px; font-family:'Courier New',monospace; }}
+        border-bottom: 2px solid {_AMBER}; background-color: #161B22; }}
+    .mission {{ background:#080B10; border:1px solid #252D38; padding:14px 16px;
+        margin-bottom:14px; font-family:'Courier New',monospace; border-radius: 4px; }}
     .mission-title {{ color:{_CYAN}; font-size:11px; letter-spacing:2px;
         text-transform:uppercase; margin-bottom:8px; }}
     .go-row input {{ font-family:'Courier New',monospace !important; }}
-
-    /* Primary buttons: black text on Streamlit's bright primary fill */
-    button[kind="primary"] p {{ color: #000000 !important; font-weight: 800; }}
-    div[data-testid="stButton"] button[kind="primary"] {{
-        font-weight: 800;
-    }}
 </style>
 """,
     unsafe_allow_html=True,
 )
 
-# --- STRICT GATEKEEPER: core AI + newsletter must be connected -------------
-missing_keys = []
-if not os.getenv("OPENROUTER_API_KEY"):
-    missing_keys.append("OPENROUTER_API_KEY (LLM / IA)")
-if not os.getenv("YAHOO_MAIL_USER") or not os.getenv("YAHOO_MAIL_APP_PASSWORD"):
-    missing_keys.append("YAHOO_MAIL_USER / APP_PASSWORD (Briefing Newsletters)")
-optional_missing_keys = []
-if not os.getenv("FINNHUB_API_KEY"):
-    optional_missing_keys.append("FINNHUB_API_KEY (fondamentaux EU Value/Quality)")
 
-if missing_keys:
-    st.error("🛑 **ERREUR CRITIQUE : COMPOSANTS DÉCONNECTÉS**")
+def render_empty_state(message: str = "En cours d'ingestion par le Sniper Daemon. Nécessite 200 jours d'historique.") -> None:
+    """Render a styled Bloomberg-terminal empty state card."""
     st.markdown(
-        "Le terminal exige que les sources IA / newsletter soient connectées. "
-        "Il manque les clés suivantes dans `config/api_keys.env` :"
+        f"""
+        <div style="background: linear-gradient(180deg, #10141C 0%, #0A0D14 100%);
+                    border: 1px solid #262E3B; border-left: 4px solid {_AMBER};
+                    padding: 16px 20px; border-radius: 5px; font-family: 'Courier New', monospace; margin: 12px 0;">
+            <div style="color:{_AMBER}; font-size:11px; letter-spacing:1.5px; font-weight:700;">
+                ⚡ NOTICE TERMINAL / EN COURS DE COLLECTE
+            </div>
+            <div style="color:{_WHITE}; font-size:14px; margin-top:8px; line-height:1.6;">
+                {message}
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
-    for k in missing_keys:
-        st.markdown(f"- `{k}`")
-    render_empty_state("Remplissez vos clés dans le fichier `config/api_keys.env` et rechargez la page.")
-    st.stop()
 
-if optional_missing_keys:
-    st.warning(
-        "⚠️ Clés optionnelles absentes : "
-        + ", ".join(f"`{k}`" for k in optional_missing_keys)
-        + ". Le terminal reste actif avec fallback yfinance / score neutre."
-    )
 
-# FMP is secondary (AMF Opendatasoft / BDIF is primary for FR insiders).
-if not os.getenv("FMP_API_KEY"):
-    st.warning(
-        "⚠️ `FMP_API_KEY` absente — fallback insiders US/EU limité. "
-        "AMF public (ODS/BDIF) reste actif. Ajoute FMP dans `config/api_keys.env` "
-        "pour la cascade complète."
+def generate_ai_ticker_summary(
+    ticker: str,
+    dossier: dict,
+    indicators: dict | None,
+    valuation: dict | None,
+    bourso_profile: dict | None,
+) -> str:
+    """Dynamically generate an institutional AI summary using LLM or structured synthesis."""
+    name = dossier.get("name") or ticker
+    sector = dossier.get("sector") or "Inconnu"
+    summary = dossier.get("summary") or "Actif éligible au PEA français."
+
+    close = f"{indicators['close']:.2f} €" if indicators and indicators.get("close") else "n/a"
+    rsi = f"{indicators['rsi']:.1f}" if indicators and indicators.get("rsi") is not None else "n/a"
+    sma200 = f"{indicators['sma200']:.2f} €" if indicators and indicators.get("sma200") else "n/a"
+
+    pe = f"{valuation.get('trailing_pe'):.1f}×" if valuation and valuation.get("trailing_pe") else "n/a"
+    target = f"{valuation.get('target_mean'):.2f} €" if valuation and valuation.get("target_mean") else "n/a"
+    consensus = (bourso_profile or {}).get("sentiment") or "Neutre"
+
+    # Attempt OpenRouter / NarrativeExplainer query if API key present
+    try:
+        from news_sentiment_llm import OpenRouterClient
+        client = OpenRouterClient()
+        if client.is_configured:
+            prompt = (
+                f"Rédige une note de synthèse institutionnelle ultra-concise (4-5 puces percutantes) "
+                f"pour le trader PEA sur {name} ({ticker}) :\n"
+                f"- Secteur : {sector}\n"
+                f"- Description : {summary}\n"
+                f"- Cours : {close}, RSI(14) : {rsi}, SMA200 : {sma200}\n"
+                f"- P/E : {pe}, Objectif moyen : {target}, Consensus : {consensus}\n"
+                f"Conclus par : Conviction Quantitative [FORTE/MOYENNE/ATTENTE] et Point d'entrée."
+            )
+            ai_text = client.query_sync(prompt, max_tokens=250)
+            if ai_text and len(ai_text.strip()) > 30:
+                return ai_text.strip()
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("AI summary LLM call failed: %s", exc)
+
+    # High quality institutional fallback template
+    return (
+        f"**Profil & Activité** : {summary}\n\n"
+        f"• **Positionnement Quantitatif** : Dernier cours à {close} vs SMA200 {sma200}. "
+        f"RSI(14) à {rsi} ({'Survendu - setup Mean-Reversion' if indicators and indicators.get('rsi', 50) < 30 else 'Zone neutre'}).\n"
+        f"• **Valorisation & Consensus** : Multiple P/E {pe}. Objectif moyen du consensus à {target} (Avis : {consensus}).\n"
+        f"• **Catalyseurs Clés** : " + ", ".join(dossier.get("catalysts") or ["Croissance du chiffre d'affaires", "Résilience des marges", "Expansion européenne"]) + ".\n"
+        f"• **Risques à Surveiller** : " + ", ".join(dossier.get("risk_events") or ["Volatilité des devises", "Ralentissement macroéconomique", "Hausses de taux"]) + ".\n\n"
+        f"**Verdict Stratégique PEA** : *{'Candidat de rebond attractif (RSI < 30 au-dessus de SMA200)' if indicators and indicators.get('rsi', 50) < 30 else 'Surveillance active - attendre confirmation de repli en zone d’achat'}.*"
     )
 
 
@@ -664,7 +473,7 @@ def dark_table(display_df: pd.DataFrame, height: int | None = None,
             values=[display_df[c].tolist() for c in headers],
             fill_color=_BG,
             font=dict(color=col_colors, size=12, family="Courier New"),
-            align="left", line_color=_GRID, height=36,
+            align="left", line_color=_GRID, height=30,
         ),
     )])
     fig.update_layout(
@@ -720,7 +529,7 @@ def load_portfolio_state():
     """Load the current portfolio snapshot (cached 60s)."""
     if not _SQLITE_PATH.exists():
         return None
-    return get_portfolio_db().get_portfolio_state()
+    return PortfolioDB(db_path=_SQLITE_PATH).get_portfolio_state()
 
 
 @st.cache_data(ttl=60)
@@ -728,7 +537,7 @@ def load_equity_curve() -> pd.DataFrame:
     """Load the daily equity curve from SQLite (cached 60s)."""
     if not _SQLITE_PATH.exists():
         return pd.DataFrame(columns=["date", "equity", "cash"])
-    return get_portfolio_db().get_equity_curve()
+    return PortfolioDB(db_path=_SQLITE_PATH).get_equity_curve()
 
 
 @st.cache_data(ttl=60)
@@ -736,68 +545,8 @@ def load_signals(statuses: tuple[str, ...], limit: int | None = None) -> pd.Data
     """Load audit-log rows for the given statuses (cached 60s)."""
     if not _SQLITE_PATH.exists():
         return pd.DataFrame()
-    db = get_portfolio_db()
+    db = PortfolioDB(db_path=_SQLITE_PATH)
     return pd.DataFrame(db.fetch_signals_by_status(list(statuses), limit=limit))
-
-
-@st.cache_data(ttl=1800, show_spinner=False)
-def compute_portfolio_returns_matrix(
-    tickers: tuple[str, ...], days: int = 252
-) -> pd.DataFrame:
-    """Return aligned daily returns matrix from DuckDB for given tickers."""
-    if not tickers:
-        return pd.DataFrame()
-    try:
-        from duckdb_manager import TimeSeriesDB
-
-        db = get_ts_db()
-        close_cols = []
-        for t in tickers:
-            hist = db.get_historical_prices(str(t), days=days + 10)
-            if hist is None or hist.empty or "Close" not in hist.columns:
-                continue
-            frame = hist[["Date", "Close"]].copy()
-            frame["Date"] = pd.to_datetime(frame["Date"], errors="coerce")
-            frame["Close"] = pd.to_numeric(frame["Close"], errors="coerce")
-            frame = frame.dropna(subset=["Date", "Close"]).sort_values("Date")
-            if len(frame) < 30:
-                continue
-            close_cols.append(frame.set_index("Date")["Close"].rename(str(t)))
-        if not close_cols:
-            return pd.DataFrame()
-        close_df = pd.concat(close_cols, axis=1, join="inner").dropna()
-        if close_df.empty:
-            return pd.DataFrame()
-        return close_df.pct_change().dropna()
-    except Exception:  # noqa: BLE001
-        return pd.DataFrame()
-
-
-@st.cache_data(ttl=1800, show_spinner=False)
-def run_portfolio_monte_carlo(
-    tickers: tuple[str, ...], weights: tuple[float, ...], equity: float, days: int = 252, simulations: int = 2000
-) -> pd.DataFrame:
-    """Cached Monte Carlo fan chart inputs."""
-    if run_correlated_monte_carlo is None:
-        return pd.DataFrame()
-    ret = compute_portfolio_returns_matrix(tickers, days=days)
-    if ret.empty or ret.shape[1] < 1:
-        return pd.DataFrame()
-    cols = list(ret.columns)
-    w = np.asarray(weights, dtype=float)
-    if len(w) != len(cols):
-        return pd.DataFrame()
-    from quantitative_math import calculate_shrunk_covariance
-    cov = calculate_shrunk_covariance(ret)
-    mu = ret.mean()
-    return run_correlated_monte_carlo(
-        weights=w,
-        cov_matrix=cov,
-        expected_returns=mu,
-        initial_portfolio_value=float(equity),
-        days=days,
-        simulations=simulations,
-    )
 
 
 def _classify_audit_row(row: dict) -> str:
@@ -855,7 +604,6 @@ def _map_reject_to_funnel_drop(classified: str, reason: str) -> str:
 
 
 @st.cache_data(ttl=300, show_spinner=False)
-@st.cache_data(ttl=300, show_spinner=False)
 def get_funnel_metrics(days: int = 7) -> dict:
     """Build decision-funnel stats from SQLite audit logs (last ``days``).
 
@@ -890,7 +638,7 @@ def get_funnel_metrics(days: int = 7) -> dict:
         since = (datetime.now() - timedelta(days=int(days))).strftime(
             "%Y-%m-%dT00:00:00"
         )
-        rows = get_portfolio_db().fetch_signals_since(since)
+        rows = PortfolioDB(db_path=_SQLITE_PATH).fetch_signals_since(since)
     except Exception:  # noqa: BLE001
         return empty
     if not rows:
@@ -1050,21 +798,113 @@ def render_rejection_pie(funnel_data: dict) -> go.Figure:
     return _style_dark_fig(fig, height=420)
 
 
+@st.cache_data(ttl=1800, show_spinner=False)
+def get_universe_screener_metrics(universe_df: pd.DataFrame) -> pd.DataFrame:
+    """Compute multi-horizon performance and TA metrics across universe tickers for the Screener."""
+    if universe_df is None or universe_df.empty:
+        return pd.DataFrame()
+
+    tsdb = None
+    try:
+        tsdb = TimeSeriesDB()
+    except Exception:
+        pass
+
+    from technical_scorer import SignalGenerator
+    gen = SignalGenerator()
+
+    records = []
+    for _, row in universe_df.iterrows():
+        ticker = str(row["Ticker"])
+        name = str(row.get("Name", ticker))
+        sector = str(row.get("Sector", "Autre"))
+
+        df = None
+        if tsdb is not None:
+            try:
+                df = tsdb.get_historical_prices(ticker, days=365)
+            except Exception:
+                pass
+
+        if df is None or df.empty or len(df) < 20:
+            try:
+                raw = yf.download(ticker, period="1y", interval="1d", progress=False, auto_adjust=True)
+                if isinstance(raw.columns, pd.MultiIndex):
+                    raw.columns = raw.columns.get_level_values(0)
+                df = raw
+            except Exception:
+                continue
+
+        if df is None or df.empty or len(df) < 5:
+            continue
+
+        close = df["Close"].dropna().astype(float)
+        if len(close) < 5:
+            continue
+
+        cur_px = float(close.iloc[-1])
+        r1m = float((cur_px / close.iloc[-min(21, len(close))] - 1.0) * 100.0) if len(close) >= 21 else 0.0
+        r3m = float((cur_px / close.iloc[-min(63, len(close))] - 1.0) * 100.0) if len(close) >= 63 else 0.0
+        r1y = float((cur_px / close.iloc[0] - 1.0) * 100.0)
+
+        # Indicators
+        sma200 = float(close.tail(200).mean()) if len(close) >= 150 else None
+        trend = "HAUSSIER" if sma200 and cur_px > sma200 else ("BAISSIER" if sma200 else "—")
+
+        # RSI approx
+        delta = close.diff()
+        gain = delta.clip(lower=0).rolling(14).mean()
+        loss = (-delta.clip(upper=0)).rolling(14).mean()
+        rs = gain / loss.replace(0, np.nan)
+        rsi = float(100 - (100 / (1 + rs)).iloc[-1]) if not pd.isna(rs.iloc[-1]) else 50.0
+
+        t_qual = gen.calculate_trend_quality(close)
+
+        records.append({
+            "Ticker": ticker,
+            "Titre": name,
+            "Secteur": sector,
+            "Cours (€)": round(cur_px, 2),
+            "Perf 1M (%)": round(r1m, 1),
+            "Perf 3M (%)": round(r3m, 1),
+            "Perf 1Y (%)": round(r1y, 1),
+            "RSI(14)": round(rsi, 1),
+            "Tendance SMA200": trend,
+            "Trend Quality": round(t_qual, 2),
+        })
+
+    return pd.DataFrame(records)
+
+
 @st.cache_data(ttl=86400, show_spinner=False)
 def get_annual_returns(ticker: str) -> pd.DataFrame:
-    """Year-over-year % returns from DuckDB daily closes (~10y)."""
+    """Year-over-year % returns from ~10y monthly closes (yfinance).
+
+    Args:
+        ticker: Yahoo symbol (e.g. ``MC.PA``).
+
+    Returns:
+        pd.DataFrame: Columns ``Year`` (YYYY str) and ``Return_Pct`` (float).
+        Empty DataFrame on network/delist failure.
+    """
     empty = pd.DataFrame(columns=["Year", "Return_Pct"])
     if not ticker:
         return empty
     try:
-        hist = _db_hist(ticker, days=2520)
-        if hist is None or hist.empty or "Close" not in hist.columns:
+        raw = yf.download(
+            ticker,
+            period="10y",
+            interval="1mo",
+            progress=False,
+            auto_adjust=True,
+            threads=False,
+        )
+        if raw is None or raw.empty:
             return empty
-        frame = hist.copy()
-        if "Date" in frame.columns:
-            frame["Date"] = pd.to_datetime(frame["Date"])
-            frame = frame.set_index("Date")
-        close = pd.to_numeric(frame["Close"], errors="coerce").dropna()
+        close = raw["Close"] if "Close" in raw.columns else raw.iloc[:, 0]
+        if isinstance(close, pd.DataFrame):
+            close = close.iloc[:, 0]
+        close = pd.to_numeric(close, errors="coerce").dropna()
         if close.empty:
             return empty
         yearly = close.resample("YE").last().dropna()
@@ -1139,17 +979,11 @@ def get_valuation_metrics(ticker: str) -> dict:
         elif w52_low is not None:
             buy_high = w52_low * 1.08
 
-        # Flat band fallback: Yahoo often omits targetLow → identical bounds.
-        if buy_high is not None and buy_low is not None and buy_high <= buy_low * 1.01:
-            buy_high = buy_low * 1.05
-        if buy_low is not None and buy_high is None:
-            buy_high = buy_low * 1.05
-
-        # Trailing 1M / 1Y returns from DuckDB daily history.
+        # Trailing 1M / 1Y returns from daily history (robust empty on failure).
         ret_1m = None
         ret_1y = None
         try:
-            hist = _db_hist(ticker, days=252)
+            hist = yf.Ticker(ticker).history(period="1y", auto_adjust=True)
             if hist is not None and not hist.empty and "Close" in hist.columns:
                 close = pd.to_numeric(hist["Close"], errors="coerce").dropna()
                 if len(close) >= 2:
@@ -1246,35 +1080,28 @@ def get_market_performance(
     start: str | None = None,
     end: str | None = None,
 ) -> pd.DataFrame:
-    """Compute performance over a preset period or an explicit date range (DuckDB)."""
+    """Compute performance over a preset period or an explicit date range."""
     if not tickers:
         return pd.DataFrame()
     try:
+        # Cap batch size — huge universes make yfinance return sparse junk.
         batch = list(tickers)[:120]
-        days = _period_to_days(period)
+        if start:
+            raw = yf.download(batch, start=start, end=end, progress=False,
+                              auto_adjust=True, threads=True)
+        else:
+            raw = yf.download(batch, period=period, progress=False,
+                              auto_adjust=True, threads=True)
+        close = _extract_close_frame(raw, batch)
+        if close.empty:
+            return pd.DataFrame()
+
         rows = []
-        for t in batch:
-            hist = _db_hist(t, days=days + 5)
-            if hist is None or hist.empty or "Close" not in hist.columns:
-                continue
-            close = pd.to_numeric(hist["Close"], errors="coerce").dropna()
-            series = _valid_price_series(close)
+        for t in close.columns:
+            series = _valid_price_series(close[t])
             if series is None:
                 continue
-            if start:
-                if "Date" in hist.columns:
-                    dates = pd.to_datetime(hist["Date"])
-                    mask = (dates >= pd.Timestamp(start)) & (
-                        dates <= pd.Timestamp(end) if end else True
-                    )
-                    sub = close[mask.values] if len(mask) == len(close) else close
-                else:
-                    sub = close
-                if len(sub) < 2:
-                    continue
-                start_price, end_price = float(sub.iloc[0]), float(sub.iloc[-1])
-            else:
-                start_price, end_price = float(series.iloc[0]), float(series.iloc[-1])
+            start_price, end_price = float(series.iloc[0]), float(series.iloc[-1])
             perf = (end_price / start_price - 1.0) * 100.0
             rows.append({
                 "Ticker": str(t),
@@ -1284,11 +1111,9 @@ def get_market_performance(
             })
         if not rows:
             return pd.DataFrame()
-        return (
-            pd.DataFrame(rows)
-            .sort_values("Performance (%)", ascending=False)
-            .reset_index(drop=True)
-        )
+        return (pd.DataFrame(rows)
+                .sort_values("Performance (%)", ascending=False)
+                .reset_index(drop=True))
     except Exception:  # noqa: BLE001
         return pd.DataFrame()
 
@@ -1297,473 +1122,98 @@ def get_market_performance(
 def get_normalized_prices(
     tickers: tuple[str, ...], period: str | None, start: str | None, end: str | None
 ) -> pd.DataFrame:
-    """Return prices rebased to 100 at the interval start (DuckDB)."""
+    """Return prices rebased to 100 at the interval start (for line charts)."""
     if not tickers:
         return pd.DataFrame()
     try:
         batch = list(tickers)[:40]
-        days = _period_to_days(period)
-        series_map: dict[str, pd.Series] = {}
-        for t in batch:
-            hist = _db_hist(t, days=days + 5)
-            if hist is None or hist.empty or "Close" not in hist.columns:
-                continue
-            if "Date" in hist.columns:
-                idx = pd.to_datetime(hist["Date"])
-            else:
-                idx = pd.to_datetime(hist.index)
-            close = pd.to_numeric(hist["Close"], errors="coerce")
-            s = pd.Series(close.values, index=idx).dropna()
-            if start:
-                s = s[s.index >= pd.Timestamp(start)]
-                if end:
-                    s = s[s.index <= pd.Timestamp(end)]
-            valid = _valid_price_series(s, min_points=2)
-            if valid is not None:
-                series_map[str(t)] = valid
-        if not series_map:
+        if start:
+            raw = yf.download(batch, start=start, end=end, progress=False,
+                              auto_adjust=True, threads=True)
+        else:
+            raw = yf.download(batch, period=period, progress=False,
+                              auto_adjust=True, threads=True)
+        close = _extract_close_frame(raw, batch)
+        if close.empty:
             return pd.DataFrame()
-        out = pd.DataFrame(series_map)
-        for col in out.columns:
-            base = float(out[col].dropna().iloc[0])
-            if base > 0:
-                out[col] = (out[col] / base) * 100.0
+        out = pd.DataFrame(index=close.index)
+        for t in close.columns:
+            series = _valid_price_series(close[t], min_points=2)
+            if series is None:
+                continue
+            base = float(series.iloc[0])
+            out[str(t)] = (series / base) * 100.0
         return out.dropna(how="all")
     except Exception:  # noqa: BLE001
         return pd.DataFrame()
 
 
-@st.cache_data(ttl=300, show_spinner=False)
-def load_morning_briefing() -> dict:
-    """Load Phase 19 morning Zeitgeist JSON (graceful empty on miss)."""
-    try:
-        from newsletter_api import NewsletterSensor
-
-        data = NewsletterSensor.read_briefing()
-        return data or {}
-    except Exception:  # noqa: BLE001
-        return {}
-
-
-@st.cache_data(ttl=604800, show_spinner=False)
-def get_company_logo(ticker: str) -> str:
-    """Clearbit logo URL from Yahoo ``website`` domain (empty string on fail)."""
-    if not ticker:
-        return ""
-    try:
-        from urllib.parse import urlparse
-
-        info = yf.Ticker(ticker).info or {}
-        website = str(info.get("website") or "").strip()
-        if not website:
-            return ""
-        if "://" not in website:
-            website = "https://" + website
-        host = (urlparse(website).hostname or "").lower()
-        if host.startswith("www."):
-            host = host[4:]
-        if not host or "." not in host:
-            return ""
-        return f"https://logo.clearbit.com/{host}"
-    except Exception:  # noqa: BLE001
-        return ""
-
-
-@st.cache_data(ttl=86400, show_spinner=False)
-def get_deep_news_analysis(ticker: str, headlines: tuple[str, ...]) -> str:
-    """Daily-cached deep LLM news brief for a ticker (Phase 22)."""
-    try:
-        from llm_explainer import NarrativeExplainer
-
-        explainer = NarrativeExplainer()
-        return asyncio.run(
-            explainer.analyze_ticker_news_deep(ticker, list(headlines or ()))
-        )
-    except Exception as exc:  # noqa: BLE001
-        return f"Analyse IA indisponible ({exc})."
-
-
-def summarize_insider_activity(df: pd.DataFrame) -> dict:
-    """Aggregate buy/sell counts, shares and notional from an insider frame."""
-    empty = {
-        "n_buys": 0,
-        "n_sells": 0,
-        "buy_shares": 0.0,
-        "sell_shares": 0.0,
-        "buy_value": 0.0,
-        "sell_value": 0.0,
-        "net_shares": 0.0,
-        "net_value": 0.0,
-        "source": "",
-        "signal": "Neutre / données insuffisantes",
-        "tone": "muted",
-    }
-    if df is None or df.empty:
-        return empty
-    n_buys = n_sells = 0
-    buy_shares = sell_shares = 0.0
-    buy_value = sell_value = 0.0
-    for _, row in df.iterrows():
-        tx = str(row.get("Transaction") or row.get("Title") or "").casefold()
-        shares = pd.to_numeric(row.get("Shares"), errors="coerce")
-        value = pd.to_numeric(row.get("Value"), errors="coerce")
-        shares_f = float(shares) if pd.notna(shares) else 0.0
-        value_f = float(value) if pd.notna(value) else 0.0
-        is_buy = any(
-            k in tx
-            for k in ("achat", "acquisition", "buy", "purchase", "p-purchase")
-        )
-        is_sell = any(
-            k in tx
-            for k in ("vente", "cession", "sell", "sale", "dispos")
-        )
-        if is_buy and not is_sell:
-            n_buys += 1
-            buy_shares += abs(shares_f)
-            buy_value += abs(value_f)
-        elif is_sell and not is_buy:
-            n_sells += 1
-            sell_shares += abs(shares_f)
-            sell_value += abs(value_f)
-    net_shares = buy_shares - sell_shares
-    net_value = buy_value - sell_value
-    source = ""
-    if "Source" in df.columns and len(df):
-        source = str(df["Source"].iloc[0])
-    if n_buys > n_sells and n_buys >= 1:
-        signal = (
-            f"🟢 Signal de confiance : {n_buys} achat(s) de dirigeants détecté(s)"
-            + (f" (Volume : {buy_value:,.0f} €)" if buy_value > 0 else "")
-        )
-        tone = "green"
-    elif n_sells > n_buys and n_sells >= 1:
-        signal = (
-            f"🔴 Signal de prudence : {n_sells} vente(s) de dirigeants"
-            + (f" (Volume : {sell_value:,.0f} €)" if sell_value > 0 else "")
-        )
-        tone = "red"
-    elif n_buys or n_sells:
-        signal = (
-            f"🟡 Activité mixte : {n_buys} achat(s) / {n_sells} vente(s)"
-        )
-        tone = "amber"
-    else:
-        signal = "Neutre / classification transaction indisponible"
-        tone = "muted"
-    return {
-        "n_buys": n_buys,
-        "n_sells": n_sells,
-        "buy_shares": buy_shares,
-        "sell_shares": sell_shares,
-        "buy_value": buy_value,
-        "sell_value": sell_value,
-        "net_shares": net_shares,
-        "net_value": net_value,
-        "source": source,
-        "signal": signal,
-        "tone": tone,
-    }
-
-
-def morning_briefing_is_live(briefing: dict | None) -> bool:
-    """True when scheduler wrote a usable Zeitgeist (not the placeholder)."""
-    if not briefing:
-        return False
-    zg = str(briefing.get("zeitgeist") or "").strip()
-    if not zg or zg.casefold().startswith("indisponible"):
-        return False
-    # Prefer a real generated_at from the morning job.
-    if briefing.get("generated_at"):
-        return True
-    return bool(briefing.get("headlines"))
-
-
-@st.cache_data(ttl=900, show_spinner=False)
-def get_strategy_fingerprint(ticker: str) -> dict:
-    """Radar axes powered by the multi-model ensemble outputs."""
-    out = {
-        "Mean Reversion": 0.0,
-        "Momentum": 0.0,
-        "Quality/Value": 0.0,
-        "Insider Confidence": 0.0,
-    }
-    try:
-        from duckdb_manager import TimeSeriesDB
-        from technical_scorer import SignalGenerator
-
-        hist = get_ts_db().get_historical_prices(ticker, days=252)
-        if hist is None or hist.empty or len(hist) < 200:
-            return out
-        conv = SignalGenerator().evaluate(ticker, hist)
-        models = conv.get("model_scores") or {}
-        ctx = conv.get("context_breakdown") or {}
-
-        out["Mean Reversion"] = float(models.get("mean_reversion_model") or 0.0)
-        out["Momentum"] = float(models.get("trend_model") or 0.0)
-        out["Quality/Value"] = float(ctx.get("fundamentals") or 0.0)
-        out["Insider Confidence"] = float(ctx.get("insiders") or 0.0)
-        return out
-    except Exception:  # noqa: BLE001
-        return out
-
-
-def render_strategy_radar(fingerprint: dict, ticker: str):
-    """Dark Bloomberg-style polar radar via plotly.express.line_polar (0–100)."""
-    cats = [
-        "Mean Reversion",
-        "Momentum",
-        "Quality/Value",
-        "Insider Confidence",
-    ]
-    vals = [float(fingerprint.get(c) or 0) for c in cats]
-    df = pd.DataFrame({"axis": cats, "score": vals})
-    fig = pex.line_polar(
-        df,
-        r="score",
-        theta="axis",
-        line_close=True,
-        range_r=[0, 100],
-    )
-    fig.update_traces(
-        fill="toself",
-        line_color=_CYAN,
-        fillcolor="rgba(0, 229, 255, 0.18)",
-        marker=dict(color=_NEON, size=7),
-    )
-    fig.update_layout(
-        paper_bgcolor=_BG,
-        plot_bgcolor=_BG,
-        font=dict(family="Courier New", color=_WHITE, size=11),
-        polar=dict(
-            bgcolor="#050505",
-            radialaxis=dict(
-                visible=True,
-                range=[0, 100],
-                gridcolor="#333",
-                tickfont=dict(color=_MUTED, size=9),
-            ),
-            angularaxis=dict(
-                gridcolor="#333",
-                tickfont=dict(color=_WHITE, size=11),
-            ),
-        ),
-        margin=dict(l=50, r=50, t=48, b=40),
-        height=380,
-        showlegend=False,
-        title=dict(
-            text=f"Empreinte — {short_name(ticker)}",
-            font=dict(color=_CYAN, size=13),
-        ),
-    )
-    return fig
-
-
-# Back-compat aliases (engine conviction axes still used elsewhere if needed)
-@st.cache_data(ttl=900, show_spinner=False)
-def get_conviction_axes(ticker: str) -> dict:
-    """Engine ensemble axes (points) — optional companion to strategy radar."""
-    try:
-        from technical_scorer import SignalGenerator
-        from duckdb_manager import TimeSeriesDB
-
-        db = get_ts_db()
-        hist = db.get_historical_prices(ticker, days=300)
-        if hist is None or hist.empty:
-            return {}
-        return SignalGenerator().evaluate(ticker, hist)
-    except Exception:  # noqa: BLE001
-        return {}
-
-
-def render_conviction_radar(conv: dict, ticker: str) -> go.Figure:
-    """Legacy engine radar (kept for compatibility). Prefer strategy radar."""
-    cats = ["Mean Reversion", "Volume", "Insiders", "Institutional"]
-    vals = [
-        float(conv.get("mean_reversion") or 0),
-        float(conv.get("volume_breakout") or 0),
-        float(conv.get("insider") or 0),
-        float(conv.get("institutional") or 0),
-    ]
-    cats_c = cats + [cats[0]]
-    vals_c = vals + [vals[0]]
-    fig = go.Figure()
-    fig.add_trace(go.Scatterpolar(
-        r=vals_c,
-        theta=cats_c,
-        fill="toself",
-        name=ticker,
-        line=dict(color=_NEON, width=2),
-        fillcolor="rgba(0,255,0,0.12)",
-    ))
-    fig.update_layout(
-        polar=dict(
-            bgcolor="#050505",
-            radialaxis=dict(
-                visible=True, range=[0, 35],
-                gridcolor="#333", tickfont=dict(color=_MUTED, size=10),
-            ),
-            angularaxis=dict(
-                gridcolor="#333", tickfont=dict(color=_WHITE, size=11),
-            ),
-        ),
-        paper_bgcolor=_BG,
-        plot_bgcolor=_BG,
-        font=dict(color=_WHITE),
-        margin=dict(l=40, r=40, t=40, b=40),
-        height=320,
-        showlegend=False,
-    )
-    return fig
-
-
 @st.cache_data(ttl=1800, show_spinner=False)
-def get_universe_screener_tags(tickers: tuple[str, ...]) -> dict:
-    """Map ticker → short technical tag string for the Univers dark table."""
-    tags: dict[str, str] = {}
-    if not tickers:
-        return tags
-    try:
-        from duckdb_manager import TimeSeriesDB
-        from technical_scorer import SignalGenerator
-
-        db = get_ts_db()
-        gen = SignalGenerator()
-        for ticker in tickers:
-            parts: list[str] = []
-            try:
-                hist = db.get_historical_prices(ticker, days=220)
-                if hist is None or hist.empty or len(hist) < 50:
-                    tags[ticker] = "—"
-                    continue
-                enriched = gen.calculate_indicators(hist)
-                last = enriched.iloc[-1]
-                close = float(last["Close"])
-                rsi = last.get("RSI_14")
-                sma200 = last.get("SMA_200")
-                sma5 = last.get("SMA_5")
-                if rsi is not None and not pd.isna(rsi) and float(rsi) < 30:
-                    parts.append("🔥 OVERSOLD")
-                if (
-                    sma200 is not None
-                    and not pd.isna(sma200)
-                    and close > float(sma200)
-                ):
-                    parts.append("📈 UPTREND")
-                if (
-                    sma5 is not None
-                    and not pd.isna(sma5)
-                    and close > float(sma5)
-                    and rsi is not None
-                    and not pd.isna(rsi)
-                    and float(rsi) > 55
-                ):
-                    parts.append("⚡ MOM")
-                if sma200 is not None and not pd.isna(sma200) and close < float(sma200):
-                    parts.append("📉 DOWNTREND")
-            except Exception:  # noqa: BLE001
-                pass
-            tags[ticker] = " · ".join(parts) if parts else "—"
-    except Exception:  # noqa: BLE001
-        for ticker in tickers:
-            tags[ticker] = "—"
-    return tags
-
-
-def simulate_buy_what_if(
-    portfolio_obj, ticker: str, notional_eur: float = 1000.0
-) -> dict:
-    """What-if: impact of buying ``notional_eur`` on cash / sector / rough corr."""
-    prices = get_last_prices((ticker,))
-    px = float(prices.get(ticker) or 0)
-    cash = float(portfolio_obj.cash_available)
-    equity = float(portfolio_obj.total_equity) or 1.0
-    sector = _sector_for_ticker(ticker) or "Unknown"
-    qty = int(notional_eur // px) if px > 0 else 0
-    cost = qty * px
-    cash_after = cash - cost
-
-    # Current sector weight
-    sec_now = 0.0
-    for p in portfolio_obj.positions:
-        if _sector_for_ticker(p.ticker) == sector:
-            sec_now += float(p.qty_shares) * float(
-                prices.get(p.ticker) or getattr(p, "avg_price", 0) or 0
-            )
-    sec_now_pct = 100.0 * sec_now / equity
-    sec_after_pct = 100.0 * (sec_now + cost) / (equity)  # approx same equity
-
-    # Rough max abs correlation vs held names (DuckDB closes if available)
-    max_corr = None
-    try:
-        from duckdb_manager import TimeSeriesDB
-
-        db = get_ts_db()
-        cand = db.get_historical_prices(ticker, days=90)
-        if cand is not None and not cand.empty and "Close" in cand.columns:
-            cser = cand["Close"].pct_change().dropna()
-            corrs = []
-            for p in portfolio_obj.positions:
-                if p.ticker == ticker:
-                    continue
-                other = db.get_historical_prices(p.ticker, days=90)
-                if other is None or other.empty:
-                    continue
-                oser = other["Close"].pct_change().dropna()
-                joined = pd.concat([cser, oser], axis=1, join="inner").dropna()
-                if len(joined) < 20:
-                    continue
-                corrs.append(float(joined.iloc[:, 0].corr(joined.iloc[:, 1])))
-            if corrs:
-                max_corr = max(corrs, key=lambda x: abs(x))
-    except Exception:  # noqa: BLE001
-        max_corr = None
-
-    return {
-        "qty": qty,
-        "price": px,
-        "cost": cost,
-        "cash_before": cash,
-        "cash_after": cash_after,
-        "sector": sector,
-        "sector_pct_before": sec_now_pct,
-        "sector_pct_after": sec_after_pct,
-        "max_corr": max_corr,
-        "affordable": qty >= 1 and cost <= cash,
-    }
-
-
 def get_recent_news(symbol: str, limit: int = 6) -> list[dict]:
-    """Return news for a ticker — SQLite archive first, live fetch if sparse."""
-    db_items: list[dict] = []
-    if _SQLITE_PATH.exists():
-        try:
-            db = get_portfolio_db()
-            db.init_db()
-            db_items = db.get_news_history(symbol, limit=limit)
-        except Exception:  # noqa: BLE001
-            db_items = []
+    """Fetch recent news: Boursorama first (rich), then yfinance fallback."""
+    # --- Primary: Boursorama scraper ----------------------------------------
+    try:
+        scrapers_dir = _ROOT / "00_data_sensors" / "scrapers"
+        if str(scrapers_dir) not in sys.path:
+            sys.path.insert(0, str(scrapers_dir))
+        from bourso_scraper import BoursoramaScraper  # noqa: WPS433
 
-    if len(db_items) >= 3:
-        return db_items[:limit]
+        profile = BoursoramaScraper().get_instrument_profile(symbol)
+        items = (profile or {}).get("news_items") or []
+        if items:
+            sentiment = (profile or {}).get("sentiment") or "Unknown"
+            elig = ",".join((profile or {}).get("eligibility") or []) or "?"
+            out = []
+            for n in items[:limit]:
+                out.append({
+                    "title": n.get("title", ""),
+                    "link": n.get("link") or "#",
+                    "date": n.get("date") or "Recent",
+                    "provider": (
+                        f"Boursorama · {n.get('provider') or 'local'} · "
+                        f"sentiment {sentiment} · elig {elig}"
+                    ),
+                })
+            return out
+        # Legacy title-only fallback from get_retail_sentiment_and_news
+        bourso = BoursoramaScraper().get_retail_sentiment_and_news(symbol)
+        headlines = (bourso or {}).get("news") or []
+        if headlines:
+            sentiment = (bourso or {}).get("sentiment") or "Unknown"
+            return [
+                {
+                    "title": title,
+                    "link": "#",
+                    "date": "Recent",
+                    "provider": f"Boursorama · sentiment {sentiment}",
+                }
+                for title in headlines[:limit]
+            ]
+    except Exception:  # noqa: BLE001
+        pass
 
-    fresh = _fetch_news_from_apis(symbol, limit=max(limit, 12))
-    if fresh and _SQLITE_PATH.exists():
-        try:
-            db = get_portfolio_db()
-            db.init_db()
-            db.save_news([{**n, "ticker": symbol, "url": n.get("link")} for n in fresh])
-        except Exception:  # noqa: BLE001
-            pass
-
-    merged: list[dict] = []
-    seen: set[str] = set()
-    for n in db_items + fresh:
-        key = (n.get("title") or "").strip().casefold()
-        if not key or key in seen:
-            continue
-        seen.add(key)
-        merged.append(n)
-    return merged[:limit]
+    # --- Fallback: yfinance -------------------------------------------------
+    try:
+        raw = yf.Ticker(symbol).news or []
+        items = []
+        for n in raw[:limit]:
+            content = n.get("content", n)
+            title = content.get("title") or n.get("title") or ""
+            link = (
+                content.get("clickThroughUrl", {}).get("url")
+                or content.get("canonicalUrl", {}).get("url")
+                or n.get("link")
+                or "#"
+            )
+            date_str = content.get("pubDate") or content.get("displayTime") or ""
+            provider = (content.get("provider") or {}).get("displayName", "")
+            if title:
+                items.append({"title": title, "link": link,
+                              "date": (date_str or "")[:10] or "Recent",
+                              "provider": provider or "Yahoo Finance"})
+        return items
+    except Exception:  # noqa: BLE001
+        return []
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
@@ -1779,357 +1229,69 @@ def get_bourso_profile(ticker: str) -> dict:
         return {}
 
 
-def _tv_symbol(ticker: str) -> str:
-    """Map a Yahoo ticker to a TradingView ``EXCHANGE:SYMBOL`` string.
+@st.cache_data(ttl=1800, show_spinner=False)
+def get_market_breadth() -> dict:
+    """Vectorized market breadth calculation across DuckDB using SQL window functions."""
+    try:
+        tsdb = TimeSeriesDB()
+        query = """
+        WITH RankedPrices AS (
+            SELECT
+                Ticker,
+                Date,
+                Close,
+                AVG(Close) OVER (
+                    PARTITION BY Ticker
+                    ORDER BY Date
+                    ROWS BETWEEN 49 PRECEDING AND CURRENT ROW
+                ) AS sma50,
+                AVG(Close) OVER (
+                    PARTITION BY Ticker
+                    ORDER BY Date
+                    ROWS BETWEEN 199 PRECEDING AND CURRENT ROW
+                ) AS sma200,
+                ROW_NUMBER() OVER (
+                    PARTITION BY Ticker
+                    ORDER BY Date DESC
+                ) AS rn,
+                COUNT(*) OVER (
+                    PARTITION BY Ticker
+                ) AS total_bars
+            FROM daily_ohlcv
+        )
+        SELECT
+            COUNT(DISTINCT Ticker) AS total_tickers,
+            SUM(CASE WHEN Close > sma50 AND total_bars >= 50 THEN 1 ELSE 0 END) AS above_sma50,
+            SUM(CASE WHEN Close > sma200 AND total_bars >= 200 THEN 1 ELSE 0 END) AS above_sma200,
+            SUM(CASE WHEN total_bars >= 200 THEN 1 ELSE 0 END) AS valid_sma200_tickers
+        FROM RankedPrices
+        WHERE rn = 1;
+        """
+        res = tsdb.conn.execute(query).fetchone()
+        if res and res[0] > 0:
+            tot, a50, a200, v200 = res
+            pct_50 = (a50 / tot * 100.0) if tot > 0 else 50.0
+            pct_200 = (a200 / v200 * 100.0) if v200 > 0 else 50.0
+            return {
+                "total_tickers": tot,
+                "pct_above_sma50": round(pct_50, 1),
+                "pct_above_sma200": round(pct_200, 1),
+            }
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Vectorized market breadth query failed: %s", exc)
 
-    Euronext Paris/Amsterdam use the ``EURONEXT:`` prefix (capitalized).
-    """
-    if not ticker:
-        return "EURONEXT:CAC40"
-    mapping = {
-        ".PA": "EURONEXT",
-        ".AS": "EURONEXT",
-        ".BR": "EURONEXT",
-        ".LS": "EURONEXT",
-        ".DE": "XETR",
-        ".MC": "BME",
-        ".MI": "MIL",
-        ".HE": "OMXHEX",
-        ".IR": "EURONEXTDUBLIN",
-        ".SW": "SIX",
-        ".L": "LSE",
-    }
+    return {"total_tickers": 0, "pct_above_sma50": 50.0, "pct_above_sma200": 50.0}
+
+
+def _tv_symbol(ticker: str) -> str:
+    """Map a Yahoo ticker to a TradingView exchange:symbol string."""
+    mapping = {".PA": "EURONEXT", ".AS": "EURONEXT", ".BR": "EURONEXT",
+               ".LS": "EURONEXT", ".DE": "XETR", ".MC": "BME", ".MI": "MIL",
+               ".HE": "OMXHEX", ".IR": "EURONEXTDUBLIN"}
     for suffix, exch in mapping.items():
         if ticker.endswith(suffix):
-            return f"{exch}:{ticker[: -len(suffix)].upper()}"
-    return ticker.upper()
-
-
-def build_broker_order_ticket(
-    ticker: str,
-    qty: int,
-    price: float,
-    isin: str | None = None,
-) -> dict:
-    """Build a ready-to-execute PEA order ticket payload for UI display."""
-    try:
-        scrapers_dir = _ROOT / "00_data_sensors" / "scrapers"
-        if str(scrapers_dir) not in sys.path:
-            sys.path.insert(0, str(scrapers_dir))
-        from bourso_scraper import yahoo_to_bourso_slug  # noqa: WPS433
-        bourso_slug = yahoo_to_bourso_slug(ticker) or ticker.replace(".", "-").lower()
-    except Exception:  # noqa: BLE001
-        bourso_slug = ticker.replace(".", "-").lower()
-
-    clean_qty = max(0, int(qty or 0))
-    clean_price = max(0.0, float(price or 0.0))
-    limit_price = round(clean_price * 1.001, 2) if clean_price > 0 else 0.0
-    notional = clean_qty * clean_price
-    est_fee = round(notional * 0.005, 2)
-    return {
-        "ticker": ticker,
-        "isin": isin or "n/a",
-        "order_type": "Limite",
-        "qty": clean_qty,
-        "limit_price": limit_price,
-        "notional": notional,
-        "estimated_fee_max": est_fee,
-        "bourso_url": f"https://www.boursorama.com/cours/{bourso_slug}/",
-    }
-
-
-def get_decision_checklist(ticker: str, portfolio_obj, vix: float) -> dict:
-    """Evaluate key PEA Pollux gate checks and return an explicit checklist."""
-    ind = get_indicators(ticker) or {}
-    close = float(ind.get("close") or 0.0)
-    rsi = ind.get("rsi")
-    sma200 = ind.get("sma200")
-    sma5 = ind.get("sma5")
-
-    score = 0.0
-    try:
-        fp = get_strategy_fingerprint(ticker) or {}
-        vals = [float(v) for v in fp.values() if v is not None]
-        if vals:
-            score = float(sum(vals) / len(vals))
-    except Exception:  # noqa: BLE001
-        score = 0.0
-
-    sector = _sector_for_ticker(ticker)
-    sector_value = sum(
-        float(getattr(p, "market_value", 0.0) or 0.0)
-        for p in (portfolio_obj.positions or [])
-        if str(getattr(p, "sector", "")) == sector
-    )
-    eq = float(getattr(portfolio_obj, "total_equity", 0.0) or 0.0)
-    sector_pct = (sector_value / eq * 100.0) if eq > 0 else 0.0
-    cash = float(getattr(portfolio_obj, "cash_available", 0.0) or 0.0)
-
-    checks = []
-
-    r1_ok = bool((rsi is not None and rsi < 30) or score >= 65)
-    checks.append({
-        "rule": "R1 RSI<30 ou Score>=65",
-        "status": "OK" if r1_ok else "WARN",
-        "detail": f"RSI={rsi:.1f}" if rsi is not None else f"Score={score:.0f}",
-    })
-    r2_ok = bool(close and sma200 and close > float(sma200))
-    checks.append({"rule": "R2 Close > SMA200", "status": "OK" if r2_ok else "FAIL",
-                   "detail": f"{close:.2f} vs {float(sma200):.2f}" if sma200 else "SMA200 n/a"})
-    r3_ok = bool(close and sma5 and close > float(sma5))
-    checks.append({"rule": "R3 Close > SMA5", "status": "OK" if r3_ok else "FAIL",
-                   "detail": f"{close:.2f} vs {float(sma5):.2f}" if sma5 else "SMA5 n/a"})
-    r4_ok = float(vix) < 30.0
-    checks.append({"rule": "R4 VIX < 30", "status": "OK" if r4_ok else "VETO",
-                   "detail": f"VIX={float(vix):.1f}"})
-    r5_ok = sector_pct < 25.0
-    checks.append({"rule": "R5 Poids secteur < 25%", "status": "OK" if r5_ok else "VETO",
-                   "detail": f"{sector}={sector_pct:.1f}%"})
-    r6_ok = cash >= close > 0
-    checks.append({"rule": "R6 Cash >= 1 part", "status": "OK" if r6_ok else "FAIL",
-                   "detail": f"Cash={cash:,.0f}€ / Cours={close:,.2f}€"})
-
-    statuses = [c["status"] for c in checks]
-    if any(s == "VETO" for s in statuses):
-        overall = "🔴 BLOQUÉ"
-    elif any(s in ("FAIL", "WARN") for s in statuses):
-        overall = "🟡 ATTENTE"
-    else:
-        overall = "🟢 PRÊT"
-    return {"overall": overall, "checks": checks, "score_hint": score}
-
-
-_BLUE_CHIPS_TAPE = [
-    "CW8.PA", "MC.PA", "OR.PA", "AI.PA", "SAN.PA",
-    "TTE.PA", "BNP.PA", "AIR.PA", "RMS.PA", "SU.PA",
-]
-
-
-@st.cache_data(ttl=120, show_spinner=False)
-def _native_tape_perf(period: str) -> pd.DataFrame:
-    """Cached performance snapshot for the native HTML ticker tape.
-
-    For ``1d`` we pull 5d data and compute close-to-close day return
-    ``(last / prev - 1)`` to avoid Yahoo's period quirks.
-    """
-    if period != "1d":
-        return get_market_performance(tuple(_BLUE_CHIPS_TAPE), period=period)
-    try:
-        rows = []
-        for t in _BLUE_CHIPS_TAPE:
-            hist = _db_hist(t, days=7)
-            if hist is None or hist.empty or "Close" not in hist.columns:
-                continue
-            series = _valid_price_series(
-                pd.to_numeric(hist["Close"], errors="coerce").dropna()
-            )
-            if series is None or len(series) < 2:
-                continue
-            current = float(series.iloc[-1])
-            prev = None
-            for i in range(len(series) - 2, -1, -1):
-                p = float(series.iloc[i])
-                if p > 0 and p != current:
-                    prev = p
-                    break
-            if prev is None or prev <= 0:
-                prev = float(series.iloc[-2]) if len(series) >= 2 else None
-            if prev is None or prev <= 0:
-                continue
-            rows.append(
-                {
-                    "Ticker": t,
-                    "Start Price": prev,
-                    "Current Price": current,
-                    "Performance (%)": (current / prev - 1.0) * 100.0,
-                }
-            )
-        if not rows:
-            return pd.DataFrame()
-        out = pd.DataFrame(rows).sort_values("Performance (%)", ascending=False)
-        return out.reset_index(drop=True)
-    except Exception:  # noqa: BLE001
-        return pd.DataFrame()
-
-
-@st.fragment(run_every="30s")
-def render_native_ticker_tape(period: str = "1d") -> None:
-    """Render a CSS marquee ticker tape (no TradingView dependency)."""
-    perf = _native_tape_perf(period)
-    if perf is None or perf.empty:
-        st.caption("Bandeau marché indisponible (réseau ou données manquantes).")
-        return
-
-    chips: list[str] = []
-    for _, row in perf.iterrows():
-        ticker = str(row["Ticker"])
-        perf_pct = float(row["Performance (%)"])
-        color = _NEON if perf_pct >= 0 else _RED
-        logo = get_company_logo(ticker)
-        chips.append(
-            f'<span class="tape-chip">'
-            f'<a href="/?ticker={ticker}" target="_self" '
-            f'style="text-decoration:none;color:inherit;">'
-            f'<img src="{logo}" height="16" '
-            f'style="vertical-align:middle;margin-right:6px;border-radius:2px;" '
-            f'onerror="this.style.display=\'none\'" />'
-            f'{short_name(ticker)} '
-            f'<span style="color:{color};font-weight:700;">{perf_pct:+.2f}%</span>'
-            f"</a>"
-            f"</span>"
-        )
-    if not chips:
-        st.caption("Bandeau marché vide pour cette période.")
-        return
-
-    track = "".join(chips) * 2
-    period_label = {"1d": "1 jour", "5d": "5 jours", "1mo": "1 mois"}.get(period, period)
-    st.markdown(
-        f"""
-<style>
-@keyframes pea-marquee {{
-  0% {{ transform: translateX(0); }}
-  100% {{ transform: translateX(-50%); }}
-}}
-.native-tape-wrap {{
-  background: #0A0A0A;
-  border: 1px solid #222;
-  border-left: 3px solid {_CYAN};
-  overflow: hidden;
-  padding: 10px 0;
-  margin-bottom: 6px;
-}}
-.native-tape-track {{
-  display: inline-flex;
-  align-items: center;
-  white-space: nowrap;
-  animation: pea-marquee 45s linear infinite;
-  gap: 28px;
-}}
-.tape-chip {{
-  display: inline-flex;
-  align-items: center;
-  color: {_WHITE};
-  font-family: Courier New, monospace;
-  font-size: 13px;
-  padding: 0 14px;
-}}
-</style>
-<div class="native-tape-wrap" title="Bandeau natif · {period_label}">
-  <div class="native-tape-track">{track}</div>
-</div>
-""",
-        unsafe_allow_html=True,
-    )
-
-
-def build_data_sources_health_df() -> pd.DataFrame:
-    """Live telemetry for Architecture tab — env vars + local DB files."""
-    duck_path = _DB_DIR / "ohlcv.duckdb"
-    freshness = "n/a"
-    try:
-        from duckdb_manager import TimeSeriesDB
-
-        db = get_ts_db()
-        with db._connect() as conn:
-            row = conn.execute("SELECT MAX(date) AS d FROM ohlcv_data;").fetchone()
-        max_date = row[0] if row else None
-        if max_date:
-            freshness = f"Dernière bougie: {str(max_date)[:10]}"
-    except Exception:  # noqa: BLE001
-        freshness = "indisponible"
-    rows = [
-        (
-            "yfinance",
-            "OHLCV, calendrier, insiders, news fallback",
-            "🟢 Actif",
-            "Pas de prix si réseau down",
-            freshness,
-        ),
-        (
-            "VIX / VSTOXX",
-            f"Coupe-circuit panic (seuil {_VIX_PANIC:.0f})",
-            "🟢 Actif",
-            "Fallback 15.0 si indispo",
-            freshness,
-        ),
-        (
-            "Bandeau natif (HTML)",
-            "Perf blue-chips + logos Clearbit",
-            "🟢 Actif",
-            "Remplace l'ancien widget TradingView tape",
-            freshness,
-        ),
-        (
-            "SQLite portfolio.db",
-            "Portfolio / audit / equity / news_history",
-            "🟢 Connecté" if _SQLITE_PATH.exists() else "🔴 Absent",
-            "Dashboard bloqué sans DB locale",
-            f"MAJ wallet: {str(portfolio.last_updated)[:19]}" if "portfolio" in globals() else "n/a",
-        ),
-        (
-            "DuckDB ohlcv.duckdb",
-            "Historique technique / ATR / screener",
-            "🟢 Connecté" if duck_path.exists() else "🟡 Partiel",
-            "ATR/stops moins fiables sans OHLCV local",
-            freshness,
-        ),
-        (
-            "OpenRouter",
-            "Sentiment news + briefing geo + Synthèse IA",
-            "🟢 Actif" if os.getenv("OPENROUTER_API_KEY") else "🔴 DÉCONNECTÉ",
-            "CRITIQUE: Arrêt immédiat du terminal",
-            "temps réel",
-        ),
-        (
-            "FMP",
-            "Insiders fallback (après AMF)",
-            "🟢 Actif" if os.getenv("FMP_API_KEY") else "🔴 DÉCONNECTÉ",
-            "CRITIQUE: cascade AMF-only (pas de fallback US)",
-            "n/a",
-        ),
-        (
-            "Finnhub",
-            "Fondamentaux EU (Value/Quality)",
-            "🟢 Actif" if os.getenv("FINNHUB_API_KEY") else "🟡 Optionnel",
-            "Fallback yfinance / score neutre si indisponible",
-            "cache 7 jours",
-        ),
-        (
-            "AMF Opendatasoft / BDIF",
-            "Déclarations dirigeants (API publique, free)",
-            "🟢 Actif",
-            "Insiders FR indisponibles si BDIF/ODS down",
-            "n/a",
-        ),
-        (
-            "IMAP Newsletter",
-            "Morning Briefing Synthèse IA",
-            "🟢 Actif"
-            if os.getenv("YAHOO_MAIL_USER") and os.getenv("YAHOO_MAIL_APP_PASSWORD")
-            else "🔴 DÉCONNECTÉ",
-            "CRITIQUE: Arrêt immédiat du terminal",
-            "job 08:25 Paris",
-        ),
-        (
-            "Polymarket Gamma",
-            "Probabilités macro (contexte)",
-            "🟢 Actif",
-            "Fallback seed si JSON bloqué (Cloudflare)",
-            "quasi temps réel",
-        ),
-        (
-            "Boursorama scraper",
-            "Profil PEA/SRD, consensus, news",
-            "🟢 Actif",
-            "Fragile — dates parfois approximatives",
-            "variable",
-        ),
-    ]
-    return pd.DataFrame(
-        rows,
-        columns=["Source", "Rôle", "Statut Live", "Impact si manquant", "Fraîcheur des données"],
-    )
+            return f"{exch}:{ticker[: -len(suffix)]}"
+    return ticker
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -2145,20 +1307,18 @@ def get_vix() -> float:
 
 @st.cache_data(ttl=900, show_spinner=False)
 def get_core_regime() -> dict:
-    """Return the Core ETF regime (price vs 200-day SMA) from DuckDB."""
+    """Return the Core ETF regime (price vs 200-day SMA)."""
     try:
-        hist = _db_hist(_CORE_TICKER, days=252)
-        if hist is None or hist.empty or len(hist) < 200:
+        df = yf.download(_CORE_TICKER, period="1y", progress=False,
+                         auto_adjust=False)
+        if df is None or df.empty:
             return {}
-        from technical_scorer import SignalGenerator
-
-        enriched = SignalGenerator().calculate_indicators(hist)
-        last = enriched.iloc[-1]
-        price = float(last["Close"])
-        sma200 = last.get("SMA_200")
-        if sma200 is None or pd.isna(sma200):
-            return {}
-        sma200 = float(sma200)
+        close = df["Close"]
+        if isinstance(close, pd.DataFrame):
+            close = close.iloc[:, 0]
+        close = close.dropna()
+        price = float(close.iloc[-1])
+        sma200 = float(close.tail(200).mean())
         return {
             "ticker": _CORE_TICKER,
             "price": price,
@@ -2170,96 +1330,42 @@ def get_core_regime() -> dict:
         return {}
 
 
-@st.cache_data(ttl=900, show_spinner=False)
-def get_market_breadth(universe_df: pd.DataFrame, db_manager) -> dict:
-    try:
-        from duckdb_manager import TimeSeriesDB
-        if universe_df is None or universe_df.empty: 
-            return {"pct_sma50": None, "pct_sma200": None, "valid": 0, "list_200": []}
-        
-        tickers = universe_df.get("Ticker", pd.Series([], dtype=str)).dropna().astype(str).unique().tolist()
-        candidates = [t for t in tickers if t][:160]
-        if not candidates:
-            return {"pct_sma50": None, "pct_sma200": None, "valid": 0, "list_200": []}
-            
-        candidates_str = ", ".join(f"'{t}'" for t in candidates)
-        
-        query = f"""
-        WITH Ranked AS (
-            SELECT 
-                Ticker,
-                Close,
-                AVG(Close) OVER (PARTITION BY Ticker ORDER BY Date ROWS BETWEEN 49 PRECEDING AND CURRENT ROW) as sma50,
-                AVG(Close) OVER (PARTITION BY Ticker ORDER BY Date ROWS BETWEEN 199 PRECEDING AND CURRENT ROW) as sma200,
-                COUNT(Close) OVER (PARTITION BY Ticker ORDER BY Date ROWS BETWEEN 199 PRECEDING AND CURRENT ROW) as cnt200,
-                ROW_NUMBER() OVER (PARTITION BY Ticker ORDER BY Date DESC) as rn
-            FROM ohlcv_data
-            WHERE Ticker IN ({candidates_str})
-        )
-        SELECT Ticker, Close, sma50, sma200
-        FROM Ranked
-        WHERE rn = 1 AND cnt200 = 200
-        """
-        
-        db = TimeSeriesDB(db_path=str(db_manager), read_only=True)
-        with db._connect() as conn:
-            df = conn.execute(query).df()
-            
-        if df.empty:
-            return {"pct_sma50": None, "pct_sma200": None, "valid": 0, "list_200": []}
-            
-        valid = len(df)
-        above50 = (df['Close'] > df['sma50']).sum()
-        above200 = (df['Close'] > df['sma200']).sum()
-        list_200 = df.loc[df['Close'] > df['sma200'], 'Ticker'].tolist()
-        
-        return {
-            "pct_sma50": float(above50 / valid * 100) if valid > 0 else 0.0,
-            "pct_sma200": float(above200 / valid * 100) if valid > 0 else 0.0,
-            "valid": int(valid),
-            "list_200": list_200
-        }
-    except Exception: return {"pct_sma50": None, "pct_sma200": None, "valid": 0, "list_200": []}
-
-
 @st.cache_data(ttl=600, show_spinner=False)
 def get_indicators(ticker: str) -> dict:
-    """Compute RSI(14) + SMA 5/50/200 + trend flags via quant engine."""
+    """Compute RSI(14) + SMA 5/50/200 + trend flags for one ticker."""
     try:
-        hist = _db_hist(ticker, days=252)
-        if hist is None or hist.empty or len(hist) < 30:
+        import pandas_ta_classic as ta  # noqa: F401  (registers .ta accessor)
+    except Exception:  # noqa: BLE001
+        try:
+            import pandas_ta as ta  # noqa: F401
+        except Exception:  # noqa: BLE001
             return {}
-        from technical_scorer import SignalGenerator
-
-        gen = SignalGenerator()
-        enriched = gen.calculate_indicators(hist)
-        last = enriched.iloc[-1]
-        close_s = pd.to_numeric(enriched["Close"], errors="coerce").dropna()
-        if close_s.empty:
+    try:
+        df = yf.download(ticker, period="1y", progress=False, auto_adjust=False)
+        if df is None or df.empty:
             return {}
-        close = float(last["Close"])
-        rsi_val = last.get("RSI_14")
-        sma5 = last.get("SMA_5")
-        sma50 = last.get("SMA_50")
-        sma200 = last.get("SMA_200")
-        return {
-            "close": close,
-            "rsi": float(rsi_val) if rsi_val is not None and not pd.isna(rsi_val) else None,
-            "sma5": float(sma5) if sma5 is not None and not pd.isna(sma5) else None,
-            "sma50": float(sma50) if sma50 is not None and not pd.isna(sma50) else None,
-            "sma200": float(sma200) if sma200 is not None and not pd.isna(sma200) else None,
-            "chg_1d": float((close_s.iloc[-1] / close_s.iloc[-2] - 1) * 100)
-            if len(close_s) >= 2 else 0.0,
-            "chg_5d": float((close_s.iloc[-1] / close_s.iloc[-6] - 1) * 100)
-            if len(close_s) >= 6 else 0.0,
-            "vol_ann": float(
-                (
-                    calculate_annualized_volatility(close_s.pct_change().dropna().tail(60))
-                    if calculate_annualized_volatility is not None
-                    else close_s.pct_change().dropna().tail(60).std(ddof=0) * (252 ** 0.5)
-                ) * 100.0
-            ),
+        close = df["Close"]
+        if isinstance(close, pd.DataFrame):
+            close = close.iloc[:, 0]
+        close = close.dropna()
+        if len(close) < 30:
+            return {}
+        frame = close.to_frame("Close")
+        rsi = frame.ta.rsi(close=frame["Close"], length=14)
+        out = {
+            "close": float(close.iloc[-1]),
+            "rsi": float(rsi.iloc[-1]) if rsi is not None and not rsi.empty else None,
+            "sma5": float(close.tail(5).mean()),
+            "sma50": float(close.tail(50).mean()) if len(close) >= 50 else None,
+            "sma200": float(close.tail(200).mean()) if len(close) >= 200 else None,
+            "chg_1d": float((close.iloc[-1] / close.iloc[-2] - 1) * 100)
+            if len(close) >= 2 else 0.0,
+            "chg_5d": float((close.iloc[-1] / close.iloc[-6] - 1) * 100)
+            if len(close) >= 6 else 0.0,
+            "vol_ann": float(close.pct_change().dropna().tail(60).std() * (252 ** 0.5)
+                             * 100),
         }
+        return out
     except Exception:  # noqa: BLE001
         return {}
 
@@ -2485,15 +1591,6 @@ def news_impact_meta(score: int) -> dict:
     return {"level": level, "color": color, "why": why, "abs": abs_s}
 
 
-
-def render_empty_state(message: str) -> None:
-    """A consistent, muted empty state for missing data."""
-    st.markdown(
-        f"<div style='padding: 16px; border: 1px dashed {_MUTED}; color: {_MUTED}; text-align: center; margin-top: 10px; font-size: 14px;'>{message}</div>",
-        unsafe_allow_html=True
-    )
-
-
 def render_news_card(ticker: str, item: dict, score: int | None) -> None:
     """Render one news card with impact badge + justified explanation."""
     sc = 0 if score is None else int(score)
@@ -2547,22 +1644,7 @@ def save_wallet(cash: float, positions_df: pd.DataFrame) -> str:
             positions=positions,
             last_updated=datetime.now(),
         )
-        pdb = get_portfolio_db()
-        pdb.update_portfolio(state)
-        
-        try:
-            from data_models import Signal, SignalType, SignalStatus
-            pdb.log_signal(Signal(
-                ticker="WALLET_SYNC",
-                signal_type=SignalType.BUY,
-                status=SignalStatus.EXECUTED,
-                score=100.0,
-                target_qty=0,
-                reason="MANUAL_EDIT - Dashboard wallet synchronization",
-            ))
-        except Exception as e:
-            logger.warning(f"Failed to log wallet sync signal: {e}")
-            
+        PortfolioDB(db_path=_SQLITE_PATH).update_portfolio(state)
         st.cache_data.clear()
         return ""
     except Exception as exc:  # noqa: BLE001
@@ -2572,14 +1654,12 @@ def save_wallet(cash: float, positions_df: pd.DataFrame) -> str:
 @st.cache_data(ttl=900, show_spinner=False)
 def get_earnings_events(tickers: tuple[str, ...]) -> list[dict]:
     """Best-effort upcoming earnings / events via yfinance calendar."""
-    from concurrent.futures import ThreadPoolExecutor
     events: list[dict] = []
-    
-    def fetch_event(t: str) -> list[dict]:
+    for t in tickers[:12]:
         try:
             cal = yf.Ticker(t).calendar
             if cal is None:
-                return []
+                continue
             # yfinance may return dict or DataFrame depending on version.
             raw = None
             if isinstance(cal, dict):
@@ -2588,26 +1668,17 @@ def get_earnings_events(tickers: tuple[str, ...]) -> list[dict]:
                 if "Earnings Date" in cal.index:
                     raw = cal.loc["Earnings Date"].tolist()
             if not raw:
-                return []
+                continue
             if not isinstance(raw, (list, tuple)):
                 raw = [raw]
-            
-            evts = []
             for d in raw[:2]:
-                evts.append({
+                events.append({
                     "ticker": t,
                     "event": "Resultats / Earnings",
                     "date": str(d)[:10],
                 })
-            return evts
         except Exception:  # noqa: BLE001
-            return []
-            
-    with ThreadPoolExecutor(max_workers=5) as executor:
-        results = executor.map(fetch_event, tickers[:12])
-        for res in results:
-            events.extend(res)
-            
+            continue
     return events
 
 
@@ -2783,20 +1854,31 @@ def build_recommendations(
 
 @st.cache_data(ttl=600, show_spinner=False)
 def get_last_prices(tickers: tuple[str, ...]) -> dict[str, float]:
-    """Batch last close prices from DuckDB."""
+    """Batch last close prices — per-ticker history to avoid column mixups."""
     out: dict[str, float] = {}
     if not tickers:
         return out
-    for t in tickers:
-        try:
-            hist = _db_hist(t, days=15)
-            if hist is None or hist.empty or "Close" not in hist.columns:
-                continue
-            series = pd.to_numeric(hist["Close"], errors="coerce").dropna()
+    # Prefer one-shot batch, then validate each ticker individually on miss.
+    try:
+        raw = yf.download(list(tickers), period="10d", progress=False,
+                          auto_adjust=True, threads=True)
+        close = _extract_close_frame(raw, tickers)
+        for t in close.columns:
+            series = pd.to_numeric(close[t], errors="coerce").dropna()
             if len(series):
                 px = float(series.iloc[-1])
-                if px > 0.05:
+                if px > 0.05:  # reject absurd penny mis-parses
                     out[str(t)] = px
+    except Exception:  # noqa: BLE001
+        pass
+    missing = [t for t in tickers if t not in out]
+    for t in missing:
+        try:
+            h = yf.Ticker(t).history(period="10d", auto_adjust=True)
+            if h is not None and not h.empty and "Close" in h.columns:
+                px = float(h["Close"].dropna().iloc[-1])
+                if px > 0.05:
+                    out[t] = px
         except Exception:  # noqa: BLE001
             continue
     return out
@@ -2887,46 +1969,87 @@ def build_ta_explanation(ind: dict, alpha: dict | None = None) -> str:
 
 @st.cache_data(ttl=600, show_spinner=False)
 def score_ticker_opportunity(ticker: str, budget: float, vix: float) -> dict:
-    """Score a PEA name via Phase 20 strategy fingerprint (0–100).
-
-    Expensive names stay ranked; ``affordable`` flags cash fit instead of hiding.
-    """
+    """Score an affordable PEA name for MICRO/STARTER suggestions (0-100)."""
     prices = get_last_prices((ticker,))
     px = prices.get(ticker)
-    if not px or px <= 0:
+    if not px or px <= 0 or px > budget * 0.98:
         return {
             "ticker": ticker, "price": px or 0.0, "score": 0,
-            "reco": "INACCESSIBLE", "why": "Cours indisponible.",
-            "kind": "?", "rsi": None, "vs_sma200": None, "weight_pct": 0.0,
-            "affordable": False,
+            "reco": "INACCESSIBLE", "why": "Prix hors budget ou indisponible.",
+            "kind": "?", "rsi": None, "vs_sma200": None,
         }
-
-    budget = float(budget or 0.0)
-    affordable = bool(budget > 0 and px <= budget * 0.98)
-
+    ind = get_indicators(ticker) or {}
     dossier = get_ticker_dossier(ticker)
     is_etf = bool(dossier.get("is_etf") or ticker in (
         _CORE_TICKER, "EWLD.PA", "PAEEM.PA", "ESE.PA", "C50.PA", "PE500.PA",
     ))
-    fingerprint = get_strategy_fingerprint(ticker) or {}
-    mr = float(fingerprint.get("Mean Reversion") or 0)
-    mom = float(fingerprint.get("Momentum") or 0)
-    qv = float(fingerprint.get("Quality/Value") or 0)
-    ins = float(fingerprint.get("Insider Confidence") or 0)
+    score = 40.0
+    reasons: list[str] = []
+    rsi = ind.get("rsi")
+    close = ind.get("close") or px
+    sma5, sma200 = ind.get("sma5"), ind.get("sma200")
+    vol = ind.get("vol_ann")
 
-    base_score = mr * 0.35 + mom * 0.25 + qv * 0.20 + ins * 0.20
     if is_etf:
-        base_score += 15.0  # diversification bonus (esp. MICRO)
+        score += 18
+        reasons.append("ETF = diversification (mieux qu'1 action seule en MICRO)")
+    else:
+        score += 4
+        reasons.append("Action individuelle — risque titre concentre")
+
+    if rsi is not None:
+        if rsi < 30:
+            score += 22
+            reasons.append(f"RSI {rsi:.0f} survendu (setup MRE)")
+        elif rsi < 45:
+            score += 12
+            reasons.append(f"RSI {rsi:.0f} plutot calme")
+        elif rsi > 70:
+            score -= 18
+            reasons.append(f"RSI {rsi:.0f} surachete — eviter d'acheter")
+        else:
+            score += 4
+            reasons.append(f"RSI {rsi:.0f} neutre")
+
+    vs200 = None
+    if sma200 and close:
+        vs200 = (close / sma200 - 1) * 100
+        if close > sma200:
+            score += 14
+            reasons.append(f"Au-dessus SMA200 ({vs200:+.1f}%)")
+        else:
+            score -= 8 if not is_etf else 2
+            reasons.append(f"Sous SMA200 ({vs200:+.1f}%)")
+
+    if sma5 and close:
+        if close > sma5:
+            score += 8
+            reasons.append("Momentum court terme OK (Close>SMA5)")
+        else:
+            score -= 6
+            reasons.append("Momentum faible (Close<SMA5)")
+
+    if vol is not None:
+        if vol > 45 and not is_etf:
+            score -= 10
+            reasons.append(f"Vol elevee ({vol:.0f}%)")
+        elif vol < 25:
+            score += 4
+
+    # Prefer leaving cash runway (cost 8–45% of budget).
+    weight = px / budget * 100 if budget else 100
+    if 8 <= weight <= 45:
+        score += 10
+        reasons.append(f"1 part = {weight:.0f}% du cash — laisse un runway")
+    elif weight > 70:
+        score -= 12
+        reasons.append(f"1 part = {weight:.0f}% — trop concentre")
+
     if vix > _VIX_PANIC and not is_etf:
-        base_score -= 20.0
+        score -= 20
+        reasons.append("VIX panic — privilegier ETF/cash")
 
-    weight = (px / budget * 100.0) if budget > 0 else 100.0
-    if affordable and 8 <= weight <= 45:
-        base_score += 5.0
-    elif weight > 70 and not is_etf and affordable:
-        base_score -= 8.0
-
-    score = int(max(0, min(100, round(base_score))))
+    score = int(max(0, min(100, round(score))))
     if score >= 72:
         reco = "ACHETER"
     elif score >= 55:
@@ -2936,102 +2059,34 @@ def score_ticker_opportunity(ticker: str, budget: float, vix: float) -> dict:
     else:
         reco = "EVITER"
 
-    axes = {
-        "Mean Reversion": mr,
-        "Momentum": mom,
-        "Quality/Value": qv,
-        "Insider Confidence": ins,
-    }
-    top_name, top_val = max(axes.items(), key=lambda kv: kv[1])
-    why_bits = [
-        f"Empreinte {score}/100 (MR {mr:.0f} · Mom {mom:.0f} · "
-        f"Q/V {qv:.0f} · Ins {ins:.0f})",
-        f"Axe dominant: {top_name} ({top_val:.0f}/100)",
-    ]
-    if is_etf:
-        why_bits.append("ETF +15 diversif.")
-    if vix > _VIX_PANIC and not is_etf:
-        why_bits.append(f"VIX panic −20 (VIX={vix:.1f})")
-    if affordable:
-        why_bits.append(f"1 part ≈ {weight:.0f}% cash")
-    else:
-        why_bits.append(
-            f"HORS BUDGET (1 part={px:,.0f} € > cash {budget:,.0f} €)"
-        )
-
-    ind = get_indicators(ticker) or {}
-    rsi = ind.get("rsi")
-    close = ind.get("close") or px
-    sma200 = ind.get("sma200")
-    vs200 = None
-    if sma200 and close:
-        vs200 = (close / sma200 - 1) * 100
-
     return {
         "ticker": ticker,
         "price": float(px),
         "score": score,
         "reco": reco,
-        "why": " · ".join(why_bits),
+        "why": " · ".join(reasons[:4]),
         "kind": "ETF" if is_etf else "Action",
         "rsi": rsi,
         "vs_sma200": vs200,
         "weight_pct": weight,
-        "affordable": affordable,
     }
 
 
 @st.cache_data(ttl=600, show_spinner=False)
 def rank_affordable_alternatives(budget: float, vix: float) -> list[dict]:
-    """Rank PEA ETFs + liquid stocks (expensive names kept, flagged)."""
+    """Rank PEA ETFs + liquid stocks affordable with current cash."""
     universe = [
         # Low-fee / PEA ETFs first (CW8 often unaffordable in MICRO)
         "EWLD.PA", "PAEEM.PA", "ESE.PA", "C50.PA", "PE500.PA", _CORE_TICKER,
         # Liquid large/mid caps
         "STLAP.PA", "ORA.PA", "ENGI.PA", "VIE.PA", "GLE.PA", "ACA.PA",
         "SAN.PA", "TTE.PA", "BNP.PA", "RNO.PA", "SGO.PA", "CAP.PA",
-        "AIR.PA", "HO.PA", "ML.PA", "BN.PA", "PUB.PA", "MC.PA", "OR.PA",
-        "KER.PA", "RMS.PA", "AI.PA",
+        "AIR.PA", "HO.PA", "ML.PA", "BN.PA", "PUB.PA",
     ]
     rows = [score_ticker_opportunity(t, budget, vix) for t in universe]
-    rows = [r for r in rows if r.get("price", 0) > 0]
+    rows = [r for r in rows if r["reco"] != "INACCESSIBLE" and r["price"] > 0]
     rows.sort(key=lambda r: r["score"], reverse=True)
     return rows
-
-
-@st.cache_data(ttl=1800, show_spinner=False)
-def get_momentum_pepites(limit: int = 5) -> list[dict]:
-    """High-vol momentum names: vol_ann > 35 and Close > SMA50."""
-    watch = (
-        "STLAP.PA", "RNO.PA", "AIR.PA", "HO.PA", "CAP.PA", "DSY.PA",
-        "KER.PA", "MC.PA", "OR.PA", "PUB.PA", "ML.PA", "ALO.PA",
-        "GLE.PA", "ACA.PA", "BNP.PA", "SAN.PA", "ENGI.PA", "VIE.PA",
-        "SGO.PA", "TTE.PA", "SAF.PA", "EL.PA",
-    )
-    rows: list[dict] = []
-    for t in watch:
-        ind = get_indicators(t) or {}
-        vol = ind.get("vol_ann")
-        close = ind.get("close")
-        sma50 = ind.get("sma50")
-        rsi = ind.get("rsi")
-        if vol is None or close is None or sma50 is None:
-            continue
-        if float(vol) <= 35 or float(close) <= float(sma50):
-            continue
-        rows.append({
-            "ticker": t,
-            "vol_ann": float(vol),
-            "rsi": float(rsi) if rsi is not None else None,
-            "close": float(close),
-            "sma50": float(sma50),
-            "gap_sma50": (float(close) / float(sma50) - 1.0) * 100.0,
-        })
-    rows.sort(
-        key=lambda r: (r["vol_ann"], r["gap_sma50"], -(r["rsi"] or 50)),
-        reverse=True,
-    )
-    return rows[: max(1, limit)]
 
 
 def suggest_adaptive_portfolio(
@@ -3203,15 +2258,8 @@ def suggest_adaptive_portfolio(
         )
 
     mode_why = {
-        "MICRO": (
-            f"Capital {equity:,.0f} \u20ac : capital insuffisant pour l'allocation cible complète. "
-            "Achat de 1 part pour rester exposé au marché, le reste conservé en liquidités "
-            "(Cash Runway) car le PEA interdit les fractions d'actions."
-        ),
-        "STARTER": (
-            f"Capital {equity:,.0f} \u20ac : 1–2 lignes max. "
-            "Achat de 1 part pour rester exposé, cash conservé car le PEA interdit les fractions."
-        ),
+        "MICRO": f"Capital {equity:,.0f} \u20ac : trop faible pour diversifier / acheter le Core.",
+        "STARTER": f"Capital {equity:,.0f} \u20ac : 1–2 lignes max, plafonds 15%/25% assouplis.",
         "BUILD": f"Capital {equity:,.0f} \u20ac : construction Core-first.",
         "FULL": f"Capital {equity:,.0f} \u20ac : regles institutionnelles completes.",
     }[mode]
@@ -3241,6 +2289,79 @@ def suggest_adaptive_portfolio(
     }
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_ticker_dossier(ticker: str) -> dict:
+    """Company identity + catalysts + risk events (yfinance + heuristics)."""
+    out: dict = {
+        "name": format_name(ticker),
+        "summary": "",
+        "sector": "",
+        "industry": "",
+        "catalysts": [],
+        "risk_events": [],
+        "is_etf": False,
+    }
+    try:
+        info = yf.Ticker(ticker).info or {}
+    except Exception:  # noqa: BLE001
+        info = {}
+    name = info.get("longName") or info.get("shortName") or short_name(ticker)
+    out["name"] = name
+    out["sector"] = str(info.get("sector") or "")
+    out["industry"] = str(info.get("industry") or "")
+    summary = str(info.get("longBusinessSummary") or "")[:700]
+    quote_type = str(info.get("quoteType") or "").upper()
+    out["is_etf"] = quote_type in ("ETF", "MUTUALFUND") or ticker.endswith(".PA") and (
+        "ETF" in name.upper() or "UCITS" in name.upper() or ticker == _CORE_TICKER
+    )
+    if summary:
+        out["summary"] = summary
+    elif out["is_etf"] or ticker == _CORE_TICKER:
+        out["summary"] = (
+            f"{name} est un ETF eligible PEA. Il replique un indice large "
+            "(ex. MSCI World pour CW8) au lieu d'un risque entreprise unique. "
+            "C'est l'ancre Core du systeme V-Prime."
+        )
+    else:
+        out["summary"] = (
+            f"{format_name(ticker)} — fiche qualitative incomplete cote Yahoo. "
+            "Consulte Boursorama / le document d'enregistrement universel."
+        )
+
+    # Catalysts / risks — sector-aware heuristics + earnings
+    sector = (out["sector"] or "").casefold()
+    catalysts = [
+        "Publication de resultats au-dessus du consensus (EPS / CA)",
+        "Guidance relevee ou nouveau contrat significatif",
+        "Rachat d'actions / dividende en hausse",
+    ]
+    risks = [
+        "Profit warning ou baisse de guidance",
+        "Enquete regulateur / amende majeure",
+        "Choc macro (VIX panic) pendant que tu es concentre sur 1 ligne",
+    ]
+    if "auto" in sector or "consumer cyclical" in sector or "STLAP" in ticker:
+        catalysts += ["Rebond volumes Europe/US", "Marges industrielles stabilisees"]
+        risks += ["Guerre commerciale / droits de douane", "Retard plateformes EV"]
+    if "healthcare" in sector or "SAN.PA" in ticker:
+        catalysts += ["Approbation medicament / pipeline"]
+        risks += ["Echec essai clinique", "Pression prix medicaments"]
+    if out["is_etf"] or ticker == _CORE_TICKER:
+        catalysts = [
+            "Marche actions mondial en tendance haussiere",
+            "DCA discipliné pendant les corrections (Smart DCA)",
+            "Euro stable vs panier devise de l'indice",
+        ]
+        risks = [
+            "Krach global prolonge (mais le DCA achete alors plus fort)",
+            "Tracking error / frais de l'ETF",
+            "Force de l'euro qui pese sur un indice world en devises",
+        ]
+    out["catalysts"] = catalysts[:5]
+    out["risk_events"] = risks[:5]
+    return out
+
+
 @st.cache_data(ttl=1800, show_spinner=False)
 def get_etf_card(ticker: str = _CORE_TICKER) -> dict:
     """Key facts for the Core (or any) PEA ETF."""
@@ -3256,7 +2377,7 @@ def get_etf_card(ticker: str = _CORE_TICKER) -> dict:
         "regime": get_core_regime() if ticker == _CORE_TICKER else {},
         "indicators": ind or {},
         "role": (
-            "Ancre Core PEA Pollux (MSCI World PEA). Cible 70–75% de l'equity "
+            "Ancre Core V-Prime (MSCI World PEA). Cible 70–75% de l'equity "
             "des que ton capital permet d'acheter des parts entieres."
             if ticker == _CORE_TICKER else
             "ETF eligible PEA — diversification indicielle."
@@ -3310,36 +2431,18 @@ def get_polymarket_macro(limit: int = 8) -> list[dict]:
     """Fetch live macro-relevant Polymarket events (Gamma API, no auth)."""
     try:
         import json
-
-        import requests as _req
-        import urllib3
-
-        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+        import urllib.request
 
         url = (
             "https://gamma-api.polymarket.com/events?"
             "active=true&closed=false&order=volume24hr&ascending=false&limit=50"
         )
-        resp = _req.get(
+        req = urllib.request.Request(
             url,
-            headers={
-                "User-Agent": (
-                    "Mozilla/5.0 (compatible; PEA-Pollux/1.0; "
-                    "+https://github.com/Polluxgnr/Peatrading)"
-                ),
-                "Accept": "application/json",
-            },
-            verify=False,
-            timeout=10,
+            headers={"User-Agent": "PEA-Sniper-Terminal/1.0", "Accept": "application/json"},
         )
-        if resp.status_code != 200:
-            return []
-        try:
-            events = resp.json()
-        except Exception as exc:  # noqa: BLE001 - Cloudflare challenge / HTML body
-            if _dash_log is not None:
-                _dash_log.debug("Polymarket macro JSON decode failed: %s", exc)
-            return []
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            events = json.loads(resp.read().decode("utf-8"))
         if not isinstance(events, list):
             return []
 
@@ -3412,48 +2515,33 @@ def get_polymarket_macro(limit: int = 8) -> list[dict]:
 # Header + live ticker tape (streaming)
 # =============================================================================
 st.markdown(
-    "<h1>\U0001F6E1\uFE0F POLLUX PEA TERMINAL "
+    "<h1>\U0001F6E1\uFE0F PEA SNIPER TERMINAL "
     "<span style='color:#00FF00; font-size:20px;'>V-PRIME</span></h1>",
     unsafe_allow_html=True,
 )
-
-# One-shot sync/pre-warm when the dashboard session opens.
-if not st.session_state.get("daily_sync_done", False):
-    with st.spinner("Initialisation et synchronisation des flux de marché..."):
-        _boot_universe = load_universe()
-        _boot_tickers = tuple(_boot_universe["Ticker"].head(24).tolist())
-        if _boot_tickers:
-            get_last_prices(_boot_tickers)
-        get_vix()
-    st.session_state["daily_sync_done"] = True
 
 universe_df = load_universe()
 # Populate the name lookup with every universe entry (STEP 1.3 coverage).
 TICKER_NAMES.update(dict(zip(universe_df["Ticker"], universe_df["Name"])))
 
-# Native ticker tape (replaces TradingView widget — no .PA red errors).
-_tape_col1, _tape_col2 = st.columns([0.22, 0.78])
-with _tape_col1:
-    _tape_period = st.radio(
-        "Période bandeau",
-        ["1d", "5d", "1mo"],
-        horizontal=True,
-        key="native_tape_period",
-        format_func=lambda x: {"1d": "1j", "5d": "5j", "1mo": "1m"}[x],
-        label_visibility="collapsed",
-    )
-with _tape_col2:
-    st.caption("Bandeau marché natif · blue chips PEA · logos Clearbit")
-render_native_ticker_tape(_tape_period)
+# Live streaming ticker tape across the top.
+_tape_symbols = ",".join(
+    f'{{"proName":"{_tv_symbol(t)}","title":"{short_name(t)}"}}'
+    for t in universe_df["Ticker"].head(16)
+)
+_tape_html = f"""
+<div class="tradingview-widget-container">
+  <div class="tradingview-widget-container__widget"></div>
+  <script type="text/javascript"
+    src="https://s3.tradingview.com/external-embedding/embed-widget-ticker-tape.js" async>
+  {{"symbols":[{_tape_symbols}],"showSymbolLogo":true,"colorTheme":"dark",
+   "isTransparent":true,"displayMode":"adaptive","locale":"fr"}}
+  </script>
+</div>
+"""
+components.html(_tape_html, height=80)
 
 portfolio = load_portfolio_state()
-try:
-    pending_df = load_signals(("PENDING",))
-    if pending_df is None:
-        pending_df = pd.DataFrame()
-except Exception:
-    pending_df = pd.DataFrame()
-
 if portfolio is None:
     st.warning(
         "\u26A0\uFE0F En attente de l'initialisation des bases de donn\u00e9es "
@@ -3471,8 +2559,6 @@ unrealized = sum((p.current_price - p.avg_entry_price) * p.qty_shares for p in p
 unrealized_pct = (unrealized / invested * 100) if invested else 0.0
 cash_pct = (portfolio.cash_available / portfolio.total_equity * 100
             if portfolio.total_equity else 0.0)
-invest_rate = (invested / portfolio.total_equity * 100
-               if portfolio.total_equity else 0.0)
 
 c1, c2, c3, c4 = st.columns(4)
 with c1:
@@ -3483,13 +2569,11 @@ with c1:
                   "la valeur de marche de toutes vos actions detenues.",
     ), unsafe_allow_html=True)
 with c2:
-    inv_accent = "cyan" if invest_rate >= 95 else ("amber" if invest_rate >= 80 else "red")
     st.markdown(metric_box(
-        "Taux d'Investissement", f"{invest_rate:.1f}%",
-        sub=f"Cash idle: {cash_pct:.1f}% ({portfolio.cash_available:,.0f} \u20ac)",
-        accent=inv_accent, sub_cls="sub-muted",
-        help_text="Part de l'equity déjà investie. Objectif Phase 40 : cash idle "
-                  "≤ 2% — l'excédent est balayé automatiquement vers CW8.PA.",
+        "Liquidites (Cash)", f"{portfolio.cash_available:,.2f} \u20ac",
+        sub=f"{cash_pct:.1f}% de l'equity", accent="muted", sub_cls="sub-muted",
+        help_text="Argent disponible non investi, pret a saisir de nouvelles "
+                  "opportunites d'achat.",
     ), unsafe_allow_html=True)
 with c3:
     pnl_cls = "sub-green" if unrealized >= 0 else "sub-red"
@@ -3527,24 +2611,7 @@ if sector_weights and portfolio.total_equity:
     max_sector = max(sector_weights, key=sector_weights.get)
     max_sector_val = sector_weights[max_sector] / portfolio.total_equity * 100
 
-from duckdb_manager import TimeSeriesDB  # noqa: E402
-
-_db_breadth = get_ts_db()
-_breadth = get_market_breadth(universe_df, str(_db_breadth.db_path))
-_pct50 = _breadth.get("pct_sma50")
-_pct200 = _breadth.get("pct_sma200")
-_valid = _breadth.get("valid") or 0
-_pct50_f = float(_pct50) if _pct50 is not None else None
-_pct200_f = float(_pct200) if _pct200 is not None else None
-
-_breadth_ok = (_pct200_f is not None and _pct200_f >= 55)
-_breadth_mid = (_pct200_f is not None and 45 <= _pct200_f < 55)
-_breadth_accent = "green" if _breadth_ok else ("cyan" if _breadth_mid else "red")
-_breadth_sub_cls = (
-    "sub-green" if _breadth_ok else ("sub-red" if _pct200_f is not None else "sub-muted")
-)
-
-r1, r2, r3, r4, r5 = st.columns(5)
+r1, r2, r3, r4 = st.columns(4)
 with r1:
     vsub = ("\U0001F6A8 PANIC - achats satellites geles" if vix_panic
             else f"Calme (seuil {_VIX_PANIC:.0f})")
@@ -3574,22 +2641,6 @@ with r2:
                       "Donnees temporairement indisponibles.",
         ), unsafe_allow_html=True)
 with r3:
-    breadth_val = (
-        f"{_pct50_f:.0f}% / {_pct200_f:.0f}%" if _pct200_f is not None else "n/a"
-    )
-    st.markdown(metric_box(
-        "Market Breadth (SMA50/200)",
-        breadth_val,
-        sub=f"{int(_valid)} titres validés · Close>SMA50/SMA200",
-        accent=_breadth_accent,
-        sub_cls=_breadth_sub_cls,
-        help_text=(
-            "Broad market measure : % des noms PEA ayant "
-            "Close > SMA50 et Close > SMA200 (hist. DuckDB ~200j)."
-        ),
-    ), unsafe_allow_html=True)
-
-with r4:
     over = sat_used_pct > 100
     ssub = f"{satellite_value:,.0f} / {sat_budget_eur:,.0f} \u20ac (max {_SAT_BUDGET*100:.0f}%)"
     st.markdown(metric_box(
@@ -3599,7 +2650,7 @@ with r4:
                   "portefeuille total) pour chercher de la surperformance. Le "
                   "reste est investi dans l'ETF Monde (le Coeur du portefeuille).",
     ), unsafe_allow_html=True)
-with r5:
+with r4:
     breach = max_sector_val > _MAX_SECTOR * 100
     st.markdown(metric_box(
         "Concentration Sectorielle Max", f"{max_sector_val:.0f}%",
@@ -3616,13 +2667,9 @@ with st.sidebar:
     auto_refresh = st.checkbox("Rafraichissement auto", value=False)
     refresh_secs = st.slider("Intervalle (s)", 30, 600, 120, 30,
                              disabled=not auto_refresh)
-    if st.button("\U0001F504 Vider le cache & recharger", use_container_width=True):
+    if st.button("\U0001F504 Vider le cache & recharger", width="stretch"):
         st.cache_data.clear()
         st.rerun()
-    st.markdown("---")
-    if st.button("Ledger signaux", use_container_width=True):
-        st.session_state["scroll_to_ledger"] = True
-    st.caption("Passe : `python main_scheduler.py --now`")
     st.markdown("---")
     st.markdown("### \U0001F4CA Etat Systeme")
     st.metric("Univers", f"{len(universe_df)} titres",
@@ -3642,681 +2689,1553 @@ st.write("---")
 # =============================================================================
 # Mission Control — état du monde en ~3 secondes
 # =============================================================================
-@st.fragment(run_every="30s")
-def _render_mission_control():
-    _pending_mc = load_signals(("PENDING",))
-    _n_pending = 0 if _pending_mc is None or _pending_mc.empty else len(_pending_mc)
-    _eq_curve_mc = load_equity_curve()
-    _day_delta = None
-    _day_delta_pct = None
-    if _eq_curve_mc is not None and not _eq_curve_mc.empty and len(_eq_curve_mc) >= 2:
-        try:
-            _eqs = _eq_curve_mc.sort_values("date")["equity"].astype(float)
-            _day_delta = float(_eqs.iloc[-1] - _eqs.iloc[-2])
-            if float(_eqs.iloc[-2]) > 0:
-                _day_delta_pct = _day_delta / float(_eqs.iloc[-2]) * 100.0
-        except Exception:  # noqa: BLE001
-            pass
-    _mkt_label, _mkt_health = euronext_session_status()
-    _pipe = read_pipeline_status() if read_pipeline_status else None
-    _pipe_health = (_pipe or {}).get("health", "amber")
-    _pipe_txt = "jamais"
-    if _pipe:
-        _pipe_txt = (
-            f"{_pipe.get('status', '?')} · "
-            f"{_pipe.get('finished_at_local') or _pipe.get('written_at', '')[:19]}"
-        )
-    _health_color = {
-        "green": _NEON, "amber": _AMBER, "red": _RED
-    }.get(_pipe_health, _AMBER)
-    _mkt_color = _NEON if _mkt_health == "green" else _AMBER
-    
-    # Degraded Mode Alert (moved to Data Lineage)
-    _is_degraded = (_pipe or {}).get("data_degraded_mode", False)
-    _degraded_reason = (_pipe or {}).get("degraded_reason", "Institutional API down. Using yfinance/fallback data.")
-    
-    # Add Market Regime
+_pending_mc = load_signals(("PENDING",))
+_n_pending = 0 if _pending_mc is None or _pending_mc.empty else len(_pending_mc)
+_eq_curve_mc = load_equity_curve()
+_day_delta = None
+_day_delta_pct = None
+if _eq_curve_mc is not None and not _eq_curve_mc.empty and len(_eq_curve_mc) >= 2:
     try:
-        from market_regime import MarketRegimeClassifier
-        _mr_classifier = MarketRegimeClassifier()
-        _regime = _mr_classifier.get_regime()
-        _conv_floor, _rsi_thresh = _mr_classifier.get_modulated_thresholds(
-            _regime,
-            base_conviction=float(_RISK.get("CONVICTION_EMIT_FLOOR", 65.0)),
-            base_rsi=float(_RISK.get("RSI_OVERSOLD_THRESHOLD", 30.0))
-        )
-    except Exception:
-        _regime = "BULL"
-        _conv_floor = 65.0
-        _rsi_thresh = 30.0
-    
-    _regime_color = _NEON if _regime == "BULL" else (_RED if _regime == "BEAR" else _AMBER)
-    
-    now_str = datetime.now().strftime("%H:%M")
-    st.markdown(
-        f"""
-    <style>@keyframes blink {{50% {{opacity: 0.2;}}}} .live-badge {{color: #0f0; animation: blink 2s linear infinite; font-size: 11px; margin-left: 10px; border: 1px solid #0f0; padding: 1px 4px; border-radius: 4px;}}</style>
-    <div class="mission">
-      <div class="mission-title">Mission Control · PEA personnel <span class="live-badge">LIVE 🟢</span> <span style="font-size:11px; color:#aaa; margin-left:5px;">{now_str}</span></div>
-      <div style="display:flex;flex-wrap:wrap;gap:18px;color:{_WHITE};font-size:13px;">
-        <div>Marché <b style="color:{_mkt_color};">{_mkt_label}</b></div>
-        <div>Régime <b style="color:{_regime_color};">{_regime}</b> 
-            <span style="color:{_MUTED}; font-size: 11px;">(Score ≥{_conv_floor:.0f} | RSI ≤{_rsi_thresh:.0f})</span>
-        </div>
-        <div>Dernière passe
-          <b style="color:{_health_color};">{_pipe_txt}</b></div>
-        <div>Equity
-          <b>{portfolio.total_equity:,.0f} €</b>
-          <span style="color:{_NEON if (_day_delta or 0) >= 0 else _RED};">
-            {f"{_day_delta:+,.0f} € ({_day_delta_pct:+.2f}%)" if _day_delta is not None else "·"}
-          </span>
-        </div>
-        <div>VIX <b style="color:{_RED if vix_panic else _WHITE};">{vix:.1f}</b></div>
-        <div>Pending Discord
-          <b style="color:{_AMBER if _n_pending else _MUTED};">{_n_pending}</b></div>
-      </div>
-    </div>
-    """,
-        unsafe_allow_html=True,
+        _eqs = _eq_curve_mc.sort_values("date")["equity"].astype(float)
+        _day_delta = float(_eqs.iloc[-1] - _eqs.iloc[-2])
+        if float(_eqs.iloc[-2]) > 0:
+            _day_delta_pct = _day_delta / float(_eqs.iloc[-2]) * 100.0
+    except Exception:  # noqa: BLE001
+        pass
+_mkt_label, _mkt_health = euronext_session_status()
+_pipe = read_pipeline_status() if read_pipeline_status else None
+_pipe_health = (_pipe or {}).get("health", "amber")
+_pipe_txt = "jamais"
+if _pipe:
+    _pipe_txt = (
+        f"{_pipe.get('status', '?')} · "
+        f"{_pipe.get('finished_at_local') or _pipe.get('written_at', '')[:19]}"
     )
-    
-    if st.button("🔄 Refresh Terminal", use_container_width=False, key="mc_refresh"):
-        st.rerun()
+_health_color = {
+    "green": _NEON, "amber": _AMBER, "red": _RED
+}.get(_pipe_health, _AMBER)
+_mkt_color = _NEON if _mkt_health == "green" else _AMBER
 
-_render_mission_control()
+st.markdown(
+    f"""
+<div class="mission">
+  <div class="mission-title">Mission Control · PEA personnel</div>
+  <div style="display:flex;flex-wrap:wrap;gap:18px;color:{_WHITE};font-size:13px;">
+    <div>Marché <b style="color:{_mkt_color};">{_mkt_label}</b></div>
+    <div>Dernière passe
+      <b style="color:{_health_color};">{_pipe_txt}</b></div>
+    <div>Equity
+      <b>{portfolio.total_equity:,.0f} €</b>
+      <span style="color:{_NEON if (_day_delta or 0) >= 0 else _RED};">
+        {f"{_day_delta:+,.0f} € ({_day_delta_pct:+.2f}%)" if _day_delta is not None else "·"}
+      </span>
+    </div>
+    <div>VIX <b style="color:{_RED if vix_panic else _WHITE};">{vix:.1f}</b></div>
+    <div>Pending Discord
+      <b style="color:{_AMBER if _n_pending else _MUTED};">{_n_pending}</b></div>
+  </div>
+</div>
+""",
+    unsafe_allow_html=True,
+)
 
+# Bloomberg-style <TICKER> <GO> — jump to Exploration dossier
+mc1, mc2, mc3, mc4 = st.columns([2.2, 0.7, 1.2, 1.2])
+with mc1:
+    _go_raw = st.text_input(
+        "Commande",
+        value=st.session_state.get("go_ticker", ""),
+        placeholder="MC.PA  <GO>  — fiche titre dans Exploration",
+        label_visibility="collapsed",
+        key="go_cmd_input",
+    )
+with mc2:
+    _go_click = st.button("GO", type="primary", width="stretch")
+with mc3:
+    if st.button("Ledger signaux", width="stretch"):
+        st.session_state["scroll_to_ledger"] = True
+with mc4:
+    st.caption("Passe manuelle : `python main_scheduler.py --now`")
+
+if _go_click and _go_raw.strip():
+    # Accept "MC.PA", "MC", "mc.pa GO"
+    tok = _go_raw.strip().upper().replace("<GO>", "").replace("GO", "").strip()
+    if tok and not tok.endswith((".PA", ".AS", ".DE", ".MI", ".BR")) and "." not in tok:
+        # Heuristic: French blue-chips default to .PA
+        cand = f"{tok}.PA"
+    else:
+        cand = tok
+    st.session_state["focus_ticker"] = cand
+    st.session_state["go_ticker"] = cand
+    st.toast(f"Fiche → {cand} (onglet Exploration)", icon="🔎")
 
 # =============================================================================
 # Tabs
 # =============================================================================
-tab_market_pulse, tab_ticker_deep_dive, tab_quant_engine, tab_portfolio = st.tabs([
-    "🌍 Market Pulse & News Feed",
-    "🔍 Ticker Deep-Dive (Data & History)",
-    "🤖 Quant Engine & Models Center",
-    "💼 Portfolio, Execution & Full History",
+tab_gen, tab_pf, tab_screener, tab_mkt, tab_uni, tab_arch = st.tabs([
+    "📊 General & Signaux",
+    "🎯 Portefeuille & Allocation",
+    "🌌 Universe & Screener",
+    "🌍 Exploration",
+    "📋 Univers Complet",
+    "🧠 Architecture & Logs",
 ])
 
 # --- Tab: General + Signals --------------------------------------------------
-with tab_market_pulse:
-    st.markdown("## 🌍 Market Pulse & News Feed")
-    
-    # 1. Macro Header
-    try:
-        from macro_alpha_api import MacroAlphaSensor
-        from market_regime import MarketRegimeClassifier
-        
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            # HMM Regime
-            try:
-                regime = MarketRegimeClassifier().get_regime()
-                color = _NEON if regime == "BULL" else (_RED if regime == "BEAR" else _AMBER)
-                st.markdown(f"<div style='padding:15px; background:#1E1E1E; border-radius:5px; border-left:5px solid {color}'><h4>Market Regime</h4><h2 style='color:{color}'>{regime}</h2></div>", unsafe_allow_html=True)
-            except Exception:
-                st.metric("Market Regime", "UNKNOWN")
-                
-        with col2:
-            # VIX Level
-            try:
-                vix_val = MacroAlphaSensor().get_european_vix()
-                vix_color = _RED if vix_val > 30 else (_AMBER if vix_val > 20 else _NEON)
-                st.markdown(f"<div style='padding:15px; background:#1E1E1E; border-radius:5px; border-left:5px solid {vix_color}'><h4>European VIX</h4><h2 style='color:{vix_color}'>{vix_val:.2f}</h2></div>", unsafe_allow_html=True)
-            except Exception:
-                st.metric("European VIX", "N/A")
-                
-        with col3:
-            # OAT vs Bund Spread
-            try:
-                spread = MacroAlphaSensor().get_oat_bund_spread()
-                if spread is not None:
-                    spread_color = _RED if spread > 0.8 else (_NEON if spread < 0.5 else _AMBER)
-                    st.markdown(f"<div style='padding:15px; background:#1E1E1E; border-radius:5px; border-left:5px solid {spread_color}'><h4>OAT/Bund Spread</h4><h2 style='color:{spread_color}'>{spread:.2f}%</h2></div>", unsafe_allow_html=True)
-                else:
-                    st.markdown("<div style='padding:15px; background:#1E1E1E; border-radius:5px; border-left:5px solid #888'><h4>OAT/Bund Spread</h4><h2 style='color:#888'>N/A</h2></div>", unsafe_allow_html=True)
-            except Exception:
-                st.metric("OAT/Bund Spread", "N/A")
-                
-    except Exception as e:
-        st.error(f"Failed to load macro sensors: {e}")
-        
-    st.markdown("---")
-    
-    # 2. Global News Terminal
-    st.markdown("### 📰 Global News Terminal")
-    
-    news_filter = st.radio("News Filter", ["All News", "High Impact Only", "Bullish", "Bearish"], horizontal=True)
-    
-    try:
-        db = get_portfolio_db()
-        news_items = db.get_news_history(limit=100)
-        
-        if not news_items:
-            render_empty_state("Data lake is empty. Waiting for daemon to ingest news.")
-        else:
-            filtered_news = []
-            for r in news_items:
-                score = float(r.get("sentiment_score") or 0)
-                if news_filter == "High Impact Only" and abs(score) < 0.5:
-                    continue
-                if news_filter == "Bullish" and score < 0.2:
-                    continue
-                if news_filter == "Bearish" and score > -0.2:
-                    continue
-                filtered_news.append(r)
-                
-            st.caption(f"Showing {len(filtered_news)} articles matching filter.")
-            
-            with st.container(height=600):
-                for r in filtered_news:
-                    score = float(r.get("sentiment_score") or 0)
-                    if score > 0.2:
-                        badge_col = _NEON
-                        badge_txt = "BULLISH"
-                    elif score < -0.2:
-                        badge_col = _RED
-                        badge_txt = "BEARISH"
-                    else:
-                        badge_col = _MUTED
-                        badge_txt = "NEUTRAL"
-                        
-                    source = r.get("source", "Unknown")
-                    title = r.get("title", "No Title")
-                    ticker = r.get("ticker", "MACRO")
-                    date = str(r.get("published_at"))[:16]
-                    url = r.get("url", "#")
-                    
-                    st.markdown(f'''
-                    <div style="padding:10px; margin-bottom:10px; border:1px solid #333; background:#111; border-left:4px solid {badge_col}">
-                        <div style="font-size:12px; color:#888; margin-bottom:4px;">
-                            <span>{date}</span> | 
-                            <strong style="color:#FFF">{ticker}</strong> | 
-                            <span>{source}</span>
-                            <span style="float:right; padding:2px 6px; background:#222; border:1px solid {badge_col}; color:{badge_col}; font-size:10px; border-radius:3px;">
-                                {badge_txt} ({score:.2f})
-                            </span>
-                        </div>
-                        <div><a href="{url}" target="_blank" style="color:#E0E0E0; text-decoration:none; font-size:15px; font-weight:600;">{title}</a></div>
-                        <div style="font-size:12px; color:#00B4D8; margin-top:6px;">🤖 Ollama LLM Insight: Processed</div>
-                    </div>
-                    ''', unsafe_allow_html=True)
-                    
-    except Exception as e:
-        st.error(f"Failed to load news: {e}")
+with tab_gen:
+    st.markdown(
+        "<div class='info-text'>Briefing + registre des signaux + "
+        "<b>suggestion de portefeuille adaptative</b> selon ton capital. "
+        "Aucun ordre n'est envoye depuis ici — Discord reste le copilot.</div>",
+        unsafe_allow_html=True,
+    )
 
-    st.markdown("---")
-    st.markdown("### 🚀 Top Opportunities & Momentum Leaders")
-    try:
-        budget = portfolio.cash_available if "portfolio" in globals() and portfolio else 10000.0
-        vix_val = float(vix) if "vix" in globals() else 15.0
-        
-        col_opp, col_mom = st.columns(2)
-        with col_opp:
-            st.markdown("#### 🎯 Top Scored PEA Candidates")
-            try:
-                opps = rank_affordable_alternatives(budget, vix_val)
-                if opps:
-                    df_opps = pd.DataFrame(opps).head(5)
-                    st.dataframe(df_opps, use_container_width=True, hide_index=True)
-                else:
-                    render_empty_state("Data unavailable")
-            except Exception as e:
-                render_empty_state("Data unavailable")
-                
-        with col_mom:
-            st.markdown("#### 🚀 High Momentum Leaders")
-            try:
-                moms = get_momentum_pepites(limit=5)
-                if moms:
-                    df_moms = pd.DataFrame(moms)
-                    st.dataframe(df_moms, use_container_width=True, hide_index=True)
-                else:
-                    render_empty_state("Data unavailable")
-            except Exception as e:
-                render_empty_state("Data unavailable")
-    except Exception as e:
-        render_empty_state("Data unavailable")
+    held_tickers = [p.ticker for p in positions]
+    blue_chips = ["MC.PA", "OR.PA", "AI.PA", "RMS.PA", "SAN.PA",
+                  "TTE.PA", "BNP.PA", "AIR.PA", _CORE_TICKER]
+    watch = tuple(dict.fromkeys(held_tickers + blue_chips))[:14]
 
+    pending_gen = load_signals(("PENDING",))
+    suggestion = suggest_adaptive_portfolio(
+        float(portfolio.total_equity),
+        float(portfolio.cash_available),
+        float(vix),
+        regime or {},
+        pending_gen,
+        held_tickers,
+    )
 
-def get_company_info(ticker: str) -> dict:
-    try:
-        import json
-        db = get_portfolio_db()
-        with db._connect() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT profile_json FROM ticker_profiles WHERE ticker = ?", (ticker,))
-            row = cursor.fetchone()
-            if row and row[0]:
-                data = json.loads(row[0])
-                # Ensure the keys match the UI expectations
-                return {
-                    "longName": data.get("longName", ticker),
-                    "sector": data.get("sector", "Inconnu"),
-                    "industry": data.get("industry", "Inconnu"),
-                    "country": data.get("country", "Europe"),
-                    "longBusinessSummary": data.get("longBusinessSummary", "Description statique non renseignée dans le système local.")
-                }
-    except Exception:
-        pass
-        
-    return {
-        "longName": ticker,
-        "sector": "Inconnu",
-        "industry": "Inconnu",
-        "country": "Europe",
-        "longBusinessSummary": "Description non disponible en base."
-    }
+    st.markdown("#### 🎯 Meilleur portefeuille suggere (adaptatif)")
+    st.markdown(
+        f"<div class='eli5'>{suggestion.get('summary', '')}<br><br>"
+        f"<b style='color:{_AMBER};'>Pourquoi ce mode ({suggestion.get('mode')}) :</b> "
+        f"{suggestion.get('mode_why', '')}<br><br>"
+        f"{suggestion.get('cash_explain', '')}</div>",
+        unsafe_allow_html=True,
+    )
+    sug_lines = suggestion.get("lines") or []
+    if sug_lines:
+        sdisp = pd.DataFrame([{
+            "Titre": format_name(l["ticker"]),
+            "Role": l["role"],
+            "Qte": l["qty"],
+            "Cours": f"{l['price']:,.2f} €",
+            "Cout": f"{l['cost']:,.2f} €",
+            "Poids": f"{l['weight_pct']:.0f}%",
+            "Justification": l["why"][:160],
+        } for l in sug_lines])
+        st.plotly_chart(
+            dark_table(sdisp, height=min(280, 60 + 36 * len(sdisp)),
+                       col_widths=[2, 1.2, 0.5, 0.9, 0.9, 0.6, 2.8]),
+            width="stretch",
+            key="gen_primary_suggestion_table",
+        )
+    else:
+        st.warning(suggestion.get("summary", "Pas de suggestion."))
 
-with tab_ticker_deep_dive:
-    st.markdown("## 🔍 Ticker Deep-Dive (Instant Terminal)")
-    try:
-        tickers = universe_df["Ticker"].unique().tolist() if "universe_df" in globals() else []
-    except Exception:
-        tickers = []
-        
-    selected_ticker = st.selectbox("Search PEA Universe", options=tickers, index=0 if tickers else None)
-    
-    if selected_ticker:
-        with st.spinner("⚡ Fetching Quant Data..."):
-            try:
-                info = get_company_info(selected_ticker)
-                name = info.get("longName", selected_ticker)
-                sector = info.get("sector", "Inconnu")
-                industry = info.get("industry", "Inconnu")
-                country = info.get("country", "Inconnu")
-                summary = info.get("longBusinessSummary", "Description statique non renseignée dans le système local.")
-                
-                col_info_left, col_info_right = st.columns([0.4, 0.6])
-                with col_info_left:
-                    st.markdown(f"### {name}")
-                    st.markdown(f"**🌍 Origine:** {country}")
-                    st.markdown(f"**🏭 Secteur:** {sector}")
-                    st.markdown(f"**⚙️ Industrie:** {industry}")
-                with col_info_right:
-                    trunc_summary = summary[:400] + "..." if len(summary) > 400 else summary
-                    st.markdown(f"**📖 Description:**<br>_{trunc_summary}_", unsafe_allow_html=True)
-                st.markdown("---")
-            except Exception as e:
-                st.warning("Profile temporarily unavailable.")
+    # Ranked alternatives with score + reco (fixes "only one option" feel)
+    alts = suggestion.get("alternatives") or []
+    st.markdown("##### Classement des alternatives achetable (score 0–100)")
+    st.markdown(
+        "<div class='info-text'>ETF PEA (EWLD, PAEEM, ESE, C50…) vs actions "
+        "liquides. Score = RSI + tendance SMA200 + momentum + fit cash + "
+        "bonus diversification ETF. <b>ACHETER / SURVEILLER / ATTENDRE / EVITER</b>. "
+        "Toujours 1 part max en MICRO + cash runway.</div>",
+        unsafe_allow_html=True,
+    )
+    if alts:
+        adisp = pd.DataFrame([{
+            "Rang": i + 1,
+            "Titre": format_name(a["ticker"]),
+            "Type": a.get("kind", "?"),
+            "Cours": f"{a['price']:,.2f} €",
+            "Score": f"{a['score']}/100",
+            "Reco": a.get("reco", ""),
+            "RSI": f"{a['rsi']:.0f}" if a.get("rsi") is not None else "—",
+            "vs SMA200": (
+                f"{a['vs_sma200']:+.1f}%" if a.get("vs_sma200") is not None else "—"
+            ),
+            "Poids 1 part": f"{a.get('weight_pct', 0):.0f}%",
+            "Pourquoi": str(a.get("why", ""))[:110],
+        } for i, a in enumerate(alts)])
+        reco_colors = []
+        for a in alts:
+            r = a.get("reco")
+            reco_colors.append(
+                _NEON if r == "ACHETER" else
+                _AMBER if r == "SURVEILLER" else
+                _CYAN if r == "ATTENDRE" else _RED
+            )
+        st.plotly_chart(
+            dark_table(adisp, height=min(520, 56 + 32 * len(adisp)),
+                       font_color_map={"Reco": reco_colors, "Score": reco_colors},
+                       col_widths=[0.5, 2.0, 0.7, 0.8, 0.8, 1.0, 0.6, 0.9, 0.8, 2.4]),
+            width="stretch",
+            key="gen_alternatives_ranking_table",
+        )
+    else:
+        st.caption("Aucune alternative liquide sous ton cash actuel.")
 
-            col_fun, col_rad = st.columns(2)
-            with col_fun:
-                st.markdown("### 📊 Fundamentals")
-                try:
-                    metrics = get_valuation_metrics(selected_ticker)
-                    if metrics:
-                        val_pe = metrics.get('pe_ratio')
-                        val_pb = metrics.get('pb_ratio')
-                        val_ret = metrics.get('return_1y')
-                        if isinstance(val_pe, float): val_pe = f"{val_pe:.1f}"
-                        if isinstance(val_pb, float): val_pb = f"{val_pb:.2f}"
-                        if isinstance(val_ret, float): val_ret = f"{val_ret:.1f}%"
-                        st.markdown(metric_box("P/E Ratio", str(val_pe)), unsafe_allow_html=True)
-                        st.markdown(metric_box("P/B Ratio", str(val_pb)), unsafe_allow_html=True)
-                        st.markdown(metric_box("Return 1Y", str(val_ret)), unsafe_allow_html=True)
-                    else:
-                        render_empty_state("Metrics unavailable")
-                except Exception:
-                    render_empty_state("Metrics unavailable")
-                    
-            with col_rad:
-                st.markdown("### 🎯 Strategy Fingerprint")
-                try:
-                    fp = get_strategy_fingerprint(selected_ticker)
-                    if fp:
-                        import plotly.graph_objects as go
-                        fig = render_strategy_radar(fp, selected_ticker)
-                        st.plotly_chart(fig, use_container_width=True)
-                    else:
-                        render_empty_state("Fingerprint unavailable")
-                except Exception:
-                    render_empty_state("Fingerprint unavailable")
-                    
-            st.markdown("---")
-            
-            st.markdown("### 📈 Price Action & Technicals (1Y)")
-            try:
-                import plotly.graph_objects as go
-                hist = _db_hist(selected_ticker, 252)
-                if hist is not None and not hist.empty:
-                    fig = go.Figure(data=[go.Candlestick(
-                        x=hist.index, open=hist['Open'], high=hist['High'],
-                        low=hist['Low'], close=hist['Close'], name='Price'
-                    )])
-                    fig.update_layout(template="plotly_dark", margin=dict(t=10, b=10, l=10, r=10), height=400, xaxis_rangeslider_visible=False)
-                    st.plotly_chart(fig, use_container_width=True)
-                else:
-                    render_empty_state("Chart data unavailable")
-            except Exception:
-                render_empty_state("Chart data unavailable")
-                
-            st.markdown("---")
-            
-            col_ins, col_news = st.columns(2)
-            with col_ins:
-                st.markdown("### 👔 AMF Insider Activity")
-                try:
-                    df_insider = get_insider_data(selected_ticker)
-                    if not df_insider.empty:
-                        summary = summarize_insider_activity(df_insider)
-                        sig_msg = summary.get("signal", "N/A")
-                        tone = summary.get("tone", "muted")
-                        color = _NEON if tone == "bullish" else (_RED if tone == "bearish" else _MUTED)
-                        st.markdown(f"**Signal AMF:** <span style='color:{color}; font-weight:bold;'>{sig_msg}</span>", unsafe_allow_html=True)
-                        st.dataframe(df_insider, use_container_width=True, hide_index=True)
-                    else:
-                        render_empty_state("No insider activity recorded")
-                except Exception:
-                    render_empty_state("Insider data unavailable")
-                    
-            with col_news:
-                st.markdown("### 📰 Ticker-Specific News")
-                try:
-                    t_news = get_recent_news(selected_ticker, limit=5)
-                    if t_news:
-                        for n in t_news:
-                            render_news_card(selected_ticker, n, n.get('sentiment_score'))
-                    else:
-                        render_empty_state("No specific news available")
-                except Exception:
-                    render_empty_state("News unavailable")
-
-
-with tab_quant_engine:
-
-
-    st.markdown("## 🤖 Quant Engine & Models Center")
-    
-    try:
-        import sys
-        import os
-        import time
-        from pathlib import Path
-        _ROOT = Path(__file__).resolve().parent.parent
-        sys.path.insert(0, str(_ROOT / "02_quant_engine"))
-        from ml_trainer import load_metrics
-        import xgboost as xgb
-        import plotly.express as px
-        import plotly.graph_objects as go
-        from market_regime import MarketRegimeClassifier
-        
-        regime = MarketRegimeClassifier().get_regime()
-        metrics = load_metrics()
-        
-        # 1. Model Roster & Staleness Health
-        st.markdown("### 📋 Active Model Roster & Health")
-        models = [
-            {"name": "XGBoost_BULL", "file": "xgboost_model_tactical_BULL.pkl"},
-            {"name": "XGBoost_BEAR", "file": "xgboost_model_tactical_BEAR.pkl"},
-            {"name": "XGBoost_VOLATILE", "file": "xgboost_model_tactical_VOLATILE.pkl"},
-            {"name": "XGBoost_Structural", "file": "xgboost_model_structural.pkl"},
-        ]
-        
-        cols = st.columns(len(models))
-        
-        for idx, m in enumerate(models):
-            with cols[idx]:
-                path = _ROOT / "database" / m["file"]
-                if path.exists():
-                    mtime = os.path.getmtime(path)
-                    days_ago = (time.time() - mtime) / (24 * 3600)
-                    
-                    if days_ago <= 7:
-                        health_color = _NEON
-                        status = "HEALTHY"
-                    elif days_ago <= 14:
-                        health_color = _AMBER
-                        status = "WARNING"
-                    else:
-                        health_color = _RED
-                        status = "STALE"
-                        
-                    st.markdown(f"""
-                    <div style="padding:10px; background:#1A1A1A; border:1px solid #333; border-top:4px solid {health_color}; border-radius:5px;">
-                        <div style="font-size:14px; font-weight:bold; color:#E0E0E0;">{m['name']}</div>
-                        <div style="color:{health_color}; font-size:12px; margin-top:5px;">{status} ({days_ago:.1f}d ago)</div>
-                    </div>
-                    """, unsafe_allow_html=True)
-                else:
-                    st.markdown(f"""
-                    <div style="padding:10px; background:#1A1A1A; border:1px solid #333; border-top:4px solid #555; border-radius:5px;">
-                        <div style="font-size:14px; font-weight:bold; color:#888;">{m['name']}</div>
-                        <div style="color:#555; font-size:12px; margin-top:5px;">NOT FOUND</div>
-                    </div>
-                    """, unsafe_allow_html=True)
-
-        st.markdown("---")
-        
-        col1, col2 = st.columns(2)
-        
-        # 2. Dynamic Ensemble Weights -> Model Accuracy Gauge
-        with col1:
-            st.markdown("### 🎯 Model Accuracy (Out-of-Sample)")
-            try:
-                model_key = f"tactical_{regime}"
-                acc = 50.0
-                if metrics and model_key in metrics:
-                    acc = float(metrics[model_key].get("accuracy", 0.50)) * 100.0
-                
-                if acc > 55:
-                    gauge_color = _NEON
-                elif acc > 50:
-                    gauge_color = _AMBER
-                else:
-                    gauge_color = _RED
-                    
-                fig = go.Figure(go.Indicator(
-                    mode = "gauge+number",
-                    value = acc,
-                    number = {'suffix': "%", 'font': {'size': 40}},
-                    domain = {'x': [0, 1], 'y': [0, 1]},
-                    title = {'text': f"{regime} Model", 'font': {'size': 18}},
-                    gauge = {
-                        'axis': {'range': [0, 100], 'tickwidth': 1, 'tickcolor': "darkblue"},
-                        'bar': {'color': gauge_color},
-                        'bgcolor': "black",
-                        'borderwidth': 2,
-                        'bordercolor': "gray",
-                        'steps': [
-                            {'range': [0, 50], 'color': 'rgba(255,0,0,0.2)'},
-                            {'range': [50, 55], 'color': 'rgba(255,165,0,0.2)'},
-                            {'range': [55, 100], 'color': 'rgba(0,255,0,0.2)'}],
-                    }
-                ))
-                fig.update_layout(margin=dict(t=50, b=20, l=20, r=20), height=350, template="plotly_dark")
-                st.plotly_chart(fig, use_container_width=True)
-            except Exception as e:
-                st.warning(f"Could not load ensemble weights: {e}")
-                
-        # 3. Feature Importance
-        with col2:
-            st.markdown(f"### 📈 Top Features (Active: {regime})")
-            model_key = f"tactical_{regime}"
-            if metrics and model_key in metrics:
-                feat_imp = metrics[model_key].get("feature_importances", {})
-                if feat_imp:
-                    # Sort and take top 5
-                    top_feats = sorted(feat_imp.items(), key=lambda x: x[1], reverse=True)[:5]
-                    df_imp = pd.DataFrame(top_feats, columns=["Feature", "Importance"])
-                    df_imp = df_imp.sort_values("Importance", ascending=True) # For Plotly hbar
-                    
-                    fig2 = px.bar(df_imp, x="Importance", y="Feature", orientation='h', template="plotly_dark")
-                    fig2.update_traces(marker_color=_CYAN)
-                    fig2.update_layout(margin=dict(t=20, b=20, l=20, r=20), height=350)
-                    st.plotly_chart(fig2, use_container_width=True)
-                else:
-                    render_empty_state(f"No feature importances found for {model_key}.")
+    horizons = suggestion.get("horizons") or {}
+    if horizons:
+        with st.expander("Horizons d'allocation (court / moyen / long)", expanded=False):
+            h_choice = st.radio(
+                "Horizon",
+                ["court", "moyen", "long"],
+                format_func=lambda k: (horizons.get(k) or {}).get("label", k),
+                horizontal=True,
+                key="gen_horizon_radio",
+            )
+            hz = horizons.get(h_choice) or {}
+            st.markdown(hz.get("why", ""), unsafe_allow_html=True)
+            hlines = hz.get("lines") or []
+            if hlines:
+                hdf = pd.DataFrame([{
+                    "Titre": format_name(l["ticker"]),
+                    "Role": l.get("role", ""),
+                    "Qte": l["qty"],
+                    "Cours": f"{l['price']:,.2f} €",
+                    "Cout": f"{l['cost']:,.2f} €",
+                    "Note": str(l.get("why", ""))[:140],
+                } for l in hlines])
+                st.plotly_chart(
+                    dark_table(hdf, height=min(260, 56 + 34 * len(hdf)),
+                               col_widths=[2, 1.1, 0.5, 0.9, 0.9, 2.6]),
+                    width="stretch",
+                    key=f"gen_horizon_table_{h_choice}",
+                )
             else:
-                render_empty_state(f"Metrics not found for {model_key}.")
+                st.caption("Rien d'achetable sur cet horizon avec le cash actuel.")
+            if h_choice != "long":
+                st.caption(f"Cash restant illustre ~{hz.get('cash_keep', 0):,.0f} €")
 
-    except Exception:
-        render_empty_state("🤖 Models require initial training. Run ml_trainer.py.")
+    # Core ETF snapshot
+    etf = get_etf_card(_CORE_TICKER)
+    with st.expander(f"📦 Fiche ETF Core — {etf.get('name', _CORE_TICKER)}", expanded=False):
+        st.markdown(
+            f"<div class='info-text'><b>{etf.get('role')}</b><br>"
+            f"{etf.get('summary', '')[:500]}</div>",
+            unsafe_allow_html=True,
+        )
+        ec1, ec2, ec3 = st.columns(3)
+        px = etf.get("price")
+        ec1.metric("Cours", f"{px:,.2f} €" if px else "n/a")
+        reg = etf.get("regime") or {}
+        ec2.metric("vs SMA200", f"{reg.get('gap_pct', 0):+.1f}%" if reg else "n/a")
+        ec3.metric("Part entiere requise", f"{px:,.0f} €" if px else "n/a",
+                   help="PEA = actions entieres. Sous ce montant, pas de Core.")
 
-
-with tab_portfolio:
-    st.markdown("## 💼 Portfolio, Execution & Full History")
-    
-    # 1. Alpha Tracker
-    try:
-        from equity_metrics import calc_live_alpha_metrics
-        try:
-            alpha_metrics = calc_live_alpha_metrics(portfolio, benchmark="^FCHI")
-        except Exception:
-            alpha_metrics = {"jensens_alpha": 2.4, "beta": 0.85, "info_ratio": 1.2}
-    except ImportError:
-        st.warning("Alpha metrics module pending deployment.")
-        alpha_metrics = {"jensens_alpha": 2.4, "beta": 0.85, "info_ratio": 1.2}
-            
-        st.markdown("### 🏆 Alpha Tracker (vs ^FCHI)")
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            val = alpha_metrics.get("jensens_alpha", 0)
-            col = _NEON if val > 0 else _RED
-            st.markdown(f"<div style='text-align:center; padding:10px; background:#1A1A1A; border-radius:5px;'><h4>Jensen's Alpha</h4><h2 style='color:{col}'>{val:+.2f}%</h2></div>", unsafe_allow_html=True)
-        with col2:
-            val = alpha_metrics.get("beta", 0)
-            st.markdown(f"<div style='text-align:center; padding:10px; background:#1A1A1A; border-radius:5px;'><h4>Beta</h4><h2 style='color:#00B4D8'>{val:.2f}</h2></div>", unsafe_allow_html=True)
-        with col3:
-            val = alpha_metrics.get("info_ratio", 0)
-            col = _NEON if val > 1.0 else (_AMBER if val > 0 else _RED)
-            st.markdown(f"<div style='text-align:center; padding:10px; background:#1A1A1A; border-radius:5px;'><h4>Information Ratio</h4><h2 style='color:{col}'>{val:.2f}</h2></div>", unsafe_allow_html=True)
-    except Exception as e:
-        st.error(f"Alpha Tracker error: {e}")
-        
     st.markdown("---")
-    
-    # 2. Active Positions & HRP
-    st.markdown("### 📊 Active Positions & HRP Target")
-    if not positions:
-        render_empty_state("Aucune position active.")
-    else:
-        disp_pos = []
-        for p in positions:
-            # Fake HRP logic for display if not fully integrated
-            actual_w = (p.market_value / portfolio.total_equity) * 100 if portfolio.total_equity > 0 else 0
-            hrp_w = min(actual_w * 1.1, 15.0) # Stub
-            atr = _latest_atr14_approx(p.ticker) or 0
-            atr_stop = p.average_price - (2.5 * atr)
-            dist_stop = ((p.last_price - atr_stop) / p.last_price) * 100 if p.last_price > 0 else 0
-            
-            disp_pos.append({
-                "Titre": format_name(p.ticker),
-                "Secteur": _sector_for_ticker(p.ticker),
-                "Qté": p.quantity,
-                "PRU": f"{p.average_price:.2f} €",
-                "Cours": f"{p.last_price:.2f} €",
-                "Poids (%)": f"{actual_w:.1f}%",
-                "Cible HRP (%)": f"{hrp_w:.1f}%",
-                "Dist. Stop ATR": f"{dist_stop:.1f}%",
-                "PnL": f"{p.unrealized_pnl:.2f} € ({p.unrealized_pnl_percent:.1f}%)"
-            })
-            
-        pdf = pd.DataFrame(disp_pos)
-        st.dataframe(pdf, use_container_width=True, hide_index=True)
-        
-    st.markdown("---")
-    
-    # 3. Execution (Pending Signals)
-    st.markdown("### ⚡ Pending Discord Execution (with Slippage)")
-    if 'pending_df' not in locals() or pending_df is None or pending_df.empty:
-        render_empty_state("Aucun signal en attente.")
-    else:
-        # Same logic as before but using the updated render_signal_card
-        for _, row in pending_df.head(8).iterrows():
-            ticker = str(row.get("ticker", ""))
-            score = float(row.get("score") or 0)
-            qty = row.get("target_qty")
-            try:
-                qty_i = int(qty) if qty is not None and str(qty) not in ("", "None", "nan") else None
-            except:
-                qty_i = None
-            price = float(prices.get(ticker) or 0)
-            sizing = None
-            
-            if sizer is not None and price > 0 and str(row.get("signal_type", "")).upper() == "BUY":
-                from data_models import Signal, SignalType, SignalStatus
-                sig = Signal(ticker=ticker, signal_type=SignalType.BUY, status=SignalStatus.PENDING, score=score, reason=str(row.get("reason") or ""))
-                qty_i, sizing = sizer.size_with_explanation(sig, portfolio, price)
-                
-            notional = (qty_i or 0) * price
-            sector = _sector_for_ticker(ticker)
-            sec_line = ""
-            if sector_impact_line is not None and notional > 0:
-                sec_line = sector_impact_line(portfolio, ticker, sector, notional, float(portfolio.total_equity), sector_cap_pct=_MAX_SECTOR * 100)
-                
-            risk_line = ""
-            impact_line = ""
-            if atr_risk_line is not None and qty_i:
-                atr = _latest_atr14_approx(ticker)
-                if atr:
-                    atr_mult = float(_RISK.get("REBALANCE_ATR_STOP_MULT", 2.5))
-                    risk_line = atr_risk_line(qty_i, atr, atr_mult, float(portfolio.total_equity))
-                    adv = _latest_adv(ticker)
-                    if adv and market_impact_line is not None:
-                        impact_line = market_impact_line(qty_i, price, adv, atr)
-                        
+    recos = build_recommendations(portfolio, pending_gen, vix, regime or {})
+    g1, g2 = st.columns([1.15, 1])
+    with g1:
+        st.markdown("#### 📌 Recommandations actuelles")
+        if not recos:
+            st.caption("Aucune recommandation urgente.")
+        for r in recos:
+            accent = _RED if r["prio"] == 1 else (_AMBER if r["prio"] == 2 else _CYAN)
             st.markdown(
-                render_signal_card(
-                    ticker=ticker,
-                    title=format_name(ticker),
-                    signal_type=str(row.get("signal_type", "")),
-                    score=score,
-                    qty=qty_i,
-                    reason=str(row.get("reason") or ""),
-                    sizing=sizing,
-                    sector_line=sec_line,
-                    risk_line=risk_line,
-                    impact_line=impact_line,
-                    created_at=str(row.get("created_at", ""))[:19],
+                f"<div style='background:#0A0A0A;padding:10px 12px;margin-bottom:8px;"
+                f"border-left:4px solid {accent};border:1px solid #222;'>"
+                f"<b style='color:{_WHITE};'>{r['title']}</b>"
+                f"<div style='color:#D0D0D0;font-size:13px;margin-top:6px;"
+                f"line-height:1.4;'><b style='color:{_AMBER};'>Justification :</b> "
+                f"{r['why']}</div></div>",
+                unsafe_allow_html=True,
+            )
+    with g2:
+        st.markdown("#### 🌍 Briefing geopolitique / macro")
+        with st.spinner("Briefing macro…"):
+            _head_preview = tuple(
+                n.get("title", "") for n in get_general_news_bundle(watch)[:8]
+            )
+            brief = get_geopolitical_brief(float(vix), _head_preview)
+        st.markdown(
+            f"<div style='background:#0A0A0A;padding:14px;border:1px solid #222;"
+            f"color:#E8E8E8;line-height:1.55;font-size:14px;'>{brief}</div>",
+            unsafe_allow_html=True,
+        )
+
+    # --- Phase 17: Decision funnel (audit-log analytics) --------------------
+    st.markdown("---")
+    with st.expander("📊 Entonnoir de Décision (Funnel 7J)", expanded=True):
+        st.markdown(
+            "<div class='info-text'>Lecture seule des audit logs SQLite "
+            "(7 jours). Taxonomie identique au Weekly Historian "
+            "(<code>_classify</code>) — pour voir <b>où</b> la cascade coupe "
+            "les idées, pas pour recalculer le marché.</div>",
+            unsafe_allow_html=True,
+        )
+        funnel_days = st.radio(
+            "Fenêtre",
+            options=(7, 30),
+            index=0,
+            horizontal=True,
+            key="funnel_days_radio",
+            format_func=lambda d: f"{d} jours",
+        )
+        funnel = get_funnel_metrics(int(funnel_days))
+        if funnel.get("empty"):
+            st.info(
+                "Aucun signal dans la fenêtre. Lance "
+                "`python main_scheduler.py --now` pour peupler l'audit log, "
+                "puis reviens ici."
+            )
+        else:
+            sr = float(funnel.get("survival_rate") or 0)
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("Signaux (fenêtre)", f"{funnel.get('total', 0)}")
+            m2.metric("Rejets cascade", f"{funnel.get('rejected', 0)}")
+            m3.metric("APPROVED / EXECUTED", f"{funnel.get('approved', 0)}")
+            m4.metric(
+                "Taux de survie",
+                f"{sr:.1f}%",
+                help="Approved+Executed / total audit rows dans la fenêtre.",
+            )
+            fw, fp = st.columns([0.6, 0.4])
+            with fw:
+                st.plotly_chart(
+                    render_waterfall_chart(funnel),
+                    width="stretch",
+                    key="gen_funnel_waterfall",
+                )
+            with fp:
+                st.plotly_chart(
+                    render_rejection_pie(funnel),
+                    width="stretch",
+                    key="gen_funnel_pie",
+                )
+            st.caption(
+                "Drops waterfall : Sanity/ADV/max positions → Macro/VIX/earnings "
+                "→ Secteur → Corrélation → Cash/sizing. Le total final = survivants "
+                "après rejets (+ pending/révoqués retirés si présents)."
+            )
+
+    st.markdown("---")
+    st.markdown("#### ⚡ Signaux & Registre")
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("##### En attente (Discord) — cartes de trade")
+        pending = pending_gen
+        render_pending_trade_cards(pending, portfolio)
+    with col2:
+        st.markdown("##### Historique (20 derniers)")
+        hist = load_signals(("EXECUTED", "REVOKED", "REJECTED", "EXPIRED"), limit=20)
+        if hist.empty:
+            st.info("Aucun historique disponible.")
+        else:
+            status_color = {"EXECUTED": _NEON, "REVOKED": _RED,
+                            "REJECTED": _MUTED, "EXPIRED": _AMBER}
+            statut_colors = [status_color.get(s, _WHITE) for s in hist["status"]]
+            disp = pd.DataFrame({
+                "Titre": [format_name(t) for t in hist["ticker"]],
+                "Statut": hist["status"],
+                "Type": hist["signal_type"],
+                "Score": [f"{s:.1f}" for s in hist["score"]],
+                "Date": [str(x)[:16] for x in hist["created_at"]],
+            })
+            st.plotly_chart(
+                dark_table(disp, height=320,
+                           font_color_map={"Statut": statut_colors},
+                           col_widths=[2, 1.1, 0.9, 0.7, 1.2]),
+                width="stretch",
+                key="gen_hist_signals_table",
+            )
+    st.markdown("---")
+    p1, p2 = st.columns(2)
+    with p1:
+        st.markdown("#### 📈 Top / Flop (1 mois)")
+        perf_watch = get_market_performance(watch, period="1mo")
+        if perf_watch.empty or "Performance (%)" not in perf_watch.columns:
+            st.caption("Performances indisponibles.")
+        else:
+            pf = perf_watch.copy()
+            pf["Titre"] = [format_name(t) for t in pf["Ticker"]]
+            top = pf.nlargest(5, "Performance (%)")
+            # Exclusive flop: exclude tickers already in Top, require strictly worse.
+            flop_pool = pf[~pf["Ticker"].isin(top["Ticker"])]
+            flop = flop_pool.nsmallest(5, "Performance (%)")
+            tcol, fcol = st.columns(2)
+            with tcol:
+                st.caption("Top")
+                disp_t = pd.DataFrame({
+                    "Titre": top["Titre"],
+                    "Perf": [f"{v:+.1f}%" for v in top["Performance (%)"]],
+                })
+                st.plotly_chart(
+                    dark_table(disp_t, height=220,
+                               font_color_map={"Perf": [_NEON] * len(disp_t)},
+                               col_widths=[2.2, 0.8]),
+                    width="stretch",
+                    key="gen_top_perf_table",
+                )
+            with fcol:
+                st.caption("Flop")
+                disp_f = pd.DataFrame({
+                    "Titre": flop["Titre"],
+                    "Perf": [f"{v:+.1f}%" for v in flop["Performance (%)"]],
+                })
+                st.plotly_chart(
+                    dark_table(disp_f, height=220,
+                               font_color_map={"Perf": [_RED] * len(disp_f)},
+                               col_widths=[2.2, 0.8]),
+                    width="stretch",
+                    key="gen_flop_perf_table",
+                )
+    with p2:
+        st.markdown("#### 📅 Evenements a venir")
+        events = get_earnings_events(watch)
+        if not events:
+            st.caption("Aucun calendrier earnings detecte (yfinance).")
+        else:
+            edf = pd.DataFrame([{
+                "Titre": format_name(e["ticker"]),
+                "Evenement": e["event"],
+                "Date": e["date"],
+            } for e in events])
+            st.plotly_chart(
+                dark_table(edf, height=220), width="stretch",
+                key="gen_earnings_table",
+            )
+    st.markdown("---")
+    st.markdown("#### 📰 Actualites (impact marche)")
+    st.markdown(
+        "<div class='info-text'>Une seule liste dedupliquee, classee par "
+        "impact. Contexte seulement — jamais un trigger d'ordre.</div>",
+        unsafe_allow_html=True,
+    )
+    news_bundle = get_general_news_bundle(watch)
+    score_gen = st.checkbox(
+        "Scorer les news (IA + mots-cles)",
+        value=False,
+        key="gen_score_news",
+        help="Impact FORT/MOYEN/FAIBLE. Cache 1h. Decoche = heuristique rapide.",
+    )
+    if news_bundle:
+        if score_gen:
+            with st.spinner("Notation des actualites…"):
+                scored_bundle = [
+                    (n, score_news_with_llm(n.get("ticker", ""), n.get("title", "")))
+                    for n in news_bundle
+                ]
+        else:
+            scored_bundle = [
+                (n, heuristic_news_score(n.get("title", ""))) for n in news_bundle
+            ]
+        scored_bundle.sort(key=lambda x: abs(x[1]), reverse=True)
+        nc1, nc2 = st.columns(2)
+        for i, (n, sc) in enumerate(scored_bundle[:12]):
+            with (nc1 if i % 2 == 0 else nc2):
+                render_news_card(n.get("ticker", ""), n, sc)
+    else:
+        st.caption("Aucune actualite recente sur la watchlist.")
+
+# --- Tab: Portfolio ----------------------------------------------------------
+with tab_pf:
+    st.markdown(
+        "<div class='info-text'>Decomposition de l'exposition sectorielle. "
+        "En capital eleve, le risque V-Prime limite a 25% / secteur et 15% / "
+        "ligne. En micro-PEA ces plafonds sont volontairement assouplis "
+        "(voir suggestion dans General).</div>",
+        unsafe_allow_html=True,
+    )
+
+    # --- Equity curve (top of Portefeuille) ---------------------------------
+    st.markdown("#### 📈 Courbe de Performance (Equity Curve)")
+    eq_curve = load_equity_curve()
+    if eq_curve is None or eq_curve.empty or "equity" not in eq_curve.columns:
+        st.info(
+            "Pas encore d'historique d'equity. La courbe se construit a chaque "
+            "``update_portfolio`` (snapshot journalier dans ``portfolio_history``)."
+        )
+    else:
+        eq = eq_curve.copy()
+        eq["date"] = pd.to_datetime(eq["date"], errors="coerce")
+        eq = eq.dropna(subset=["date", "equity"]).sort_values("date")
+        if eq.empty:
+            st.info("Historique equity vide apres nettoyage.")
+        else:
+            y_min = float(eq["equity"].min())
+            y_max = float(eq["equity"].max())
+            pad = max((y_max - y_min) * 0.08, abs(y_max) * 0.01, 1.0)
+            fig_eq = pex.area(
+                eq,
+                x="date",
+                y="equity",
+                labels={"date": "Date", "equity": "Equity (€)"},
+            )
+            fig_eq.update_traces(
+                line=dict(color="#00FF00", width=2),
+                fill="tozeroy",
+                fillcolor="rgba(0, 255, 0, 0.25)",
+            )
+            fig_eq.update_layout(
+                paper_bgcolor=_BG,
+                plot_bgcolor=_BG,
+                font=dict(family="Courier New", color=_WHITE),
+                margin=dict(t=20, l=40, r=20, b=40),
+                height=320,
+                xaxis=dict(gridcolor="#222", showgrid=True),
+                yaxis=dict(
+                    gridcolor="#222",
+                    showgrid=True,
+                    range=[y_min - pad, y_max + pad],
+                    title="Equity (€)",
                 ),
+                showlegend=False,
+            )
+            st.plotly_chart(fig_eq, width="stretch", key="pf_equity_curve")
+            if compute_equity_metrics is not None:
+                m = compute_equity_metrics(eq)
+                c1, c2, c3, c4, c5 = st.columns(5)
+
+                def _pct(x):
+                    return "—" if x is None else f"{x * 100:+.1f}%"
+
+                def _num(x):
+                    return "—" if x is None else f"{x:.2f}"
+
+                c1.metric("Total return", _pct(m.get("total_return")))
+                c2.metric("CAGR", _pct(m.get("cagr")))
+                c3.metric("Max DD", _pct(m.get("max_drawdown")))
+                c4.metric("Sharpe", _num(m.get("sharpe")))
+                c5.metric("Sortino", _num(m.get("sortino")))
+                st.caption(
+                    f"{m.get('n_points', 0)} point(s) · "
+                    "métriques partagées (`equity_metrics`) — mêmes formules "
+                    "que le futur backtester."
+                )
+
+    if not positions:
+        st.info("⏸️ Le portefeuille est actuellement 100% en "
+                "liquidites. Aucune position ouverte : le capital attend une "
+                "opportunite validee par les filtres mathematiques.")
+    else:
+        rows = [{
+            "Ticker": p.ticker, "Secteur": p.sector, "Qte": p.qty_shares,
+            "PRU": p.avg_entry_price, "Cours": p.current_price,
+            "Valeur": p.market_value, "Poids": 0.0,
+            "PnL": p.unrealized_pnl_pct * 100,
+        } for p in positions]
+        dfp = pd.DataFrame(rows)
+        dfp["Poids"] = dfp["Valeur"] / portfolio.total_equity * 100
+
+        sun = dfp[["Secteur", "Ticker", "Valeur", "PnL"]].copy()
+        sun["Titre"] = [short_name(t) for t in sun["Ticker"]]
+        if portfolio.cash_available > 0:
+            sun = pd.concat([sun, pd.DataFrame([{
+                "Secteur": "Liquidites", "Ticker": "CASH", "Titre": "Liquidites",
+                "Valeur": portfolio.cash_available, "PnL": 0.0}])],
+                ignore_index=True)
+
+        fig = pex.sunburst(sun, path=["Secteur", "Titre"], values="Valeur",
+                          color="PnL", color_continuous_scale=_DIVERGE,
+                          color_continuous_midpoint=0)
+        fig.update_layout(paper_bgcolor=_BG, plot_bgcolor=_BG,
+                          font=dict(family="Courier New", color=_WHITE),
+                          margin=dict(t=10, l=0, r=0, b=0), height=430)
+        fig.update_traces(insidetextfont=dict(color=_WHITE, family="Courier New"),
+                          marker=dict(line=dict(color=_BG, width=1)))
+
+        col_chart, col_table = st.columns([1, 1.4])
+        with col_chart:
+            st.plotly_chart(fig, width="stretch")
+        with col_table:
+            pnl_colors = [_NEON if v >= 0 else _RED for v in dfp["PnL"]]
+            disp = pd.DataFrame({
+                "Titre": [format_name(t) for t in dfp["Ticker"]],
+                "Secteur": dfp["Secteur"],
+                "Qte": [f"{q:g}" for q in dfp["Qte"]],
+                "PRU": [f"{v:,.2f} €" for v in dfp["PRU"]],
+                "Cours": [f"{v:,.2f} €" for v in dfp["Cours"]],
+                "Valeur": [f"{v:,.2f} €" for v in dfp["Valeur"]],
+                "Poids": [f"{v:.1f}%" for v in dfp["Poids"]],
+                "PnL": [f"{v:+.2f}%" for v in dfp["PnL"]],
+            })
+            st.plotly_chart(
+                dark_table(disp, height=430, font_color_map={"PnL": pnl_colors},
+                           col_widths=[2.2, 1.4, 0.7, 1, 1, 1.2, 0.8, 0.9]),
+                width="stretch")
+
+    st.markdown("---")
+    with st.expander("✏️ Ajuster le wallet (cash & positions)", expanded=False):
+        st.markdown(
+            "<div class='info-text'>Modifie le cash et les lignes pour coller "
+            "a ton PEA reel. Ecriture directe dans SQLite.</div>",
+            unsafe_allow_html=True,
+        )
+        edit_cash = st.number_input(
+            "Cash disponible (€)",
+            min_value=0.0,
+            value=float(portfolio.cash_available),
+            step=10.0,
+            key="wallet_cash",
+        )
+        base_rows = [{
+            "Ticker": p.ticker,
+            "Secteur": p.sector,
+            "Qte": int(p.qty_shares),
+            "PRU": float(p.avg_entry_price),
+            "Cours": float(p.current_price),
+        } for p in positions] or [{
+            "Ticker": "", "Secteur": "Unknown", "Qte": 0, "PRU": 0.0, "Cours": 0.0,
+        }]
+        edited = st.data_editor(
+            pd.DataFrame(base_rows),
+            num_rows="dynamic",
+            width="stretch",
+            key="wallet_editor",
+            column_config={
+                "Ticker": st.column_config.TextColumn("Ticker Yahoo", required=False),
+                "Secteur": st.column_config.TextColumn("Secteur"),
+                "Qte": st.column_config.NumberColumn("Qte", min_value=0, step=1),
+                "PRU": st.column_config.NumberColumn("PRU €", min_value=0.0,
+                                                    format="%.4f"),
+                "Cours": st.column_config.NumberColumn("Cours €", min_value=0.0,
+                                                      format="%.4f"),
+            },
+        )
+        c_save, c_hint = st.columns([1, 2])
+        with c_save:
+            if st.button("Enregistrer le wallet", type="primary",
+                         width="stretch", key="save_wallet_btn"):
+                err = save_wallet(float(edit_cash), edited)
+                if err:
+                    st.error(f"Echec : {err}")
+                else:
+                    st.success("Wallet enregistre. Rechargement…")
+                    st.rerun()
+        with c_hint:
+            st.caption(
+                "Ticker Yahoo (ex. MC.PA). Qte=0 pour retirer une ligne."
+            )
+
+    # --- Portfolio Ledger (Audit logs) ---
+    st.markdown("---")
+    st.markdown("#### 📜 Journal d'Exécution & Ledger (Audit Logs)")
+    st.markdown(
+        "<div class='info-text'>Historique immuable des ordres exécutés et signaux clôturés dans SQLite.</div>",
+        unsafe_allow_html=True,
+    )
+    closed_logs = []
+    try:
+        with sqlite3.connect(_PORTFOLIO_DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT id, ticker, signal_type, quantity, price, score, reason, created_at "
+                "FROM audit_logs WHERE status='CLOSED' OR status='EXECUTED' "
+                "ORDER BY created_at DESC LIMIT 50;"
+            ).fetchall()
+            closed_logs = [dict(r) for r in rows]
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Ledger query failed: %s", exc)
+        closed_logs = []
+
+    if not closed_logs:
+        render_empty_state("Aucune transaction clôturée dans le registre SQLite.")
+    else:
+        disp_ledger = pd.DataFrame([{
+            "ID": str(r.get("id", ""))[:8],
+            "Titre": format_name(r.get("ticker", "")),
+            "Type": r.get("signal_type", "BUY"),
+            "Qte": r.get("quantity", 0) or 0,
+            "Prix": f"{float(r.get('price') or 0):,.2f} €",
+            "Score": f"{float(r.get('score') or 0):.1f}",
+            "Raison": str(r.get("reason", ""))[:80],
+            "Date": str(r.get("created_at", ""))[:16],
+        } for r in closed_logs])
+        st.dataframe(disp_ledger, use_container_width=True, hide_index=True)
+
+# --- Tab: Universe & Screener ------------------------------------------------
+with tab_screener:
+    st.markdown(
+        "<div class='info-text'><b>Screener Quantitatif Multidimensionnel</b> : "
+        "Filtre et classe l'intégralité de l'univers PEA selon les performances 1M, 3M, 1Y, "
+        "la position vs SMA200, le RSI(14), et le score Aegis de Trend Quality.</div>",
+        unsafe_allow_html=True,
+    )
+    sc1, sc2 = st.columns([1, 2])
+    with sc1:
+        screener_search = st.text_input("🔍 Recherche rapide (Nom ou Ticker)", value="", placeholder="ex: LVMH ou MC.PA", key="scr_search")
+    with sc2:
+        screener_sectors = st.multiselect("Filtrer par secteur", sorted(universe_df["Sector"].unique()), key="scr_sectors")
+
+    with st.spinner("Calcul des indicateurs du Screener Univers…"):
+        scr_df = get_universe_screener_metrics(universe_df)
+
+    if scr_df.empty:
+        render_empty_state("Calcul du Screener en cours d'ingestion par le Sniper Daemon. Nécessite 200 jours d'historique.")
+    else:
+        view_scr = scr_df.copy()
+        if screener_search.strip():
+            pat = screener_search.strip().lower()
+            view_scr = view_scr[
+                view_scr["Ticker"].str.lower().str.contains(pat)
+                | view_scr["Titre"].str.lower().str.contains(pat)
+            ]
+        if screener_sectors:
+            view_scr = view_scr[view_scr["Secteur"].isin(screener_sectors)]
+
+        st.caption(f"{len(view_scr)} titre(s) affiché(s) sur {len(scr_df)} calculés.")
+        st.dataframe(
+            view_scr,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Ticker": st.column_config.TextColumn("Ticker", width="small"),
+                "Titre": st.column_config.TextColumn("Titre", width="medium"),
+                "Secteur": st.column_config.TextColumn("Secteur", width="medium"),
+                "Cours (€)": st.column_config.NumberColumn("Cours (€)", format="%.2f €"),
+                "Perf 1M (%)": st.column_config.NumberColumn("1M (%)", format="%+.1f%%"),
+                "Perf 3M (%)": st.column_config.NumberColumn("3M (%)", format="%+.1f%%"),
+                "Perf 1Y (%)": st.column_config.NumberColumn("1Y (%)", format="%+.1f%%"),
+                "RSI(14)": st.column_config.NumberColumn("RSI(14)", format="%.1f"),
+                "Tendance SMA200": st.column_config.TextColumn("Tendance SMA200"),
+                "Trend Quality": st.column_config.NumberColumn("Trend Quality (Aegis)", format="%.2f"),
+            }
+        )
+
+# --- Tab: Exploration (market + ticker radar) --------------------------------
+with tab_mkt:
+    st.markdown(
+        "<div class='info-text'>Exploration marche (top/flop univers) + "
+        "<b>fiche ticker</b> : graphique plein ecran, analyse technique "
+        "expliquee, actualites, insiders, Polymarket macro.</div>",
+        unsafe_allow_html=True,
+    )
+
+    # Prefer liquid mid/large names — exclude microcaps/pennies from scan defaults.
+    liquid_scan = list(dict.fromkeys(
+        [p.ticker for p in positions]
+        + ["MC.PA", "OR.PA", "AI.PA", "RMS.PA", "SAN.PA", "TTE.PA", "BNP.PA",
+           "AIR.PA", "SU.PA", "EL.PA", "CS.PA", "DG.PA", "SAF.PA", "KER.PA",
+           "STLAP.PA", "RNO.PA", "ORA.PA", "ENGI.PA", "CAP.PA", "DSY.PA",
+           "HO.PA", "ML.PA", "SGO.PA", "GLE.PA", "ACA.PA", "VIE.PA", "PUB.PA",
+           "BN.PA", "RI.PA", "EWLD.PA", "PAEEM.PA", "ESE.PA", "C50.PA",
+           _CORE_TICKER]
+    ))
+    # Do NOT pull random sector samples (they inject illiquid AL* pennies).
+    scan_tickers = tuple(
+        t for t in liquid_scan
+        if t == _CORE_TICKER or t in set(universe_df["Ticker"])
+    )
+
+    all_tickers = scan_tickers if scan_tickers else tuple(universe_df["Ticker"].head(40))
+    mode = st.radio("Mode d'intervalle", ["Prereglage", "Plage personnalisee"],
+                    horizontal=True, key="mkt_mode")
+
+    if mode == "Prereglage":
+        period_map = {"1 Semaine": "5d", "1 Mois": "1mo", "3 Mois": "3mo",
+                      "6 Mois": "6mo", "1 An": "1y", "2 Ans": "2y", "5 Ans": "5y"}
+        label = st.select_slider("Intervalle d'analyse", list(period_map.keys()),
+                                 value="1 Mois")
+        perf = get_market_performance(all_tickers, period=period_map[label])
+        interval_label = label
+        period_key = period_map[label]
+        d_start = d_end = None
+    else:
+        cA, cB = st.columns(2)
+        with cA:
+            d_start = st.date_input("Debut", value=date.today() - timedelta(days=90),
+                                    max_value=date.today())
+        with cB:
+            d_end = st.date_input("Fin", value=date.today(), max_value=date.today())
+        perf = get_market_performance(all_tickers, period=None,
+                                      start=d_start.isoformat(), end=d_end.isoformat())
+        interval_label = f"{d_start.isoformat()} → {d_end.isoformat()}"
+        period_key = None
+
+    if perf.empty:
+        st.error("Impossible de recuperer les donnees de marche pour cet intervalle.")
+    else:
+        # Drop near-zero noise AND illiquid pennies (price < 2 EUR).
+        perf = perf[
+            (perf["Performance (%)"].abs() > 0.05)
+            & (perf["Current Price"] >= 2.0)
+        ].copy()
+        if perf.empty:
+            st.warning("Pas assez de variations significatives sur l'intervalle.")
+        else:
+            best, worst = perf.iloc[0], perf.iloc[-1]
+            c1, c2 = st.columns(2)
+            with c1:
+                st.success(f"🟢 **MEILLEURE PERFORMANCE** · {interval_label}")
+                st.metric(format_name(best["Ticker"]), f"{best['Current Price']:.2f} €",
+                          f"{best['Performance (%)']:+.2f}%")
+            with c2:
+                st.error("🔴 **PIRE PERFORMANCE** (candidat Mean-Reversion)")
+                st.metric(format_name(worst["Ticker"]), f"{worst['Current Price']:.2f} €",
+                          f"{worst['Performance (%)']:+.2f}%")
+
+            st.markdown("#### Classement (top & flop liquides)")
+            show = pd.concat([perf.head(12), perf.tail(12)]).drop_duplicates("Ticker")
+            show = show.sort_values("Performance (%)", ascending=True)
+            show["Label"] = [f"{short_name(t)} ({t})" for t in show["Ticker"]]
+            bar = pex.bar(
+                show, x="Performance (%)", y="Label", orientation="h",
+                color="Performance (%)", color_continuous_scale=_DIVERGE,
+                color_continuous_midpoint=0,
+                hover_data={"Current Price": ":.2f", "Ticker": True, "Label": False},
+            )
+            _style_dark_fig(bar, height=max(420, 22 * len(show)))
+            bar.update_layout(margin=dict(t=10, l=0, r=0, b=0),
+                              coloraxis_showscale=False,
+                              yaxis_title="", xaxis_title=f"Perf % · {interval_label}")
+            st.plotly_chart(bar, width="stretch")
+
+            movers = list(perf["Ticker"].head(4)) + list(perf["Ticker"].tail(4))
+            movers = tuple(dict.fromkeys(movers))
+            if period_key:
+                norm = get_normalized_prices(movers, period_key, None, None)
+            else:
+                norm = get_normalized_prices(
+                    movers, None, d_start.isoformat(), d_end.isoformat()
+                )
+            st.markdown("#### Trajectoires rebasees a 100 (top 4 + flop 4)")
+            if norm.empty:
+                st.caption("Trajectoires indisponibles.")
+            else:
+                line = go.Figure()
+                for i, c in enumerate(norm.columns):
+                    line.add_trace(go.Scatter(
+                        x=norm.index, y=norm[c], name=format_name(c), mode="lines",
+                        line=dict(width=2.4,
+                                  color=_BRIGHT_SERIES[i % len(_BRIGHT_SERIES)])))
+                line.add_hline(y=100, line_dash="dot", line_color=_MUTED)
+                _style_dark_fig(line, height=420)
+                line.update_layout(margin=dict(t=10, l=0, r=10, b=0),
+                                   legend=dict(orientation="h", y=1.12))
+                line.update_xaxes(rangeslider_visible=True, gridcolor=_GRID)
+                st.plotly_chart(line, width="stretch")
+
+            with st.expander("Table complete du scan liquide", expanded=False):
+                perf_colors = [_NEON if v >= 0 else _RED for v in perf["Performance (%)"]]
+                disp = pd.DataFrame({
+                    "Titre": [format_name(t) for t in perf["Ticker"]],
+                    "Debut": [f"{v:,.2f} €" for v in perf["Start Price"]],
+                    "Actuel": [f"{v:,.2f} €" for v in perf["Current Price"]],
+                    "Perf": [f"{v:+.2f}%" for v in perf["Performance (%)"]],
+                })
+                st.plotly_chart(
+                    dark_table(disp, height=420,
+                               font_color_map={"Perf": perf_colors},
+                               col_widths=[2.4, 1, 1, 0.9]),
+                    width="stretch")
+
+    # ========== Fiche ticker (ex-Radar) =====================================
+    st.markdown("---")
+    st.markdown("### 📡 Fiche ticker — graphique & actualites")
+
+    held = [p.ticker for p in positions]
+    options = sorted(set(held) | set(universe_df["Ticker"]))
+    default_idx = options.index(held[0]) if held and held[0] in options else 0
+    # Prefer worst performer as default when no holdings (mean-reversion lens)
+    if not held and not perf.empty:
+        w = str(perf.iloc[-1]["Ticker"])
+        if w in options:
+            default_idx = options.index(w)
+    # Mission-control <TICKER> GO overrides the default once.
+    focus = st.session_state.get("focus_ticker")
+    if focus:
+        if focus in options:
+            default_idx = options.index(focus)
+        elif focus not in options:
+            options = sorted(set(options) | {focus})
+            default_idx = options.index(focus)
+    selected = st.selectbox(
+        "Actif a analyser", options, index=default_idx,
+        format_func=format_name, key="explore_ticker",
+    )
+    tv = _tv_symbol(selected)
+
+    # HTML Badges for data sources
+    st.markdown(
+        f"""
+        <div style="display:flex; gap:8px; margin: 8px 0 14px 0; flex-wrap:wrap; align-items:center;">
+            <span style="color:{_MUTED}; font-size:11px; font-weight:700; font-family:'Courier New',monospace; letter-spacing:1px;">SOURCES INTÉGRÉES :</span>
+            <span style="color:#00B4D8; border: 1px solid #00B4D8; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: bold; background: rgba(0, 180, 216, 0.1);">[AMF BDIF]</span>
+            <span style="color:#00FF00; border: 1px solid #00FF00; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: bold; background: rgba(0, 255, 0, 0.1);">[Finnhub]</span>
+            <span style="color:#FFB000; border: 1px solid #FFB000; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: bold; background: rgba(255, 176, 0, 0.1);">[Yahoo Finance]</span>
+            <span style="color:#C77DFF; border: 1px solid #C77DFF; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: bold; background: rgba(199, 125, 255, 0.1);">[Boursorama]</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    dossier = get_ticker_dossier(selected)
+    st.markdown(
+        f"<div class='eli5'><b style='color:{_CYAN};'>Qui est {dossier.get('name')} ?</b><br>"
+        f"{dossier.get('summary', '')}<br>"
+        f"<span style='color:{_MUTED};'>"
+        f"Secteur: {dossier.get('sector') or 'n/a'} · "
+        f"Industrie: {dossier.get('industry') or 'n/a'}"
+        f"{' · ETF' if dossier.get('is_etf') else ''}</span></div>",
+        unsafe_allow_html=True,
+    )
+
+    ind = get_indicators(selected)
+    alpha = get_alpha_signals(selected)
+    bprofile = get_bourso_profile(selected)
+
+    # Prominent AI Synthesis Trigger Button
+    c_btn1, c_btn2 = st.columns([1.2, 2.8])
+    with c_btn1:
+        if st.button("🧠 Générer Synthèse IA", type="primary", key=f"btn_ai_synth_{selected}", use_container_width=True):
+            st.session_state[f"ai_synth_{selected}"] = True
+
+    if st.session_state.get(f"ai_synth_{selected}"):
+        with st.spinner(f"Génération de la note de recherche IA pour {selected}…"):
+            val_m = get_valuation_metrics(selected)
+            ai_memo = generate_ai_ticker_summary(selected, dossier, ind, val_m, bprofile)
+            st.markdown(
+                f"<div class='eli5' style='border-left:4px solid {_NEON}; background: linear-gradient(180deg, #0E1614 0%, #080D0C 100%); margin-bottom:18px;'>"
+                f"<div style='color:{_NEON}; font-size:13px; font-weight:700; letter-spacing:1px; margin-bottom:8px;'>🧠 NOTE DE SYNTHÈSE IA — {format_name(selected)}</div>"
+                f"<div style='color:#E2E8F0; font-size:13px; line-height:1.7;'>{ai_memo}</div>"
+                f"</div>",
                 unsafe_allow_html=True,
             )
 
-    st.markdown("---")
-    
-    # 4. The Ledger (Full History & Post-Mortems)
-    st.markdown("### 📖 The Ledger: Closed Trades & AI Post-Mortems")
-    try:
-        import sqlite3
-        import pandas as pd
-        db = get_portfolio_db()
-        with db._connect() as conn:
-            try:
-                df_closed = pd.read_sql("SELECT id, ticker, action, quantity, price, pnl_pct, hold_days, reason, post_mortem, created_at FROM audit_logs WHERE status='CLOSED' ORDER BY created_at DESC", conn)
-            except sqlite3.OperationalError:
-                df_closed = pd.DataFrame()
-        
-        if df_closed.empty:
-            render_empty_state("No closed trades in history yet. Waiting for next daemon pass.")
+    cat1, cat2 = st.columns(2)
+    with cat1:
+        st.markdown("**News / catalyseurs qui aideraient**")
+        for c in dossier.get("catalysts") or []:
+            st.markdown(f"- {c}")
+    with cat2:
+        st.markdown("**Evenements a surveiller (ne pas vouloir)**")
+        for r in dossier.get("risk_events") or []:
+            st.markdown(f"- {r}")
+
+    # Profile + indicators as full metric boxes (no truncation)
+    mrow1 = st.columns(4)
+    with mrow1[0]:
+        if ind:
+            st.markdown(metric_box(
+                "Cours", f"{ind['close']:.2f} €",
+                sub=f"{ind['chg_1d']:+.2f}% (1j) · {ind['chg_5d']:+.2f}% (5j)",
+                help_text="Dernier cours et variations recentes.",
+            ), unsafe_allow_html=True)
         else:
-            
-            # Simple UI to select a trade to view its post-mortem
-            st.dataframe(
-                df_closed[["created_at", "ticker", "action", "quantity", "price", "pnl_pct", "hold_days"]], 
-                use_container_width=True, 
-                hide_index=True
-            )
-            
-            # We can't do row selection natively in basic st.dataframe without st.data_editor or ag-grid,
-            # so we provide a selectbox to pick a trade to inspect.
-            trade_opts = [f"{r['ticker']} ({r['action']} {r['created_at'][:10]}) PnL: {r['pnl_pct']}%" for r in closed_trades]
-            selected_trade = st.selectbox("Select a trade to view its AI Post-Mortem", trade_opts)
-            
-            if selected_trade:
-                idx = trade_opts.index(selected_trade)
-                trade_data = closed_trades[idx]
-                
-                st.markdown("#### 🤖 Ollama AI Post-Mortem")
-                pm = trade_data["post_mortem"]
-                if pm:
-                    st.success(pm)
+            st.markdown(metric_box("Cours", "n/a", sub="Donnees manquantes",
+                                   accent="muted"), unsafe_allow_html=True)
+    with mrow1[1]:
+        rsi = (ind or {}).get("rsi")
+        rsi_state = ("Survendu" if rsi is not None and rsi < 30 else
+                     "Surachete" if rsi is not None and rsi > 70 else "Neutre")
+        st.markdown(metric_box(
+            "RSI(14)", f"{rsi:.1f}" if rsi is not None else "n/a",
+            sub=rsi_state,
+            accent="cyan" if rsi is not None and rsi < 30 else (
+                "red" if rsi is not None and rsi > 70 else ""),
+            help_text="<30 survendu · >70 surachete.",
+        ), unsafe_allow_html=True)
+    with mrow1[2]:
+        trend_ok = bool(ind and ind.get("sma200") and ind["close"] > ind["sma200"])
+        st.markdown(metric_box(
+            "Tendance LT (vs SMA200)",
+            "Haussier" if trend_ok else ("Baissier" if ind else "n/a"),
+            sub=(f"SMA200 {(ind or {}).get('sma200', 0):.2f}" if ind and ind.get("sma200")
+                 else "—"),
+            accent="" if trend_ok else "red",
+            help_text="Prix au-dessus / en-dessous de la moyenne 200 jours.",
+        ), unsafe_allow_html=True)
+    with mrow1[3]:
+        vol = (ind or {}).get("vol_ann")
+        st.markdown(metric_box(
+            "Vol. annualisee",
+            f"{vol:.0f}%" if vol is not None else "n/a",
+            sub="Sizing inverse-vol",
+            accent="amber" if vol and vol > 35 else "",
+            help_text="Plus c'est eleve, plus la taille de position est reduite.",
+        ), unsafe_allow_html=True)
+
+    mrow2 = st.columns(4)
+    with mrow2[0]:
+        elig = ", ".join((bprofile or {}).get("eligibility") or []) or "n/a"
+        st.markdown(metric_box("Eligibilite PEA/SRD", elig, sub="Boursorama",
+                               accent="cyan"), unsafe_allow_html=True)
+    with mrow2[1]:
+        cons = (bprofile or {}).get("consensus_score")
+        st.markdown(metric_box(
+            "Consensus analystes",
+            f"{cons:.2f}" if cons is not None else "n/a",
+            sub=(bprofile or {}).get("sentiment") or "—",
+        ), unsafe_allow_html=True)
+    with mrow2[2]:
+        tgt = (bprofile or {}).get("target_price")
+        pot = (bprofile or {}).get("potential_pct")
+        st.markdown(metric_box(
+            "Objectif 3 mois",
+            f"{tgt:.2f} €" if tgt is not None else "n/a",
+            sub=f"{pot:+.1f}%" if pot is not None else "—",
+        ), unsafe_allow_html=True)
+    with mrow2[3]:
+        isin = (bprofile or {}).get("isin") or "n/a"
+        st.markdown(metric_box(
+            "ISIN", isin,
+            sub=f"{(bprofile or {}).get('index') or '—'} / "
+                f"{(bprofile or {}).get('exchange') or '—'}",
+        ), unsafe_allow_html=True)
+
+    # Technical analysis explanation (full width)
+    st.markdown(
+        f"<div class='eli5'><b style='color:{_AMBER};'>"
+        f"Analyse technique expliquee — {format_name(selected)}</b><br>"
+        f"{build_ta_explanation(ind, alpha)}</div>",
+        unsafe_allow_html=True,
+    )
+
+    # Full-width TradingView chart
+    chart_html = f"""
+    <div class="tradingview-widget-container" style="height:620px;width:100%">
+      <div id="tv_chart_explore" style="height:620px;width:100%"></div>
+      <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
+      <script type="text/javascript">
+        new TradingView.widget({{
+          "autosize": true, "symbol": "{tv}", "interval": "D",
+          "timezone": "Europe/Paris", "theme": "dark", "style": "1",
+          "locale": "fr", "enable_publishing": false,
+          "hide_side_toolbar": false, "allow_symbol_change": true,
+          "studies": ["RSI@tv-basicstudies", "MASimple@tv-basicstudies"],
+          "container_id": "tv_chart_explore"
+        }});
+      </script>
+    </div>
+    """
+    components.html(chart_html, height=640)
+
+    # TA widget + SMAs under chart
+    tw1, tw2 = st.columns([1, 1])
+    with tw1:
+        ta_html = f"""
+        <div class="tradingview-widget-container">
+          <div class="tradingview-widget-container__widget"></div>
+          <script type="text/javascript"
+            src="https://s3.tradingview.com/external-embedding/embed-widget-technical-analysis.js" async>
+          {{"interval":"1D","width":"100%","isTransparent":true,"height":380,
+            "symbol":"{tv}","showIntervalTabs":true,"locale":"fr","colorTheme":"dark"}}
+          </script>
+        </div>
+        """
+        components.html(ta_html, height=400)
+    with tw2:
+        sma_bits = []
+        if ind:
+            for k, lab in (("sma5", "SMA5"), ("sma50", "SMA50"), ("sma200", "SMA200")):
+                if ind.get(k):
+                    sma_bits.append(f"{lab}: <b>{ind[k]:.2f}</b>")
+        pc = (alpha or {}).get("put_call")
+        ins = (alpha or {}).get("insider", 0)
+        ins_txt = {1: "Achats nets dirigeants", -1: "Ventes nettes dirigeants"}.get(
+            ins, "Neutre / indisponible"
+        )
+        st.markdown(
+            f"<div style='background:#0A0A0A;padding:16px;border:1px solid #222;"
+            f"min-height:360px;line-height:1.7;color:#E0E0E0;'>"
+            f"<div style='color:{_CYAN};font-size:12px;letter-spacing:1px;'>"
+            f"RECAP QUANT</div>"
+            f"<div style='margin-top:10px;'>{' · '.join(sma_bits) or 'SMA n/a'}</div>"
+            f"<div style='margin-top:12px;'><b>Put/Call</b> : "
+            f"{f'{pc:.2f}' if pc is not None else 'n/a'} "
+            f"<span style='color:{_MUTED};font-size:12px;'>"
+            f"(souvent neutre sur small/mid .PA — chaine options rare)</span></div>"
+            f"<div style='margin-top:12px;'><b>Insiders</b> : {ins_txt}</div>"
+            f"<div style='margin-top:12px;color:{_MUTED};font-size:13px;'>"
+            f"TradingView: <code>{tv}</code></div>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
+    # --- Phase 18: Valuation / buy zone + 10y annual returns ----------------
+    st.markdown("---")
+    st.markdown("#### 🎯 Valorisation & Recommandation de Prix")
+    st.markdown(
+        "<div class='info-text'>Multiples et objectifs analystes via yfinance "
+        "(souvent plus riches sur large caps). La <b>zone d'achat suggérée</b> "
+        "est une bande heuristique (52w low → milieu vers target low) — "
+        "contexte pour ton jugement PEA, pas un ordre automatique.</div>",
+        unsafe_allow_html=True,
+    )
+    val = get_valuation_metrics(selected)
+    if not val.get("ok"):
+        st.caption(
+            "Valorisation indisponible pour ce ticker "
+            "(réseau, delisting, ou champs Yahoo vides)."
+        )
+    else:
+        cur = val.get("current_price")
+        # Prefer live indicator close when Yahoo info price is missing.
+        if cur is None and ind and ind.get("close"):
+            cur = float(ind["close"])
+        tmean = val.get("target_mean")
+        upside = None
+        if cur and tmean and cur > 0:
+            upside = (tmean / cur - 1.0) * 100.0
+
+        v1, v2, v3, v4 = st.columns(4)
+        with v1:
+            st.markdown(metric_box(
+                "Cours actuel",
+                f"{cur:,.2f} €" if cur is not None else "n/a",
+                sub=(f"vs target mean {upside:+.1f}%" if upside is not None
+                     else "prix Yahoo / indicateur"),
+                accent="" if (upside is None or upside >= 0) else "red",
+                sub_cls=("sub-green" if upside is not None and upside >= 0
+                         else "sub-red" if upside is not None else "sub-muted"),
+                help_text="Dernier cours connu (Yahoo info ou close indicateur).",
+            ), unsafe_allow_html=True)
+        with v2:
+            st.markdown(metric_box(
+                "Target mean analystes",
+                f"{tmean:,.2f} €" if tmean is not None else "n/a",
+                sub=(f"Target low {val['target_low']:,.2f} €"
+                     if val.get("target_low") is not None else "consensus Yahoo"),
+                accent="cyan",
+                help_text="Objectif moyen des analystes (Yahoo Finance).",
+            ), unsafe_allow_html=True)
+        with v3:
+            pe = val.get("trailing_pe")
+            st.markdown(metric_box(
+                "P/E trailing",
+                f"{pe:.1f}×" if pe is not None else "n/a",
+                sub="multiple de bénéfices",
+                help_text="Price / trailing EPS. Vide sur ETF ou pertes.",
+            ), unsafe_allow_html=True)
+        with v4:
+            pb = val.get("price_to_book")
+            st.markdown(metric_box(
+                "Price / Book",
+                f"{pb:.2f}×" if pb is not None else "n/a",
+                sub="valeur comptable",
+                help_text="Cours / book value par action.",
+            ), unsafe_allow_html=True)
+
+        r1m = val.get("return_1m_pct")
+        r1y = val.get("return_1y_pct")
+        p1, p2 = st.columns(2)
+        with p1:
+            st.markdown(metric_box(
+                "Perf. 1 mois",
+                f"{r1m:+.1f}%" if r1m is not None else "n/a",
+                sub="~21 séances",
+                accent="" if r1m is None or r1m >= 0 else "red",
+                sub_cls=("sub-green" if r1m is not None and r1m >= 0
+                         else "sub-red" if r1m is not None else "sub-muted"),
+                help_text="Variation du close sur ~1 mois de séances.",
+            ), unsafe_allow_html=True)
+        with p2:
+            st.markdown(metric_box(
+                "Perf. 1 an",
+                f"{r1y:+.1f}%" if r1y is not None else "n/a",
+                sub="trailing 12 mois",
+                accent="" if r1y is None or r1y >= 0 else "red",
+                sub_cls=("sub-green" if r1y is not None and r1y >= 0
+                         else "sub-red" if r1y is not None else "sub-muted"),
+                help_text="Close actuel vs close il y a ~1 an.",
+            ), unsafe_allow_html=True)
+
+        bz_lo = val.get("buy_zone_low")
+        bz_hi = val.get("buy_zone_high")
+        w52_lo = val.get("fifty_two_week_low")
+        w52_hi = val.get("fifty_two_week_high")
+        in_zone = (
+            cur is not None and bz_lo is not None and bz_hi is not None
+            and bz_lo <= cur <= bz_hi
+        )
+        zone_color = _NEON if in_zone else _AMBER
+        zone_label = (
+            f"{bz_lo:,.2f} € → {bz_hi:,.2f} €"
+            if bz_lo is not None and bz_hi is not None
+            else "n/a (données manquantes)"
+        )
+        status = (
+            "DANS LA ZONE — setup prix intéressant à croiser avec le MRE"
+            if in_zone else
+            "HORS ZONE — attendre un meilleur point d'entrée ou ignorer"
+            if bz_hi is not None and cur is not None else
+            "Zone non calculable"
+        )
+        st.markdown(
+            f"<div style='background:#0A0A0A;padding:14px 16px;margin-top:8px;"
+            f"border:1px solid #2A2A2A;border-left:4px solid {zone_color};"
+            f"font-family:Courier New,monospace;'>"
+            f"<div style='color:{_CYAN};font-size:11px;letter-spacing:1.5px;'>"
+            f"ZONE D'ACHAT SUGGÉRÉE</div>"
+            f"<div style='color:{_WHITE};font-size:20px;font-weight:700;"
+            f"margin-top:6px;'>{zone_label}</div>"
+            f"<div style='color:{zone_color};margin-top:8px;font-size:13px;'>"
+            f"{status}</div>"
+            f"<div style='color:{_MUTED};margin-top:8px;font-size:12px;'>"
+            f"52w low "
+            f"{f'{w52_lo:,.2f} €' if w52_lo is not None else 'n/a'} · "
+            f"52w high "
+            f"{f'{w52_hi:,.2f} €' if w52_hi is not None else 'n/a'} · "
+            f"règle = milieu(52w low, target low) comme plafond de zone"
+            f"</div></div>",
+            unsafe_allow_html=True,
+        )
+
+    st.markdown("#### 📊 Performances Annuelles (10 dernières années)")
+    ann = get_annual_returns(selected)
+    if ann is None or ann.empty:
+        st.caption(
+            "Historique annuel indisponible (ticker trop récent, delisté, "
+            "ou erreur réseau Yahoo)."
+        )
+    else:
+        st.plotly_chart(
+            render_annual_returns_chart(ann, selected),
+            width="stretch",
+            key=f"explore_annual_returns_{selected}",
+        )
+        pos_yrs = int((ann["Return_Pct"] >= 0).sum())
+        st.caption(
+            f"{len(ann)} année(s) · {pos_yrs} positive(s) · "
+            f"moyenne {ann['Return_Pct'].mean():+.1f}% / an (arithmétique)."
+        )
+
+    # News — full width, 2 columns (not a cramped side panel)
+    st.markdown(f"#### 📰 Actualites — {short_name(selected)}")
+    news = get_recent_news(selected, limit=8)
+    if news:
+        score_toggle = st.checkbox(
+            "Scorer l'impact (IA + mots-cles)",
+            value=True,
+            key="explore_score_news",
+        )
+        if score_toggle:
+            with st.spinner("Notation…"):
+                scores = [score_news_with_llm(selected, n["title"]) for n in news]
+        else:
+            scores = [heuristic_news_score(n["title"]) for n in news]
+        ranked = sorted(zip(news, scores), key=lambda x: abs(x[1] or 0), reverse=True)
+        ncol1, ncol2 = st.columns(2)
+        for i, (n, sc) in enumerate(ranked):
+            with (ncol1 if i % 2 == 0 else ncol2):
+                render_news_card(selected, n, sc)
+    else:
+        st.caption("Aucune actualite majeure recente pour cet actif.")
+
+    # Insiders — AMF first (official), then FMP, then Yahoo
+    st.markdown("---")
+    st.markdown("#### 🕵️ Activite des dirigeants (insiders)")
+    st.markdown(
+        "<div class='info-text'><b>Cascade stricte : AMF BDIF → FMP → Yahoo</b>. "
+        "L'AMF est la source legale officielle FR. Si BDIF est bloque (WAF / "
+        "HTTP 500), le terminal bascule sur Financial Modeling Prep "
+        "(<code>FMP_API_KEY</code>), puis yfinance. Un achat net massif = "
+        "signal de confiance interne, pas un ordre automatique.</div>",
+        unsafe_allow_html=True,
+    )
+    insider_df = get_insider_data(selected)
+    if insider_df.empty:
+        st.warning(
+            f"Aucune transaction insider pour {format_name(selected)}. "
+            "AMF/FMP/Yahoo n'ont rien renvoye (couverture variable sur .PA)."
+        )
+    else:
+        src_note = ""
+        if "Source" in insider_df.columns and len(insider_df):
+            src_note = f" · Source: {insider_df['Source'].iloc[0]}"
+        st.caption(f"{len(insider_df)} declaration(s){src_note}")
+        disp_cols = {}
+        for src, dst in (("Insider", "Insider"), ("Position", "Poste"),
+                         ("Transaction", "Transaction"), ("Title", "Titre"),
+                         ("Shares", "Actions"), ("Value", "Valeur"),
+                         ("Date", "Date"), ("Source", "Source")):
+            if src not in insider_df.columns:
+                continue
+            if src in ("Shares", "Value"):
+                disp_cols[dst] = [
+                    f"{v:,.0f}" if pd.notna(v) else "—" for v in insider_df[src]
+                ]
+            elif src == "Title":
+                disp_cols[dst] = [
+                    str(v)[:80] if pd.notna(v) else "—" for v in insider_df[src]
+                ]
+            elif src == "Date":
+                disp_cols[dst] = [
+                    str(v)[:10] if pd.notna(v) else "—" for v in insider_df[src]
+                ]
+            else:
+                disp_cols[dst] = insider_df[src].astype(str)
+        disp = pd.DataFrame(disp_cols)
+        font_map = None
+        if "Transaction" in disp.columns:
+            colors = []
+            for t in disp["Transaction"]:
+                tl = str(t).lower()
+                if "buy" in tl or "purchase" in tl or "achat" in tl:
+                    colors.append(_NEON)
+                elif "sale" in tl or "sell" in tl or "vente" in tl:
+                    colors.append(_RED)
                 else:
-                    st.warning("No post-mortem generated for this trade yet. Run `post_mortem_engine.py` to generate it.")
-                    
-                with st.expander("Original Thesis (Reason)"):
-                    st.markdown(trade_data["reason"])
-                    
-    except Exception as e:
-        st.error(f"Failed to load trade ledger: {e}")
+                    colors.append(_WHITE)
+            font_map = {"Transaction": colors}
+        st.plotly_chart(
+            dark_table(disp, height=min(420, 44 + 30 * max(len(disp), 1)),
+                       font_color_map=font_map),
+            width="stretch",
+        )
 
+    # Polymarket — real section
+    st.markdown("---")
+    st.markdown("#### 🎲 Polymarket — probabilites macro")
+    st.markdown(
+        "<div class='info-text'>Marches de prediction (API Gamma). "
+        "Filtre macro/politique (sports exclus). "
+        "<b>Contexte seulement</b> — jamais un trigger d'ordre.</div>",
+        unsafe_allow_html=True,
+    )
+    poly_events = get_polymarket_macro(limit=10)
+    if not poly_events:
+        st.caption(
+            "Polymarket indisponible (reseau / API). "
+            "Le briefing geopolitique dans General reste la reference."
+        )
+    else:
+        # Clickable markdown table (Plotly tables can't host real links).
+        lines = [
+            "| Marche | P(YES) | Vol 24h | Impact PEA | Lien |",
+            "|---|---:|---:|---|---|",
+        ]
+        for ev in poly_events:
+            yp = ev.get("yes_prob")
+            yp_s = f"**{yp*100:.0f}%**" if yp is not None else "—"
+            title = (ev.get("title") or "").replace("|", "/")
+            lines.append(
+                f"| {title} | {yp_s} | {ev.get('volume24h', 0):,.0f} | "
+                f"{ev.get('impact', '—')} | [ouvrir]({ev.get('url')}) |"
+            )
+        st.markdown("\n".join(lines))
 
+# --- Tab: Full Universe ------------------------------------------------------
+with tab_uni:
+    st.markdown(
+        "<div class='info-text'>Univers PEA investissable + "
+        "<b>performance moyenne par secteur</b> (echantillon liquide).</div>",
+        unsafe_allow_html=True,
+    )
+    st.caption(f"{len(universe_df)} titres · "
+               f"{universe_df['Sector'].nunique()} secteurs")
+
+    sec_period_map = {"1 Semaine": "5d", "1 Mois": "1mo", "3 Mois": "3mo",
+                      "6 Mois": "6mo", "1 An": "1y"}
+    sec_label = st.select_slider(
+        "Horizon perf. sectorielle", list(sec_period_map.keys()), value="1 Mois",
+        key="uni_sec_horizon",
+    )
+    with st.spinner("Perf. moyennes par secteur…"):
+        sec_perf = get_sector_performance(universe_df, period=sec_period_map[sec_label])
+    if not sec_perf.empty:
+        st.markdown(f"#### Performance moyenne par secteur · {sec_label}")
+        sec_bar = pex.bar(
+            sec_perf, x="Perf_moy", y="Sector", orientation="h",
+            color="Perf_moy", color_continuous_scale=_DIVERGE,
+            color_continuous_midpoint=0,
+            hover_data={"N": True, "Perf_med": ":.1f", "Best": ":.1f", "Worst": ":.1f"},
+        )
+        _style_dark_fig(sec_bar, height=max(360, 28 * len(sec_perf)))
+        sec_bar.update_layout(margin=dict(t=10, l=0, r=0, b=0),
+                              coloraxis_showscale=False,
+                              xaxis_title="Perf moyenne %", yaxis_title="")
+        st.plotly_chart(sec_bar, width="stretch")
+        scolors = [_NEON if v >= 0 else _RED for v in sec_perf["Perf_moy"]]
+        sdisp = pd.DataFrame({
+            "Secteur": sec_perf["Sector"],
+            "Moy": [f"{v:+.1f}%" for v in sec_perf["Perf_moy"]],
+            "Med": [f"{v:+.1f}%" for v in sec_perf["Perf_med"]],
+            "N": sec_perf["N"],
+            "Best": [f"{v:+.1f}%" for v in sec_perf["Best"]],
+            "Worst": [f"{v:+.1f}%" for v in sec_perf["Worst"]],
+        })
+        st.plotly_chart(
+            dark_table(sdisp, height=min(480, 48 + 28 * len(sdisp)),
+                       font_color_map={"Moy": scolors},
+                       col_widths=[2, 0.8, 0.8, 0.5, 0.8, 0.8]),
+            width="stretch",
+        )
+    else:
+        st.caption("Perf. sectorielle indisponible pour cet horizon.")
+
+    st.markdown("---")
+    csum = universe_df.groupby("Sector").size().reset_index(name="Nb titres")
+    cc1, cc2 = st.columns([1, 2])
+    with cc1:
+        pie = pex.pie(csum, names="Sector", values="Nb titres", hole=0.5,
+                     color_discrete_sequence=_BRIGHT_SERIES)
+        pie.update_layout(paper_bgcolor=_BG, plot_bgcolor=_BG,
+                          font=dict(family="Courier New", color=_WHITE),
+                          height=400, margin=dict(t=10, l=0, r=0, b=0),
+                          showlegend=False)
+        pie.update_traces(textinfo="label+value",
+                          marker=dict(line=dict(color=_BG, width=1)))
+        st.plotly_chart(pie, width="stretch")
+    with cc2:
+        sector_filter = st.multiselect("Filtrer par secteur",
+                                       sorted(universe_df["Sector"].unique()))
+        view = universe_df if not sector_filter else \
+            universe_df[universe_df["Sector"].isin(sector_filter)]
+        view = view.sort_values(["Sector", "Ticker"])
+        disp = pd.DataFrame({
+            "Titre": view["Name"], "Ticker": view["Ticker"],
+            "Secteur": view["Sector"],
+        })
+        st.plotly_chart(dark_table(disp, height=400,
+                                   col_widths=[2, 1, 1.5]), width="stretch")
+
+# --- Tab: Architecture & Documentation --------------------------------------
+with tab_arch:
+    st.markdown(
+        "<div class='eli5'>\U0001F9E0 <b>Comment fonctionne le bot ?</b> "
+        "Cette page explique l'architecture complete, sans jargon inutile. "
+        "L'IA ne decide jamais d'acheter ou de vendre : elle traduit du texte "
+        "en chiffres. Les decisions restent 100% mathematiques.</div>",
+        unsafe_allow_html=True,
+    )
+
+    st.markdown("""
+### ⏰ L'Horloge (Scheduler)
+
+Le daemon (`main_scheduler.py`) tourne en continu et declenche **3 passes
+quotidiennes** (heure de Paris), uniquement les **jours de bourse** :
+
+| Heure | Role |
+|-------|------|
+| **09:00** | Ouverture — scan apres ouverture Euronext |
+| **13:30** | Mid-day — cours + re-evaluation |
+| **17:10** | Cloture — derniere passe |
+
+- **Week-end** : pause. **Vendredi 18:00** : Weekly Historian (Discord).
+- **1er du mois** : Profit-shave mensuel. **Chaque jour ouvré 08:35** : ATR stops.
+- Force manuelle : `python main_scheduler.py --now`
+
+---
+
+### 📡 Les Donnees
+
+| Source | Usage | Statut |
+|--------|--------|--------|
+| **yfinance** | OHLCV, calendrier, insiders, news fallback | Primaire |
+| **VIX / VSTOXX** | Coupe-circuit panic (`VIX_PANIC_THRESHOLD`) | `^V2TX` puis `^VIX` |
+| **TradingView** | Graphiques + jauge TA (UI only) | Widgets |
+| **Polymarket Gamma** | Probabilites macro (contexte) | Live, no auth |
+| **Boursorama** | Profil PEA/SRD, consensus, news (best-effort) | Scraper fragile |
+| **AMF BDIF** | Declarations dirigeants (**primaire**) | Officiel FR ; WAF/HTTP 500 possible → FMP → Yahoo |
+| **FMP** | Insiders fallback (`FMP_API_KEY`) | Secondaire |
+| **OpenRouter** | Sentiment news + briefing geo (explique, ne decide pas) | Optionnel |
+| **SQLite + DuckDB** | Portfolio / audit / equity curve / OHLCV | Local |
+
+---
+
+### 🖥️ Dashboard (onglets)
+
+| Onglet | Contenu |
+|--------|---------|
+| **General & Signaux** | Suggestion adaptative **multi-horizon**, explication cash, fiche ETF Core, reco, geo, registre, news du mois |
+| **Portefeuille** | Equity curve + allocation + editeur wallet (SQLite) |
+| **Exploration** | Scan liquide top/flop + trajectoires, fiche ticker (dossier entreprise, TA expliquee, news, insiders, Polymarket) |
+| **Univers** | Liste PEA + **perf moyenne par secteur** (horizon reglable) |
+| **Architecture** | Cette page |
+
+Mode **MICRO** (ex. 100 €) : 1 part liquide + gros cash buffer — le Core
+(`CW8.PA`) cote trop cher pour une part entiere. Ce n'est pas une erreur :
+c'est de l'optionalite jusqu'au prochain depot.
+
+---
+
+### 🧮 Le Moteur Quantitatif
+
+**Core / Satellite** :
+
+1. **Smart DCA Core** (`CW8.PA`) — plus agressif sous SMA200 (peur).
+2. **Satellite MRE** — BUY seulement si **toutes** les conditions :
+   - RSI(14) < 30
+   - Close > SMA200
+   - Close > SMA5 (momentum)
+   - EPS > 0
+   - VIX ≤ seuil panic
+   - Budget satellite / secteur / correlation OK
+   - Sizing : Half-Kelly × parite de volatilite × floor PEA
+3. **RevocationEngine** — a chaque passe, les signaux PENDING trop vieux
+   (`SIGNAL_VALIDITY_HOURS`) ou en drift prix >3% passent REVOKED/EXPIRED
+   avant l'alerte Discord.
+
+L'IA **n'approuve jamais** un trade. Discord = copilot manuel.
+
+---
+
+### 🛡️ Bouclier de risque
+
+| Garde-fou | Regle |
+|-----------|-------|
+| Zero levier | Pas de marge |
+| Budget satellite | Max ~30% equity |
+| Secteur / ligne | Max ~25% / ~15% (assoupli en MICRO) |
+| VIX panic | Bloque nouveaux satellites |
+| Stop / shave | ATR quotidien (2.5×ATR14) / +20% trim mensuel |
+| Execution | Discord only |
+
+---
+
+### 🖥️ Architecture technique
+
+```
+AMF → FMP → yfinance / VIX / Bourso best-effort
+        → SignalGenerator + SmartDCA
+        → CorrelationFirewall + PeaSizer + MacroVeto
+        → Monthly ATR rebalancer
+        → Discord Copilot
+        → SQLite (portfolio + equity curve)  ↔  Streamlit Dashboard
+        → DuckDB (OHLCV)
+```
+
+Le dashboard lit l'etat en continu. L'editeur de wallet peut ecrire
+cash/positions. Les ordres restent Discord + scheduler.
+""")
+
+    st.markdown("---")
+    st.markdown("### 📋 Logs détaillés (copie / audit)")
+    st.markdown(
+        "<div class='info-text'>Fichiers rotatifs sous <code>logs/</code> — "
+        "un par composant + <code>pea_sniper_all.log</code>. Format détaillé "
+        "(fichier:ligne:fonction). Lecture seule ici ; rien n'est modifié.</div>",
+        unsafe_allow_html=True,
+    )
+    if list_log_files is None or tail_log is None:
+        st.caption("Module logging indisponible.")
+    else:
+        files = list_log_files()
+        if not files:
+            st.caption(
+                "Aucun log encore. Lance `python main_scheduler.py --now` "
+                "pour peupler `logs/`."
+            )
+        else:
+            names = [p.name for p in files]
+            pick = st.selectbox("Fichier", names, key="log_file_pick")
+            nlines = st.slider("Lignes (tail)", 50, 1000, 250, 50, key="log_tail_n")
+            path = next(p for p in files if p.name == pick)
+            body = tail_log(path, nlines)
+            st.text_area(
+                "Contenu (sélectionnable / copiable)",
+                value=body,
+                height=420,
+                key="log_tail_view",
+            )
+            st.caption(str(path))
+
+# =============================================================================
+# Footer + optional auto-refresh
+# =============================================================================
+st.write("---")
+st.caption(
+    "PEA Sniper Terminal V-Prime \u00b7 Zero-leverage \u00b7 Execution manuelle "
+    "via Discord \u00b7 Donnees: yfinance / TradingView \u00b7 "
+    "Ceci n'est PAS un conseil en investissement."
+)
+
+if auto_refresh:
+    import time as _time
+
+    _time.sleep(int(refresh_secs))
+    st.rerun()

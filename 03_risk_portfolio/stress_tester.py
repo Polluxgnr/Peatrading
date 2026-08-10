@@ -1,145 +1,167 @@
-"""Historical stress testing utilities (black swan replay)."""
+"""Ratio Backfill & Historical Crisis Stress Tester for PEA Sniper Terminal.
+
+Solves the truncated history problem for French PEA ETFs (e.g. ``CW8.PA``)
+by mathematically stitching their price action to long-history proxies
+(``URTH``, ``^GSPC``, ``SPY``) using the invariant ratio at the first overlap date:
+    ratio = Asset[first_date] / Proxy[first_date]
+    Synthetic_History = Proxy[:first_date] * ratio
+"""
 
 from __future__ import annotations
 
-from typing import Iterable
+import logging
+from typing import Dict, Optional, Tuple
 
+import numpy as np
 import pandas as pd
+import yfinance as yf
 
-_SHOCK_WINDOWS = [
-    ("Subprime 2008", "2008-09-01", "2008-10-31"),
-    ("COVID Crash 2020", "2020-02-20", "2020-03-23"),
-    ("Inflation Shock 2022", "2022-01-03", "2022-10-12"),
-]
+logger = logging.getLogger(__name__)
 
-# CAC 40 index has history back to 2000 — CW8/EWLD did not exist in 2008.
-_PRIMARY_PROXY = "^FCHI"
-_FALLBACK_PROXIES: Iterable[str] = ("^FCHI", "EWLD.PA", "CW8.PA", "PE500.PA")
-_NO_DATA_MSG = "Pas de données historiques"
-
-
-def _max_drawdown_from_returns(returns: pd.Series) -> float:
-    if returns is None or returns.empty:
-        return 0.0
-    wealth = (1.0 + returns.astype(float)).cumprod()
-    peak = wealth.cummax()
-    drawdown = wealth / peak - 1.0
-    return float(drawdown.min()) if not drawdown.empty else 0.0
+# Key historical crisis regimes to stress-test
+CRISIS_PERIODS = {
+    "2008_GFC_Lehman": ("2007-10-01", "2009-03-09"),
+    "2011_Euro_Debt": ("2011-05-01", "2011-10-04"),
+    "2020_Covid_Crash": ("2020-02-19", "2020-03-23"),
+    "2022_Inflation_Bear": ("2022-01-03", "2022-10-12"),
+}
 
 
-def _load_close_series(db_manager, ticker: str, days: int) -> pd.Series | None:
-    try:
-        hist = db_manager.get_historical_prices(ticker, days=days)
-        if hist is None or hist.empty:
-            return None
-        frame = hist[["Date", "Close"]].copy()
-        frame["Date"] = pd.to_datetime(frame["Date"], errors="coerce")
-        frame["Close"] = pd.to_numeric(frame["Close"], errors="coerce")
-        frame = frame.dropna(subset=["Date", "Close"]).sort_values("Date")
-        if frame.empty:
-            return None
-        return frame.set_index("Date")["Close"]
-    except Exception:
-        return None
+class RatioBackfillStressTester:
+    """Stitches asset history with a proxy index (^FCHI / ^GSPC) and executes crisis stress tests."""
 
+    def __init__(self, target_ticker: str = "CW8.PA", proxy_ticker: str = "^FCHI") -> None:
+        self.target_ticker = target_ticker
+        self.proxy_ticker = proxy_ticker
 
-def simulate_historical_shocks(
-    portfolio_tickers: list,
-    weights: dict,
-    db_manager,
-) -> pd.DataFrame:
-    """Replay historical windows and estimate weighted portfolio drawdowns.
+    def synthesize_ratio_backfill(
+        self,
+        target_df: Optional[pd.DataFrame] = None,
+        proxy_df: Optional[pd.DataFrame] = None,
+        start_year: str = "2000-01-01",
+    ) -> pd.DataFrame:
+        """Create a continuous synthetic OHLCV history by ratio-backfilling target with proxy.
 
-    Uses ``^FCHI`` (CAC 40) as primary proxy for pre-2010 shocks.
-  """
-    if not portfolio_tickers:
-        return pd.DataFrame(columns=["Shock", "Start", "End", "Worst PnL %", "Proxy Used"])
+        Args:
+            target_df: DataFrame with Date index and 'Close' column for target (e.g. CW8.PA).
+            proxy_df: DataFrame with Date index and 'Close' column for proxy (e.g. ^GSPC).
+            start_year: Start date for proxy download if fetching live.
 
-    tickers = [str(t) for t in portfolio_tickers if str(t)]
-    w = {str(k): float(v) for k, v in (weights or {}).items()}
-    if not w:
-        ew = 1.0 / float(len(tickers))
-        w = {t: ew for t in tickers}
+        Returns:
+            pd.DataFrame: Stitched DataFrame with columns ['Close', 'Synthetic'].
+        """
+        if target_df is None or target_df.empty:
+            try:
+                target_df = yf.download(self.target_ticker, start="2005-01-01", progress=False, auto_adjust=True)
+                if isinstance(target_df.columns, pd.MultiIndex):
+                    c = target_df["Close"]
+                    target_df = pd.DataFrame({"Close": c.iloc[:, 0] if isinstance(c, pd.DataFrame) else c})
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Could not download %s: %s", self.target_ticker, exc)
+                target_df = pd.DataFrame()
 
-    start_min = min(pd.Timestamp(s) for _, s, _ in _SHOCK_WINDOWS)
-    end_max = max(pd.Timestamp(e) for _, _, e in _SHOCK_WINDOWS)
-    days = int((end_max - start_min).days) + 60
+        if proxy_df is None or proxy_df.empty:
+            try:
+                proxy_df = yf.download(self.proxy_ticker, start=start_year, progress=False, auto_adjust=True)
+                if isinstance(proxy_df.columns, pd.MultiIndex):
+                    c = proxy_df["Close"]
+                    proxy_df = pd.DataFrame({"Close": c.iloc[:, 0] if isinstance(c, pd.DataFrame) else c})
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Could not download proxy %s: %s", self.proxy_ticker, exc)
+                proxy_df = pd.DataFrame()
 
-    series_map: dict[str, pd.Series] = {}
-    for t in tickers:
-        s = _load_close_series(db_manager, t, days)
-        if s is not None:
-            series_map[t] = s
+        if target_df.empty and proxy_df.empty:
+            return pd.DataFrame(columns=["Close", "Synthetic"])
 
-    # Pre-load proxy series (CAC 40 first for 2008 coverage).
-    proxy_map: dict[str, pd.Series] = {}
-    for px in _FALLBACK_PROXIES:
-        s = _load_close_series(db_manager, px, days)
-        if s is not None and not s.empty:
-            proxy_map[px] = s
+        if target_df.empty:
+            # Entirely proxy
+            res = pd.DataFrame({"Close": proxy_df["Close"].dropna(), "Synthetic": True})
+            return res
 
-    out_rows = []
-    for shock_name, start_s, end_s in _SHOCK_WINDOWS:
-        start = pd.Timestamp(start_s)
-        end = pd.Timestamp(end_s)
-        active_returns = []
-        active_weights = []
-        proxy_used = False
+        if proxy_df.empty:
+            # Entirely target
+            res = pd.DataFrame({"Close": target_df["Close"].dropna(), "Synthetic": False})
+            return res
 
-        for t in tickers:
-            s = series_map.get(t)
-            if s is None or s[(s.index >= start) & (s.index <= end)].empty:
-                # Prefer CAC 40 for 2008; fall back to other proxies.
-                for px in _FALLBACK_PROXIES:
-                    sp = proxy_map.get(px)
-                    if sp is not None:
-                        wdw_test = sp[(sp.index >= start) & (sp.index <= end)]
-                        if wdw_test is not None and len(wdw_test) >= 4:
-                            s = sp
-                            proxy_used = True
-                            break
-            if s is None:
-                continue
+        t_close = target_df["Close"].dropna().sort_index()
+        p_close = proxy_df["Close"].dropna().sort_index()
 
-            wdw = s[(s.index >= start) & (s.index <= end)]
-            if wdw is None or wdw.empty or len(wdw) < 4:
-                continue
-            r = wdw.pct_change().dropna()
-            if r.empty:
-                continue
-            active_returns.append(r.rename(t))
-            active_weights.append(float(w.get(t, 0.0)))
+        # Find first overlapping valid date
+        overlap_dates = t_close.index.intersection(p_close.index)
+        if len(overlap_dates) == 0:
+            logger.warning("No overlap dates found between %s and %s.", self.target_ticker, self.proxy_ticker)
+            return pd.DataFrame({"Close": t_close, "Synthetic": False})
 
-        if not active_returns:
-            out_rows.append(
-                {
-                    "Shock": shock_name,
-                    "Start": start_s,
-                    "End": end_s,
-                    "Worst PnL %": _NO_DATA_MSG,
-                    "Proxy Used": _PRIMARY_PROXY if shock_name.startswith("Subprime") else "n/a",
-                }
-            )
-            continue
-
-        mat = pd.concat(active_returns, axis=1, join="inner").dropna()
-        if mat.empty:
-            worst = _NO_DATA_MSG
-        else:
-            ww = pd.Series(active_weights, dtype=float)
-            ww = ww / ww.sum() if ww.sum() > 0 else pd.Series([1.0 / len(active_weights)] * len(active_weights))
-            pr = mat.to_numpy(dtype=float) @ ww.to_numpy(dtype=float)
-            dd = _max_drawdown_from_returns(pd.Series(pr, index=mat.index))
-            worst = round(dd * 100.0, 2)
-
-        out_rows.append(
-            {
-                "Shock": shock_name,
-                "Start": start_s,
-                "End": end_s,
-                "Worst PnL %": worst,
-                "Proxy Used": _PRIMARY_PROXY if proxy_used else "no",
-            }
+        first_overlap = overlap_dates[0]
+        ratio = float(t_close.loc[first_overlap]) / float(p_close.loc[first_overlap])
+        logger.info(
+            "Ratio Backfill: first overlap at %s | %s=%.2f, %s=%.2f | ratio=%.6f",
+            str(first_overlap)[:10],
+            self.target_ticker,
+            float(t_close.loc[first_overlap]),
+            self.proxy_ticker,
+            float(p_close.loc[first_overlap]),
+            ratio,
         )
 
-    return pd.DataFrame(out_rows)
+        # Synthetic history prior to first_overlap
+        p_pre = p_close[p_close.index < first_overlap] * ratio
+        synth_pre = pd.DataFrame({"Close": p_pre, "Synthetic": True})
+        actual_post = pd.DataFrame({"Close": t_close, "Synthetic": False})
+
+        stitched = pd.concat([synth_pre, actual_post]).sort_index()
+        stitched = stitched[~stitched.index.duplicated(keep="last")]
+        return stitched
+
+    def stress_test_crisis(self, stitched_df: pd.DataFrame, start_date: str, end_date: str) -> Dict[str, float]:
+        """Calculate maximum drawdown and performance over a specified crisis window."""
+        if stitched_df.empty:
+            return {"max_drawdown": 0.0, "total_return": 0.0, "trough_date": "n/a"}
+
+        sub = stitched_df.loc[start_date:end_date]
+        if sub.empty or len(sub) < 2:
+            return {"max_drawdown": 0.0, "total_return": 0.0, "trough_date": "n/a"}
+
+        series = sub["Close"].astype(float)
+        peak = series.cummax()
+        drawdowns = (series - peak) / peak
+
+        max_dd = float(drawdowns.min())
+        trough_idx = drawdowns.idxmin()
+        tot_return = float((series.iloc[-1] / series.iloc[0]) - 1.0)
+
+        return {
+            "max_drawdown": max_dd,
+            "total_return": tot_return,
+            "trough_date": str(trough_idx)[:10],
+            "start_price": float(series.iloc[0]),
+            "trough_price": float(series.loc[trough_idx]),
+            "end_price": float(series.iloc[-1]),
+        }
+
+    def run_all_stress_tests(self, stitched_df: Optional[pd.DataFrame] = None) -> Dict[str, dict]:
+        """Execute full battery of crisis stress tests."""
+        if stitched_df is None or stitched_df.empty:
+            stitched_df = self.synthesize_ratio_backfill()
+
+        results: Dict[str, dict] = {}
+        for name, (start_d, end_d) in CRISIS_PERIODS.items():
+            results[name] = self.stress_test_crisis(stitched_df, start_d, end_d)
+            logger.info(
+                "Stress Test [%s]: Max DD = %.2f%%, Total Return = %.2f%% (Trough: %s)",
+                name,
+                results[name]["max_drawdown"] * 100,
+                results[name]["total_return"] * 100,
+                results[name]["trough_date"],
+            )
+
+        return results
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    tester = RatioBackfillStressTester()
+    res = tester.run_all_stress_tests()
+    print("\n--- Crisis Stress Testing Results ---")
+    for crisis, stats in res.items():
+        print(f"[{crisis}] Max DD: {stats['max_drawdown']*100:+.2f}% | Return: {stats['total_return']*100:+.2f}% | Trough: {stats['trough_date']}")

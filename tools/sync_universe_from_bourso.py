@@ -223,7 +223,7 @@ def main() -> None:
         return
 
     with open(_UNIVERSE, "w", encoding="utf-8") as fh:
-        fh.write("# PEA Pollux - investable universe\n")
+        fh.write("# PEA Sniper Terminal V-Prime - investable universe\n")
         fh.write("# Synced from Boursorama Eligibilité PEA filter "
                  "(tools/sync_universe_from_bourso.py).\n")
         fh.write("# Extra flags: srd=true (liquid SRD), pea_pme=true.\n\n")

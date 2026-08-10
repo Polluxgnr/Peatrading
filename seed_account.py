@@ -1,4 +1,4 @@
-"""Account seeding CLI for PEA Pollux.
+"""Account seeding CLI for PEA Sniper Terminal V-Prime.
 
 Bootstraps (or resets) the SQLite portfolio so the daemon, sizer and dashboard
 have a real starting capital to work from. Without this, the account is empty

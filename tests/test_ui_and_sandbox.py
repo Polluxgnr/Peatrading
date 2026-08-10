@@ -9,7 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 for sub in ("01_memory_core", "03_risk_portfolio", "05_interfaces"):
     sys.path.insert(0, str(ROOT / sub))
-sys.path.insert(0, str(ROOT / "00_data_sensors" / "newsletter_ingest"))
+sys.path.insert(0, str(ROOT / "experiments" / "newsletter_ingest"))
 
 from data_models import Position, PortfolioState, Signal, SignalType  # noqa: E402
 from pea_position_sizer import PeaSizer  # noqa: E402

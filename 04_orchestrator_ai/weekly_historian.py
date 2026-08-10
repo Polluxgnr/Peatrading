@@ -1,4 +1,4 @@
-"""Weekly Historian for PEA Pollux (Phase 12).
+"""Weekly Historian for PEA Sniper Terminal V-Prime (Phase 12).
 
 Every Friday the system "steps back" and writes a hedge-fund-style weekly digest
 for the CIO. It aggregates the last 7 days of audit logs into hard counts
@@ -17,20 +17,13 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-try:
-    _CORE = Path(__file__).resolve().parent.parent / "01_memory_core"
-    sys.path.insert(0, str(_CORE))
-    from env_loader import load_api_keys
+try:  # Load config/api_keys.env if python-dotenv is available.
+    from dotenv import load_dotenv
 
-    load_api_keys(Path(__file__).resolve().parent.parent / "config" / "api_keys.env")
+    _ENV_PATH = Path(__file__).resolve().parent.parent / "config" / "api_keys.env"
+    load_dotenv(_ENV_PATH)
 except Exception:  # noqa: BLE001
-    _env = Path(__file__).resolve().parent.parent / "config" / "api_keys.env"
-    if _env.exists():
-        with open(_env, "r", encoding="utf-8") as fh:
-            for line in fh:
-                if "=" in line and not line.strip().startswith("#"):
-                    k, v = line.strip().split("=", 1)
-                    os.environ.setdefault(k.strip(), v.strip().strip(" '\""))
+    pass
 
 _INTERFACES_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "05_interfaces"

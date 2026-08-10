@@ -1,4 +1,4 @@
-"""Root daemon scheduler for PEA Pollux.
+"""Root daemon scheduler for PEA Sniper Terminal V-Prime.
 
 Ties the whole pipeline together and runs it on the multi-pass European market
 schedule (09:00, 13:30, 17:10 Paris time, weekdays only):
@@ -28,17 +28,8 @@ from pathlib import Path
 
 import yaml
 
-# Native .env loader (no python-dotenv) — force keys into os.environ.
-_ROOT = Path(__file__).resolve().parent
-_env_path = _ROOT / "config" / "api_keys.env"
-if _env_path.exists():
-    with open(_env_path, "r", encoding="utf-8") as f:
-        for line in f:
-            if "=" in line and not line.strip().startswith("#"):
-                k, v = line.strip().split("=", 1)
-                os.environ[k.strip()] = v.strip().strip(" '\"")
-
 # --- Wire up the digit-prefixed package directories --------------------------
+_ROOT = Path(__file__).resolve().parent
 for _sub in (
     "00_data_sensors",
     "01_memory_core",
@@ -49,13 +40,6 @@ for _sub in (
 ):
     sys.path.insert(0, str(_ROOT / _sub))
 
-try:
-    from env_loader import load_api_keys  # noqa: E402
-
-    load_api_keys(_env_path)
-except Exception:  # noqa: BLE001
-    pass
-
 import aiohttp  # noqa: E402
 import schedule  # noqa: E402
 
@@ -64,7 +48,6 @@ from duckdb_manager import TimeSeriesDB  # noqa: E402
 from sqlite_portfolio import PortfolioDB  # noqa: E402
 from market_prices_api import MarketDataFetcher  # noqa: E402
 from macro_alpha_api import MacroAlphaSensor  # noqa: E402
-from newsletter_api import run_morning_briefing_sync  # noqa: E402
 from technical_scorer import SignalGenerator  # noqa: E402
 from smart_dca_engine import SmartDcaCore  # noqa: E402
 from monthly_rebalancer import PortfolioRebalancer  # noqa: E402
@@ -84,9 +67,8 @@ _TIMEZONE = "Europe/Paris"
 _PASS_TIMES = ("09:00", "13:30", "17:10")
 _WEEKLY_REPORT_TIME = "18:00"     # Friday CIO digest.
 _MONTHLY_CHECK_TIME = "08:30"     # Daily probe; profit-shave acts only on the 1st.
-_MORNING_BRIEFING_TIME = "08:25"  # Newsletter Zeitgeist before market open.
 _ATR_STOP_CHECK_TIME = "08:35"    # Daily ATR stop evaluation (weekdays via loop).
-_LOOKBACK_DAYS = 3650  # ~10 years -> enough for all ML and long-term SMAs.
+_LOOKBACK_DAYS = 400  # ~270 trading days -> enough for SMA-200.
 
 
 def _core_ticker() -> str:
@@ -139,20 +121,11 @@ def _load_universe_tickers() -> list[str]:
     try:
         with open(_UNIVERSE_PATH, "r", encoding="utf-8") as fh:
             universe = yaml.safe_load(fh) or {}
-        raw_tickers = [
+        return [
             entry["ticker"]
             for members in universe.get("universe", {}).values()
             for entry in members
         ]
-        
-        # Explicitly filter out macroeconomic symbols like IR3TIB01.EZQ.M.EM
-        # We only keep typical equity suffixes for the PEA universe.
-        valid_suffixes = (".PA", ".AS", ".NX", ".MI", ".MC", ".LS")
-        clean_tickers = [
-            t for t in raw_tickers 
-            if any(t.endswith(s) for s in valid_suffixes) or t.isalpha()
-        ]
-        return clean_tickers
     except Exception:  # noqa: BLE001
         logger.exception("Could not read universe file %s", _UNIVERSE_PATH)
         return []
@@ -244,12 +217,12 @@ async def run_pipeline_async() -> None:
     pdb = PortfolioDB()
     pdb.init_db()
     fetcher = MarketDataFetcher()
-    generator = SignalGenerator(portfolio_db=pdb)
+    generator = SignalGenerator()
     orchestrator = SignalOrchestrator(
         config_dir=_CONFIG_DIR, portfolio_db=pdb, timeseries_db=tsdb
     )
     explainer = NarrativeExplainer()
-    copilot = DiscordCopilot()
+    copilot = DiscordCopilot(portfolio_db=pdb, explainer=explainer)
 
     core_engine = SmartDcaCore(_CONFIG_DIR)
     macro_alpha = MacroAlphaSensor()
@@ -261,7 +234,8 @@ async def run_pipeline_async() -> None:
         return
     # The Core ETF must be fetched too so Smart DCA can read its history.
     fetch_tickers = tickers + ([core_ticker] if core_ticker not in tickers else [])
-    logger.info("Universe loaded: %d tickers (+core %s).", len(tickers), core_ticker)
+    fetch_tickers = list(set(fetch_tickers + ["^FCHI", "^GSPC", "^IXIC", "EURUSD=X", "OAT.PA", "CW8.PA"]))
+    logger.info("Universe loaded: %d tickers (+core %s, +macro indices).", len(tickers), core_ticker)
 
     # --- Data Phase ---
     ok = fetcher.update_database(tsdb, fetch_tickers, lookback_days=_LOOKBACK_DAYS)
@@ -269,122 +243,24 @@ async def run_pipeline_async() -> None:
         logger.error("Data ingestion failed; skipping this pass (no stale trades).")
         return
 
+    # --- News Ingestion Phase ---
+    try:
+        from news_api_client import run_api_scraper
+        from news_email_scraper import run_email_scraper
+        from news_rss_scraper import run_rss_scraper
+
+        run_api_scraper(pdb)
+        run_email_scraper(pdb)
+        run_rss_scraper(pdb)
+    except Exception as e:
+        logger.warning(f"News scraping failed: {e}")
+
     # --- Macro Phase: European VIX emergency brake ---
     vix_level = macro_alpha.get_european_vix()
 
-    # --- Compute daily sector means for StatArb ---
-    try:
-        import yaml
-        from pathlib import Path
-        with open(Path("config") / "pea_universe.yaml", "r", encoding="utf-8") as f:
-            uni = yaml.safe_load(f).get("universe", {})
-        ticker_to_sector = {}
-        for sector, items in uni.items():
-            for item in items:
-                ticker_to_sector[item["ticker"]] = sector
-        
-        daily_sector_means = {}
-        sector_rets = {}
-        for t in tickers:
-            try:
-                df_t = tsdb.get_historical_prices(t, days=5)
-                if df_t is not None and len(df_t) >= 2:
-                    c = df_t["Close"].astype(float).values
-                    if c[-2] > 0:
-                        ret = c[-1] / c[-2] - 1.0
-                        sec = ticker_to_sector.get(t, "Unknown")
-                        sector_rets.setdefault(sec, []).append(ret)
-            except Exception:
-                pass
-        for sec, rets in sector_rets.items():
-            daily_sector_means[sec] = sum(rets) / len(rets)
-        logger.info("Computed StatArb sector means for %d sectors.", len(daily_sector_means))
-    except Exception as e:
-        logger.warning("Failed to compute daily sector means: %s", e)
-        ticker_to_sector = {}
-        daily_sector_means = {}
-
     # --- Quant Phase ---
-    raw_signals = generator.generate_raw_signals(tsdb, tickers, daily_sector_means=daily_sector_means)
+    raw_signals = generator.generate_raw_signals(tsdb, tickers)
     logger.info("Quant engine produced %d raw signal(s).", len(raw_signals))
-
-    # --- Meta-Labeling (XGBoost) & SHAP Explainability Phase ---
-    try:
-        from ml_trainer import _MODEL_PATH, FEATURE_COLS
-        from ml_feature_store import build_ml_feature_row
-        import xgboost as xgb
-        
-        if _MODEL_PATH.exists() and raw_signals:
-            import shap
-            logger.info("Meta-Labeling ML model found. Filtering raw signals...")
-            bst = xgb.Booster()
-            bst.load_model(_MODEL_PATH)
-            explainer = shap.TreeExplainer(bst)
-            
-            # Fetch exogenous data once
-            exog_dfs = {}
-            for sym in ["^GSPC", "^IXIC", "EURUSD=X", "OAT.PA"]:
-                try:
-                    df_ex = tsdb.get_historical_prices(sym, days=252)
-                    if df_ex is not None and not df_ex.empty:
-                        exog_dfs[sym] = df_ex["Close"].astype(float)
-                except Exception:
-                    pass
-            
-            try:
-                cw8_df = tsdb.get_historical_prices("CW8.PA", days=252)
-                cw8_close = cw8_df["Close"].astype(float) if cw8_df is not None and not cw8_df.empty else None
-            except Exception:
-                cw8_close = None
-
-            filtered_signals = []
-            for sig in raw_signals:
-                try:
-                    df = tsdb.get_historical_prices(sig.ticker, days=252)
-                    if df is None or df.empty:
-                        continue
-                    sec = ticker_to_sector.get(sig.ticker, "Unknown")
-                    mean_ret = daily_sector_means.get(sec, 0.0)
-                    feat = build_ml_feature_row(
-                        sig.ticker,
-                        close=df["Close"].astype(float),
-                        cw8_close=cw8_close,
-                        exog_closes=exog_dfs,
-                        reason="live inference",
-                        pdb=pdb,
-                        asof_idx=-1,
-                        sector_mean_ret1d=mean_ret
-                    )
-                    from ml_trainer import predict_probability_with_shap
-                    
-                    proba, shap_vals = predict_probability_with_shap(feat)
-                    
-                    if proba is not None and shap_vals is not None:
-                        # Set shap vals directly on the signal for later consumption by the UI
-                        sig.shap_breakdown = shap_vals
-                        sig.lineage["shap_breakdown"] = shap_vals
-                        sig.ml_probability = proba
-                        
-                        contributions = list(shap_vals.items())
-                        contributions.sort(key=lambda x: abs(x[1]), reverse=True)
-                        top_3 = contributions[:3]
-                        shap_str = ", ".join([f"{k}: {v:+.2f}" for k, v in top_3])
-                        
-                        if proba >= 0.50:
-                            sig.reason += f" | AI Meta-Label: {proba*100:.1f}% ({shap_str})"
-                            filtered_signals.append(sig)
-                        else:
-                            logger.info(f"Signal {sig.ticker} rejected by ML Meta-Labeling (proba {proba*100:.1f}% < 50%)")
-                    else:
-                        filtered_signals.append(sig)
-                except Exception as exc:
-                    logger.debug(f"Failed to run ML filter for {sig.ticker}: {exc}")
-                    filtered_signals.append(sig)  # Fallback: keep signal if ML fails
-            
-            raw_signals = filtered_signals
-            logger.info(f"After ML Meta-Labeling, {len(raw_signals)} signal(s) passed.")
-    except Exception as exc:
-        logger.debug(f"ML Meta-Labeling phase skipped: {exc}")
 
     # --- Orchestration Phase (satellite) ---
     portfolio: PortfolioState = pdb.get_portfolio_state()
@@ -402,51 +278,17 @@ async def run_pipeline_async() -> None:
         len(approved),
         vix_level,
     )
-    # --- Phase 49: Intelligent Capital Deployment (80% Rule) ---
-    from pea_position_sizer import PeaSizer
-    inv_rate = PeaSizer.investment_rate(portfolio)
-    if inv_rate < 0.80:
-        market_reg = getattr(macro_alpha, "_last_regime_result", None)
-        is_bad_regime = False
-        if market_reg:
-            rm = market_reg.get("regime", "").upper()
-            if rm in ("BEAR", "VOLATILE"):
-                is_bad_regime = True
-        
-        if not is_bad_regime:
-            logger.info("Invested capital (%.1f%%) < 80%%. Activating strategic deployment.", inv_rate * 100)
-            # Find signals that were rejected ONLY because of score threshold
-            rejected_for_score = [s for s in processed if s.status == SignalStatus.REJECTED and ("Score" in s.reason or "< 65" in s.reason)]
-            rejected_for_score.sort(key=lambda x: x.score, reverse=True)
-            
-            deployed = 0
-            for sig in rejected_for_score:
-                if deployed >= 3:
-                    break
-                price = current_prices.get(sig.ticker, 0.0)
-                if price > 0:
-                    target_qty, sizing = orchestrator.sizer.size_with_explanation(sig, portfolio, price)
-                    if target_qty > 0:
-                        sig.target_qty = target_qty
-                        sig.status = SignalStatus.APPROVED
-                        sig.reason = f"DÉPLOIEMENT STRATÉGIQUE (Cash: {100 - inv_rate*100:.1f}%) | {target_qty} actions @ {price:.2f} EUR (Score: {sig.score:.1f})"
-                        logger.info("Strategic deployment APPROVED %s (score=%.1f)", sig.ticker, sig.score)
-                        deployed += 1
-
 
     # --- Core Phase: Smart DCA on the MSCI World ETF (immune to VIX veto) ---
     core_signal = core_engine.evaluate_cw8(
-        tsdb, portfolio.cash_available, portfolio.total_equity, portfolio
+        tsdb, portfolio.cash_available, portfolio.total_equity
     )
-    if core_signal:
-        from logging_setup import send_discord_alert
-        if (core_signal.target_qty or 0) > 0:
-            core_signal.status = SignalStatus.APPROVED
-            processed.append(core_signal)
-            logger.info("Core DCA APPROVED: buy %d %s.", core_signal.target_qty, core_ticker)
-            send_discord_alert(f"Core DCA: {core_signal.reason}", urgent=False)
-        else:
-            send_discord_alert(f"Core DCA: CALM ({core_signal.reason})", urgent=False)
+    if core_signal and (core_signal.target_qty or 0) > 0:
+        core_signal.status = SignalStatus.APPROVED
+        processed.append(core_signal)
+        logger.info(
+            "Core DCA APPROVED: buy %d %s.", core_signal.target_qty, core_ticker
+        )
 
     # --- Revocation Phase: anti-stale on existing PENDING signals ------------
     revoker = RevocationEngine(_CONFIG_DIR)
@@ -508,42 +350,26 @@ async def run_pipeline_async() -> None:
 
     # --- Alert Phase ---
     alertable = [
-        s for s in processed if s.status in (SignalStatus.APPROVED, SignalStatus.REVOKED)
+        s for s in processed
+        if s.status in (SignalStatus.APPROVED, SignalStatus.REVOKED)
     ]
     if not alertable:
         logger.info("No APPROVED/REVOKED signals to push to Discord this pass.")
-        from logging_setup import send_discord_alert
-        send_discord_alert("0 signals generated this pass.", urgent=False)
         return
 
-    if not os.getenv("DISCORD_WEBHOOK_URL"):
+    if not os.getenv("DISCORD_TOKEN"):
         logger.warning(
-            "DISCORD_WEBHOOK_URL not set; %d alert(s) computed but not sent.",
+            "DISCORD_TOKEN not set; %d alert(s) computed but not sent.",
             len(alertable),
         )
         return
 
     for signal in alertable:
         try:
-            # Discord Spam Guard: ensure no other alert sent today for same ticker/type
-            if pdb.has_duplicate_signal_today(signal):
-                logger.info("Spam guard: %s alert already sent today, skipping Discord.", signal.ticker)
-                continue
-                
             price = current_prices.get(signal.ticker, 0.0)
-            
-            # Direct webhook alert for asynchronous paper trading
-            from logging_setup import send_discord_alert
-            alert_msg = f"🛒 **PAPER TRADE APPROVED**\n**Ticker:** {signal.ticker}\n**Action:** {signal.signal_type.value}\n**Quantity:** {signal.target_qty} shares\n**Price:** {price:.2f} EUR\n**Reason:** {signal.reason}"
-            send_discord_alert(alert_msg, urgent=True)
-            
-            # Also try the rich copilot alert if bot is connected
-            try:
-                await copilot.send_signal_alert(
-                    signal, portfolio, explainer=explainer, current_price=price
-                )
-            except Exception as e:
-                logger.debug("Copilot bot alert skipped (bot might not be connected): %s", e)
+            await copilot.send_signal_alert(
+                signal, portfolio, explainer=explainer, current_price=price
+            )
         except Exception:  # noqa: BLE001 - a failed alert must not abort the pass.
             logger.exception("Failed to send Discord alert for %s.", signal.ticker)
 
@@ -562,8 +388,6 @@ def run_analysis_pass() -> None:
 
     started = time.perf_counter()
     logger.info("=== Analysis pass starting ===")
-    from logging_setup import send_discord_alert
-    send_discord_alert("=== Analysis pass starting ===", urgent=False)
     try:
         asyncio.run(run_pipeline_async())
         elapsed = time.perf_counter() - started
@@ -575,13 +399,6 @@ def run_analysis_pass() -> None:
             "elapsed_sec": round(elapsed, 2),
             "finished_at_local": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         })
-        # Phase 40: daily concise Discord digest after the evening pass.
-        local_hour = datetime.now().hour
-        if local_hour >= 17:
-            try:
-                asyncio.run(run_daily_concise_report_async())
-            except Exception:  # noqa: BLE001
-                logger.exception("Daily concise report failed after evening pass.")
     except Exception as exc:  # noqa: BLE001 - daemon must survive any failure.
         elapsed = time.perf_counter() - started
         logger.critical(
@@ -597,100 +414,6 @@ def run_analysis_pass() -> None:
         })
 
 
-async def run_daily_concise_report_async() -> None:
-    """Build and post the Phase 40 end-of-day Discord webhook digest."""
-    from discord_copilot import send_daily_concise_report
-    from pea_position_sizer import PeaSizer
-
-    pdb = PortfolioDB()
-    pdb.init_db()
-    state = pdb.get_portfolio_state()
-    inv_rate = PeaSizer.investment_rate(state)
-
-    day_chg = None
-    try:
-        curve = pdb.get_equity_curve()
-        if curve is not None and not curve.empty and len(curve) >= 2:
-            eqs = curve.sort_values("date")["equity"].astype(float)
-            if float(eqs.iloc[-2]) > 0:
-                day_chg = (float(eqs.iloc[-1]) / float(eqs.iloc[-2]) - 1.0) * 100.0
-    except Exception:  # noqa: BLE001
-        day_chg = None
-
-    top_pos = []
-    for p in sorted(state.positions, key=lambda x: x.market_value, reverse=True)[:5]:
-        top_pos.append({
-            "ticker": p.ticker,
-            "weight_pct": (
-                p.market_value / state.total_equity * 100.0
-                if state.total_equity else 0.0
-            ),
-            "pnl_pct": p.unrealized_pnl_pct * 100.0,
-        })
-
-    near_miss = []
-    try:
-        rows = pdb.fetch_signals_by_status(["PENDING", "REJECTED"], limit=40)
-        for row in rows or []:
-            try:
-                sc = float(row.get("score") or 0)
-            except (TypeError, ValueError):
-                continue
-            if 40 <= sc <= 64:
-                near_miss.append({
-                    "ticker": str(row.get("ticker") or ""),
-                    "score": int(sc),
-                    "missing": str(row.get("reason") or "")[:80] or "sous le seuil 65",
-                })
-        near_miss.sort(key=lambda x: x["score"], reverse=True)
-        near_miss = near_miss[:3]
-    except Exception:  # noqa: BLE001
-        near_miss = []
-
-    vix = None
-    try:
-        vix = float(MacroAlphaSensor().get_european_vix())
-    except Exception:  # noqa: BLE001
-        vix = None
-
-    await send_daily_concise_report(
-        equity=float(state.total_equity or 0),
-        day_change_pct=day_chg,
-        investment_rate_pct=inv_rate,
-        top_positions=top_pos,
-        near_miss=near_miss,
-        vix=vix,
-    )
-
-
-def run_backfill_10y() -> None:
-    """One-shot ~10-year OHLCV backfill for the PEA universe into DuckDB."""
-    logger.info("=== 10-year OHLCV backfill starting (lookback=3650) ===")
-    tsdb = TimeSeriesDB()
-    tsdb.init_db()
-    fetcher = MarketDataFetcher()
-    tickers = _load_universe_tickers()
-    core = _core_ticker()
-    fetch_tickers = tickers + ([core] if core not in tickers else [])
-    if not fetch_tickers:
-        logger.error("No tickers to backfill.")
-        return
-    # Batch to avoid Yahoo timeouts on 600+ names × 10y.
-    batch_size = 40
-    ok_total = 0
-    for i in range(0, len(fetch_tickers), batch_size):
-        batch = fetch_tickers[i : i + batch_size]
-        logger.info(
-            "Backfill batch %d–%d / %d …",
-            i + 1,
-            min(i + batch_size, len(fetch_tickers)),
-            len(fetch_tickers),
-        )
-        if fetcher.update_database(tsdb, batch, lookback_days=3650):
-            ok_total += len(batch)
-    logger.info("=== 10-year backfill done (%d tickers attempted) ===", ok_total)
-
-
 async def run_weekly_report_async() -> None:
     """Generate the weekly CIO digest and push it to the Discord webhook."""
     pdb = PortfolioDB()
@@ -700,7 +423,7 @@ async def run_weekly_report_async() -> None:
 
     report = await historian.generate_weekly_report(pdb, explainer=explainer)
     header = (
-        "\U0001F4C8 **PEA Pollux - Weekly Risk & Performance Digest**\n"
+        "\U0001F4C8 **PEA Sniper Terminal - Weekly Risk & Performance Digest**\n"
         f"_(generated {datetime.now().strftime('%Y-%m-%d %H:%M')} Paris)_\n\n"
     )
     sent = await _post_webhook(header + report)
@@ -808,113 +531,21 @@ def run_monthly_rebalance() -> None:
         logger.critical("Monthly rebalance FAILED: %s", exc, exc_info=True)
 
 
-def run_morning_briefing() -> None:
-    """08:25 Paris: IMAP newsletter headlines → LLM Zeitgeist → JSON file.
-
-    Strictly read-only IMAP. Failures write an Indisponible briefing so the
-    dashboard never crashes.
-    """
-    started = time.perf_counter()
-    logger.info("=== Morning briefing (newsletter Zeitgeist) starting ===")
-    try:
-        result = run_morning_briefing_sync(folder=os.getenv("NEWSLETTER_IMAP_FOLDER", "Finance"))
-        n = len(result.get("headlines") or [])
-        logger.info(
-            "=== Morning briefing done in %.1fs (%d headlines) ===",
-            time.perf_counter() - started,
-            n,
-        )
-    except Exception as exc:  # noqa: BLE001
-        logger.critical("Morning briefing FAILED: %s", exc, exc_info=True)
-        try:
-            from newsletter_api import NewsletterSensor
-
-            NewsletterSensor().write_briefing("Indisponible", [])
-        except Exception:  # noqa: BLE001
-            pass
-
-
-def run_nightly_profile_batch() -> None:
-    """04:00 Paris: Sequential massive pre-computation of all ticker profiles."""
-    import random
-    started = time.perf_counter()
-    logger.info("=== Night Run (Profile Batch) starting ===")
-    
-    try:
-        if not _UNIVERSE_PATH.exists():
-            logger.error("Universe file not found for Night Run.")
-            return
-            
-        with open(_UNIVERSE_PATH, "r", encoding="utf-8") as f:
-            univ = yaml.safe_load(f) or {}
-            
-        tickers = list(univ.keys())
-        total = len(tickers)
-        logger.info(f"Night Run will process {total} tickers.")
-        
-        # We need the profile builder
-        pb_dir = _ROOT / "01_memory_core"
-        if str(pb_dir) not in sys.path:
-            sys.path.insert(0, str(pb_dir))
-        from profile_builder import build_and_save_ticker_profile
-        
-        for i, tk in enumerate(tickers, 1):
-            write_pipeline_status({"night_run_status": f"Running {i}/{total} ({tk})..."})
-            try:
-                build_and_save_ticker_profile(tk, include_llm=False)
-            except Exception as e:
-                logger.error(f"Night Run failed for {tk}: {e}")
-                
-            time.sleep(random.uniform(1.5, 3.5))
-            
-        write_pipeline_status({"night_run_status": "Completed"})
-        logger.info(
-            "=== Night Run done in %.1fs (%d tickers) ===",
-            time.perf_counter() - started,
-            total,
-        )
-    except Exception as exc:
-        logger.critical("Night Run FAILED: %s", exc, exc_info=True)
-        write_pipeline_status({"night_run_status": f"Failed: {exc}"})
-
-
-def run_weekly_retraining() -> None:
-    """Weekly ML Retraining triggered: adapting models to latest market regime."""
-    logger.info("Weekly ML Retraining triggered: adapting models to latest market regime.")
-    try:
-        import sys
-        if str(_ROOT / "02_quant_engine") not in sys.path:
-            sys.path.insert(0, str(_ROOT / "02_quant_engine"))
-        from ml_trainer import train_model
-        train_model()
-        logger.info("Weekly retraining completed successfully.")
-    except Exception as e:
-        logger.error("Weekly ML Retraining failed: %s", e)
-    except Exception as e:
-        logger.exception("Unexpected error during weekend retraining: %s", e)
-
 def _schedule_passes() -> None:
     """Register all periodic jobs in Europe/Paris time."""
     for pass_time in _PASS_TIMES:
         schedule.every().day.at(pass_time, _TIMEZONE).do(run_analysis_pass)
     # Weekly CIO digest: Friday 18:00 Paris.
     schedule.every().friday.at(_WEEKLY_REPORT_TIME, _TIMEZONE).do(run_weekly_report)
-    # Morning newsletter Zeitgeist (before monthly probe / ATR stops).
-    schedule.every().day.at(_MORNING_BRIEFING_TIME, _TIMEZONE).do(run_morning_briefing)
     # Monthly profit-shave: probe daily, act only on the 1st (guarded inside).
     schedule.every().day.at(_MONTHLY_CHECK_TIME, _TIMEZONE).do(run_monthly_rebalance)
     # Daily ATR stops (weekdays guarded inside).
     schedule.every().day.at(_ATR_STOP_CHECK_TIME, _TIMEZONE).do(run_daily_atr_stops)
-    # Night Run: Mass profile pre-calculation
-    schedule.every().day.at("04:00", _TIMEZONE).do(run_nightly_profile_batch)
-    # Weekend Auto-Retraining
-    schedule.every().friday.at("22:00", _TIMEZONE).do(run_weekly_retraining)
     logger.info(
-        "Scheduled: passes at %s; weekly report Fri %s; morning briefing %s; "
-        "monthly probe %s; ATR stops %s; Weekly ML 22:00 (Fri), Night Run 04:00 (%s).",
+        "Scheduled: passes at %s; weekly report Fri %s; monthly probe %s; "
+        "ATR stops %s (%s).",
         ", ".join(_PASS_TIMES),
         _WEEKLY_REPORT_TIME,
-        _MORNING_BRIEFING_TIME,
         _MONTHLY_CHECK_TIME,
         _ATR_STOP_CHECK_TIME,
         _TIMEZONE,
@@ -925,7 +556,7 @@ def main() -> None:
     """Entry point: parse CLI args and either run once or loop forever."""
     setup_app_logging(level=logging.INFO, console=True)
 
-    parser = argparse.ArgumentParser(description="PEA Pollux daemon.")
+    parser = argparse.ArgumentParser(description="PEA Sniper Terminal daemon.")
     parser.add_argument(
         "--now",
         action="store_true",
@@ -946,42 +577,7 @@ def main() -> None:
         action="store_true",
         help="Run daily ATR stop-loss evaluation now.",
     )
-    parser.add_argument(
-        "--briefing",
-        action="store_true",
-        help="Run morning newsletter Zeitgeist now, then exit.",
-    )
-    parser.add_argument(
-        "--backfill-10y",
-        action="store_true",
-        help="Fetch ~10y OHLCV for the PEA universe into DuckDB, then exit.",
-    )
-    parser.add_argument(
-        "--daily-report",
-        action="store_true",
-        help="Send the Phase 40 daily concise Discord report now, then exit.",
-    )
-    parser.add_argument(
-        "--night-run",
-        action="store_true",
-        help="Run the massive profile pre-computation (Night Run) now, then exit.",
-    )
     args = parser.parse_args()
-
-    if args.backfill_10y:
-        logger.info("--backfill-10y: starting long-horizon OHLCV ingest.")
-        run_backfill_10y()
-        return
-
-    if args.night_run:
-        logger.info("--night-run: starting massive profile pre-computation.")
-        run_nightly_profile_batch()
-        return
-
-    if args.daily_report:
-        logger.info("--daily-report: posting concise Discord digest.")
-        asyncio.run(run_daily_concise_report_async())
-        return
 
     if args.now:
         logger.info("--now: running a single immediate pass.")
@@ -991,11 +587,6 @@ def main() -> None:
     if args.weekly:
         logger.info("--weekly: generating the weekly report now.")
         run_weekly_report()
-        return
-
-    if args.briefing:
-        logger.info("--briefing: running morning Zeitgeist now.")
-        run_morning_briefing()
         return
 
     if args.atr_stops:
@@ -1009,28 +600,11 @@ def main() -> None:
         return
 
     _schedule_passes()
-    logger.info("\U0001F6E1\uFE0F PEA Pollux Daemon started. "
+    logger.info("\U0001F6E1\uFE0F PEA Sniper Terminal Daemon started. "
                 "Waiting for scheduled runs...")
-    
-    last_heartbeat = 0
-    start_time = time.time()
-    
     while True:
         try:
             schedule.run_pending()
-            
-            now = time.time()
-            if now - last_heartbeat > 900:  # 15 minutes = 900 seconds
-                last_heartbeat = now
-                hb_path = _LOG_DIR / "health_status.json"
-                import json
-                hb_path.parent.mkdir(parents=True, exist_ok=True)
-                hb_path.write_text(json.dumps({
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                    "status": "running",
-                    "uptime_seconds": int(now - start_time)
-                }), encoding="utf-8")
-                
             time.sleep(60)
         except KeyboardInterrupt:
             logger.info("Shutdown requested; exiting daemon loop.")

@@ -1,4 +1,4 @@
-"""Entry point to launch the PEA Pollux Discord Copilot.
+"""Entry point to launch the PEA Sniper Terminal Discord Copilot.
 
 Usage:
     1. Copy config/api_keys.env.example -> config/api_keys.env and fill in:
@@ -17,23 +17,17 @@ import sys
 from pathlib import Path
 
 try:
-    sys.path.insert(0, str(Path(__file__).resolve().parent / "01_memory_core"))
-    from env_loader import load_api_keys
+    from dotenv import load_dotenv
 
-    load_api_keys(Path(__file__).resolve().parent / "config" / "api_keys.env")
+    load_dotenv(Path(__file__).resolve().parent / "config" / "api_keys.env")
 except Exception:  # noqa: BLE001
-    _env = Path(__file__).resolve().parent / "config" / "api_keys.env"
-    if _env.exists():
-        with open(_env, "r", encoding="utf-8") as fh:
-            for line in fh:
-                if "=" in line and not line.strip().startswith("#"):
-                    k, v = line.strip().split("=", 1)
-                    os.environ.setdefault(k.strip(), v.strip().strip(" '\""))
+    pass
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "05_interfaces"))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "01_memory_core"))
 
 from discord_copilot import DiscordCopilot  # noqa: E402
+from duckdb_manager import TimeSeriesDB  # noqa: E402
 from llm_explainer import NarrativeExplainer  # noqa: E402
 from sqlite_portfolio import PortfolioDB  # noqa: E402
 
@@ -56,9 +50,12 @@ def main() -> None:
     portfolio_db = PortfolioDB()
     portfolio_db.init_db()
 
+    timeseries_db = TimeSeriesDB()
+
     copilot = DiscordCopilot(
         portfolio_db=portfolio_db,
         explainer=NarrativeExplainer(),
+        timeseries_db=timeseries_db,
     )
 
     if "--demo" in sys.argv:

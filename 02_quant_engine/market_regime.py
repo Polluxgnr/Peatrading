@@ -1,120 +1,145 @@
-"""Market Regime Classifier for PEA Pollux.
+"""Market Regime & Volatility Percentile Tiers for PEA Sniper Terminal.
 
-Detects current market regime (BULL, BEAR, VOLATILE) using VIX and CAC40.
-Modulates quant engine parameters like CONVICTION_EMIT_FLOOR and RSI_OVERSOLD.
+Upgrades hard binary VIX cutoffs to continuous 252-day percentile-ranked volatility tiers:
+  * Percentile >= 95th: Panic / Extreme Volatility -> Conviction Floor +15 pts
+  * Percentile >= 80th: Elevated Volatility -> Conviction Floor +5 pts
+  * Percentile >= 50th: Normal / Moderate -> Conviction Floor +0 pts
+  * Percentile < 50th: Low Volatility / Complacency -> Conviction Floor +0 pts
 """
 
+from __future__ import annotations
+
 import logging
-from typing import Tuple
+from typing import Optional, Tuple, Union
 
+import numpy as np
 import pandas as pd
-
-from duckdb_manager import TimeSeriesDB
-from macro_alpha_api import MacroAlphaSensor
 
 logger = logging.getLogger(__name__)
 
-class MarketRegimeClassifier:
-    """Classifies the market regime to modulate quant engine thresholds."""
-    
-    def __init__(self) -> None:
-        self.tsdb = TimeSeriesDB(read_only=True)
-        self.macro_sensor = MacroAlphaSensor()
-        self._cached_regime = None
-        
-    def get_regime(self) -> str:
-        """Evaluate VIX and CAC40 to return current regime via HMM.
-        
-        Returns:
-            str: 'BULL', 'BEAR', or 'VOLATILE'
-        """
-        if self._cached_regime:
-            return self._cached_regime
-            
-        try:
-            vix = self.macro_sensor.get_european_vix()
-        except Exception:
-            logger.warning("Could not fetch VIX. Defaulting to VOLATILE for safety.")
-            return "VOLATILE"
-            
-        if vix is not None and vix > 30.0:
-            self._cached_regime = "VOLATILE"
-            return "VOLATILE"
-            
-        try:
-            import numpy as np
-            from hmmlearn.hmm import GaussianHMM
-            
-            # Fetch ~3 years of data for robust HMM training
-            df = self.tsdb.get_historical_prices("^FCHI", days=1000)
-            if df is None or df.empty or "Close" not in df.columns or len(df) < 100:
-                logger.warning("Not enough history for ^FCHI to compute HMM. Defaulting to VOLATILE for safety.")
-                return "VOLATILE"
-                
-            close = df["Close"].astype(float).dropna()
-            returns = close.pct_change().dropna()
-            
-            # Features: log returns and 10-day rolling volatility
-            vol = returns.rolling(10).std().dropna()
-            
-            # Align indices
-            common_idx = returns.index.intersection(vol.index)
-            X = np.column_stack([returns[common_idx].values, vol[common_idx].values])
-            
-            # Fit HMM (3 states: Bull, Bear, Volatile)
-            model = GaussianHMM(n_components=3, covariance_type="diag", n_iter=100, random_state=42)
-            model.fit(X)
-            
-            # Predict the latent state for the most recent observation
-            hidden_states = model.predict(X)
-            current_state = hidden_states[-1]
-            
-            # Heuristic to label states based on their mean return and volatility
-            means = model.means_
-            # means[:, 0] = return, means[:, 1] = vol
-            
-            # Highest vol state = VOLATILE
-            volatile_state = np.argmax(means[:, 1])
-            
-            # Among the other two, the one with higher return is BULL, lower is BEAR
-            other_states = [i for i in range(3) if i != volatile_state]
-            if means[other_states[0], 0] > means[other_states[1], 0]:
-                bull_state, bear_state = other_states[0], other_states[1]
-            else:
-                bull_state, bear_state = other_states[1], other_states[0]
-                
-            if current_state == volatile_state:
-                regime = "VOLATILE"
-            elif current_state == bull_state:
-                regime = "BULL"
-            else:
-                regime = "BEAR"
-                
-            logger.info("HMM Regime detected: %s (bull=%d, bear=%d, vol=%d, current=%d)",
-                        regime, bull_state, bear_state, volatile_state, current_state)
-            self._cached_regime = regime
-            return regime
-            
-        except Exception:
-            logger.exception("Failed to compute CAC40 HMM regime. Defaulting to VOLATILE for safety.")
-            return "VOLATILE"
 
-    def get_modulated_thresholds(
-        self, regime: str, base_conviction: float = 65.0, base_rsi: float = 30.0
-    ) -> Tuple[float, float]:
-        """Modulate conviction and RSI based on regime.
-        
+class VolatilityRegimeSentinel:
+    """Computes rolling 252-day percentile rank of European / Global volatility."""
+
+    def __init__(self, window: int = 252) -> None:
+        self.window = window
+
+    @staticmethod
+    def calculate_percentile_rank(
+        history: Union[pd.Series, Sequence[float], pd.DataFrame],
+        current_value: Optional[float] = None,
+    ) -> float:
+        """Calculate the percentile rank (0.0 to 100.0) of current volatility.
+
         Args:
-            regime: Output of get_regime().
-            base_conviction: Default floor.
-            base_rsi: Default RSI oversold threshold.
-            
+            history: Historical VIX/V2TX series (at least 20-252 points).
+            current_value: Current VIX level. If None, uses the last element of history.
+
         Returns:
-            Tuple[float, float]: (conviction_floor, rsi_oversold)
+            float: Percentile rank between 0.0 and 100.0.
         """
-        if regime == "VOLATILE":
-            return 75.0, base_rsi
-        elif regime == "BEAR":
-            return 70.0, 25.0
+        if history is None:
+            return 50.0
+
+        if isinstance(history, pd.DataFrame):
+            col = "Close" if "Close" in history.columns else history.columns[0]
+            series = history[col].dropna().astype(float)
+        elif isinstance(history, pd.Series):
+            series = history.dropna().astype(float)
+        elif isinstance(history, (list, tuple)):
+            series = pd.Series(history, dtype=float).dropna()
         else:
-            return base_conviction, base_rsi
+            return 50.0
+
+        if len(series) < 5:
+            return 50.0
+
+        val = float(current_value if current_value is not None else series.iloc[-1])
+        # Percentile rank: % of historical observations <= val
+        rank = (series <= val).mean() * 100.0
+        return float(np.clip(rank, 0.0, 100.0))
+
+    def get_conviction_floor_modifier(self, percentile: float) -> int:
+        """Map volatility percentile rank to a conviction floor offset.
+
+        Args:
+            percentile: Percentile rank [0.0..100.0].
+
+        Returns:
+            int: Modifier (+15, +5, 0).
+        """
+        if percentile >= 95.0:
+            return 15
+        elif percentile >= 80.0:
+            return 5
+        elif percentile >= 50.0:
+            return 0
+        else:
+            return 0
+
+    def evaluate_vix_regime(
+        self,
+        vix_history: Union[pd.Series, Sequence[float], pd.DataFrame],
+        current_vix: float,
+        base_floor: int = 70,
+    ) -> dict:
+        """Evaluate volatility regime and calculate dynamic conviction threshold.
+
+        Args:
+            vix_history: Historical VIX data.
+            current_vix: Current spot VIX / V2TX.
+            base_floor: Standard emit floor (e.g. 70).
+
+        Returns:
+            dict: {
+                "current_vix": float,
+                "percentile": float,
+                "floor_modifier": int,
+                "effective_floor": int,
+                "regime": str,
+                "is_panic": bool
+            }
+        """
+        pct = self.calculate_percentile_rank(vix_history, current_vix)
+        mod = self.get_conviction_floor_modifier(pct)
+        eff_floor = base_floor + mod
+
+        if pct >= 95.0 or current_vix >= 32.0:
+            regime = "PANIC"
+            is_panic = True
+        elif pct >= 80.0:
+            regime = "ELEVATED_VOL"
+            is_panic = False
+        elif pct >= 50.0:
+            regime = "NORMAL"
+            is_panic = False
+        else:
+            regime = "LOW_VOL"
+            is_panic = False
+
+        logger.info(
+            "VIX Regime: level=%.2f (pct=%.1f%%) -> regime=%s floor=%d (+%d)",
+            current_vix,
+            pct,
+            regime,
+            eff_floor,
+            mod,
+        )
+
+        return {
+            "current_vix": float(current_vix),
+            "percentile": float(pct),
+            "floor_modifier": int(mod),
+            "effective_floor": int(eff_floor),
+            "regime": regime,
+            "is_panic": is_panic,
+        }
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    sentinel = VolatilityRegimeSentinel()
+    np.random.seed(42)
+    fake_vix = np.random.normal(18.0, 4.0, 252)
+    res = sentinel.evaluate_vix_regime(fake_vix, current_vix=28.5)
+    print("Regime Assessment:", res)

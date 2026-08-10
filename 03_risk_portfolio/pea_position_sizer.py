@@ -1,4 +1,4 @@
-"""PEA position sizer for PEA Pollux.
+"""PEA position sizer for PEA Sniper Terminal V-Prime.
 
 Converts an approved signal into an integer number of shares, respecting the
 PEA's no-fractional-shares rule, the per-position cap, Half-Kelly scaling by
@@ -22,7 +22,6 @@ _CORE_DIR = os.path.join(
 sys.path.insert(0, _CORE_DIR)
 
 from data_models import PortfolioState, Signal  # noqa: E402
-from config_validator import load_risk_config  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -45,46 +44,38 @@ class PeaSizer:
             config_path: Path to the ``config`` directory (or a risk_params
                 YAML file). Defaults to ``<project_root>/config``.
         """
-        risk = load_risk_config(config_path)
-        self.kelly_fraction: float = float(risk.KELLY_FRACTION)
-        self.max_single_position: float = float(risk.MAX_SINGLE_POSITION_PCT)
+        risk = self._load_risk_params(config_path)
+        self.kelly_fraction: float = float(risk["KELLY_FRACTION"])
+        self.max_single_position: float = float(risk["MAX_SINGLE_POSITION_PCT"])
         # Core/Satellite + volatility-parity parameters (Phase 10).
-        self.core_ticker: str = str(risk.CORE_TICKER)
-        self.satellite_max_budget: float = float(risk.SATELLITE_MAX_BUDGET_PCT)
-        self.vol_reference: float = float(risk.VOLATILITY_REFERENCE)
-        self.vol_max_factor: float = float(risk.VOLATILITY_MAX_FACTOR)
-        
-        try:
-            from stable_baselines3 import PPO
-            model_path = _PROJECT_ROOT / "database" / "rl_sizer_model.zip"
-            if model_path.exists():
-                self.rl_model = PPO.load(str(model_path))
-                logger.info("Loaded PPO RL model for dynamic sizing.")
-            else:
-                self.rl_model = None
-        except Exception:
-            self.rl_model = None
-            
+        self.core_ticker: str = str(risk.get("CORE_TICKER", "CW8.PA"))
+        self.satellite_max_budget: float = float(
+            risk.get("SATELLITE_MAX_BUDGET_PCT", 0.30)
+        )
+        self.max_sector_weight: float = float(risk.get("MAX_SECTOR_WEIGHT_PCT", 0.25))
+        self.vol_reference: float = float(risk.get("VOLATILITY_REFERENCE", 0.20))
+        self.vol_max_factor: float = float(risk.get("VOLATILITY_MAX_FACTOR", 1.5))
         logger.debug(
-            "Sizer loaded: kelly=%.2f max_single=%.2f sat_budget=%.2f vol_ref=%.2f",
+            "Sizer loaded: kelly=%.2f max_single=%.2f sat_budget=%.2f vol_ref=%.2f max_sector=%.2f",
             self.kelly_fraction,
             self.max_single_position,
             self.satellite_max_budget,
             self.vol_reference,
+            self.max_sector_weight,
         )
 
     @staticmethod
-    def _load_risk_params(config_path: str | Path | None):
-        """Resolve and load validated risk config."""
-        return load_risk_config(config_path)
-
-    @staticmethod
-    def investment_rate(portfolio: PortfolioState) -> float:
-        """Calculate the ratio of invested capital to total equity."""
-        if portfolio.total_equity <= 0:
-            return 0.0
-        invested = sum(p.market_value for p in portfolio.positions)
-        return invested / portfolio.total_equity
+    def _load_risk_params(config_path: str | Path | None) -> dict:
+        """Resolve and load the risk_params YAML into a dict."""
+        if config_path is None:
+            path = _DEFAULT_CONFIG_DIR / "risk_params.yaml"
+        else:
+            p = Path(config_path)
+            path = p if p.is_file() else p / "risk_params.yaml"
+        if not path.exists():
+            raise FileNotFoundError(f"Config file not found: {path}")
+        with open(path, "r", encoding="utf-8") as fh:
+            return yaml.safe_load(fh)
 
     def _satellite_value(self, portfolio: PortfolioState) -> float:
         """Sum the market value of all non-core (satellite) holdings."""
@@ -113,19 +104,63 @@ class PeaSizer:
         factor = self.vol_reference / historical_volatility
         return float(max(0.1, min(self.vol_max_factor, factor)))
 
+    def calculate_sector_scale(
+        self,
+        ticker_sector: str,
+        portfolio: PortfolioState,
+        proposed_notional: float,
+    ) -> float:
+        """Proportional sector scaler to keep sector strictly under MAX_SECTOR_WEIGHT_PCT.
+
+        If buying an asset would push the sector to 32% while max is 25%,
+        returns scale = 25.0 / 32.0 (0.781) instead of binary trade veto.
+
+        Args:
+            ticker_sector: Sector name of candidate ticker.
+            portfolio: Current portfolio state.
+            proposed_notional: Intended cash allocation.
+
+        Returns:
+            float: Scale multiplier [0.0..1.0].
+        """
+        if portfolio.total_equity <= 0 or not ticker_sector or ticker_sector == "UNKNOWN":
+            return 1.0
+
+        current_sector_val = sum(
+            p.market_value
+            for p in portfolio.positions
+            if (p.sector or "").casefold() == ticker_sector.casefold()
+        )
+        projected_sector_val = current_sector_val + proposed_notional
+        projected_weight = projected_sector_val / portfolio.total_equity
+
+        if projected_weight > self.max_sector_weight and projected_weight > 0:
+            scale = self.max_sector_weight / projected_weight
+            logger.info(
+                "Proportional Sector Rescaling for sector '%s': projected %.1f%% > max %.1f%% -> scale=%.3f",
+                ticker_sector,
+                projected_weight * 100,
+                self.max_sector_weight * 100,
+                scale,
+            )
+            return float(max(0.0, min(1.0, scale)))
+
+        return 1.0
+
     def size_with_explanation(
         self,
         signal: Signal,
         portfolio: PortfolioState,
         current_price: float,
         historical_volatility: float | None = None,
-        hrp_max_alloc: float | None = None,
+        ticker_sector: str = "UNKNOWN",
+        kinetic_multiplier: float = 1.0,
     ) -> tuple[int, dict]:
         """Return ``(qty, meta)`` so UIs can show the sizing reasoning.
 
         Meta keys: kelly_fraction, score, historical_volatility, vol_factor,
         max_alloc, target_cash_pre_cap, target_cash, notional, weight_pct,
-        satellite_room, cash_capped.
+        satellite_room, cash_capped, sector_scale, kinetic_multiplier.
         """
         meta: dict = {
             "kelly_fraction": self.kelly_fraction,
@@ -139,32 +174,33 @@ class PeaSizer:
             "weight_pct": 0.0,
             "satellite_room": 0.0,
             "cash_capped": False,
+            "sector_scale": 1.0,
+            "kinetic_multiplier": kinetic_multiplier,
         }
-        if current_price <= 0 or portfolio.total_equity <= 0:
+        if current_price <= 0 or portfolio.total_equity <= 0 or kinetic_multiplier <= 0.0:
             logger.warning(
-                "Sizing %s to 0 (price=%.4f equity=%.2f).",
-                signal.ticker, current_price, portfolio.total_equity,
+                "Sizing %s to 0 (price=%.4f equity=%.2f kinetic=%.2f).",
+                signal.ticker, current_price, portfolio.total_equity, kinetic_multiplier,
             )
             return 0, meta
 
-        if hrp_max_alloc is not None:
-            max_alloc = min(portfolio.total_equity * self.max_single_position, hrp_max_alloc)
-            meta["hrp_max_alloc"] = hrp_max_alloc
-        else:
-            max_alloc = portfolio.total_equity * self.max_single_position
-            meta["hrp_max_alloc"] = None
-        
-        # TODO: Re-enable RL Sizer only when SizingEnv is connected to real historical trajectories via walk_forward_backtester.py
-        # RL Sizing Path is completely disabled in production for now.
-        
-        # Traditional Deterministic Path
+        max_alloc = portfolio.total_equity * self.max_single_position
         target_cash = max_alloc * (signal.score / 100.0) * self.kelly_fraction
         vol_factor = self._volatility_factor(historical_volatility)
         target_cash *= vol_factor
+
+        # Apply Kinetic Brake multiplier
+        target_cash *= max(0.0, min(1.0, float(kinetic_multiplier)))
+
+        # Apply Proportional Sector Rescaling
+        sec_scale = self.calculate_sector_scale(ticker_sector, portfolio, target_cash)
+        target_cash *= sec_scale
+
         meta.update({
             "vol_factor": vol_factor,
             "max_alloc": max_alloc,
             "target_cash_pre_cap": target_cash,
+            "sector_scale": sec_scale,
         })
 
         satellite_room = max(
@@ -191,9 +227,9 @@ class PeaSizer:
             )
         else:
             logger.info(
-                "%s sized to %d shares (target=%.2f @ %.2f, score=%.1f, vol_f=%.2f).",
+                "%s sized to %d shares (target=%.2f @ %.2f, score=%.1f, vol_f=%.2f, sec_scale=%.2f).",
                 signal.ticker, qty_shares, target_cash, current_price,
-                signal.score, vol_factor,
+                signal.score, vol_factor, sec_scale,
             )
 
         qty_shares = max(0, qty_shares)
@@ -213,37 +249,19 @@ class PeaSizer:
             - self._satellite_value(portfolio)
         )
 
-    @staticmethod
-    def investment_rate(portfolio: PortfolioState) -> float:
-        """Percentage of equity currently invested (100 − cash drag)."""
-        if portfolio is None or portfolio.total_equity <= 0:
-            return 0.0
-        invested = sum(float(p.market_value) for p in portfolio.positions)
-        return float(max(0.0, min(100.0, invested / portfolio.total_equity * 100.0)))
-
-    @staticmethod
-    def idle_cash_pct(portfolio: PortfolioState) -> float:
-        """Cash as a percentage of total equity."""
-        if portfolio is None or portfolio.total_equity <= 0:
-            return 0.0
-        return float(
-            max(0.0, min(100.0, portfolio.cash_available / portfolio.total_equity * 100.0))
-        )
-
     def calculate_target_qty(
         self,
         signal: Signal,
         portfolio: PortfolioState,
         current_price: float,
         historical_volatility: float | None = None,
-        hrp_max_alloc: float | None = None,
     ) -> int:
         """Compute the integer share quantity for a satellite signal.
 
         See ``size_with_explanation`` for the full breakdown (dashboard cards).
         """
         qty, _meta = self.size_with_explanation(
-            signal, portfolio, current_price, historical_volatility, hrp_max_alloc
+            signal, portfolio, current_price, historical_volatility
         )
         return qty
 

@@ -1,4 +1,4 @@
-"""Revocation Engine for PEA Pollux.
+"""Revocation Engine for PEA Sniper Terminal V-Prime.
 
 Implements the Anti-Stale logic re-run at each daily pass (09:00, 13:30, 17:10):
 a signal is REVOKED if the price drifts too far from the emission price, or
@@ -101,17 +101,6 @@ class RevocationEngine:
                 self.validity_hours,
             )
             return signal
-
-        # Continuous Conviction Decay
-        if age_hours > 0 and self.validity_hours > 0:
-            decay_factor = age_hours / self.validity_hours
-            penalty = min(0.30, 0.30 * decay_factor)
-            original_score = signal.score
-            signal.score = max(0.0, original_score * (1.0 - penalty))
-            if penalty > 0:
-                decay_str = f"Time decay -{penalty*100:.1f}%"
-                if decay_str not in signal.reason:
-                    signal.reason = f"{signal.reason} | {decay_str}".strip(" |")
 
         logger.debug("Signal %s still valid (age %.1fh).", signal.id[:8], age_hours)
         return signal

@@ -70,38 +70,16 @@ def atr_risk_line(
         return "Risque stop ATR: n/a (historique insuffisant)"
     risk_eur = float(qty) * atr_mult * float(atr)
     risk_pct = (risk_eur / equity * 100.0) if equity > 0 else 0.0
-    return (
-        f"Perte max si stop {atr_mult:.1f}×ATR: "
-        f"−{risk_eur:,.0f} € (−{risk_pct:.2f}% equity)"
-    )
-
-
 def market_impact_line(
-    qty: int,
-    price: float,
-    adv: float,
-    atr: float,
+    adv: Optional[float],
+    notional: float,
 ) -> str:
-    """Estimate slippage based on ADV and ATR."""
-    if not qty or price <= 0 or not adv or adv <= 0:
-        return "Market Impact: n/a (illiquide)"
-        
-    # Standard square root model for market impact: slippage = ATR * sqrt(qty / ADV) * constant
-    # Constant can be ~0.1 for typical European mid/large caps
-    participation_rate = float(qty) / float(adv)
-    slippage_bps = 0.0
-    
-    if atr > 0 and price > 0:
-        atr_pct = atr / price
-        slippage_pct = atr_pct * (participation_rate ** 0.5) * 0.1
-        slippage_bps = slippage_pct * 10000.0
-        
-    cost_eur = slippage_bps / 10000.0 * (float(qty) * price)
-    
-    return (
-        f"Est. Market Impact: {slippage_bps:.1f} bps "
-        f"({participation_rate*100:.2f}% ADV) ≈ -{cost_eur:.1f} €"
-    )
+    """Estimated market impact based on ticket size vs 20d Average Daily Volume (ADV)."""
+    if adv is None or adv <= 0:
+        return "Impact marché estimé: < 0.05% (liquidité standard)"
+    participation_pct = (notional / adv) * 100.0 if adv > 0 else 0.0
+    color = "sub-green" if participation_pct < 1.0 else ("sub-amber" if participation_pct < 5.0 else "sub-red")
+    return f"Impact marché estimé: {participation_pct:.2f}% de l'ADV 20j (€{adv:,.0f})"
 
 
 def render_signal_card(
@@ -118,7 +96,23 @@ def render_signal_card(
     impact_line: str = "",
     created_at: str = "",
 ) -> str:
-    """Build one approved/pending trade card as HTML."""
+    """Build one approved/pending trade card as HTML.
+
+    Args:
+        ticker: Raw symbol.
+        title: Display name (``Full Name (TICKER)``).
+        signal_type: BUY / SELL.
+        score: 0–100.
+        qty: Target shares (may be None).
+        reason: Pipeline explanation.
+        sizing: Optional dict from ``PeaSizer.size_with_explanation``.
+        sector_line: Precomputed sector impact sentence.
+        risk_line: Precomputed ATR risk sentence.
+        created_at: Timestamp string.
+
+    Returns:
+        str: HTML snippet safe for ``st.markdown(..., unsafe_allow_html=True)``.
+    """
     tier, tier_color = conviction_tier(float(score or 0))
     is_buy = str(signal_type).upper() == "BUY"
     border = _NEON if is_buy and score >= 75 else (_AMBER if is_buy else _RED)
@@ -138,20 +132,20 @@ def render_signal_card(
         )
 
     extras = ""
+    if impact_line:
+        extras += (
+            f"<div style='margin-top:6px;color:{_CYAN};font-size:12px;'>"
+            f"⚡ {impact_line}</div>"
+        )
     if risk_line:
         extras += (
-            f"<div style='margin-top:6px;color:{_AMBER};font-size:12px;'>"
+            f"<div style='margin-top:4px;color:{_AMBER};font-size:12px;'>"
             f"⚠ {risk_line}</div>"
         )
     if sector_line:
         extras += (
             f"<div style='margin-top:4px;color:{_MUTED};font-size:12px;'>"
             f"▣ {sector_line}</div>"
-        )
-    if impact_line:
-        extras += (
-            f"<div style='margin-top:4px;color:{_CYAN};font-size:12px;'>"
-            f"⚡ {impact_line}</div>"
         )
 
     qty_s = "—" if qty is None else str(qty)

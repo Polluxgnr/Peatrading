@@ -1,4 +1,4 @@
-"""SQLite state manager for PEA Pollux.
+"""SQLite state manager for PEA Sniper Terminal V-Prime.
 
 This module owns application state persistence: the current PEA account
 snapshot, open positions, and the audit log of every signal and its lifecycle.
@@ -13,7 +13,7 @@ import os
 import sqlite3
 import sys
 from contextlib import contextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator, Optional
 
@@ -62,13 +62,8 @@ class PortfolioDB:
         Raises:
             sqlite3.Error: Propagated after a rollback if any DB error occurs.
         """
-        # WAL mode enables concurrent readers while a writer holds a lock.
-        # Dashboard can read while daemon updates portfolio/analytics.
-        conn = sqlite3.connect(str(self.db_path), timeout=15.0)
+        conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA busy_timeout = 15000;")
-        conn.execute("PRAGMA journal_mode=WAL;")
-        conn.execute("PRAGMA synchronous=NORMAL;")
         conn.execute("PRAGMA foreign_keys = ON;")
         try:
             yield conn
@@ -119,10 +114,18 @@ class PortfolioDB:
                         score        REAL NOT NULL,
                         reason       TEXT,
                         created_at   TEXT NOT NULL,
-                        lineage_json TEXT
+                        quantity     INTEGER DEFAULT 0,
+                        price        REAL DEFAULT 0.0
                     );
                     """
                 )
+                # Automatic column migration for older schemas
+                cols = [r["name"] for r in conn.execute("PRAGMA table_info(audit_logs);").fetchall()]
+                if "quantity" not in cols:
+                    conn.execute("ALTER TABLE audit_logs ADD COLUMN quantity INTEGER DEFAULT 0;")
+                if "price" not in cols:
+                    conn.execute("ALTER TABLE audit_logs ADD COLUMN price REAL DEFAULT 0.0;")
+
                 conn.execute(
                     """
                     CREATE TABLE IF NOT EXISTS portfolio_history (
@@ -134,89 +137,18 @@ class PortfolioDB:
                 )
                 conn.execute(
                     """
-                    CREATE TABLE IF NOT EXISTS news_history (
-                        url              TEXT PRIMARY KEY,
-                        ticker           TEXT NOT NULL,
-                        title            TEXT NOT NULL,
-                        date_published   TEXT NOT NULL,
-                        provider         TEXT NOT NULL,
-                        sentiment_score  REAL,
-                        inserted_at      TEXT NOT NULL
-                    );
-                    """
-                )
-                conn.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS fundamentals_cache (
-                        ticker          TEXT PRIMARY KEY,
-                        pe_ratio        REAL,
-                        pb_ratio        REAL,
-                        roe             REAL,
-                        debt_to_equity  REAL,
-                        piotroski_score REAL,
-                        updated_at      TEXT NOT NULL
-                    );
-                    """
-                )
-                conn.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS ticker_notes (
-                        ticker          TEXT PRIMARY KEY,
-                        analyst_comment TEXT,
-                        last_updated    TEXT NOT NULL
-                    );
-                    """
-                )
-                
-                # Migration: Add piotroski_score if missing
-                try:
-                    conn.execute("ALTER TABLE fundamentals_cache ADD COLUMN piotroski_score REAL;")
-                except sqlite3.OperationalError:
-                    pass  # Column likely already exists
-                    
-                # Migration: Add lineage_json if missing
-                try:
-                    conn.execute("ALTER TABLE audit_logs ADD COLUMN lineage_json TEXT;")
-                except sqlite3.OperationalError:
-                    pass
-
-                conn.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS ticker_profiles (
-                        ticker          TEXT PRIMARY KEY,
-                        profile_json    TEXT,
-                        last_updated    TEXT NOT NULL
-                    );
-                    """
-                )
-                conn.execute(
-                    """
                     CREATE TABLE IF NOT EXISTS news_master (
-                        id               TEXT PRIMARY KEY,
-                        published_at     TEXT NOT NULL,
-                        ticker           TEXT,
-                        source           TEXT NOT NULL,
-                        url              TEXT,
-                        title            TEXT NOT NULL,
-                        content          TEXT,
-                        sentiment_score  REAL,
-                        sentiment_label  TEXT
+                        id              TEXT PRIMARY KEY,
+                        ticker          TEXT,
+                        title           TEXT NOT NULL,
+                        source          TEXT,
+                        url             TEXT,
+                        published_at    TEXT,
+                        sentiment_score REAL,
+                        created_at      TEXT NOT NULL
                     );
                     """
                 )
-
-                conn.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS institutional_holdings (
-                        ticker TEXT PRIMARY KEY,
-                        company_name TEXT,
-                        fund_source TEXT,
-                        weight_pct REAL,
-                        updated_at TEXT NOT NULL
-                    );
-                    """
-                )
-
             logger.info("SQLite schema initialized at %s", self.db_path)
         except sqlite3.Error:
             logger.exception("Failed to initialize SQLite schema.")
@@ -366,38 +298,28 @@ class PortfolioDB:
             logger.exception("Failed to read portfolio_history.")
             return pd.DataFrame(columns=["date", "equity", "cash"])
 
-    def log_signal(self, signal: Signal) -> None:
+    def log_signal(self, signal: Signal, price: float = 0.0) -> None:
         """Insert a signal or update its lifecycle state in ``audit_logs``.
 
         Args:
             signal: The signal to record. Upsert key is ``signal.id``.
+            price: Optional execution or trigger price.
         """
         try:
+            qty = signal.target_qty if signal.target_qty is not None else 0
             with self._connect() as conn:
-                # Idempotency check: don't log duplicate signals if already approved/executed today
-                existing = conn.execute(
-                    """
-                    SELECT id FROM audit_logs
-                    WHERE ticker = ? AND signal_type = ? AND date(created_at) = date(?)
-                    AND status IN ('APPROVED', 'EXECUTED') AND id != ?
-                    """,
-                    (signal.ticker, signal.signal_type.value, signal.created_at.isoformat(), signal.id)
-                ).fetchone()
-                if existing:
-                    logger.info("Signal %s skipped (duplicate of APPROVED/EXECUTED today).", signal.id[:8])
-                    return
-
                 conn.execute(
                     """
                     INSERT INTO audit_logs
                         (id, ticker, signal_type, status, score, reason,
-                         created_at, lineage_json)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                         created_at, quantity, price)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(id) DO UPDATE SET
-                        status = excluded.status,
-                        score  = excluded.score,
-                        reason = excluded.reason,
-                        lineage_json = excluded.lineage_json;
+                        status   = excluded.status,
+                        score    = excluded.score,
+                        reason   = excluded.reason,
+                        quantity = excluded.quantity,
+                        price    = excluded.price;
                     """,
                     (
                         signal.id,
@@ -407,77 +329,118 @@ class PortfolioDB:
                         signal.score,
                         signal.reason,
                         signal.created_at.isoformat(),
-                        __import__("json").dumps(signal.lineage) if signal.lineage else None,
+                        qty,
+                        price,
                     ),
                 )
             logger.info(
-                "Signal logged: %s %s %s status=%s",
+                "Signal logged: %s %s %s status=%s qty=%s",
                 signal.id[:8],
                 signal.ticker,
                 signal.signal_type.value,
                 signal.status.value,
+                qty,
             )
         except sqlite3.Error:
             logger.exception("Failed to log signal %s.", signal.id)
             raise
 
-    def has_duplicate_signal_today(self, signal: Signal) -> bool:
-        """Check if another approved/executed signal exists for this ticker/type today."""
-        try:
-            with self._connect() as conn:
-                existing = conn.execute(
-                    """
-                    SELECT id FROM audit_logs
-                    WHERE ticker = ? AND signal_type = ? AND date(created_at) = date(?)
-                    AND status IN ('APPROVED', 'EXECUTED') AND id != ?
-                    """,
-                    (signal.ticker, signal.signal_type.value, signal.created_at.isoformat(), signal.id)
-                ).fetchone()
-                return existing is not None
-        except sqlite3.Error:
-            return False
+    def save_news_item(self, item: dict) -> None:
+        """Insert a single news article into ``news_master`` (idempotent)."""
+        self.save_news_items([item])
 
-    def update_signal_status(
-        self, signal_id: str, status: str, reason_suffix: str | None = None
-    ) -> bool:
-        """Update a signal's lifecycle status in ``audit_logs`` (Command Center).
+    def save_news_items(self, items: list[dict]) -> int:
+        """Insert a batch of news articles into ``news_master`` (idempotent).
 
         Args:
-            signal_id: Primary key of the audit row.
-            status: New status (e.g. ``APPROVED``, ``REVOKED``, ``REJECTED``).
-            reason_suffix: Optional text appended to the existing reason.
+            items: List of dicts with keys ``id, ticker, title, source, url, published_at, sentiment_score``.
 
         Returns:
-            bool: ``True`` if a row was updated.
+            int: Number of items processed.
         """
+        if not items:
+            return 0
+        now = datetime.now(timezone.utc).isoformat()
         try:
             with self._connect() as conn:
-                if reason_suffix:
-                    cur = conn.execute(
-                        """
-                        UPDATE audit_logs
-                        SET status = ?,
-                            reason = COALESCE(reason, '') || ?
-                        WHERE id = ?;
-                        """,
-                        (status, f" | {reason_suffix}", signal_id),
-                    )
-                else:
-                    cur = conn.execute(
-                        "UPDATE audit_logs SET status = ? WHERE id = ?;",
-                        (status, signal_id),
-                    )
-                updated = cur.rowcount > 0
-            if updated:
-                logger.info(
-                    "Signal %s status → %s (Streamlit / Command Center).",
-                    signal_id[:8],
-                    status,
+                conn.executemany(
+                    """
+                    INSERT INTO news_master
+                        (id, ticker, title, source, url, published_at, sentiment_score, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(id) DO UPDATE SET
+                        ticker          = COALESCE(excluded.ticker, news_master.ticker),
+                        sentiment_score = COALESCE(excluded.sentiment_score, news_master.sentiment_score);
+                    """,
+                    [
+                        (
+                            str(it["id"]),
+                            it.get("ticker"),
+                            str(it["title"]),
+                            it.get("source", "Unknown"),
+                            it.get("url"),
+                            it.get("published_at", now),
+                            it.get("sentiment_score"),
+                            now,
+                        )
+                        for it in items
+                        if it.get("id") and it.get("title")
+                    ],
                 )
-            return updated
+            logger.info("Saved %d news items to news_master.", len(items))
+            return len(items)
         except sqlite3.Error:
-            logger.exception("Failed to update signal %s status.", signal_id)
-            raise
+            logger.exception("Failed to save news items.")
+            return 0
+
+    def fetch_news_master(self, ticker: str | None = None, limit: int = 50) -> list[dict]:
+        """Fetch latest news articles from ``news_master``."""
+        try:
+            with self._connect() as conn:
+                if ticker:
+                    rows = conn.execute(
+                        """
+                        SELECT id, ticker, title, source, url, published_at, sentiment_score, created_at
+                        FROM news_master
+                        WHERE ticker = ? OR ticker IS NULL
+                        ORDER BY published_at DESC, created_at DESC
+                        LIMIT ?;
+                        """,
+                        (ticker, limit),
+                    ).fetchall()
+                else:
+                    rows = conn.execute(
+                        """
+                        SELECT id, ticker, title, source, url, published_at, sentiment_score, created_at
+                        FROM news_master
+                        ORDER BY published_at DESC, created_at DESC
+                        LIMIT ?;
+                        """,
+                        (limit,),
+                    ).fetchall()
+                return [dict(r) for r in rows]
+        except sqlite3.Error:
+            logger.exception("Failed to fetch news from news_master.")
+            return []
+
+    def fetch_closed_signals(self, limit: int = 50) -> list[dict]:
+        """Query closed/executed audit log entries for the Portfolio Ledger."""
+        try:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    """
+                    SELECT id, ticker, signal_type, quantity, price, score, reason, created_at
+                    FROM audit_logs
+                    WHERE status IN ('CLOSED', 'EXECUTED')
+                    ORDER BY created_at DESC
+                    LIMIT ?;
+                    """,
+                    (limit,),
+                ).fetchall()
+                return [dict(r) for r in rows]
+        except sqlite3.Error:
+            logger.exception("Failed to fetch closed signals.")
+            return []
 
     def fetch_signals_by_status(
         self, statuses: list[str], limit: int | None = None
@@ -541,360 +504,3 @@ class PortfolioDB:
         except sqlite3.Error:
             logger.exception("Failed to fetch signals since %s.", since_iso)
             raise
-
-    def save_news(self, news_list: list[dict]) -> None:
-        """Upsert news articles into ``news_history`` (keyed by URL).
-
-        Args:
-            news_list: Dicts with keys ``url`` or ``link``, ``ticker``, ``title``,
-                ``date`` or ``date_published``, ``provider``, optional
-                ``sentiment_score``.
-        """
-        if not news_list:
-            return
-        now = datetime.now(timezone.utc).isoformat()
-        try:
-            with self._connect() as conn:
-                for item in news_list:
-                    url = str(item.get("url") or item.get("link") or "").strip()
-                    title = str(item.get("title") or "").strip()
-                    if not title:
-                        continue
-                    if not url or url == "#":
-                        url = f"title:{title.casefold()}"
-                    ticker = str(item.get("ticker") or "").strip()
-                    if not ticker:
-                        continue
-                    date_pub = str(
-                        item.get("date_published") or item.get("date") or now[:16]
-                    ).strip()
-                    provider = str(item.get("provider") or "unknown").strip()
-                    sentiment = item.get("sentiment_score")
-                    conn.execute(
-                        """
-                        INSERT INTO news_history (
-                            url, ticker, title, date_published, provider,
-                            sentiment_score, inserted_at
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                        ON CONFLICT(url) DO UPDATE SET
-                            ticker = excluded.ticker,
-                            title = excluded.title,
-                            date_published = excluded.date_published,
-                            provider = excluded.provider,
-                            sentiment_score = excluded.sentiment_score,
-                            inserted_at = excluded.inserted_at;
-                        """,
-                        (url, ticker, title, date_pub, provider, sentiment, now),
-                    )
-        except sqlite3.Error:
-            logger.exception("Failed to save news history.")
-            raise
-
-    def get_news_history(self, ticker: str | None = None, limit: int = 100) -> list[dict]:
-        """Return archived news for a ticker (or all), newest first.
-
-        Args:
-            ticker: Yahoo symbol (e.g. ``MC.PA``). If None, returns global feed.
-            limit: Max rows to return.
-
-        Returns:
-            list[dict]: UI-ready items with ``title``, ``link``, ``date``,
-            ``provider``.
-        """
-        try:
-            with self._connect() as conn:
-                if ticker:
-                    rows = conn.execute(
-                        """
-                        SELECT url, ticker, title, date_published, provider,
-                               sentiment_score, inserted_at
-                        FROM news_history
-                        WHERE ticker = ?
-                        ORDER BY date_published DESC, inserted_at DESC
-                        LIMIT ?;
-                        """,
-                        (ticker, int(limit)),
-                    ).fetchall()
-                else:
-                    rows = conn.execute(
-                        """
-                        SELECT url, ticker, title, date_published, provider,
-                               sentiment_score, inserted_at
-                        FROM news_history
-                        ORDER BY date_published DESC, inserted_at DESC
-                        LIMIT ?;
-                        """,
-                        (int(limit),),
-                    ).fetchall()
-            return [
-                {
-                    "title": row["title"],
-                    "link": row["url"],
-                    "date": row["date_published"],
-                    "provider": row["provider"],
-                    "sentiment_score": row["sentiment_score"],
-                    "ticker": row["ticker"],
-                }
-                for row in rows
-            ]
-        except sqlite3.Error:
-            logger.exception("Failed to retrieve news history.")
-            logger.exception("Failed to read news history for %s.", ticker)
-            raise
-
-    def upsert_fundamentals(self, ticker: str, data: dict) -> None:
-        """Upsert normalized fundamentals into local cache."""
-        if not ticker:
-            return
-        payload = data or {}
-        now = datetime.now(timezone.utc).isoformat()
-        try:
-            with self._connect() as conn:
-                conn.execute(
-                    """
-                    INSERT INTO fundamentals_cache (
-                        ticker, pe_ratio, pb_ratio, roe, debt_to_equity, piotroski_score, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(ticker) DO UPDATE SET
-                        pe_ratio = excluded.pe_ratio,
-                        pb_ratio = excluded.pb_ratio,
-                        roe = excluded.roe,
-                        debt_to_equity = excluded.debt_to_equity,
-                        piotroski_score = excluded.piotroski_score,
-                        updated_at = excluded.updated_at;
-                    """,
-                    (
-                        str(ticker).strip().upper(),
-                        payload.get("pe_ratio"),
-                        payload.get("pb_ratio"),
-                        payload.get("roe"),
-                        payload.get("debt_to_equity"),
-                        payload.get("piotroski_score"),
-                        now,
-                    ),
-                )
-        except sqlite3.Error:
-            logger.exception("Failed to upsert fundamentals for %s.", ticker)
-            raise
-
-    def get_cached_fundamentals(
-        self, ticker: str, max_age_days: int = 7
-    ) -> dict | None:
-        """Return cached fundamentals when still fresh, else None."""
-        if not ticker:
-            return None
-        try:
-            with self._connect() as conn:
-                row = conn.execute(
-                    """
-                    SELECT ticker, pe_ratio, pb_ratio, roe, debt_to_equity, piotroski_score, updated_at
-                    FROM fundamentals_cache
-                    WHERE ticker = ?;
-                    """,
-                    (str(ticker).strip().upper(),),
-                ).fetchone()
-            if row is None:
-                return None
-            updated_raw = str(row["updated_at"] or "").strip()
-            if not updated_raw:
-                return None
-            try:
-                updated_at = datetime.fromisoformat(updated_raw)
-            except ValueError:
-                return None
-            if updated_at.tzinfo is None:
-                updated_at = updated_at.replace(tzinfo=timezone.utc)
-            if datetime.now(timezone.utc) - updated_at > timedelta(days=max_age_days):
-                return None
-            return {
-                "pe_ratio": row["pe_ratio"],
-                "pb_ratio": row["pb_ratio"],
-                "roe": row["roe"],
-                "debt_to_equity": row["debt_to_equity"],
-                "piotroski_score": row["piotroski_score"],
-                "updated_at": updated_raw,
-                "source": "sqlite_cache",
-            }
-        except sqlite3.Error:
-            logger.exception("Failed to read cached fundamentals for %s.", ticker)
-            return None
-
-    def save_ticker_note(self, ticker: str, comment: str) -> None:
-        """Save or update analyst note for one ticker."""
-        tk = str(ticker or "").strip().upper()
-        if not tk:
-            return
-        now = datetime.now(timezone.utc).isoformat()
-        try:
-            with self._connect() as conn:
-                conn.execute(
-                    """
-                    INSERT INTO ticker_notes (ticker, analyst_comment, last_updated)
-                    VALUES (?, ?, ?)
-                    ON CONFLICT(ticker) DO UPDATE SET
-                        analyst_comment = excluded.analyst_comment,
-                        last_updated = excluded.last_updated;
-                    """,
-                    (tk, str(comment or "").strip(), now),
-                )
-        except sqlite3.Error:
-            logger.exception("Failed to save ticker note for %s.", tk)
-            raise
-
-    def get_ticker_note(self, ticker: str) -> str:
-        """Return analyst note text for ticker (empty string when absent)."""
-        tk = str(ticker or "").strip().upper()
-        if not tk:
-            return ""
-        try:
-            with self._connect() as conn:
-                row = conn.execute(
-                    """
-                    SELECT analyst_comment
-                    FROM ticker_notes
-                    WHERE ticker = ?;
-                    """,
-                    (tk,),
-                ).fetchone()
-            if row is None:
-                return ""
-            return str(row["analyst_comment"] or "")
-        except sqlite3.Error:
-            logger.exception("Failed to read ticker note for %s.", tk)
-            return ""
-
-    def upsert_ticker_profile(self, ticker: str, profile_dict: dict) -> None:
-        """Store the complete ticker profile (OHLCV, fundamentals, synthesis, news) as JSON."""
-        tk = str(ticker or "").strip().upper()
-        if not tk:
-            return
-        import json
-        payload = json.dumps(profile_dict, default=str)
-        now_iso = datetime.now(timezone.utc).isoformat()
-        try:
-            with self._connect() as conn:
-                conn.execute(
-                    """
-                    INSERT INTO ticker_profiles (ticker, profile_json, last_updated)
-                    VALUES (?, ?, ?)
-                    ON CONFLICT(ticker) DO UPDATE SET
-                        profile_json=excluded.profile_json,
-                        last_updated=excluded.last_updated;
-                    """,
-                    (tk, payload, now_iso),
-                )
-        except sqlite3.Error:
-            logger.exception("Failed to upsert ticker profile for %s.", tk)
-            raise
-
-    def get_ticker_profile(self, ticker: str, max_age_hours: int = 12) -> dict | None:
-        """Retrieve the ticker profile if it exists and is fresher than max_age_hours."""
-        tk = str(ticker or "").strip().upper()
-        if not tk:
-            return None
-        try:
-            with self._connect() as conn:
-                row = conn.execute(
-                    "SELECT profile_json, last_updated FROM ticker_profiles WHERE ticker = ?;",
-                    (tk,),
-                ).fetchone()
-            if row is None:
-                return None
-            last_up = datetime.fromisoformat(row["last_updated"])
-            # Ensure it is timezone-aware for the comparison
-            if last_up.tzinfo is None:
-                last_up = last_up.replace(tzinfo=timezone.utc)
-            if (datetime.now(timezone.utc) - last_up).total_seconds() > max_age_hours * 3600:
-                return None  # Stale
-            import json
-            return json.loads(row["profile_json"])
-        except Exception:
-            logger.exception("Failed to read ticker profile for %s.", tk)
-            return None
-
-    def upsert_news_master(self, news_items: list[dict]) -> None:
-        """Upsert alternative data news items into the master database."""
-        if not news_items:
-            return
-            
-        try:
-            with self._connect() as conn:
-                conn.executemany(
-                    """
-                    INSERT OR IGNORE INTO news_master 
-                    (id, published_at, ticker, source, url, title, content)
-                    VALUES (:id, :published_at, :ticker, :source, :url, :title, :content)
-                    """,
-                    news_items
-                )
-            logger.info("Upserted %d items into news_master", len(news_items))
-        except sqlite3.Error:
-            logger.exception("Failed to upsert news_master")
-
-    def get_unprocessed_news(self) -> list[dict]:
-        """Fetch news from news_master that have no sentiment score yet."""
-        try:
-            with self._connect() as conn:
-                conn.row_factory = sqlite3.Row
-                cursor = conn.execute(
-                    "SELECT * FROM news_master WHERE sentiment_score IS NULL"
-                )
-                return [dict(row) for row in cursor.fetchall()]
-        except sqlite3.Error:
-            logger.exception("Failed to fetch unprocessed news")
-            return []
-
-    def update_news_sentiment(self, updates: list[dict]) -> None:
-        """Batch update sentiment scores for news items.
-        Expects a list of dicts with keys: id, sentiment_score, sentiment_label
-        """
-        if not updates:
-            return
-            
-        try:
-            with self._connect() as conn:
-                conn.executemany(
-                    """
-                    UPDATE news_master 
-                    SET sentiment_score = :sentiment_score,
-                        sentiment_label = :sentiment_label
-                    WHERE id = :id
-                    """,
-                    updates
-                )
-            logger.info("Updated sentiment for %d news items", len(updates))
-        except sqlite3.Error:
-            logger.exception("Failed to update news sentiment")
-    def save_institutional_holdings(self, holdings: list[dict]) -> None:
-        """Save institutional holdings from scraper."""
-        if not holdings:
-            return
-        
-        try:
-            with self._connect() as conn:
-                conn.executemany(
-                    """
-                    INSERT INTO institutional_holdings 
-                        (ticker, company_name, fund_source, weight_pct, updated_at)
-                    VALUES (:ticker, :company_name, :fund_source, :weight_pct, :updated_at)
-                    ON CONFLICT(ticker) DO UPDATE SET
-                        company_name = excluded.company_name,
-                        fund_source = excluded.fund_source,
-                        weight_pct = excluded.weight_pct,
-                        updated_at = excluded.updated_at;
-                    """,
-                    holdings
-                )
-            logger.info("Saved %d institutional holdings", len(holdings))
-        except sqlite3.Error:
-            logger.exception("Failed to save institutional holdings")
-
-    def get_institutional_holdings(self) -> set[str]:
-        """Get set of institutional holding tickers."""
-        try:
-            with self._connect() as conn:
-                rows = conn.execute("SELECT ticker FROM institutional_holdings;").fetchall()
-                return {row["ticker"] for row in rows}
-        except sqlite3.Error:
-            logger.exception("Failed to get institutional holdings")
-            return set()

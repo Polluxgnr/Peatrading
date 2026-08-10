@@ -1,4 +1,4 @@
-"""LLM narrative explainer for PEA Pollux.
+"""LLM narrative explainer for PEA Sniper Terminal V-Prime.
 
 Wraps OpenRouter (async, via ``aiohttp``) to turn an already-approved,
 already-sized ``Signal`` into a short, human-readable rationale for Discord.
@@ -18,30 +18,18 @@ from pathlib import Path
 
 import aiohttp
 
-try:
-    from env_loader import load_api_keys
+try:  # Load config/api_keys.env if python-dotenv is available.
+    from dotenv import load_dotenv
 
-    load_api_keys(Path(__file__).resolve().parent.parent / "config" / "api_keys.env")
-except Exception:  # noqa: BLE001
-    # Native fallback if env_loader not on path yet.
-    _env = Path(__file__).resolve().parent.parent / "config" / "api_keys.env"
-    if _env.exists():
-        with open(_env, "r", encoding="utf-8") as fh:
-            for line in fh:
-                if "=" in line and not line.strip().startswith("#"):
-                    k, v = line.strip().split("=", 1)
-                    os.environ.setdefault(k.strip(), v.strip().strip(" '\""))
+    _ENV_PATH = Path(__file__).resolve().parent.parent / "config" / "api_keys.env"
+    load_dotenv(_ENV_PATH)
+except Exception:  # noqa: BLE001 - dotenv is a convenience, not a requirement.
+    pass
 
 _CORE_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "01_memory_core"
 )
 sys.path.insert(0, _CORE_DIR)
-try:
-    from env_loader import load_api_keys as _load_keys2  # noqa: E402
-
-    _load_keys2()
-except Exception:  # noqa: BLE001
-    pass
 
 from data_models import PortfolioState, Signal  # noqa: E402
 
@@ -89,7 +77,7 @@ async def openrouter_chat(
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
-        "X-Title": "PEA Pollux",
+        "X-Title": "PEA Sniper Terminal V-Prime",
     }
     try:
         timeout = aiohttp.ClientTimeout(total=timeout_s)
@@ -189,50 +177,6 @@ class NarrativeExplainer:
             temperature=0.4,
         )
         return content or _FALLBACK
-
-    async def analyze_ticker_news_deep(
-        self, ticker: str, headlines: list[str]
-    ) -> str:
-        """Deep FR news brief for a ticker (3-step synthesis).
-
-        Args:
-            ticker: Yahoo ticker (e.g. ``KER.PA``).
-            headlines: Raw headline strings (deduped by the caller).
-
-        Returns:
-            str: Markdown-ish bullet analysis, or a graceful FR fallback.
-        """
-        cleaned = [str(h).strip() for h in (headlines or []) if str(h).strip()]
-        if not cleaned:
-            return "Aucune actualité récente à analyser pour ce titre."
-        if not self.api_key:
-            return (
-                "Analyse IA indisponible (OPENROUTER_API_KEY manquante). "
-                "Les titres bruts restent listés ci-dessous."
-            )
-
-        blob = "\n".join(f"- {h}" for h in cleaned[:12])
-        system_prompt = (
-            f"Tu es un analyste financier senior. Voici les derniers gros titres "
-            f"pour {ticker}. Fais une analyse approfondie en 3 étapes claires : "
-            "1. Résumé des enjeux. 2. Impact sur la valorisation/fondamentaux. "
-            "3. Verdict de marché. Explique ton raisonnement. Sois précis, "
-            "professionnel et structure avec des puces."
-        )
-        content = await openrouter_chat(
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": blob},
-            ],
-            api_key=self.api_key,
-            model=self.model,
-            max_tokens=420,
-            temperature=0.3,
-        )
-        return content or (
-            "Analyse IA indisponible pour le moment. "
-            "Réessaie plus tard ou vérifie OpenRouter."
-        )
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-"""Correlation Firewall for PEA Pollux.
+"""Correlation Firewall for PEA Sniper Terminal V-Prime.
 
 Intercepts candidate signals and vetoes them when they would over-concentrate
 the portfolio, either by sector weight or by price correlation with existing
@@ -23,7 +23,6 @@ _CORE_DIR = os.path.join(
 sys.path.insert(0, _CORE_DIR)
 
 from data_models import PortfolioState  # noqa: E402
-from config_validator import load_risk_config  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -51,14 +50,16 @@ class CorrelationFirewall:
                 YAML file). Defaults to ``<project_root>/config``.
         """
         config_dir = self._resolve_config_dir(config_path)
-        risk = load_risk_config(config_dir)
+        risk = self._load_yaml(config_dir / "risk_params.yaml")
         universe = self._load_yaml(config_dir / "pea_universe.yaml")
 
-        self.max_correlation: float = float(risk.MAX_CORRELATION_TO_PORTFOLIO)
-        self.max_sector_weight: float = float(risk.MAX_SECTOR_WEIGHT_PCT)
-        self.max_single_position: float = float(risk.MAX_SINGLE_POSITION_PCT)
-        self.vix_panic_threshold: float = float(risk.VIX_PANIC_THRESHOLD)
-        self.corr_lookback_days: int = int(risk.CORRELATION_LOOKBACK_DAYS)
+        self.max_correlation: float = float(risk["MAX_CORRELATION_TO_PORTFOLIO"])
+        self.max_sector_weight: float = float(risk["MAX_SECTOR_WEIGHT_PCT"])
+        self.max_single_position: float = float(risk["MAX_SINGLE_POSITION_PCT"])
+        self.vix_panic_threshold: float = float(risk.get("VIX_PANIC_THRESHOLD", 30.0))
+        self.corr_lookback_days: int = int(
+            risk.get("CORRELATION_LOOKBACK_DAYS", _CORR_WINDOW_DEFAULT)
+        )
         self.ticker_sectors: Dict[str, str] = self._build_sector_map(universe)
 
         logger.debug(
@@ -160,10 +161,11 @@ class CorrelationFirewall:
         if vix_level is None:
             return True
         if vix_level > self.vix_panic_threshold:
-            msg = f"VIX PANIC VETO: V2TX {vix_level:.1f} > {self.vix_panic_threshold:.1f} -> blocking new satellite buys."
-            logger.warning(msg)
-            from logging_setup import send_discord_alert
-            send_discord_alert(msg, urgent=True)
+            logger.warning(
+                "VIX PANIC VETO: V2TX %.1f > %.1f -> blocking new satellite buys.",
+                vix_level,
+                self.vix_panic_threshold,
+            )
             return False
         logger.debug(
             "VIX %.1f within calm threshold %.1f; satellite buys allowed.",
@@ -205,13 +207,7 @@ class CorrelationFirewall:
         if len(prices) < 2 or prices.shape[1] < 2:
             return True, "Correlation check passed (insufficient overlap)"
 
-        # EWMA correlation to react immediately to sudden market decoupling
-        num_tickers = prices.shape[1]
-        corr_multi = prices.ewm(span=self.corr_lookback_days).corr(pairwise=True)
-        # Extract the correlation matrix for the last timestamp
-        corr_matrix = corr_multi.iloc[-num_tickers:].copy()
-        corr_matrix.index = corr_matrix.index.get_level_values(1)
-        
+        corr_matrix = prices.corr(method="pearson")
         candidate_corr = corr_matrix[ticker].drop(labels=[ticker], errors="ignore")
 
         for existing_ticker, corr in candidate_corr.items():

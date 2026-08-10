@@ -1,4 +1,4 @@
-# PEA Pollux - single image, two roles (daemon + dashboard).
+# PEA Sniper Terminal V-Prime - single image, two roles (daemon + dashboard).
 # Python 3.11 (x64) is required: streamlit's pyarrow has no 3.13/arm64 wheel.
 FROM python:3.11-slim
 
@@ -9,15 +9,14 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-# System deps: tzdata for Paris scheduling, build tools for wheels that need them,
-# plus small utilities for docker healthchecks.
+# System deps: tzdata for Paris scheduling, build tools for wheels that need them.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends tzdata gcc procps curl \
+    && apt-get install -y --no-install-recommends tzdata gcc \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python deps first (better layer caching).
 COPY requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip && pip install --no-cache-dir -r requirements.txt
+RUN pip install --upgrade pip && pip install -r requirements.txt
 
 # Copy the application code.
 COPY . .
