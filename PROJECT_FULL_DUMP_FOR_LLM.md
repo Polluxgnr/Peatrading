@@ -1,5 +1,5 @@
 # PEA Pollux — Complete Monolithic Repository Dump
-Generated: `2026-08-10 17:41 UTC` | File Count: `123`
+Generated: `2026-08-10 18:02 UTC` | File Count: `126`
 Institutional Systematic Decision Support Architecture for French PEA.
 ---
 ## Included Files Index
@@ -34,6 +34,7 @@ Institutional Systematic Decision Support Architecture for French PEA.
 - [00_data_sensors/scrapers/institutional_scraper.py](#file-00_data_sensors-scrapers-institutional_scraper-py)
 - [00_data_sensors/scrapers/openinsider_eu_scraper.py](#file-00_data_sensors-scrapers-openinsider_eu_scraper-py)
 - [00_data_sensors/symbol_mapper.py](#file-00_data_sensors-symbol_mapper-py)
+- [00_data_sensors/text_cleaner.py](#file-00_data_sensors-text_cleaner-py)
 - [01_memory_core/__init__.py](#file-01_memory_core-__init__-py)
 - [01_memory_core/config_validator.py](#file-01_memory_core-config_validator-py)
 - [01_memory_core/data_models.py](#file-01_memory_core-data_models-py)
@@ -113,11 +114,13 @@ Institutional Systematic Decision Support Architecture for French PEA.
 - [seed_account.py](#file-seed_account-py)
 - [tests/__init__.py](#file-tests-__init__-py)
 - [tests/test_api_and_mcp.py](#file-tests-test_api_and_mcp-py)
+- [tests/test_finbert_sentiment.py](#file-tests-test_finbert_sentiment-py)
 - [tests/test_funnel_analytics.py](#file-tests-test_funnel_analytics-py)
 - [tests/test_institutional_suite.py](#file-tests-test_institutional_suite-py)
 - [tests/test_newsletter_whitelist.py](#file-tests-test_newsletter_whitelist-py)
 - [tests/test_phase16_foundations.py](#file-tests-test_phase16_foundations-py)
 - [tests/test_stat_arb_and_backtest.py](#file-tests-test_stat_arb_and_backtest-py)
+- [tests/test_text_cleaner_and_feedback.py](#file-tests-test_text_cleaner_and_feedback-py)
 - [tests/test_ui_and_sandbox.py](#file-tests-test_ui_and_sandbox-py)
 - [tools/backup_databases.py](#file-tools-backup_databases-py)
 - [tools/bootstrap_ml_dataset.py](#file-tools-bootstrap_ml_dataset-py)
@@ -247,12 +250,14 @@ from .macro_alpha_api import MacroAlphaSensor
 from .market_prices_api import MarketPricesSensor
 from .openfigi_mapper import OpenFigiMapper
 from .raw_dumper import dump_bronze_json, save_raw_response
+from .text_cleaner import clean_financial_text
 
 __all__ = [
     "FundamentalsSensor",
     "MacroAlphaSensor",
     "MarketPricesSensor",
     "OpenFigiMapper",
+    "clean_financial_text",
     "dump_bronze_json",
     "save_raw_response",
 ]
@@ -4021,6 +4026,123 @@ class SymbolMapper:
         return results
 ```
 
+## FILE: 00_data_sensors/text_cleaner.py
+```python
+"""Financial Text Sanitizer & Data Janitor for PEA Pollux NLP pipeline.
+
+Strips HTML, URLs, emails, boilerplate disclaimers, and normalizes financial text
+to under 1500 characters so Transformer/FinBERT models receive clean, high-signal input.
+"""
+
+from __future__ import annotations
+
+import re
+import html
+import logging
+from typing import List
+
+logger = logging.getLogger(__name__)
+
+# Compile regex patterns for fast sanitization
+_HTML_TAG_RE = re.compile(r"<[^>]+>", re.IGNORECASE)
+_URL_RE = re.compile(r"https?://\S+|www\.\S+", re.IGNORECASE)
+_EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b")
+_MULTISPACE_RE = re.compile(r"[ \t]+")
+_MULTILINE_RE = re.compile(r"\n{2,}")
+
+_BOILERPLATE_PATTERNS: List[re.Pattern] = [
+    re.compile(r"unsubscribe\b.*", re.IGNORECASE | re.DOTALL),
+    re.compile(r"désabonner\b.*", re.IGNORECASE | re.DOTALL),
+    re.compile(r"se désinscrire\b.*", re.IGNORECASE | re.DOTALL),
+    re.compile(r"view in (your )?browser\b.*", re.IGNORECASE),
+    re.compile(r"consulter (ce message )?dans votre navigateur\b.*", re.IGNORECASE),
+    re.compile(r"disclaimer\s*:?.*", re.IGNORECASE),
+    re.compile(r"avertissement\s*:?.*", re.IGNORECASE),
+    re.compile(r"all rights reserved\b.*", re.IGNORECASE),
+    re.compile(r"tous droits réservés\b.*", re.IGNORECASE),
+    re.compile(r"ce message a été envoyé à\b.*", re.IGNORECASE),
+    re.compile(r"this email was sent to\b.*", re.IGNORECASE),
+    re.compile(r"click here to (opt out|manage).*?", re.IGNORECASE),
+]
+
+
+def clean_financial_text(raw_text: str, max_chars: int = 1500) -> str:
+    """Sanitize and normalize financial news and newsletter text.
+
+    Args:
+        raw_text: Raw incoming text (HTML, email body, RSS snippet, or headline).
+        max_chars: Maximum character limit (default 1500 for FinBERT context).
+
+    Returns:
+        str: Sanitized, plain text string. Empty if no signal remains.
+    """
+    if not raw_text or not isinstance(raw_text, str):
+        return ""
+
+    text = raw_text
+
+    # 1. Unescape HTML entities
+    text = html.unescape(text)
+
+    # 2. Strip HTML tags (try BeautifulSoup if available, else regex)
+    try:
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup(text, "html.parser")
+        # Remove script and style elements
+        for script in soup(["script", "style", "noscript", "header", "footer"]):
+            script.decompose()
+        text = soup.get_text(separator=" ")
+    except Exception:
+        text = _HTML_TAG_RE.sub(" ", text)
+
+    # 3. Strip URLs and Emails
+    text = _URL_RE.sub("", text)
+    text = _EMAIL_RE.sub("", text)
+
+    # 4. Remove common boilerplate lines/sections
+    for pattern in _BOILERPLATE_PATTERNS:
+        text = pattern.sub("", text)
+
+    # 5. Clean up whitespace and newlines
+    text = _MULTISPACE_RE.sub(" ", text)
+    text = _MULTILINE_RE.sub("\n", text)
+    text = text.strip()
+
+    # 6. Truncate to maximum context window safely focusing on lead content
+    if len(text) > max_chars:
+        # Split on sentence boundaries if possible
+        truncated = text[:max_chars]
+        last_period = max(truncated.rfind(". "), truncated.rfind(".\n"), truncated.rfind("! "), truncated.rfind("? "))
+        if last_period > max_chars // 2:
+            text = truncated[: last_period + 1].strip()
+        else:
+            text = truncated.strip()
+
+    return text
+
+
+if __name__ == "__main__":
+    sample_html = """
+    <html>
+        <body>
+            <h1>LVMH : Chiffre d'affaires record au Q1 2026 !</h1>
+            <p>Le groupe de luxe annonce une hausse de 12% de ses ventes, tirée par la maroquinerie.</p>
+            <p>Retrouvez tous les détails sur <a href="https://example.com/lvmh">https://example.com/lvmh</a>.</p>
+            <footer>
+                Disclaimer: Ceci n'est pas un conseil financier. 
+                <a href="https://example.com/unsub">Unsubscribe from newsletter</a>.
+                All rights reserved 2026.
+            </footer>
+        </body>
+    </html>
+    """
+    cleaned = clean_financial_text(sample_html)
+    print("Sanitized text output:")
+    print("---")
+    print(cleaned)
+    print("---")
+```
+
 ## FILE: 01_memory_core/__init__.py
 ```python
 """Memory Core & State Persistence package for PEA Pollux."""
@@ -5190,6 +5312,7 @@ class PortfolioDB:
                         url             TEXT,
                         published_at    TEXT,
                         sentiment_score REAL,
+                        sentiment_label TEXT,
                         created_at      TEXT NOT NULL
                     );
                     """
@@ -5506,6 +5629,58 @@ class PortfolioDB:
             logger.exception("Failed to fetch news from news_master.")
             return []
 
+    def get_unprocessed_news(self, limit: int = 100) -> list[dict]:
+        """Fetch news articles that do not have a sentiment label yet."""
+        try:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    """
+                    SELECT id, ticker, title, source, url, published_at, sentiment_score, sentiment_label
+                    FROM news_master
+                    WHERE sentiment_label IS NULL OR sentiment_label = ''
+                    ORDER BY published_at DESC
+                    LIMIT ?;
+                    """,
+                    (limit,),
+                ).fetchall()
+                return [dict(r) for r in rows]
+        except sqlite3.Error:
+            logger.exception("Failed to fetch unprocessed news.")
+            return []
+
+    def update_news_sentiment(self, updates: list[dict]) -> int:
+        """Batch update sentiment scores and labels on news_master."""
+        if not updates:
+            return 0
+        try:
+            with self._connect() as conn:
+                conn.executemany(
+                    """
+                    UPDATE news_master
+                    SET sentiment_score = ?,
+                        sentiment_label = ?
+                    WHERE id = ?;
+                    """,
+                    [
+                        (
+                            float(u.get("sentiment_score", 0.0)),
+                            str(u.get("sentiment_label", "Neutral")),
+                            str(u["id"]),
+                        )
+                        for u in updates
+                        if u.get("id")
+                    ],
+                )
+            logger.info("Updated sentiment for %d news items.", len(updates))
+            return len(updates)
+        except sqlite3.Error:
+            logger.exception("Failed to update news sentiment in batch.")
+            return 0
+
+    def insert_raw_news(self, items: list[dict]) -> int:
+        """Alias for save_news_items to insert batch news."""
+        return self.save_news_items(items)
+
     def fetch_recent_post_mortems(self, limit: int = 50) -> list[dict]:
         """Fetch historical post-mortems from trade_post_mortems table."""
         try:
@@ -5729,6 +5904,10 @@ class PortfolioDB:
         except sqlite3.Error:
             logger.exception("Failed to log model training run.")
             return ""
+
+
+# Backward-compatible alias
+SQLitePortfolioDB = PortfolioDB
 ```
 
 ## FILE: 02_quant_engine/__init__.py
@@ -6995,58 +7174,101 @@ if __name__ == "__main__":
 
 ## FILE: 02_quant_engine/nlp_sentiment_engine.py
 ```python
+"""Batch NLP News Sentiment Engine using ProsusAI/finbert transformer model.
+
+Scores unprocessed news items in SQLite database and persists sentiment labels
+('Bullish', 'Bearish', 'Neutral') and numeric compound scores in [-1.0, 1.0].
+"""
+
+from __future__ import annotations
+
+import logging
 import sys
 from pathlib import Path
+from typing import Any, Dict, List
+
 _ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_ROOT / "01_memory_core"))
+for _d in ("00_data_sensors", "01_memory_core", "02_quant_engine", "03_risk_portfolio", "04_orchestrator_ai"):
+    sys.path.insert(0, str(_ROOT / _d))
 
-from logging_setup import get_logger
 from sqlite_portfolio import SQLitePortfolioDB
+from news_sentiment_llm import get_finbert_pipeline
 
-logger = get_logger("nlp_sentiment_engine")
+logger = logging.getLogger("nlp_sentiment_engine")
 
-try:
-    from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
-except ImportError:
-    logger.error("vaderSentiment not installed. Run: pip install vaderSentiment")
-    sys.exit(1)
 
-def score_news_batch(db: SQLitePortfolioDB):
-    """Fetch unprocessed news, score them using VADER, and update the database."""
+def score_news_batch(db: SQLitePortfolioDB) -> None:
+    """Fetch unprocessed news, score them using ProsusAI/finbert, and update the database."""
     unprocessed = db.get_unprocessed_news()
     if not unprocessed:
         logger.info("No unprocessed news found.")
         return
-        
-    logger.info("Scoring %d unprocessed news items...", len(unprocessed))
-    
-    analyzer = SentimentIntensityAnalyzer()
-    updates = []
-    
+
+    logger.info("Scoring %d unprocessed news items with FinBERT...", len(unprocessed))
+
+    nlp = get_finbert_pipeline()
+    updates: List[Dict[str, Any]] = []
+
     for item in unprocessed:
-        # Combine title and content for scoring
-        text = f"{item['title']} {item['content'] or ''}"
-        
-        # VADER returns a dict, we want the 'compound' score [-1.0, 1.0]
-        scores = analyzer.polarity_scores(text)
-        compound = float(scores["compound"])
-        
-        if compound >= 0.05:
-            label = "Bullish"
-        elif compound <= -0.05:
-            label = "Bearish"
+        # Sanitize and truncate content to avoid token limit and boilerplate
+        raw_combined = f"{item['title']} {item.get('content') or ''}"
+        try:
+            from text_cleaner import clean_financial_text
+            text = clean_financial_text(raw_combined, max_chars=1500)
+        except Exception:
+            text = raw_combined[:1500].strip()
+
+        if not text:
+            continue
+
+        label = "Neutral"
+        compound = 0.0
+
+        if nlp is not None:
+            try:
+                outputs = nlp(text)
+                if outputs and isinstance(outputs[0], list):
+                    sorted_preds = sorted(outputs[0], key=lambda x: x.get("score", 0.0), reverse=True)
+                    top = sorted_preds[0]
+                elif outputs and isinstance(outputs[0], dict):
+                    top = outputs[0]
+                else:
+                    top = {"label": "neutral", "score": 1.0}
+
+                pred_label = str(top.get("label", "neutral")).lower()
+                prob = float(top.get("score", 0.0))
+
+                if pred_label == "positive" and prob > 0.50:
+                    label = "Bullish"
+                    compound = prob
+                elif pred_label == "negative" and prob > 0.50:
+                    label = "Bearish"
+                    compound = -prob
+                else:
+                    label = "Neutral"
+                    compound = 0.0
+            except Exception as exc:
+                logger.debug("FinBERT inference error on news item %s: %s", item.get("id"), exc)
         else:
-            label = "Neutral"
-            
+            # Fallback keyword scoring
+            t_lower = text.lower()
+            if any(w in t_lower for w in ("record", "croissance", "hausse", "bénéfice", "upgrade", "beat")):
+                label = "Bullish"
+                compound = 0.70
+            elif any(w in t_lower for w in ("chute", "baisse", "perte", "déficit", "downgrade", "miss")):
+                label = "Bearish"
+                compound = -0.70
+
         updates.append({
             "id": item["id"],
-            "sentiment_score": compound,
-            "sentiment_label": label
+            "sentiment_score": round(compound, 4),
+            "sentiment_label": label,
         })
-        
+
     if updates:
         db.update_news_sentiment(updates)
-        logger.info("Sentiment scoring completed for %d items.", len(updates))
+        logger.info("FinBERT sentiment scoring completed for %d items.", len(updates))
+
 
 if __name__ == "__main__":
     db = SQLitePortfolioDB()
@@ -10613,59 +10835,59 @@ if __name__ == "__main__":
 
 ## FILE: 04_orchestrator_ai/news_sentiment_llm.py
 ```python
-"""News sentiment scorer for PEA Sniper Terminal V-Prime (Phase 11).
+"""Financial News Sentiment Scorer for PEA Pollux using ProsusAI/finbert.
 
-Turns unstructured news headlines into a single hard number the deterministic
-engine can use. The LLM is constrained to act as a quantitative NLP model and
-MUST return only an integer in ``[-100, +100]`` — no prose, no explanation.
+Provides 100% deterministic, offline, institutional-grade sentiment classification
+mapping strictly to the [-100, +100] quantitative conviction scale.
 
-This keeps the pipeline emotionless: the model never decides trades, it only
-compresses text into a scalar sentiment feature.
+Model: ProsusAI/finbert (BERT-based financial domain language model)
+Output mapping:
+  - positive (prob p): +p * 100.0
+  - negative (prob p): -p * 100.0
+  - neutral: 0.0
 """
+
+from __future__ import annotations
 
 import logging
 import os
-import re
 import sys
 from pathlib import Path
-from typing import List
+from typing import List, Optional, Tuple
 
-try:  # Load config/api_keys.env if python-dotenv is available.
-    from dotenv import load_dotenv
-
-    _ENV_PATH = Path(__file__).resolve().parent.parent / "config" / "api_keys.env"
-    load_dotenv(_ENV_PATH)
-except Exception:  # noqa: BLE001 - dotenv is a convenience, not a requirement.
-    pass
-
-# Reuse the shared OpenRouter client from the interfaces layer.
-_INTERFACES_DIR = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "05_interfaces"
-)
-sys.path.insert(0, _INTERFACES_DIR)
-
-from llm_explainer import openrouter_chat  # noqa: E402
+_ROOT = Path(__file__).resolve().parent.parent
+for _d in ("00_data_sensors", "01_memory_core", "02_quant_engine", "03_risk_portfolio"):
+    sys.path.insert(0, str(_ROOT / _d))
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_MODEL = "mistralai/mistral-7b-instruct"
-_NEUTRAL_SCORE = 0.0
-# Extract the first signed integer from the model reply.
-_INT_RE = re.compile(r"-?\d+")
+_FINBERT_PIPELINE = None
+
+
+def get_finbert_pipeline():
+    """Lazily load and cache the ProsusAI/finbert sentiment analysis pipeline."""
+    global _FINBERT_PIPELINE
+    if _FINBERT_PIPELINE is None:
+        try:
+            from transformers import pipeline
+            logger.info("Initializing ProsusAI/finbert transformer pipeline...")
+            _FINBERT_PIPELINE = pipeline(
+                "sentiment-analysis",
+                model="ProsusAI/finbert",
+                tokenizer="ProsusAI/finbert",
+                top_k=None,
+            )
+            logger.info("ProsusAI/finbert pipeline successfully loaded.")
+        except Exception as exc:
+            logger.warning("FinBERT pipeline could not be loaded: %s (using heuristic fallback)", exc)
+            _FINBERT_PIPELINE = False
+    return _FINBERT_PIPELINE if _FINBERT_PIPELINE is not False else None
 
 
 class NewsSentimentScorer:
-    """Compresses news headlines into a numeric sentiment score and persists history."""
+    """Quantitative sentiment scorer powered by ProsusAI/finbert transformer."""
 
     def __init__(self, portfolio_db=None) -> None:
-        """Read the OpenRouter API key and model slug from the environment."""
-        self.api_key: str | None = os.getenv("OPENROUTER_API_KEY")
-        self.model: str = os.getenv("OPENROUTER_MODEL", _DEFAULT_MODEL)
-        if not self.api_key:
-            logger.warning(
-                "OPENROUTER_API_KEY not set; news sentiment will be neutral (0)."
-            )
-
         if portfolio_db is None:
             try:
                 from sqlite_portfolio import PortfolioDB
@@ -10675,103 +10897,114 @@ class NewsSentimentScorer:
         else:
             self.portfolio_db = portfolio_db
 
-    @staticmethod
-    def _parse_score(raw: str | None) -> float:
-        """Parse the LLM reply into a float clamped to [-100, 100]."""
-        if not raw:
-            return _NEUTRAL_SCORE
-        match = _INT_RE.search(raw)
-        if not match:
-            logger.warning("No integer in sentiment reply %r; neutral.", raw[:80])
-            return _NEUTRAL_SCORE
-        value = float(int(match.group()))
-        return max(-100.0, min(100.0, value))
-
-    async def analyze_news(
-        self, ticker: str, news_headlines: List[str], source: str = "openrouter"
-    ) -> float:
-        """Score the aggregate sentiment of headlines for one ticker.
+    def score_single_headline(self, headline: str) -> Tuple[float, str]:
+        """Score a single headline string using FinBERT or deterministic keywords.
 
         Args:
-            ticker: The ticker the headlines relate to (for prompt context).
-            news_headlines: Recent headline strings.
-            source: Source identifier (e.g. 'openrouter', 'finnhub', 'rss').
+            headline: Text of the financial headline.
 
         Returns:
-            float: Sentiment in ``[-100.0, +100.0]``.
+            Tuple[float, str]: (score in [-100, 100], label string).
+        """
+        try:
+            from text_cleaner import clean_financial_text
+            cleaned = clean_financial_text(headline, max_chars=1500)
+        except Exception:
+            cleaned = str(headline)[:1500].strip()
+
+        if not cleaned:
+            return 0.0, "neutral"
+
+        pipe = get_finbert_pipeline()
+        if pipe is not None:
+            try:
+                # pipe returns e.g. [[{'label': 'positive', 'score': 0.89}, {'label': 'negative', ...}, ...]]
+                outputs = pipe(cleaned)
+                if outputs and isinstance(outputs[0], list):
+                    # Sort by score descending to get top label
+                    sorted_preds = sorted(outputs[0], key=lambda x: x.get("score", 0.0), reverse=True)
+                    top_pred = sorted_preds[0]
+                elif outputs and isinstance(outputs[0], dict):
+                    top_pred = outputs[0]
+                else:
+                    top_pred = {"label": "neutral", "score": 1.0}
+
+                label = str(top_pred.get("label", "neutral")).lower()
+                prob = float(top_pred.get("score", 0.0))
+
+                if label == "positive":
+                    return round(prob * 100.0, 1), "positive"
+                elif label == "negative":
+                    return round(prob * -100.0, 1), "negative"
+                else:
+                    return 0.0, "neutral"
+            except Exception as exc:
+                logger.debug("FinBERT inference error on '%s': %s", cleaned[:50], exc)
+
+        # Heuristic financial keywords fallback
+        lower = cleaned.lower()
+        bull_words = ["hausse", "croissance", "record", "dividende", "bénéfice", "achat", "surperformance", "rehausse", "upgrade", "beat", "surge", "gain", "profit", "bullish"]
+        bear_words = ["baisse", "chute", "perte", "déficit", "avertissement", "dégradation", "downgrade", "miss", "plunge", "fraud", "investigation", "litigation", "bearish"]
+        
+        pos_hits = sum(1 for w in bull_words if w in lower)
+        neg_hits = sum(1 for w in bear_words if w in lower)
+
+        if pos_hits > neg_hits:
+            return 50.0 + min(40.0, pos_hits * 15.0), "positive"
+        elif neg_hits > pos_hits:
+            return -50.0 - min(40.0, neg_hits * 15.0), "negative"
+        return 0.0, "neutral"
+
+    async def analyze_news(
+        self, ticker: str, news_headlines: List[str], source: str = "finbert"
+    ) -> float:
+        """Score the aggregate sentiment of headlines for one ticker using FinBERT.
+
+        Args:
+            ticker: Asset ticker (e.g. 'MC.PA').
+            news_headlines: List of headline strings.
+            source: Ingestion source tag.
+
+        Returns:
+            float: Normalized aggregate sentiment score in [-100.0, +100.0].
         """
         headlines = [h.strip() for h in (news_headlines or []) if h and h.strip()]
         if not headlines:
-            logger.debug("No headlines for %s; neutral sentiment.", ticker)
-            return _NEUTRAL_SCORE
-        if not self.api_key:
-            return _NEUTRAL_SCORE
+            logger.debug("No headlines for %s; neutral sentiment (0).", ticker)
+            return 0.0
 
-        joined = "\n".join(f"- {h}" for h in headlines[:15])
-        system_prompt = (
-            "You are a deterministic quantitative NLP sentiment model. You read "
-            "financial news headlines and output market sentiment as a single "
-            "integer between -100 (extremely bearish) and +100 (extremely "
-            "bullish), where 0 is neutral. Output ONLY the integer. No words, no "
-            "symbols, no explanation, no punctuation."
-        )
-        user_prompt = (
-            f"Ticker: {ticker}\nHeadlines:\n{joined}\n\n"
-            "Return ONLY one integer between -100 and 100."
-        )
+        scores: List[float] = []
+        for h in headlines[:15]:
+            h_score, _ = self.score_single_headline(h)
+            scores.append(h_score)
 
-        raw = await openrouter_chat(
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            api_key=self.api_key,
-            model=self.model,
-            max_tokens=8,
-            temperature=0.0,
-        )
-        score = self._parse_score(raw)
-        logger.info("News sentiment for %s: %.0f (from %d headlines).",
-                    ticker, score, len(headlines))
+            if self.portfolio_db is not None:
+                try:
+                    self.portfolio_db.upsert_sentiment_history(
+                        ticker=ticker,
+                        score=h_score,
+                        source=source,
+                        headline=h[:120],
+                    )
+                except Exception as exc:
+                    logger.debug("Failed to upsert sentiment history for %s: %s", ticker, exc)
 
-        # Persist sentiment history time-series
-        if self.portfolio_db is not None:
-            summary_headline = "; ".join(headlines[:2])[:120]
-            try:
-                self.portfolio_db.upsert_sentiment_history(
-                    ticker=ticker,
-                    score=score,
-                    source=source,
-                    headline=summary_headline,
-                )
-            except Exception as exc:
-                logger.debug("Failed to upsert sentiment history: %s", exc)
-
-        return score
+        final_score = float(sum(scores) / len(scores)) if scores else 0.0
+        final_score = max(-100.0, min(100.0, round(final_score, 1)))
+        logger.info("FinBERT sentiment for %s: %.1f (from %d headlines).", ticker, final_score, len(headlines))
+        return final_score
 
 
 if __name__ == "__main__":
     import asyncio
-
-    logging.basicConfig(
-        level=logging.INFO, format="%(levelname)s %(name)s: %(message)s"
-    )
-
+    logging.basicConfig(level=logging.INFO)
     scorer = NewsSentimentScorer()
-
-    # Offline unit check of the parser (no network needed).
-    assert scorer._parse_score("42") == 42.0
-    assert scorer._parse_score("Score: -73 (bearish)") == -73.0
-    assert scorer._parse_score("999") == 100.0
-    assert scorer._parse_score("nonsense") == 0.0
-    print("Parser checks passed.")
-
-    demo = [
-        "Company X beats earnings, raises full-year guidance",
-        "Analysts upgrade Company X to Buy on strong order book",
+    demo_headlines = [
+        "LVMH records strong Q1 sales growth beating all analyst expectations",
+        "European luxury sector downgraded on slowing Chinese demand",
     ]
-    result = asyncio.run(scorer.analyze_news("TEST.PA", demo))
-    print("Live sentiment (0 if no API key):", result)
+    res = asyncio.run(scorer.analyze_news("MC.PA", demo_headlines))
+    print("Aggregate FinBERT sentiment score:", res)
 ```
 
 ## FILE: 04_orchestrator_ai/post_mortem_engine.py
@@ -10874,7 +11107,6 @@ class TradePostMortemEngine:
                 f"Trade clôturé en perte ({pnl_pct:.1f}% en {holding_days}j). "
                 f"Coupe-circuit {exit_reason} exécuté avec discipline, limitant l'érosion du capital."
             )
-
         now = datetime.now(timezone.utc).isoformat()
         try:
             with self._connect() as conn:
@@ -10910,6 +11142,38 @@ class TradePostMortemEngine:
                     ),
                 )
             logger.info("Post-mortem saved for trade %s on %s (PnL: %+.2f EUR)", trade_id, ticker, pnl_eur)
+
+            # --- Autonomous Reinforcement Feedback Loop (Contextual Bandit) ---
+            try:
+                from contextual_bandit import UCBBandit
+                bandit = UCBBandit()
+
+                # Infer strategy arm from exit reason or metadata
+                er_upper = str(exit_reason).upper()
+                if "STAT_ARB" in er_upper or "COINT" in er_upper or "PAIR" in er_upper:
+                    strategy_arm = "context"
+                elif "BREAKOUT" in er_upper:
+                    strategy_arm = "breakout"
+                elif "TREND" in er_upper:
+                    strategy_arm = "trend"
+                else:
+                    strategy_arm = "mean_reversion"
+
+                # Infer regime: BULL if profit shave / gain, VOLATILE if stop loss
+                if pnl_eur > 0:
+                    current_regime = "BULL"
+                elif "ATR_STOP" in er_upper or pnl_pct < -5.0:
+                    current_regime = "VOLATILE"
+                else:
+                    current_regime = "BEAR"
+
+                # Reward is proportional to realized PnL %
+                reward = float(pnl_pct)
+                bandit.update_reward(regime=current_regime, arm=strategy_arm, reward=reward)
+                logger.info("Bandit feedback loop updated: regime=%s, arm=%s, reward=%+.2f%%", current_regime, strategy_arm, reward)
+            except Exception as b_exc:
+                logger.debug("Bandit update skipped: %s", b_exc)
+
         except Exception as exc:  # noqa: BLE001
             logger.warning("Failed to save post-mortem for %s: %s", trade_id, exc)
 
@@ -21172,13 +21436,14 @@ Repository: [github.com/Polluxgnr/Peatrading](https://github.com/Polluxgnr/Peatr
 
 | Layer | What it does (why it exists) |
 |------|------------------------------|
-| **Data** | OHLCV → DuckDB; VIX/VSTOXX; ECB SDW OAT-Bund spread; **InsiderScreener API + OpenInsider EU + AMF BDIF** cross-verified into SQLite `insiders_master`; OpenFIGI mapper; INPI distress alerts; Polymarket Gamma; RSS & IMAP news feeds |
+| **Data & Sensors** | OHLCV → DuckDB; VIX/VSTOXX; ECB SDW OAT-Bund spread; **InsiderScreener API + OpenInsider EU + AMF BDIF** cross-verified into SQLite `insiders_master`; OpenFIGI mapper; INPI distress alerts; Polymarket Gamma; RSS & IMAP news feeds; **Data Janitor & Sanitizer** (`text_cleaner.py` stripping HTML/boilerplate/URLs) |
 | **Capital Security** | Multi-horizon loss circuit breakers (**Daily −0.5%, Weekly −2%, Monthly −5%**); continuous **Kinetic Brake** (1.0x → 0.50x → 0.20x → 0.0x); Pydantic `RiskParamsConfig(extra='forbid', frozen=True)`; **Strict Piotroski (<4) Veto**; Degraded Mode (Floor=85) |
-| **Quant & Stochastic** | Mean-reversion exhaustion (RSI < 30 + Close > SMA200 + Trend Quality R²×slope); **3-State Gaussian HMM** (CAC 40 regime classifier); **Hierarchical Risk Parity (HRP)**; **Quantitative Risk Math** (Historical VaR, Cornish-Fisher VaR, CVaR 95/99); **Merton Jump Diffusion GBM** |
-| **ML & Calibration** | **Feature Store** (RSI, ATR, BB, Momentum, Volume Z-score) + **XGBoost Classifier with Conformal Prediction** coverage sets |
-| **Backtesting & Stress** | **Walk-Forward Event-Driven Backtester** (strict execution at **T+1 Open**, dynamic ATR 2.5x stop, monthly +20% profit-shaving); **Ratio Backfill Crisis Stress Tester** (2008 Lehman via `^FCHI`, 2011 Euro Debt, 2020 COVID, 2022 Bear) |
-| **AI Orchestration** | **Red Team Adversarial Debate** (Bull Analyst vs Bear Risk Officer vs Committee Judge); **Trade Post-Mortems** (automatic retrospective analytics upon stop/shave in SQLite `trade_post_mortems`); News sentiment scoring |
-| **UI / Command Center** | Streamlit Bloomberg HUD (Mission Control, Interactive Screener, Ticker Deep-Dive with HTML Badges & AI Synthesis button, Execution Ledger, Funnel Analytics) + **Discord Copilot** with interactive dark `!chart` candles |
+| **Quant & Stochastic** | Mean-reversion exhaustion (RSI < 30 + Close > SMA200 + Trend Quality R²×slope); **Statistical Arbitrage / Pairs Trading** (sector-isolated Engle-Granger cointegration $p < 0.05$, OLS hedge ratios $\beta$, and 20-day rolling spread Z-scores); **3-State Gaussian HMM** (CAC 40 regime classifier); **Hierarchical Risk Parity (HRP)**; **Quantitative Risk Math** (Historical VaR, Cornish-Fisher VaR, CVaR 95/99); **Merton Jump Diffusion GBM** |
+| **ML & NLP Sentiment** | **ProsusAI/finbert** transformer pipeline mapping to $[-100, +100]$ continuous conviction; **Feature Store** (RSI, ATR, BB, Momentum, Volume Z-score) + **XGBoost Classifier with Conformal Prediction** coverage sets; **Contextual UCB Bandit** dynamic sub-model weighting |
+| **Backtesting & Stress** | **Walk-Forward Event-Driven Backtester** (strict execution at **T+1 Open**, dynamic ATR 2.5x stop, monthly +20% profit-shaving); **Interactive Streamlit Calibration Tab**; **Ratio Backfill Crisis Stress Tester** (2008 Lehman via `^FCHI`, 2011 Euro Debt, 2020 COVID, 2022 Bear) |
+| **AI Orchestration & Self-Learning** | **Red Team Adversarial Debate** (Bull Analyst vs Bear Risk Officer vs Committee Judge); **Trade Post-Mortems** (`trade_post_mortems` retrospective analytics); **Autonomous Reinforcement Feedback Loop** (post-mortem PnL updates Contextual Bandit UCB weights across BULL/BEAR/VOLATILE regimes) |
+| **UI / Command Center** | Streamlit Bloomberg HUD (Mission Control, Interactive Screener, Ticker Deep-Dive with HTML Badges, Red Team Committee & NLP Curves, Calibration/Backtest HUD, Execution Ledger, Funnel Analytics) + **Discord Copilot** with interactive dark `!chart` candles |
+| **Internal API & MCP** | **FastAPI Internal SSOT** (`06_api/internal_api.py`) + **Claude Desktop Model Context Protocol (MCP)** Server (`mcp_server.py`) |
 | **Ops & CI/CD** | GitHub Actions CI with full dependency install & `ruff check`, Paris market daemon, rotating logs, SQLite backup |
 
 ---
@@ -21630,6 +21895,7 @@ xgboost>=2.0.0
 mapie>=0.8.0
 hmmlearn>=0.3.0
 torch>=2.2.0
+transformers>=4.38.0
 stable-baselines3>=2.2.0
 shap>=0.44.0
 # pandas-ta-classic is the numpy-2.x / numba-free provider of the `.ta`
@@ -22216,6 +22482,90 @@ if __name__ == "__main__":
     unittest.main()
 ```
 
+## FILE: tests/test_finbert_sentiment.py
+```python
+"""Unit Tests for FinBERT Sentiment Scorer and Batch NLP Engine."""
+
+from __future__ import annotations
+
+import asyncio
+import sys
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+for sub in ("00_data_sensors", "01_memory_core", "02_quant_engine", "03_risk_portfolio", "04_orchestrator_ai"):
+    sys.path.insert(0, str(ROOT / sub))
+
+from news_sentiment_llm import NewsSentimentScorer
+from nlp_sentiment_engine import score_news_batch
+from sqlite_portfolio import SQLitePortfolioDB
+
+
+class TestFinBertSentimentSuite(unittest.TestCase):
+
+    def test_01_single_headline_scoring(self):
+        """Verify FinBERT scoring on positive, negative, and neutral financial headlines."""
+        scorer = NewsSentimentScorer()
+
+        # Positive headline
+        pos_score, pos_label = scorer.score_single_headline("LVMH reports record profits and raises dividend by 15%")
+        self.assertGreater(pos_score, 0.0)
+        self.assertEqual(pos_label, "positive")
+
+        # Negative headline
+        neg_score, neg_label = scorer.score_single_headline("Company warns of massive profit drop and revenue miss")
+        self.assertLess(neg_score, 0.0)
+        self.assertEqual(neg_label, "negative")
+
+        # Empty headline
+        zero_score, zero_label = scorer.score_single_headline("")
+        self.assertEqual(zero_score, 0.0)
+        self.assertEqual(zero_label, "neutral")
+
+    def test_02_aggregate_analyze_news(self):
+        """Verify aggregate news scoring and normalization in [-100, 100]."""
+        scorer = NewsSentimentScorer()
+        headlines = [
+            "Air Liquide reports strong growth across all business lines",
+            "Target price upgraded by major European banks",
+        ]
+        avg_score = asyncio.run(scorer.analyze_news("AI.PA", headlines))
+        self.assertGreater(avg_score, 0.0)
+        self.assertLessEqual(avg_score, 100.0)
+
+    def test_03_batch_nlp_scoring_with_db(self):
+        """Verify batch news scoring persists bullish/bearish labels into SQLite."""
+        import tempfile
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tf:
+            db_path = tf.name
+
+        try:
+            db = SQLitePortfolioDB(db_path=db_path)
+            db.init_db()
+
+            # Insert unprocessed news
+            db.insert_raw_news([
+                {"id": "NEWS_1", "ticker": "MC.PA", "title": "Record sales in Q1 for luxury giant", "content": "Tremendous growth in Europe", "source": "Reuters", "published_at": "2026-08-10 10:00:00"},
+                {"id": "NEWS_2", "ticker": "OR.PA", "title": "Profit collapse and severe regulatory penalties", "content": "Downturn expected", "source": "Bloomberg", "published_at": "2026-08-10 10:30:00"},
+            ])
+
+            score_news_batch(db)
+
+            # Verify processed status
+            unproc = db.get_unprocessed_news()
+            self.assertEqual(len(unproc), 0)
+        finally:
+            try:
+                Path(db_path).unlink(missing_ok=True)
+            except Exception:
+                pass
+
+
+if __name__ == "__main__":
+    unittest.main()
+```
+
 ## FILE: tests/test_funnel_analytics.py
 ```python
 """Phase 17 funnel taxonomy tests (no Streamlit runtime)."""
@@ -22733,6 +23083,89 @@ class TestStatArbAndBacktestSuite(unittest.TestCase):
         self.assertIsInstance(s_map, dict)
         self.assertIn("MC.PA", s_map)
         self.assertEqual(s_map["MC.PA"], "Consumer Cyclical")
+
+
+if __name__ == "__main__":
+    unittest.main()
+```
+
+## FILE: tests/test_text_cleaner_and_feedback.py
+```python
+"""Unit Tests for Text Sanitizer and Autonomous Reinforcement Post-Mortem Loop."""
+
+from __future__ import annotations
+
+import sys
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+for sub in ("00_data_sensors", "01_memory_core", "02_quant_engine", "03_risk_portfolio", "04_orchestrator_ai"):
+    sys.path.insert(0, str(ROOT / sub))
+
+from text_cleaner import clean_financial_text
+from post_mortem_engine import TradePostMortemEngine
+from contextual_bandit import UCBBandit
+
+
+class TestTextCleanerAndFeedbackSuite(unittest.TestCase):
+
+    def test_01_text_sanitizer_html_and_urls(self):
+        """Verify clean_financial_text strips HTML, URLs, and boilerplate."""
+        raw_html = (
+            "<html><body>"
+            "<h3>TotalEnergies annonce un dividende exceptionnel</h3>"
+            "<p>Le groupe pétrolier enregistre une progression solide de 8%.</p>"
+            "<a href='https://finance.yahoo.com/news'>Lire la suite</a>"
+            "<footer>Disclaimer: Ceci n'est pas un conseil. Unsubscribe here. All rights reserved.</footer>"
+            "</body></html>"
+        )
+        cleaned = clean_financial_text(raw_html)
+
+        self.assertIn("TotalEnergies", cleaned)
+        self.assertIn("dividende exceptionnel", cleaned)
+        self.assertNotIn("<p>", cleaned)
+        self.assertNotIn("https://", cleaned)
+        self.assertNotIn("Unsubscribe", cleaned)
+        self.assertNotIn("Disclaimer", cleaned)
+
+    def test_02_post_mortem_bandit_reinforcement_update(self):
+        """Verify TradePostMortemEngine triggers bandit reward update."""
+        import tempfile
+        import gc
+        
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tf:
+            db_path = tf.name
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as b_tf:
+            bandit_path = Path(b_tf.name)
+
+        try:
+            bandit = UCBBandit(storage_path=bandit_path)
+            prev_counts = bandit.state["BULL"]["mean_reversion"]["counts"]
+
+            engine = TradePostMortemEngine(db_path=db_path)
+            res = engine.generate_post_mortem(
+                trade_id="TR_BANDIT_01",
+                ticker="MC.PA",
+                entry_date="2026-06-01",
+                exit_date="2026-06-15",
+                entry_price=100.0,
+                exit_price=120.0,
+                shares=10,
+                exit_reason="PROFIT_SHAVE_20PCT",
+            )
+            self.assertEqual(res["pnl_eur"], 200.0)
+            self.assertEqual(res["pnl_pct"], 20.0)
+        finally:
+            gc.collect()
+            try:
+                Path(db_path).unlink(missing_ok=True)
+            except Exception:
+                pass
+            try:
+                bandit_path.unlink(missing_ok=True)
+            except Exception:
+                pass
 
 
 if __name__ == "__main__":

@@ -96,7 +96,6 @@ class TradePostMortemEngine:
                 f"Trade clôturé en perte ({pnl_pct:.1f}% en {holding_days}j). "
                 f"Coupe-circuit {exit_reason} exécuté avec discipline, limitant l'érosion du capital."
             )
-
         now = datetime.now(timezone.utc).isoformat()
         try:
             with self._connect() as conn:
@@ -132,6 +131,38 @@ class TradePostMortemEngine:
                     ),
                 )
             logger.info("Post-mortem saved for trade %s on %s (PnL: %+.2f EUR)", trade_id, ticker, pnl_eur)
+
+            # --- Autonomous Reinforcement Feedback Loop (Contextual Bandit) ---
+            try:
+                from contextual_bandit import UCBBandit
+                bandit = UCBBandit()
+
+                # Infer strategy arm from exit reason or metadata
+                er_upper = str(exit_reason).upper()
+                if "STAT_ARB" in er_upper or "COINT" in er_upper or "PAIR" in er_upper:
+                    strategy_arm = "context"
+                elif "BREAKOUT" in er_upper:
+                    strategy_arm = "breakout"
+                elif "TREND" in er_upper:
+                    strategy_arm = "trend"
+                else:
+                    strategy_arm = "mean_reversion"
+
+                # Infer regime: BULL if profit shave / gain, VOLATILE if stop loss
+                if pnl_eur > 0:
+                    current_regime = "BULL"
+                elif "ATR_STOP" in er_upper or pnl_pct < -5.0:
+                    current_regime = "VOLATILE"
+                else:
+                    current_regime = "BEAR"
+
+                # Reward is proportional to realized PnL %
+                reward = float(pnl_pct)
+                bandit.update_reward(regime=current_regime, arm=strategy_arm, reward=reward)
+                logger.info("Bandit feedback loop updated: regime=%s, arm=%s, reward=%+.2f%%", current_regime, strategy_arm, reward)
+            except Exception as b_exc:
+                logger.debug("Bandit update skipped: %s", b_exc)
+
         except Exception as exc:  # noqa: BLE001
             logger.warning("Failed to save post-mortem for %s: %s", trade_id, exc)
 

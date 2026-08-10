@@ -1,5 +1,5 @@
 # PEA Pollux — Memory Core, State Persistence & Data Contracts
-Generated: `2026-08-10 17:41 UTC` | File Count: `8`
+Generated: `2026-08-10 18:02 UTC` | File Count: `8`
 Institutional Systematic Decision Support Architecture for French PEA.
 ---
 ## Included Files Index
@@ -1182,6 +1182,7 @@ class PortfolioDB:
                         url             TEXT,
                         published_at    TEXT,
                         sentiment_score REAL,
+                        sentiment_label TEXT,
                         created_at      TEXT NOT NULL
                     );
                     """
@@ -1498,6 +1499,58 @@ class PortfolioDB:
             logger.exception("Failed to fetch news from news_master.")
             return []
 
+    def get_unprocessed_news(self, limit: int = 100) -> list[dict]:
+        """Fetch news articles that do not have a sentiment label yet."""
+        try:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    """
+                    SELECT id, ticker, title, source, url, published_at, sentiment_score, sentiment_label
+                    FROM news_master
+                    WHERE sentiment_label IS NULL OR sentiment_label = ''
+                    ORDER BY published_at DESC
+                    LIMIT ?;
+                    """,
+                    (limit,),
+                ).fetchall()
+                return [dict(r) for r in rows]
+        except sqlite3.Error:
+            logger.exception("Failed to fetch unprocessed news.")
+            return []
+
+    def update_news_sentiment(self, updates: list[dict]) -> int:
+        """Batch update sentiment scores and labels on news_master."""
+        if not updates:
+            return 0
+        try:
+            with self._connect() as conn:
+                conn.executemany(
+                    """
+                    UPDATE news_master
+                    SET sentiment_score = ?,
+                        sentiment_label = ?
+                    WHERE id = ?;
+                    """,
+                    [
+                        (
+                            float(u.get("sentiment_score", 0.0)),
+                            str(u.get("sentiment_label", "Neutral")),
+                            str(u["id"]),
+                        )
+                        for u in updates
+                        if u.get("id")
+                    ],
+                )
+            logger.info("Updated sentiment for %d news items.", len(updates))
+            return len(updates)
+        except sqlite3.Error:
+            logger.exception("Failed to update news sentiment in batch.")
+            return 0
+
+    def insert_raw_news(self, items: list[dict]) -> int:
+        """Alias for save_news_items to insert batch news."""
+        return self.save_news_items(items)
+
     def fetch_recent_post_mortems(self, limit: int = 50) -> list[dict]:
         """Fetch historical post-mortems from trade_post_mortems table."""
         try:
@@ -1721,4 +1774,8 @@ class PortfolioDB:
         except sqlite3.Error:
             logger.exception("Failed to log model training run.")
             return ""
+
+
+# Backward-compatible alias
+SQLitePortfolioDB = PortfolioDB
 ```

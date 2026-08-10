@@ -25,6 +25,7 @@ xgboost>=2.0.0
 mapie>=0.8.0
 hmmlearn>=0.3.0
 torch>=2.2.0
+transformers>=4.38.0
 stable-baselines3>=2.2.0
 shap>=0.44.0
 # pandas-ta-classic is the numpy-2.x / numba-free provider of the `.ta`

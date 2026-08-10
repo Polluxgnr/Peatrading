@@ -1,5 +1,5 @@
 # PEA Pollux — Risk Sentinel, Pydantic Config, Drawdown Breakers & HRP Sizer
-Generated: `2026-08-10 17:41 UTC` | File Count: `11`
+Generated: `2026-08-10 18:02 UTC` | File Count: `11`
 Institutional Systematic Decision Support Architecture for French PEA.
 ---
 ## Included Files Index

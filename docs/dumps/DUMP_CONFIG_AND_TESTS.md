@@ -1,5 +1,5 @@
 # PEA Pollux — Configuration Yaml, Test Suites, Root Ops & Documentation
-Generated: `2026-08-10 17:41 UTC` | File Count: `28`
+Generated: `2026-08-10 18:02 UTC` | File Count: `30`
 Institutional Systematic Decision Support Architecture for French PEA.
 ---
 ## Included Files Index
@@ -18,11 +18,13 @@ Institutional Systematic Decision Support Architecture for French PEA.
 - [seed_account.py](#file-seed_account-py)
 - [tests/__init__.py](#file-tests-__init__-py)
 - [tests/test_api_and_mcp.py](#file-tests-test_api_and_mcp-py)
+- [tests/test_finbert_sentiment.py](#file-tests-test_finbert_sentiment-py)
 - [tests/test_funnel_analytics.py](#file-tests-test_funnel_analytics-py)
 - [tests/test_institutional_suite.py](#file-tests-test_institutional_suite-py)
 - [tests/test_newsletter_whitelist.py](#file-tests-test_newsletter_whitelist-py)
 - [tests/test_phase16_foundations.py](#file-tests-test_phase16_foundations-py)
 - [tests/test_stat_arb_and_backtest.py](#file-tests-test_stat_arb_and_backtest-py)
+- [tests/test_text_cleaner_and_feedback.py](#file-tests-test_text_cleaner_and_feedback-py)
 - [tests/test_ui_and_sandbox.py](#file-tests-test_ui_and_sandbox-py)
 - [tools/backup_databases.py](#file-tools-backup_databases-py)
 - [tools/bootstrap_ml_dataset.py](#file-tools-bootstrap_ml_dataset-py)
@@ -2964,13 +2966,14 @@ Repository: [github.com/Polluxgnr/Peatrading](https://github.com/Polluxgnr/Peatr
 
 | Layer | What it does (why it exists) |
 |------|------------------------------|
-| **Data** | OHLCV → DuckDB; VIX/VSTOXX; ECB SDW OAT-Bund spread; **InsiderScreener API + OpenInsider EU + AMF BDIF** cross-verified into SQLite `insiders_master`; OpenFIGI mapper; INPI distress alerts; Polymarket Gamma; RSS & IMAP news feeds |
+| **Data & Sensors** | OHLCV → DuckDB; VIX/VSTOXX; ECB SDW OAT-Bund spread; **InsiderScreener API + OpenInsider EU + AMF BDIF** cross-verified into SQLite `insiders_master`; OpenFIGI mapper; INPI distress alerts; Polymarket Gamma; RSS & IMAP news feeds; **Data Janitor & Sanitizer** (`text_cleaner.py` stripping HTML/boilerplate/URLs) |
 | **Capital Security** | Multi-horizon loss circuit breakers (**Daily −0.5%, Weekly −2%, Monthly −5%**); continuous **Kinetic Brake** (1.0x → 0.50x → 0.20x → 0.0x); Pydantic `RiskParamsConfig(extra='forbid', frozen=True)`; **Strict Piotroski (<4) Veto**; Degraded Mode (Floor=85) |
-| **Quant & Stochastic** | Mean-reversion exhaustion (RSI < 30 + Close > SMA200 + Trend Quality R²×slope); **3-State Gaussian HMM** (CAC 40 regime classifier); **Hierarchical Risk Parity (HRP)**; **Quantitative Risk Math** (Historical VaR, Cornish-Fisher VaR, CVaR 95/99); **Merton Jump Diffusion GBM** |
-| **ML & Calibration** | **Feature Store** (RSI, ATR, BB, Momentum, Volume Z-score) + **XGBoost Classifier with Conformal Prediction** coverage sets |
-| **Backtesting & Stress** | **Walk-Forward Event-Driven Backtester** (strict execution at **T+1 Open**, dynamic ATR 2.5x stop, monthly +20% profit-shaving); **Ratio Backfill Crisis Stress Tester** (2008 Lehman via `^FCHI`, 2011 Euro Debt, 2020 COVID, 2022 Bear) |
-| **AI Orchestration** | **Red Team Adversarial Debate** (Bull Analyst vs Bear Risk Officer vs Committee Judge); **Trade Post-Mortems** (automatic retrospective analytics upon stop/shave in SQLite `trade_post_mortems`); News sentiment scoring |
-| **UI / Command Center** | Streamlit Bloomberg HUD (Mission Control, Interactive Screener, Ticker Deep-Dive with HTML Badges & AI Synthesis button, Execution Ledger, Funnel Analytics) + **Discord Copilot** with interactive dark `!chart` candles |
+| **Quant & Stochastic** | Mean-reversion exhaustion (RSI < 30 + Close > SMA200 + Trend Quality R²×slope); **Statistical Arbitrage / Pairs Trading** (sector-isolated Engle-Granger cointegration $p < 0.05$, OLS hedge ratios $\beta$, and 20-day rolling spread Z-scores); **3-State Gaussian HMM** (CAC 40 regime classifier); **Hierarchical Risk Parity (HRP)**; **Quantitative Risk Math** (Historical VaR, Cornish-Fisher VaR, CVaR 95/99); **Merton Jump Diffusion GBM** |
+| **ML & NLP Sentiment** | **ProsusAI/finbert** transformer pipeline mapping to $[-100, +100]$ continuous conviction; **Feature Store** (RSI, ATR, BB, Momentum, Volume Z-score) + **XGBoost Classifier with Conformal Prediction** coverage sets; **Contextual UCB Bandit** dynamic sub-model weighting |
+| **Backtesting & Stress** | **Walk-Forward Event-Driven Backtester** (strict execution at **T+1 Open**, dynamic ATR 2.5x stop, monthly +20% profit-shaving); **Interactive Streamlit Calibration Tab**; **Ratio Backfill Crisis Stress Tester** (2008 Lehman via `^FCHI`, 2011 Euro Debt, 2020 COVID, 2022 Bear) |
+| **AI Orchestration & Self-Learning** | **Red Team Adversarial Debate** (Bull Analyst vs Bear Risk Officer vs Committee Judge); **Trade Post-Mortems** (`trade_post_mortems` retrospective analytics); **Autonomous Reinforcement Feedback Loop** (post-mortem PnL updates Contextual Bandit UCB weights across BULL/BEAR/VOLATILE regimes) |
+| **UI / Command Center** | Streamlit Bloomberg HUD (Mission Control, Interactive Screener, Ticker Deep-Dive with HTML Badges, Red Team Committee & NLP Curves, Calibration/Backtest HUD, Execution Ledger, Funnel Analytics) + **Discord Copilot** with interactive dark `!chart` candles |
+| **Internal API & MCP** | **FastAPI Internal SSOT** (`06_api/internal_api.py`) + **Claude Desktop Model Context Protocol (MCP)** Server (`mcp_server.py`) |
 | **Ops & CI/CD** | GitHub Actions CI with full dependency install & `ruff check`, Paris market daemon, rotating logs, SQLite backup |
 
 ---
@@ -3422,6 +3425,7 @@ xgboost>=2.0.0
 mapie>=0.8.0
 hmmlearn>=0.3.0
 torch>=2.2.0
+transformers>=4.38.0
 stable-baselines3>=2.2.0
 shap>=0.44.0
 # pandas-ta-classic is the numpy-2.x / numba-free provider of the `.ta`
@@ -3692,6 +3696,90 @@ class TestApiAndMcpSuite(unittest.TestCase):
             text_recs = pollux_mcp.get_top_recommendations()
             self.assertIn("Active Quantitative Recommendations", text_recs)
             self.assertIn("OR.PA", text_recs)
+
+
+if __name__ == "__main__":
+    unittest.main()
+```
+
+## FILE: tests/test_finbert_sentiment.py
+```python
+"""Unit Tests for FinBERT Sentiment Scorer and Batch NLP Engine."""
+
+from __future__ import annotations
+
+import asyncio
+import sys
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+for sub in ("00_data_sensors", "01_memory_core", "02_quant_engine", "03_risk_portfolio", "04_orchestrator_ai"):
+    sys.path.insert(0, str(ROOT / sub))
+
+from news_sentiment_llm import NewsSentimentScorer
+from nlp_sentiment_engine import score_news_batch
+from sqlite_portfolio import SQLitePortfolioDB
+
+
+class TestFinBertSentimentSuite(unittest.TestCase):
+
+    def test_01_single_headline_scoring(self):
+        """Verify FinBERT scoring on positive, negative, and neutral financial headlines."""
+        scorer = NewsSentimentScorer()
+
+        # Positive headline
+        pos_score, pos_label = scorer.score_single_headline("LVMH reports record profits and raises dividend by 15%")
+        self.assertGreater(pos_score, 0.0)
+        self.assertEqual(pos_label, "positive")
+
+        # Negative headline
+        neg_score, neg_label = scorer.score_single_headline("Company warns of massive profit drop and revenue miss")
+        self.assertLess(neg_score, 0.0)
+        self.assertEqual(neg_label, "negative")
+
+        # Empty headline
+        zero_score, zero_label = scorer.score_single_headline("")
+        self.assertEqual(zero_score, 0.0)
+        self.assertEqual(zero_label, "neutral")
+
+    def test_02_aggregate_analyze_news(self):
+        """Verify aggregate news scoring and normalization in [-100, 100]."""
+        scorer = NewsSentimentScorer()
+        headlines = [
+            "Air Liquide reports strong growth across all business lines",
+            "Target price upgraded by major European banks",
+        ]
+        avg_score = asyncio.run(scorer.analyze_news("AI.PA", headlines))
+        self.assertGreater(avg_score, 0.0)
+        self.assertLessEqual(avg_score, 100.0)
+
+    def test_03_batch_nlp_scoring_with_db(self):
+        """Verify batch news scoring persists bullish/bearish labels into SQLite."""
+        import tempfile
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tf:
+            db_path = tf.name
+
+        try:
+            db = SQLitePortfolioDB(db_path=db_path)
+            db.init_db()
+
+            # Insert unprocessed news
+            db.insert_raw_news([
+                {"id": "NEWS_1", "ticker": "MC.PA", "title": "Record sales in Q1 for luxury giant", "content": "Tremendous growth in Europe", "source": "Reuters", "published_at": "2026-08-10 10:00:00"},
+                {"id": "NEWS_2", "ticker": "OR.PA", "title": "Profit collapse and severe regulatory penalties", "content": "Downturn expected", "source": "Bloomberg", "published_at": "2026-08-10 10:30:00"},
+            ])
+
+            score_news_batch(db)
+
+            # Verify processed status
+            unproc = db.get_unprocessed_news()
+            self.assertEqual(len(unproc), 0)
+        finally:
+            try:
+                Path(db_path).unlink(missing_ok=True)
+            except Exception:
+                pass
 
 
 if __name__ == "__main__":
@@ -4215,6 +4303,89 @@ class TestStatArbAndBacktestSuite(unittest.TestCase):
         self.assertIsInstance(s_map, dict)
         self.assertIn("MC.PA", s_map)
         self.assertEqual(s_map["MC.PA"], "Consumer Cyclical")
+
+
+if __name__ == "__main__":
+    unittest.main()
+```
+
+## FILE: tests/test_text_cleaner_and_feedback.py
+```python
+"""Unit Tests for Text Sanitizer and Autonomous Reinforcement Post-Mortem Loop."""
+
+from __future__ import annotations
+
+import sys
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+for sub in ("00_data_sensors", "01_memory_core", "02_quant_engine", "03_risk_portfolio", "04_orchestrator_ai"):
+    sys.path.insert(0, str(ROOT / sub))
+
+from text_cleaner import clean_financial_text
+from post_mortem_engine import TradePostMortemEngine
+from contextual_bandit import UCBBandit
+
+
+class TestTextCleanerAndFeedbackSuite(unittest.TestCase):
+
+    def test_01_text_sanitizer_html_and_urls(self):
+        """Verify clean_financial_text strips HTML, URLs, and boilerplate."""
+        raw_html = (
+            "<html><body>"
+            "<h3>TotalEnergies annonce un dividende exceptionnel</h3>"
+            "<p>Le groupe pétrolier enregistre une progression solide de 8%.</p>"
+            "<a href='https://finance.yahoo.com/news'>Lire la suite</a>"
+            "<footer>Disclaimer: Ceci n'est pas un conseil. Unsubscribe here. All rights reserved.</footer>"
+            "</body></html>"
+        )
+        cleaned = clean_financial_text(raw_html)
+
+        self.assertIn("TotalEnergies", cleaned)
+        self.assertIn("dividende exceptionnel", cleaned)
+        self.assertNotIn("<p>", cleaned)
+        self.assertNotIn("https://", cleaned)
+        self.assertNotIn("Unsubscribe", cleaned)
+        self.assertNotIn("Disclaimer", cleaned)
+
+    def test_02_post_mortem_bandit_reinforcement_update(self):
+        """Verify TradePostMortemEngine triggers bandit reward update."""
+        import tempfile
+        import gc
+        
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tf:
+            db_path = tf.name
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as b_tf:
+            bandit_path = Path(b_tf.name)
+
+        try:
+            bandit = UCBBandit(storage_path=bandit_path)
+            prev_counts = bandit.state["BULL"]["mean_reversion"]["counts"]
+
+            engine = TradePostMortemEngine(db_path=db_path)
+            res = engine.generate_post_mortem(
+                trade_id="TR_BANDIT_01",
+                ticker="MC.PA",
+                entry_date="2026-06-01",
+                exit_date="2026-06-15",
+                entry_price=100.0,
+                exit_price=120.0,
+                shares=10,
+                exit_reason="PROFIT_SHAVE_20PCT",
+            )
+            self.assertEqual(res["pnl_eur"], 200.0)
+            self.assertEqual(res["pnl_pct"], 20.0)
+        finally:
+            gc.collect()
+            try:
+                Path(db_path).unlink(missing_ok=True)
+            except Exception:
+                pass
+            try:
+                bandit_path.unlink(missing_ok=True)
+            except Exception:
+                pass
 
 
 if __name__ == "__main__":
