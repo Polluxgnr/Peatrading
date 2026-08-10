@@ -1,5 +1,5 @@
 # PEA Pollux — Complete Monolithic Repository Dump
-Generated: `2026-08-10 17:30 UTC` | File Count: `121`
+Generated: `2026-08-10 17:41 UTC` | File Count: `123`
 Institutional Systematic Decision Support Architecture for French PEA.
 ---
 ## Included Files Index
@@ -56,6 +56,7 @@ Institutional Systematic Decision Support Architecture for French PEA.
 - [02_quant_engine/quantitative_math.py](#file-02_quant_engine-quantitative_math-py)
 - [02_quant_engine/risk_engine.py](#file-02_quant_engine-risk_engine-py)
 - [02_quant_engine/smart_dca_engine.py](#file-02_quant_engine-smart_dca_engine-py)
+- [02_quant_engine/stat_arb_pairs.py](#file-02_quant_engine-stat_arb_pairs-py)
 - [02_quant_engine/stochastic_models.py](#file-02_quant_engine-stochastic_models-py)
 - [02_quant_engine/technical_scorer.py](#file-02_quant_engine-technical_scorer-py)
 - [02_quant_engine/train_rl_sizer.py](#file-02_quant_engine-train_rl_sizer-py)
@@ -116,6 +117,7 @@ Institutional Systematic Decision Support Architecture for French PEA.
 - [tests/test_institutional_suite.py](#file-tests-test_institutional_suite-py)
 - [tests/test_newsletter_whitelist.py](#file-tests-test_newsletter_whitelist-py)
 - [tests/test_phase16_foundations.py](#file-tests-test_phase16_foundations-py)
+- [tests/test_stat_arb_and_backtest.py](#file-tests-test_stat_arb_and_backtest-py)
 - [tests/test_ui_and_sandbox.py](#file-tests-test_ui_and_sandbox-py)
 - [tools/backup_databases.py](#file-tools-backup_databases-py)
 - [tools/bootstrap_ml_dataset.py](#file-tools-bootstrap_ml_dataset-py)
@@ -4313,12 +4315,18 @@ engine (pandas-ta). This is a pure I/O layer: no indicator math, no trading
 logic, no API fetching lives here.
 """
 
+from __future__ import annotations
+
 import logging
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator, Optional
+from typing import Any, Iterator, Optional
 
-import duckdb
+try:
+    import duckdb
+except ImportError:
+    duckdb = None  # type: ignore[assignment]
+
 import pandas as pd
 
 logger = logging.getLogger(__name__)
@@ -4359,10 +4367,12 @@ class TimeSeriesDB:
         Raises:
             duckdb.Error: Propagated if any DB error occurs.
         """
+        if duckdb is None:
+            raise RuntimeError("DuckDB package is not installed.")
         conn = duckdb.connect(str(self.db_path))
         try:
             yield conn
-        except duckdb.Error:
+        except Exception:
             logger.exception("DuckDB operation failed.")
             raise
         finally:
@@ -5729,6 +5739,7 @@ from .hmm_regime import HMMRegimeClassifier, MarketRegimeState
 from .ml_feature_store import FeatureStore
 from .quantitative_math import calculate_cvar, calculate_historical_var, calculate_cornish_fisher_var
 from .smart_dca_engine import SmartDCAEngine
+from .stat_arb_pairs import StatArbEngine
 from .stochastic_models import StochasticEngine
 from .technical_scorer import SignalGenerator
 from .walk_forward_backtester import WalkForwardBacktester
@@ -5739,6 +5750,7 @@ __all__ = [
     "MarketRegimeState",
     "SignalGenerator",
     "SmartDCAEngine",
+    "StatArbEngine",
     "StochasticEngine",
     "WalkForwardBacktester",
     "calculate_cvar",
@@ -7439,6 +7451,264 @@ if __name__ == "__main__":
                                      np.linspace(260.0, 170.0, 60)]))
     s2 = core.evaluate_cw8(_MockDB(crash), current_cash=8000.0, total_equity=20000.0)
     print(f"  score={s2.score:.0f} qty={s2.target_qty}\n  {s2.reason}")
+```
+
+## FILE: 02_quant_engine/stat_arb_pairs.py
+```python
+"""Statistical Arbitrage & Cointegration Pairs Trading Engine for PEA Pollux.
+
+Identifies stationary, cointegrated asset pairs within the same economic sector
+(Engle-Granger two-step test, p-value < 0.05) and calculates rolling Z-scores of the
+hedged spread to generate mean-reverting statistical arbitrage signals.
+
+Strict Sector Isolation:
+  Pairs are strictly formed within the same sector (from pea_universe.yaml)
+  to prevent spurious mathematical correlation across fundamentally disconnected businesses.
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+import sys
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+
+import numpy as np
+import pandas as pd
+
+try:
+    from statsmodels.tsa.stattools import coint
+except ImportError:
+    coint = None  # Fallback handled in code
+
+_ROOT = Path(__file__).resolve().parent.parent
+for _d in ("00_data_sensors", "01_memory_core", "02_quant_engine", "03_risk_portfolio"):
+    sys.path.insert(0, str(_ROOT / _d))
+
+from data_models import Signal, SignalStatus, SignalType
+
+logger = logging.getLogger(__name__)
+
+
+class StatArbEngine:
+    """Quantitative cointegration pairs trading and spread Z-score engine."""
+
+    def __init__(
+        self,
+        p_val_threshold: float = 0.05,
+        z_score_entry: float = 2.0,
+        z_score_exit: float = 0.5,
+        rolling_window: int = 20,
+        min_history_days: int = 120,
+    ) -> None:
+        self.p_val_threshold = float(p_val_threshold)
+        self.z_score_entry = float(z_score_entry)
+        self.z_score_exit = float(z_score_exit)
+        self.rolling_window = int(rolling_window)
+        self.min_history_days = int(min_history_days)
+
+    def compute_pair_spread(
+        self, series_a: pd.Series, series_b: pd.Series
+    ) -> Tuple[float, float, pd.Series, float]:
+        """Fit OLS hedge ratio on log prices and calculate the rolling Z-score.
+
+        Args:
+            series_a: Close prices for Asset A.
+            series_b: Close prices for Asset B.
+
+        Returns:
+            Tuple: (p_value, hedge_ratio_beta, z_score_series, current_z_score).
+        """
+        # Align series on common dates
+        df = pd.DataFrame({"A": series_a, "B": series_b}).dropna()
+        if len(df) < self.min_history_days:
+            return 1.0, 1.0, pd.Series(dtype=float), 0.0
+
+        log_a = np.log(df["A"])
+        log_b = np.log(df["B"])
+
+        # 1. Cointegration test (Engle-Granger)
+        if coint is not None:
+            try:
+                score, p_value, _ = coint(log_a, log_b)
+            except Exception as exc:
+                logger.debug("Cointegration calculation error: %s", exc)
+                p_value = 1.0
+        else:
+            p_value = 1.0
+
+        # 2. Estimate hedge ratio beta via OLS slope
+        cov_matrix = np.cov(log_a, log_b)
+        var_b = cov_matrix[1, 1]
+        beta = float(cov_matrix[0, 1] / var_b) if var_b > 1e-12 else 1.0
+
+        # 3. Calculate spread: ln(A) - beta * ln(B)
+        spread = log_a - (beta * log_b)
+
+        # 4. Rolling 20-day Z-score
+        rolling_mean = spread.rolling(window=self.rolling_window).mean()
+        rolling_std = spread.rolling(window=self.rolling_window).std()
+
+        z_scores = (spread - rolling_mean) / rolling_std.replace(0, np.nan)
+        z_scores = z_scores.dropna()
+
+        cur_z = float(z_scores.iloc[-1]) if not z_scores.empty else 0.0
+        return float(p_value), float(beta), z_scores, cur_z
+
+    def find_cointegrated_pairs(
+        self,
+        prices_by_ticker: Dict[str, pd.DataFrame],
+        sector_map: Dict[str, str],
+    ) -> List[Dict]:
+        """Scan tickers grouped strictly by sector to identify cointegrated pairs.
+
+        Args:
+            prices_by_ticker: Dict mapping ticker to DataFrame with 'Close' column.
+            sector_map: Dict mapping ticker to its economic sector.
+
+        Returns:
+            List[Dict]: List of discovered cointegrated pair descriptors.
+        """
+        # Group tickers by sector
+        sectors: Dict[str, List[str]] = {}
+        for ticker, sector in sector_map.items():
+            if ticker in prices_by_ticker:
+                sectors.setdefault(sector, []).append(ticker)
+
+        found_pairs: List[Dict] = []
+
+        for sector, tickers in sectors.items():
+            if len(tickers) < 2:
+                continue
+
+            for i in range(len(tickers)):
+                for j in range(i + 1, len(tickers)):
+                    t_a = tickers[i]
+                    t_b = tickers[j]
+
+                    df_a = prices_by_ticker[t_a]
+                    df_b = prices_by_ticker[t_b]
+
+                    s_a = df_a["Close"] if "Close" in df_a.columns else None
+                    s_b = df_b["Close"] if "Close" in df_b.columns else None
+
+                    if s_a is None or s_b is None or len(s_a) < self.min_history_days or len(s_b) < self.min_history_days:
+                        continue
+
+                    p_val, beta, z_series, cur_z = self.compute_pair_spread(s_a, s_b)
+
+                    if p_val < self.p_val_threshold:
+                        found_pairs.append({
+                            "ticker_a": t_a,
+                            "ticker_b": t_b,
+                            "sector": sector,
+                            "p_value": round(p_val, 4),
+                            "beta": round(beta, 4),
+                            "current_z": round(cur_z, 2),
+                            "n_obs": len(z_series),
+                        })
+
+        found_pairs.sort(key=lambda p: abs(p["current_z"]), reverse=True)
+        logger.info("StatArb: Found %d cointegrated pairs across %d sectors.", len(found_pairs), len(sectors))
+        return found_pairs
+
+    def generate_stat_arb_signals(
+        self,
+        prices_by_ticker: Dict[str, pd.DataFrame],
+        sector_map: Dict[str, str],
+    ) -> List[Signal]:
+        """Generate actionable BUY signals when a cointegrated pair's spread deviates > 2.0 sigma.
+
+        Args:
+            prices_by_ticker: Dict mapping ticker to historical DataFrame with Close prices.
+            sector_map: Dict mapping ticker to sector.
+
+        Returns:
+            List[Signal]: List of statistical arbitrage candidate signals.
+        """
+        pairs = self.find_cointegrated_pairs(prices_by_ticker, sector_map)
+        signals: List[Signal] = []
+
+        for pair in pairs:
+            t_a = pair["ticker_a"]
+            t_b = pair["ticker_b"]
+            z = pair["current_z"]
+            p_val = pair["p_value"]
+            beta = pair["beta"]
+            sector = pair["sector"]
+
+            # Scenario 1: Z-score <= -2.0 -> Asset A is significantly undervalued relative to Asset B
+            if z <= -self.z_score_entry:
+                score = min(95.0, 75.0 + abs(z) * 5.0)
+                reason = (
+                    f"StatArb Cointegration: {t_a} is undervalued vs {t_b} in sector '{sector}' "
+                    f"(Z-score: {z:+.2f}, p-value: {p_val:.4f}, Beta: {beta:.2f})"
+                )
+                sig = Signal(
+                    ticker=t_a,
+                    signal_type=SignalType.BUY,
+                    score=round(score, 1),
+                    reason=reason,
+                    lineage={
+                        "strategy": "STAT_ARB_COINTEGRATION",
+                        "pair_partner": t_b,
+                        "sector": sector,
+                        "z_score": z,
+                        "p_value": p_val,
+                        "beta": beta,
+                    },
+                )
+                signals.append(sig)
+                logger.info("StatArb Signal Generated: BUY %s (vs %s, Z=%.2f, p=%.4f)", t_a, t_b, z, p_val)
+
+            # Scenario 2: Z-score >= +2.0 -> Asset B is significantly undervalued relative to Asset A
+            elif z >= self.z_score_entry:
+                score = min(95.0, 75.0 + abs(z) * 5.0)
+                reason = (
+                    f"StatArb Cointegration: {t_b} is undervalued vs {t_a} in sector '{sector}' "
+                    f"(Z-score: {-z:+.2f}, p-value: {p_val:.4f}, Beta: {beta:.2f})"
+                )
+                sig = Signal(
+                    ticker=t_b,
+                    signal_type=SignalType.BUY,
+                    score=round(score, 1),
+                    reason=reason,
+                    lineage={
+                        "strategy": "STAT_ARB_COINTEGRATION",
+                        "pair_partner": t_a,
+                        "sector": sector,
+                        "z_score": -z,
+                        "p_value": p_val,
+                        "beta": beta,
+                    },
+                )
+                signals.append(sig)
+                logger.info("StatArb Signal Generated: BUY %s (vs %s, Z=%.2f, p=%.4f)", t_b, t_a, -z, p_val)
+
+        return signals
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    # Synthetic test of cointegrated random walk
+    np.random.seed(42)
+    t_len = 300
+    walk = np.cumsum(np.random.normal(0, 1, t_len))
+    noise1 = np.random.normal(0, 0.5, t_len)
+    noise2 = np.random.normal(0, 0.5, t_len)
+    # create artificial spread divergence at the end
+    noise1[-5:] -= 3.0
+
+    p_a = pd.DataFrame({"Close": np.exp(walk + noise1 + 4.0)})
+    p_b = pd.DataFrame({"Close": np.exp(walk + noise2 + 4.0)})
+
+    engine = StatArbEngine()
+    sigs = engine.generate_stat_arb_signals(
+        {"MC.PA": p_a, "OR.PA": p_b},
+        {"MC.PA": "Luxury", "OR.PA": "Luxury"},
+    )
+    print("Signals emitted:", sigs)
 ```
 
 ## FILE: 02_quant_engine/stochastic_models.py
@@ -15114,12 +15384,13 @@ if _go_click and _go_raw.strip():
 # =============================================================================
 # Tabs
 # =============================================================================
-tab_gen, tab_pf, tab_screener, tab_mkt, tab_postmortem, tab_uni, tab_arch = st.tabs([
+tab_gen, tab_pf, tab_screener, tab_mkt, tab_postmortem, tab_backtest, tab_uni, tab_arch = st.tabs([
     "📊 General & Signaux",
     "🎯 Portefeuille & Allocation",
     "🌌 Universe & Screener",
     "🌍 Exploration",
     "📓 Ledger & Post-Mortems",
+    "🧪 Backtest & Calibration",
     "📋 Univers Complet",
     "🧠 Architecture & Logs",
 ])
@@ -16656,6 +16927,172 @@ with tab_postmortem:
             "Date": df_logs["created_at"].astype(str).str[:16],
         })
         st.plotly_chart(dark_table(disp_logs, height=280), width="stretch")
+
+
+# --- Tab: Backtest & Calibration ---------------------------------------------
+with tab_backtest:
+    st.markdown(
+        "<div class='info-text'><b>Laboratoire de Backtest Walk-Forward Réaliste (T+1 Open)</b> : "
+        "Simule l'exécution stricte sans biais de regard anticipé (Lookahead bias), "
+        "avec trailing stops ATR 2.5x et profit-shaving mensuel (+20%). Calibre et valide tes paramètres de stratégie.</div>",
+        unsafe_allow_html=True,
+    )
+
+    b_col1, b_col2, b_col3, b_col4 = st.columns(4)
+    with b_col1:
+        bt_universe_options = ["Univers Complet (Top 25 Liquides)"] + sorted(list(set(universe_df["Ticker"])))
+        selected_bt_ticker = st.selectbox("Actif / Scope", bt_universe_options, index=0, key="bt_scope_select")
+    with b_col2:
+        bt_horizon = st.selectbox("Historique de Test", ["1 An", "2 Ans", "3 Ans", "5 Ans"], index=1, key="bt_horizon_select")
+        horizon_days_map = {"1 An": 365, "2 Ans": 730, "3 Ans": 1095, "5 Ans": 1825}
+        n_days = horizon_days_map[bt_horizon]
+    with b_col3:
+        rsi_thresh = st.slider("Seuil RSI Survendu (MRE)", min_value=15, max_value=45, value=30, step=1, key="bt_rsi_thresh")
+    with b_col4:
+        atr_stop_mult = st.slider("Multiplicateur Stop ATR", min_value=1.5, max_value=4.5, value=2.5, step=0.1, key="bt_atr_mult")
+
+    b_sub1, b_sub2 = st.columns([1.5, 3.5])
+    with b_sub1:
+        initial_cap = st.number_input("Capital Initial (€)", min_value=1000.0, max_value=200000.0, value=10000.0, step=1000.0, key="bt_cap_input")
+    with b_sub2:
+        st.write("")
+        st.write("")
+        run_bt_click = st.button("🚀 Lancer le Backtest Walk-Forward", type="primary", use_container_width=True, key="btn_run_wf_backtest")
+
+    if run_bt_click:
+        with st.spinner("Exécution du backtest walk-forward réaliste sur DuckDB…"):
+            try:
+                from walk_forward_backtester import WalkForwardBacktester
+                from duckdb_manager import TimeSeriesDB
+
+                tsdb_bt = TimeSeriesDB()
+                tsdb_bt.init_db()
+
+                if selected_bt_ticker.startswith("Univers"):
+                    sample_tickers = ["MC.PA", "OR.PA", "AI.PA", "RMS.PA", "SAN.PA", "TTE.PA", "BNP.PA", "AIR.PA", "SU.PA", "EL.PA", "CS.PA", "DG.PA", "SAF.PA", "KER.PA", "RNO.PA", "ORA.PA", "ENGI.PA", "CAP.PA", "BN.PA", "RI.PA", "GLE.PA", "ACA.PA", "VIE.PA", "PUB.PA", "ML.PA"]
+                else:
+                    sample_tickers = [selected_bt_ticker]
+
+                ohlcv_dict = {}
+                for t in sample_tickers:
+                    df_t = tsdb_bt.get_historical_prices(t, days=n_days)
+                    if df_t is None or df_t.empty or len(df_t) < 30:
+                        df_t = yf.Ticker(t).history(period=f"{n_days}d")
+                        if df_t is not None and not df_t.empty:
+                            df_t = df_t.reset_index()
+                    if df_t is not None and not df_t.empty:
+                        if "Date" in df_t.columns:
+                            df_t["Date"] = pd.to_datetime(df_t["Date"]).dt.strftime("%Y-%m-%d")
+                        ohlcv_dict[t] = df_t
+
+                raw_sig_rows = []
+                for t, df_t in ohlcv_dict.items():
+                    if len(df_t) < 200:
+                        continue
+                    try:
+                        import pandas_ta_classic as ta
+                    except ImportError:
+                        import pandas_ta as ta
+
+                    df_calc = df_t.copy()
+                    df_calc["SMA200"] = df_calc["Close"].rolling(200).mean()
+                    df_calc["SMA5"] = df_calc["Close"].rolling(5).mean()
+                    df_calc["RSI14"] = df_calc.ta.rsi(length=14)
+
+                    for row_idx in range(200, len(df_calc)):
+                        r = df_calc.iloc[row_idx]
+                        if r["Close"] > r["SMA200"] and r["RSI14"] < rsi_thresh and r["Close"] > r["SMA5"]:
+                            raw_sig_rows.append({
+                                "Date": str(r["Date"])[:10],
+                                "Ticker": t,
+                                "Score": float(100.0 - r["RSI14"]),
+                                "SignalType": "BUY",
+                            })
+
+                signals_df = pd.DataFrame(raw_sig_rows)
+
+                tester = WalkForwardBacktester(
+                    initial_capital=initial_cap,
+                    atr_stop_mult=atr_stop_mult,
+                    profit_shave_trigger_pct=0.20,
+                    profit_shave_trim_pct=0.20,
+                )
+
+                res = tester.run_backtest(ohlcv_dict, signals_df)
+
+                if "error" in res and res.get("error") != "":
+                    st.warning(f"Backtest complété sans signaux déclenchés sur la période : {res.get('error')}")
+                else:
+                    st.session_state["bt_results"] = res
+
+            except Exception as exc:
+                st.error(f"Erreur lors de l'exécution du backtest : {exc}")
+
+    if st.session_state.get("bt_results"):
+        res = st.session_state["bt_results"]
+        st.markdown("---")
+        st.markdown("### 📊 Résultats du Backtest Walk-Forward")
+
+        m1, m2, m3, m4, m5 = st.columns(5)
+        m1.metric("Capital Final", f"{res['final_equity']:,.2f} €", delta=f"{res['total_return_pct']:+.2f}%")
+        m2.metric("Rendement Total", f"{res['total_return_pct']:+.2f}%")
+        m3.metric("Trades Exécutés", f"{res['total_trades']}")
+        m4.metric("Taux de Gain (Win Rate)", f"{res['win_rate_pct']:.1f}%")
+
+        eq_df = res.get("equity_curve", pd.DataFrame())
+        max_dd_val = 0.0
+        if not eq_df.empty and "equity" in eq_df.columns:
+            cummax = eq_df["equity"].cummax()
+            dd_series = (eq_df["equity"] - cummax) / cummax
+            max_dd_val = float(dd_series.min() * 100.0)
+        m5.metric("Max Drawdown", f"{max_dd_val:.2f}%")
+
+        if not eq_df.empty:
+            st.markdown("#### 📈 Courbe d'Évolution du Capital (Equity Curve)")
+            fig_bt = go.Figure()
+            fig_bt.add_trace(go.Scatter(
+                x=eq_df["date"],
+                y=eq_df["equity"],
+                mode="lines",
+                name="Equity Portefeuille",
+                line=dict(color=_NEON, width=2.4),
+                fill="tozeroy",
+                fillcolor="rgba(0, 255, 0, 0.08)",
+            ))
+            fig_bt.add_hline(y=res["initial_capital"], line_dash="dot", line_color=_MUTED, annotation_text="Capital Initial")
+            _style_dark_fig(fig_bt, height=380)
+            fig_bt.update_layout(
+                yaxis_title="Capital (€)",
+                xaxis_title="Date",
+                margin=dict(t=10, l=10, r=10, b=10),
+            )
+            st.plotly_chart(fig_bt, width="stretch")
+
+        trades_list = res.get("trades", [])
+        if trades_list:
+            st.markdown("#### 📋 Journal des Trades Simulés (T+1 Open)")
+            tdf = pd.DataFrame([{
+                "Titre": format_name(t.ticker),
+                "Entrée (T+1 Open)": str(t.entry_date)[:10],
+                "Sortie": str(t.exit_date)[:10] if t.exit_date else "En cours",
+                "Prix Achat": f"{t.entry_price:.2f} €",
+                "Prix Vente": f"{t.exit_price:.2f} €" if t.exit_price else "—",
+                "Actions": t.shares,
+                "PnL (€)": f"{t.pnl_eur:+,.2f} €",
+                "PnL (%)": f"{t.pnl_pct:+.2f}%",
+                "Motif Sortie": t.exit_reason,
+            } for t in trades_list])
+
+            pnl_cols = [_NEON if float(t.pnl_eur) >= 0 else _RED for t in trades_list]
+            st.plotly_chart(
+                dark_table(
+                    tdf,
+                    height=min(400, 48 + 28 * len(tdf)),
+                    font_color_map={"PnL (€)": pnl_cols, "PnL (%)": pnl_cols},
+                    col_widths=[1.8, 1.2, 1.2, 1, 1, 0.7, 1.1, 1, 1.6],
+                ),
+                width="stretch",
+            )
 
 
 # --- Tab: Full Universe ------------------------------------------------------
@@ -20107,6 +20544,22 @@ def _load_universe_tickers() -> list[str]:
         return []
 
 
+def _load_universe_sector_map() -> dict[str, str]:
+    """Read mapping from ticker -> sector from ``config/pea_universe.yaml``."""
+    try:
+        with open(_UNIVERSE_PATH, "r", encoding="utf-8") as fh:
+            universe = yaml.safe_load(fh) or {}
+        sector_map: dict[str, str] = {}
+        for sector, members in universe.get("universe", {}).items():
+            for entry in members:
+                if isinstance(entry, dict) and "ticker" in entry:
+                    sector_map[str(entry["ticker"])] = str(sector)
+        return sector_map
+    except Exception:  # noqa: BLE001
+        logger.exception("Could not read universe sector map %s", _UNIVERSE_PATH)
+        return {}
+
+
 def _refresh_portfolio_prices(
     pdb: PortfolioDB, portfolio: PortfolioState, prices: dict[str, float]
 ) -> PortfolioState:
@@ -20234,9 +20687,29 @@ async def run_pipeline_async() -> None:
     # --- Macro Phase: European VIX emergency brake ---
     vix_level = macro_alpha.get_european_vix()
 
-    # --- Quant Phase ---
-    raw_signals = generator.generate_raw_signals(tsdb, tickers)
-    logger.info("Quant engine produced %d raw signal(s).", len(raw_signals))
+    # --- Quant Phase (Mean-Reversion Exhaustion + StatArb Cointegration) ---
+    mre_signals = generator.generate_raw_signals(tsdb, tickers)
+    logger.info("Mean-Reversion engine produced %d raw signal(s).", len(mre_signals))
+
+    stat_arb_signals = []
+    try:
+        from stat_arb_pairs import StatArbEngine
+        stat_arb_engine = StatArbEngine()
+        sector_map = _load_universe_sector_map()
+        
+        prices_by_ticker = {}
+        for t in tickers:
+            df_t = tsdb.get_historical_prices(t, days=500)
+            if df_t is not None and not df_t.empty and "Close" in df_t.columns:
+                prices_by_ticker[t] = df_t
+                
+        stat_arb_signals = stat_arb_engine.generate_stat_arb_signals(prices_by_ticker, sector_map)
+        logger.info("StatArb Cointegration engine produced %d raw signal(s).", len(stat_arb_signals))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("StatArb pass failed: %s", exc)
+
+    raw_signals = mre_signals + stat_arb_signals
+    logger.info("Total unified raw candidate signal(s): %d.", len(raw_signals))
 
     # --- Orchestration Phase (satellite) ---
     portfolio: PortfolioState = pdb.get_portfolio_state()
@@ -21151,6 +21624,7 @@ feedparser>=6.0
 pandas>=2.1
 numpy>=2.0
 scipy>=1.11
+statsmodels>=0.14.0
 scikit-learn>=1.4.0
 xgboost>=2.0.0
 mapie>=0.8.0
@@ -22166,6 +22640,99 @@ class TestPhase16Foundations(unittest.TestCase):
             self.assertIn("Q2", reason)
             clear, _ = eng.check_veto("OR.PA", date(2026, 7, 24))
             self.assertFalse(clear)
+
+
+if __name__ == "__main__":
+    unittest.main()
+```
+
+## FILE: tests/test_stat_arb_and_backtest.py
+```python
+"""Unit & Integration Tests for StatArb Cointegration Engine & Walk-Forward Backtester."""
+
+from __future__ import annotations
+
+import sys
+import unittest
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+
+ROOT = Path(__file__).resolve().parent.parent
+for sub in ("00_data_sensors", "01_memory_core", "02_quant_engine", "03_risk_portfolio", "04_orchestrator_ai", "05_interfaces"):
+    sys.path.insert(0, str(ROOT / sub))
+
+from stat_arb_pairs import StatArbEngine
+from walk_forward_backtester import WalkForwardBacktester
+from data_models import SignalType
+import main_scheduler
+
+
+class TestStatArbAndBacktestSuite(unittest.TestCase):
+
+    def test_01_stat_arb_cointegrated_pair_detection(self):
+        """Verify StatArbEngine detects synthetic cointegrated series and emits signals."""
+        np.random.seed(42)
+        n = 300
+        common_trend = np.cumsum(np.random.normal(0, 1, n))
+        noise_a = np.random.normal(0, 0.05, n)
+        noise_b = np.random.normal(0, 0.05, n)
+
+        # Create temporary spread divergence at the end
+        noise_a[-2:] -= 0.6
+
+        dates = pd.date_range("2024-01-01", periods=n, freq="B").strftime("%Y-%m-%d")
+        df_a = pd.DataFrame({"Date": dates, "Close": np.exp(common_trend + noise_a + 4.0)})
+        df_b = pd.DataFrame({"Date": dates, "Close": np.exp(common_trend + noise_b + 4.0)})
+
+        engine = StatArbEngine(p_val_threshold=0.05, z_score_entry=2.0)
+        sector_map = {"MC.PA": "Luxury", "OR.PA": "Luxury"}
+
+        pairs = engine.find_cointegrated_pairs({"MC.PA": df_a, "OR.PA": df_b}, sector_map)
+        self.assertGreaterEqual(len(pairs), 1)
+        self.assertEqual(pairs[0]["sector"], "Luxury")
+        self.assertLess(pairs[0]["p_value"], 0.05)
+
+        # Generate signals
+        sigs = engine.generate_stat_arb_signals({"MC.PA": df_a, "OR.PA": df_b}, sector_map)
+        self.assertGreaterEqual(len(sigs), 1)
+        sig = sigs[0]
+        self.assertEqual(sig.signal_type, SignalType.BUY)
+        self.assertIn("STAT_ARB_COINTEGRATION", sig.lineage.get("strategy", ""))
+        self.assertIn("z_score", sig.lineage)
+
+    def test_02_walk_forward_backtester_execution(self):
+        """Verify event-driven execution at T+1 Open and profit-shaving rules."""
+        dates = pd.date_range("2024-01-01", periods=100, freq="B").strftime("%Y-%m-%d")
+        # Steady uptrend
+        prices = [100.0 + i * 1.0 for i in range(100)]
+        df = pd.DataFrame({
+            "Date": dates,
+            "Open": prices,
+            "High": [p + 2.0 for p in prices],
+            "Low": [p - 2.0 for p in prices],
+            "Close": prices,
+            "Volume": [10000] * 100,
+        })
+
+        signals_df = pd.DataFrame([
+            {"Date": dates[5], "Ticker": "MC.PA", "Score": 85.0, "SignalType": "BUY"}
+        ])
+
+        tester = WalkForwardBacktester(initial_capital=10_000.0, atr_stop_mult=2.5)
+        res = tester.run_backtest({"MC.PA": df}, signals_df)
+
+        self.assertGreater(res["final_equity"], 10_000.0)
+        self.assertGreater(res["total_return_pct"], 0.0)
+        self.assertFalse(res["equity_curve"].empty)
+
+    def test_03_main_scheduler_sector_map_loader(self):
+        """Verify sector map loader accurately extracts sectors from universe YAML."""
+        s_map = main_scheduler._load_universe_sector_map()
+        self.assertIsInstance(s_map, dict)
+        self.assertIn("MC.PA", s_map)
+        self.assertEqual(s_map["MC.PA"], "Consumer Cyclical")
 
 
 if __name__ == "__main__":

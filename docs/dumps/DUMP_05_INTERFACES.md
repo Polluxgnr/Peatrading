@@ -1,5 +1,5 @@
 # PEA Pollux — Interfaces, Streamlit Bloomberg Terminal HUD & Discord Copilot
-Generated: `2026-08-10 17:30 UTC` | File Count: `8`
+Generated: `2026-08-10 17:41 UTC` | File Count: `8`
 Institutional Systematic Decision Support Architecture for French PEA.
 ---
 ## Included Files Index
@@ -3550,12 +3550,13 @@ if _go_click and _go_raw.strip():
 # =============================================================================
 # Tabs
 # =============================================================================
-tab_gen, tab_pf, tab_screener, tab_mkt, tab_postmortem, tab_uni, tab_arch = st.tabs([
+tab_gen, tab_pf, tab_screener, tab_mkt, tab_postmortem, tab_backtest, tab_uni, tab_arch = st.tabs([
     "📊 General & Signaux",
     "🎯 Portefeuille & Allocation",
     "🌌 Universe & Screener",
     "🌍 Exploration",
     "📓 Ledger & Post-Mortems",
+    "🧪 Backtest & Calibration",
     "📋 Univers Complet",
     "🧠 Architecture & Logs",
 ])
@@ -5092,6 +5093,172 @@ with tab_postmortem:
             "Date": df_logs["created_at"].astype(str).str[:16],
         })
         st.plotly_chart(dark_table(disp_logs, height=280), width="stretch")
+
+
+# --- Tab: Backtest & Calibration ---------------------------------------------
+with tab_backtest:
+    st.markdown(
+        "<div class='info-text'><b>Laboratoire de Backtest Walk-Forward Réaliste (T+1 Open)</b> : "
+        "Simule l'exécution stricte sans biais de regard anticipé (Lookahead bias), "
+        "avec trailing stops ATR 2.5x et profit-shaving mensuel (+20%). Calibre et valide tes paramètres de stratégie.</div>",
+        unsafe_allow_html=True,
+    )
+
+    b_col1, b_col2, b_col3, b_col4 = st.columns(4)
+    with b_col1:
+        bt_universe_options = ["Univers Complet (Top 25 Liquides)"] + sorted(list(set(universe_df["Ticker"])))
+        selected_bt_ticker = st.selectbox("Actif / Scope", bt_universe_options, index=0, key="bt_scope_select")
+    with b_col2:
+        bt_horizon = st.selectbox("Historique de Test", ["1 An", "2 Ans", "3 Ans", "5 Ans"], index=1, key="bt_horizon_select")
+        horizon_days_map = {"1 An": 365, "2 Ans": 730, "3 Ans": 1095, "5 Ans": 1825}
+        n_days = horizon_days_map[bt_horizon]
+    with b_col3:
+        rsi_thresh = st.slider("Seuil RSI Survendu (MRE)", min_value=15, max_value=45, value=30, step=1, key="bt_rsi_thresh")
+    with b_col4:
+        atr_stop_mult = st.slider("Multiplicateur Stop ATR", min_value=1.5, max_value=4.5, value=2.5, step=0.1, key="bt_atr_mult")
+
+    b_sub1, b_sub2 = st.columns([1.5, 3.5])
+    with b_sub1:
+        initial_cap = st.number_input("Capital Initial (€)", min_value=1000.0, max_value=200000.0, value=10000.0, step=1000.0, key="bt_cap_input")
+    with b_sub2:
+        st.write("")
+        st.write("")
+        run_bt_click = st.button("🚀 Lancer le Backtest Walk-Forward", type="primary", use_container_width=True, key="btn_run_wf_backtest")
+
+    if run_bt_click:
+        with st.spinner("Exécution du backtest walk-forward réaliste sur DuckDB…"):
+            try:
+                from walk_forward_backtester import WalkForwardBacktester
+                from duckdb_manager import TimeSeriesDB
+
+                tsdb_bt = TimeSeriesDB()
+                tsdb_bt.init_db()
+
+                if selected_bt_ticker.startswith("Univers"):
+                    sample_tickers = ["MC.PA", "OR.PA", "AI.PA", "RMS.PA", "SAN.PA", "TTE.PA", "BNP.PA", "AIR.PA", "SU.PA", "EL.PA", "CS.PA", "DG.PA", "SAF.PA", "KER.PA", "RNO.PA", "ORA.PA", "ENGI.PA", "CAP.PA", "BN.PA", "RI.PA", "GLE.PA", "ACA.PA", "VIE.PA", "PUB.PA", "ML.PA"]
+                else:
+                    sample_tickers = [selected_bt_ticker]
+
+                ohlcv_dict = {}
+                for t in sample_tickers:
+                    df_t = tsdb_bt.get_historical_prices(t, days=n_days)
+                    if df_t is None or df_t.empty or len(df_t) < 30:
+                        df_t = yf.Ticker(t).history(period=f"{n_days}d")
+                        if df_t is not None and not df_t.empty:
+                            df_t = df_t.reset_index()
+                    if df_t is not None and not df_t.empty:
+                        if "Date" in df_t.columns:
+                            df_t["Date"] = pd.to_datetime(df_t["Date"]).dt.strftime("%Y-%m-%d")
+                        ohlcv_dict[t] = df_t
+
+                raw_sig_rows = []
+                for t, df_t in ohlcv_dict.items():
+                    if len(df_t) < 200:
+                        continue
+                    try:
+                        import pandas_ta_classic as ta
+                    except ImportError:
+                        import pandas_ta as ta
+
+                    df_calc = df_t.copy()
+                    df_calc["SMA200"] = df_calc["Close"].rolling(200).mean()
+                    df_calc["SMA5"] = df_calc["Close"].rolling(5).mean()
+                    df_calc["RSI14"] = df_calc.ta.rsi(length=14)
+
+                    for row_idx in range(200, len(df_calc)):
+                        r = df_calc.iloc[row_idx]
+                        if r["Close"] > r["SMA200"] and r["RSI14"] < rsi_thresh and r["Close"] > r["SMA5"]:
+                            raw_sig_rows.append({
+                                "Date": str(r["Date"])[:10],
+                                "Ticker": t,
+                                "Score": float(100.0 - r["RSI14"]),
+                                "SignalType": "BUY",
+                            })
+
+                signals_df = pd.DataFrame(raw_sig_rows)
+
+                tester = WalkForwardBacktester(
+                    initial_capital=initial_cap,
+                    atr_stop_mult=atr_stop_mult,
+                    profit_shave_trigger_pct=0.20,
+                    profit_shave_trim_pct=0.20,
+                )
+
+                res = tester.run_backtest(ohlcv_dict, signals_df)
+
+                if "error" in res and res.get("error") != "":
+                    st.warning(f"Backtest complété sans signaux déclenchés sur la période : {res.get('error')}")
+                else:
+                    st.session_state["bt_results"] = res
+
+            except Exception as exc:
+                st.error(f"Erreur lors de l'exécution du backtest : {exc}")
+
+    if st.session_state.get("bt_results"):
+        res = st.session_state["bt_results"]
+        st.markdown("---")
+        st.markdown("### 📊 Résultats du Backtest Walk-Forward")
+
+        m1, m2, m3, m4, m5 = st.columns(5)
+        m1.metric("Capital Final", f"{res['final_equity']:,.2f} €", delta=f"{res['total_return_pct']:+.2f}%")
+        m2.metric("Rendement Total", f"{res['total_return_pct']:+.2f}%")
+        m3.metric("Trades Exécutés", f"{res['total_trades']}")
+        m4.metric("Taux de Gain (Win Rate)", f"{res['win_rate_pct']:.1f}%")
+
+        eq_df = res.get("equity_curve", pd.DataFrame())
+        max_dd_val = 0.0
+        if not eq_df.empty and "equity" in eq_df.columns:
+            cummax = eq_df["equity"].cummax()
+            dd_series = (eq_df["equity"] - cummax) / cummax
+            max_dd_val = float(dd_series.min() * 100.0)
+        m5.metric("Max Drawdown", f"{max_dd_val:.2f}%")
+
+        if not eq_df.empty:
+            st.markdown("#### 📈 Courbe d'Évolution du Capital (Equity Curve)")
+            fig_bt = go.Figure()
+            fig_bt.add_trace(go.Scatter(
+                x=eq_df["date"],
+                y=eq_df["equity"],
+                mode="lines",
+                name="Equity Portefeuille",
+                line=dict(color=_NEON, width=2.4),
+                fill="tozeroy",
+                fillcolor="rgba(0, 255, 0, 0.08)",
+            ))
+            fig_bt.add_hline(y=res["initial_capital"], line_dash="dot", line_color=_MUTED, annotation_text="Capital Initial")
+            _style_dark_fig(fig_bt, height=380)
+            fig_bt.update_layout(
+                yaxis_title="Capital (€)",
+                xaxis_title="Date",
+                margin=dict(t=10, l=10, r=10, b=10),
+            )
+            st.plotly_chart(fig_bt, width="stretch")
+
+        trades_list = res.get("trades", [])
+        if trades_list:
+            st.markdown("#### 📋 Journal des Trades Simulés (T+1 Open)")
+            tdf = pd.DataFrame([{
+                "Titre": format_name(t.ticker),
+                "Entrée (T+1 Open)": str(t.entry_date)[:10],
+                "Sortie": str(t.exit_date)[:10] if t.exit_date else "En cours",
+                "Prix Achat": f"{t.entry_price:.2f} €",
+                "Prix Vente": f"{t.exit_price:.2f} €" if t.exit_price else "—",
+                "Actions": t.shares,
+                "PnL (€)": f"{t.pnl_eur:+,.2f} €",
+                "PnL (%)": f"{t.pnl_pct:+.2f}%",
+                "Motif Sortie": t.exit_reason,
+            } for t in trades_list])
+
+            pnl_cols = [_NEON if float(t.pnl_eur) >= 0 else _RED for t in trades_list]
+            st.plotly_chart(
+                dark_table(
+                    tdf,
+                    height=min(400, 48 + 28 * len(tdf)),
+                    font_color_map={"PnL (€)": pnl_cols, "PnL (%)": pnl_cols},
+                    col_widths=[1.8, 1.2, 1.2, 1, 1, 0.7, 1.1, 1, 1.6],
+                ),
+                width="stretch",
+            )
 
 
 # --- Tab: Full Universe ------------------------------------------------------

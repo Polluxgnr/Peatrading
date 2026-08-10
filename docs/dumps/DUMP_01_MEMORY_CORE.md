@@ -1,5 +1,5 @@
 # PEA Pollux — Memory Core, State Persistence & Data Contracts
-Generated: `2026-08-10 17:30 UTC` | File Count: `8`
+Generated: `2026-08-10 17:41 UTC` | File Count: `8`
 Institutional Systematic Decision Support Architecture for French PEA.
 ---
 ## Included Files Index
@@ -307,12 +307,18 @@ engine (pandas-ta). This is a pure I/O layer: no indicator math, no trading
 logic, no API fetching lives here.
 """
 
+from __future__ import annotations
+
 import logging
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator, Optional
+from typing import Any, Iterator, Optional
 
-import duckdb
+try:
+    import duckdb
+except ImportError:
+    duckdb = None  # type: ignore[assignment]
+
 import pandas as pd
 
 logger = logging.getLogger(__name__)
@@ -353,10 +359,12 @@ class TimeSeriesDB:
         Raises:
             duckdb.Error: Propagated if any DB error occurs.
         """
+        if duckdb is None:
+            raise RuntimeError("DuckDB package is not installed.")
         conn = duckdb.connect(str(self.db_path))
         try:
             yield conn
-        except duckdb.Error:
+        except Exception:
             logger.exception("DuckDB operation failed.")
             raise
         finally:

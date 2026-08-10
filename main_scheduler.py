@@ -131,6 +131,22 @@ def _load_universe_tickers() -> list[str]:
         return []
 
 
+def _load_universe_sector_map() -> dict[str, str]:
+    """Read mapping from ticker -> sector from ``config/pea_universe.yaml``."""
+    try:
+        with open(_UNIVERSE_PATH, "r", encoding="utf-8") as fh:
+            universe = yaml.safe_load(fh) or {}
+        sector_map: dict[str, str] = {}
+        for sector, members in universe.get("universe", {}).items():
+            for entry in members:
+                if isinstance(entry, dict) and "ticker" in entry:
+                    sector_map[str(entry["ticker"])] = str(sector)
+        return sector_map
+    except Exception:  # noqa: BLE001
+        logger.exception("Could not read universe sector map %s", _UNIVERSE_PATH)
+        return {}
+
+
 def _refresh_portfolio_prices(
     pdb: PortfolioDB, portfolio: PortfolioState, prices: dict[str, float]
 ) -> PortfolioState:
@@ -258,9 +274,29 @@ async def run_pipeline_async() -> None:
     # --- Macro Phase: European VIX emergency brake ---
     vix_level = macro_alpha.get_european_vix()
 
-    # --- Quant Phase ---
-    raw_signals = generator.generate_raw_signals(tsdb, tickers)
-    logger.info("Quant engine produced %d raw signal(s).", len(raw_signals))
+    # --- Quant Phase (Mean-Reversion Exhaustion + StatArb Cointegration) ---
+    mre_signals = generator.generate_raw_signals(tsdb, tickers)
+    logger.info("Mean-Reversion engine produced %d raw signal(s).", len(mre_signals))
+
+    stat_arb_signals = []
+    try:
+        from stat_arb_pairs import StatArbEngine
+        stat_arb_engine = StatArbEngine()
+        sector_map = _load_universe_sector_map()
+        
+        prices_by_ticker = {}
+        for t in tickers:
+            df_t = tsdb.get_historical_prices(t, days=500)
+            if df_t is not None and not df_t.empty and "Close" in df_t.columns:
+                prices_by_ticker[t] = df_t
+                
+        stat_arb_signals = stat_arb_engine.generate_stat_arb_signals(prices_by_ticker, sector_map)
+        logger.info("StatArb Cointegration engine produced %d raw signal(s).", len(stat_arb_signals))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("StatArb pass failed: %s", exc)
+
+    raw_signals = mre_signals + stat_arb_signals
+    logger.info("Total unified raw candidate signal(s): %d.", len(raw_signals))
 
     # --- Orchestration Phase (satellite) ---
     portfolio: PortfolioState = pdb.get_portfolio_state()
