@@ -40,9 +40,9 @@ _INT_RE = re.compile(r"-?\d+")
 
 
 class NewsSentimentScorer:
-    """Compresses news headlines into a numeric sentiment score."""
+    """Compresses news headlines into a numeric sentiment score and persists history."""
 
-    def __init__(self) -> None:
+    def __init__(self, portfolio_db=None) -> None:
         """Read the OpenRouter API key and model slug from the environment."""
         self.api_key: str | None = os.getenv("OPENROUTER_API_KEY")
         self.model: str = os.getenv("OPENROUTER_MODEL", _DEFAULT_MODEL)
@@ -50,6 +50,15 @@ class NewsSentimentScorer:
             logger.warning(
                 "OPENROUTER_API_KEY not set; news sentiment will be neutral (0)."
             )
+
+        if portfolio_db is None:
+            try:
+                from sqlite_portfolio import PortfolioDB
+                self.portfolio_db = PortfolioDB()
+            except Exception:
+                self.portfolio_db = None
+        else:
+            self.portfolio_db = portfolio_db
 
     @staticmethod
     def _parse_score(raw: str | None) -> float:
@@ -64,18 +73,17 @@ class NewsSentimentScorer:
         return max(-100.0, min(100.0, value))
 
     async def analyze_news(
-        self, ticker: str, news_headlines: List[str]
+        self, ticker: str, news_headlines: List[str], source: str = "openrouter"
     ) -> float:
         """Score the aggregate sentiment of headlines for one ticker.
 
         Args:
             ticker: The ticker the headlines relate to (for prompt context).
             news_headlines: Recent headline strings.
+            source: Source identifier (e.g. 'openrouter', 'finnhub', 'rss').
 
         Returns:
-            float: Sentiment in ``[-100.0, +100.0]`` (negative = bearish,
-            positive = bullish). Returns ``0.0`` (neutral) if there is no data
-            or the API is unavailable.
+            float: Sentiment in ``[-100.0, +100.0]``.
         """
         headlines = [h.strip() for h in (news_headlines or []) if h and h.strip()]
         if not headlines:
@@ -110,6 +118,20 @@ class NewsSentimentScorer:
         score = self._parse_score(raw)
         logger.info("News sentiment for %s: %.0f (from %d headlines).",
                     ticker, score, len(headlines))
+
+        # Persist sentiment history time-series
+        if self.portfolio_db is not None:
+            summary_headline = "; ".join(headlines[:2])[:120]
+            try:
+                self.portfolio_db.upsert_sentiment_history(
+                    ticker=ticker,
+                    score=score,
+                    source=source,
+                    headline=summary_headline,
+                )
+            except Exception as exc:
+                logger.debug("Failed to upsert sentiment history: %s", exc)
+
         return score
 
 

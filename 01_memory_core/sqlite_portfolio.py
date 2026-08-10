@@ -149,6 +149,18 @@ class PortfolioDB:
                     );
                     """
                 )
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS news_sentiment_history (
+                        id          TEXT PRIMARY KEY,
+                        ticker      TEXT,
+                        date_scored TEXT,
+                        score       REAL,
+                        source      TEXT,
+                        headline    TEXT
+                    );
+                    """
+                )
             logger.info("SQLite schema initialized at %s", self.db_path)
         except sqlite3.Error:
             logger.exception("Failed to initialize SQLite schema.")
@@ -504,3 +516,46 @@ class PortfolioDB:
         except sqlite3.Error:
             logger.exception("Failed to fetch signals since %s.", since_iso)
             raise
+
+    def upsert_sentiment_history(
+        self, ticker: str, score: float, source: str, headline: str
+    ) -> None:
+        """Save every scored news item with a timestamp for time-series analysis."""
+        import uuid
+        now = datetime.now(timezone.utc).isoformat()
+        item_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{ticker}_{headline[:60]}_{source}_{now[:13]}"))
+        try:
+            with self._connect() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO news_sentiment_history (id, ticker, date_scored, score, source, headline)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(id) DO UPDATE SET
+                        score = excluded.score,
+                        date_scored = excluded.date_scored;
+                    """,
+                    (item_id, ticker, float(score), source, headline, now),
+                )
+            logger.debug("Sentiment history recorded for %s: %+.1f (%s)", ticker, score, source)
+        except sqlite3.Error:
+            logger.exception("Failed to upsert sentiment history for %s", ticker)
+
+    def get_sentiment_history(self, ticker: str, days: int = 30) -> list[dict]:
+        """Return a time-series of sentiment scores for the UI and API."""
+        from datetime import timedelta
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        try:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    """
+                    SELECT id, ticker, date_scored, score, source, headline
+                    FROM news_sentiment_history
+                    WHERE ticker = ? AND date_scored >= ?
+                    ORDER BY date_scored ASC;
+                    """,
+                    (ticker, cutoff),
+                ).fetchall()
+                return [dict(row) for row in rows]
+        except sqlite3.Error:
+            logger.exception("Failed to fetch sentiment history for %s", ticker)
+            return []
