@@ -125,11 +125,24 @@ def get_portfolio_summary() -> Dict[str, Any]:
 def get_pending_recommendations(limit: int = Query(default=50, ge=1, le=100)) -> List[Dict[str, Any]]:
     """Return quantitative recommendations that passed the risk cascade awaiting human execution."""
     try:
+        import json
         # Fetch APPROVED or PENDING signals
         logs = _PORTFOLIO_DB.fetch_signals_by_status(["APPROVED", "PENDING"], limit=limit)
         recommendations = []
         for r in logs:
-            recommendations.append({
+            lineage_data = {}
+            raw_lineage = r.get("lineage_json")
+            if raw_lineage:
+                try:
+                    lineage_data = json.loads(raw_lineage) if isinstance(raw_lineage, str) else raw_lineage
+                except Exception:
+                    lineage_data = {}
+
+            ml_prob = lineage_data.get("ml_probability")
+            shap_vals = lineage_data.get("shap_values")
+            ml_int = lineage_data.get("ml_interval")
+
+            rec_item = {
                 "recommendation_id": r.get("id"),
                 "ticker": r.get("ticker"),
                 "action": r.get("signal_type", "BUY"),
@@ -139,7 +152,15 @@ def get_pending_recommendations(limit: int = Query(default=50, ge=1, le=100)) ->
                 "reference_price": float(r.get("price", 0.0)),
                 "rationale": r.get("reason", ""),
                 "generated_at": r.get("created_at"),
-            })
+            }
+            if ml_prob is not None:
+                rec_item["ml_probability"] = round(float(ml_prob), 4)
+            if shap_vals is not None:
+                rec_item["shap_values"] = shap_vals
+            if ml_int is not None:
+                rec_item["ml_interval"] = ml_int
+
+            recommendations.append(rec_item)
         return recommendations
     except Exception as exc:
         logger.exception("Failed to retrieve pending recommendations: %s", exc)

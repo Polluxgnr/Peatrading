@@ -1,5 +1,5 @@
 # PEA Pollux — Complete Monolithic Repository Dump
-Generated: `2026-08-10 18:02 UTC` | File Count: `126`
+Generated: `2026-08-12 10:00 UTC` | File Count: `127`
 Institutional Systematic Decision Support Architecture for French PEA.
 ---
 ## Included Files Index
@@ -117,6 +117,7 @@ Institutional Systematic Decision Support Architecture for French PEA.
 - [tests/test_finbert_sentiment.py](#file-tests-test_finbert_sentiment-py)
 - [tests/test_funnel_analytics.py](#file-tests-test_funnel_analytics-py)
 - [tests/test_institutional_suite.py](#file-tests-test_institutional_suite-py)
+- [tests/test_ml_cascade_integration.py](#file-tests-test_ml_cascade_integration-py)
 - [tests/test_newsletter_whitelist.py](#file-tests-test_newsletter_whitelist-py)
 - [tests/test_phase16_foundations.py](#file-tests-test_phase16_foundations-py)
 - [tests/test_stat_arb_and_backtest.py](#file-tests-test_stat_arb_and_backtest-py)
@@ -5739,7 +5740,7 @@ class PortfolioDB:
 
         placeholders = ",".join("?" for _ in statuses)
         query = (
-            "SELECT id, ticker, signal_type, status, score, reason, created_at "
+            "SELECT id, ticker, signal_type, status, score, reason, created_at, quantity, price, lineage_json "
             "FROM audit_logs "
             f"WHERE status IN ({placeholders}) "
             "ORDER BY created_at DESC"
@@ -11537,7 +11538,7 @@ import yaml
 
 # --- Cross-package imports (directories start with digits) --------------------
 _ROOT = Path(__file__).resolve().parent.parent
-for _sub in ("01_memory_core", "03_risk_portfolio", "04_orchestrator_ai"):
+for _sub in ("00_data_sensors", "01_memory_core", "02_quant_engine", "03_risk_portfolio", "04_orchestrator_ai"):
     sys.path.insert(0, os.path.join(str(_ROOT), _sub))
 
 from data_models import PortfolioState, Signal, SignalStatus  # noqa: E402
@@ -11548,6 +11549,12 @@ from earnings_blackout import EarningsBlackoutEngine  # noqa: E402
 from drawdown_breaker import DrawdownBreaker  # noqa: E402
 from fundamentals_api import FundamentalsSensor  # noqa: E402
 from risk_config import load_and_validate_risk_params  # noqa: E402
+
+try:
+    from ml_trainer import predict_probability_with_shap, predict_anomaly
+except ImportError:
+    predict_probability_with_shap = None
+    predict_anomaly = None
 
 logger = logging.getLogger(__name__)
 
@@ -11774,6 +11781,57 @@ class SignalOrchestrator:
                 processed.append(self._reject(signal, f"REJECTED: {corr_reason}"))
                 continue
 
+            # --- Check 2c: ML Predictive Veto (XGBoost + Isolation Forest) ---
+            if predict_anomaly is not None and predict_probability_with_shap is not None:
+                # Determine current market regime from vix_level (default to VOLATILE)
+                if vix_level is not None:
+                    if vix_level < 17.5:
+                        current_regime = "BULL"
+                    elif vix_level > 23.0:
+                        current_regime = "VOLATILE"
+                    else:
+                        current_regime = "BEAR"
+                else:
+                    current_regime = "VOLATILE"
+
+                feat_snapshot = (
+                    signal.lineage
+                    if hasattr(signal, "lineage") and isinstance(signal.lineage, dict)
+                    else {}
+                )
+
+                # Anomaly Detection via Isolation Forest
+                is_anomaly = predict_anomaly(feat_snapshot)
+                if is_anomaly is True:
+                    processed.append(
+                        self._reject(
+                            signal,
+                            "REJECTED: Structural Anomaly detected by Isolation Forest",
+                        )
+                    )
+                    continue
+
+                # Win Probability & SHAP Scoring via XGBoost
+                proba, shap_dict, interval = predict_probability_with_shap(
+                    feat_snapshot, horizon="tactical", regime=current_regime
+                )
+                if proba is not None:
+                    if proba < 0.50:
+                        processed.append(
+                            self._reject(
+                                signal,
+                                f"REJECTED: ML Win Probability too low ({proba * 100:.1f}%)",
+                            )
+                        )
+                        continue
+
+                    # Inject ML inference features into signal lineage
+                    if not hasattr(signal, "lineage") or not isinstance(signal.lineage, dict):
+                        signal.lineage = {}
+                    signal.lineage["ml_probability"] = proba
+                    signal.lineage["shap_values"] = shap_dict
+                    signal.lineage["ml_interval"] = interval
+
             # --- Check 3: PEA position sizing (volatility & kinetic adjusted) ---
             # TODO: Re-enable RL Sizer only when SizingEnv is connected to real historical trajectories
             # rather than synthetic noise. Current sizing strictly relies on deterministic Half-Kelly,
@@ -11808,7 +11866,7 @@ class SignalOrchestrator:
                     "execution_price": price,
                     "sizing": sizing,
                     "kinetic_multiplier": kinetic_mult,
-                    "vix": vix,
+                    "vix": vix_level,
                 })
 
             logger.info(
@@ -13087,6 +13145,15 @@ def render_pending_trade_cards(pending_df: pd.DataFrame, portfolio_obj) -> None:
             risk_line = atr_risk_line(
                 qty_i, atr, atr_mult, float(portfolio_obj.total_equity)
             )
+        lineage = None
+        raw_lin = row.get("lineage_json")
+        if raw_lin:
+            try:
+                import json
+                lineage = json.loads(raw_lin) if isinstance(raw_lin, str) else raw_lin
+            except Exception:
+                lineage = None
+
         st.markdown(
             render_signal_card(
                 ticker=ticker,
@@ -13096,6 +13163,7 @@ def render_pending_trade_cards(pending_df: pd.DataFrame, portfolio_obj) -> None:
                 qty=qty_i,
                 reason=str(row.get("reason") or ""),
                 sizing=sizing,
+                lineage=lineage,
                 sector_line=sec_line,
                 risk_line=risk_line,
                 created_at=str(row.get("created_at", ""))[:19],
@@ -17690,6 +17758,7 @@ def render_signal_card(
     qty: Optional[int],
     reason: str,
     sizing: Optional[dict] = None,
+    lineage: Optional[dict] = None,
     sector_line: str = "",
     risk_line: str = "",
     impact_line: str = "",
@@ -17705,6 +17774,7 @@ def render_signal_card(
         qty: Target shares (may be None).
         reason: Pipeline explanation.
         sizing: Optional dict from ``PeaSizer.size_with_explanation``.
+        lineage: Optional dict with ML inference feature lineage.
         sector_line: Precomputed sector impact sentence.
         risk_line: Precomputed ATR risk sentence.
         created_at: Timestamp string.
@@ -17729,6 +17799,46 @@ def render_signal_card(
             f" · poids {sizing.get('weight_pct', 0):.2f}% equity"
             f"</div>"
         )
+
+    # ML Predictor & Conformal Confidence row
+    ml_prob = None
+    shap_vals = None
+    ml_interval = None
+
+    if lineage and isinstance(lineage, dict):
+        ml_prob = lineage.get("ml_probability")
+        shap_vals = lineage.get("shap_values")
+        ml_interval = lineage.get("ml_interval")
+    if ml_prob is None and sizing and isinstance(sizing, dict):
+        ml_prob = sizing.get("ml_probability")
+        shap_vals = sizing.get("shap_values")
+        ml_interval = sizing.get("ml_interval")
+
+    ml_html = ""
+    if ml_prob is not None:
+        try:
+            p_val = float(ml_prob)
+            prob_pct = p_val * 100.0 if p_val <= 1.0 else p_val
+            int_txt = ""
+            if ml_interval and isinstance(ml_interval, (list, tuple)) and len(ml_interval) == 2:
+                low_p = float(ml_interval[0]) * 100.0 if float(ml_interval[0]) <= 1.0 else float(ml_interval[0])
+                high_p = float(ml_interval[1]) * 100.0 if float(ml_interval[1]) <= 1.0 else float(ml_interval[1])
+                int_txt = f" (Confidence Interval: {low_p:.0f}%-{high_p:.0f}%)"
+
+            shap_txt = ""
+            if shap_vals and isinstance(shap_vals, dict):
+                pos_shaps = sorted([(k, v) for k, v in shap_vals.items() if float(v) > 0], key=lambda x: float(x[1]), reverse=True)[:2]
+                if pos_shaps:
+                    shap_items = [f"{k} (+{float(v):.2f})" for k, v in pos_shaps]
+                    shap_txt = f" · <span style='color:{_MUTED};'>Top Drivers: {', '.join(shap_items)}</span>"
+
+            ml_html = (
+                f"<div style='margin-top:6px;color:#A78BFA;font-size:12px;line-height:1.45;'>"
+                f"🧠 <b>ML Probability</b>: <b style='color:#C4B5FD;'>{prob_pct:.1f}%</b>{int_txt}{shap_txt}"
+                f"</div>"
+            )
+        except Exception:
+            ml_html = ""
 
     extras = ""
     if impact_line:
@@ -17771,6 +17881,7 @@ def render_signal_card(
     {reason}
   </div>
   {sizing_html}
+  {ml_html}
   {extras}
   <div style="margin-top:8px;">{when}</div>
 </div>
@@ -17911,11 +18022,24 @@ def get_portfolio_summary() -> Dict[str, Any]:
 def get_pending_recommendations(limit: int = Query(default=50, ge=1, le=100)) -> List[Dict[str, Any]]:
     """Return quantitative recommendations that passed the risk cascade awaiting human execution."""
     try:
+        import json
         # Fetch APPROVED or PENDING signals
         logs = _PORTFOLIO_DB.fetch_signals_by_status(["APPROVED", "PENDING"], limit=limit)
         recommendations = []
         for r in logs:
-            recommendations.append({
+            lineage_data = {}
+            raw_lineage = r.get("lineage_json")
+            if raw_lineage:
+                try:
+                    lineage_data = json.loads(raw_lineage) if isinstance(raw_lineage, str) else raw_lineage
+                except Exception:
+                    lineage_data = {}
+
+            ml_prob = lineage_data.get("ml_probability")
+            shap_vals = lineage_data.get("shap_values")
+            ml_int = lineage_data.get("ml_interval")
+
+            rec_item = {
                 "recommendation_id": r.get("id"),
                 "ticker": r.get("ticker"),
                 "action": r.get("signal_type", "BUY"),
@@ -17925,7 +18049,15 @@ def get_pending_recommendations(limit: int = Query(default=50, ge=1, le=100)) ->
                 "reference_price": float(r.get("price", 0.0)),
                 "rationale": r.get("reason", ""),
                 "generated_at": r.get("created_at"),
-            })
+            }
+            if ml_prob is not None:
+                rec_item["ml_probability"] = round(float(ml_prob), 4)
+            if shap_vals is not None:
+                rec_item["shap_values"] = shap_vals
+            if ml_int is not None:
+                rec_item["ml_interval"] = ml_int
+
+            recommendations.append(rec_item)
         return recommendations
     except Exception as exc:
         logger.exception("Failed to retrieve pending recommendations: %s", exc)
@@ -22851,6 +22983,191 @@ class TestInstitutionalSuite(unittest.TestCase):
         )
         self.assertEqual(res.ticker, "MC.PA")
         self.assertIn(res.final_verdict, ("GO", "REDUCE_SIZE", "NO_GO"))
+
+
+if __name__ == "__main__":
+    unittest.main()
+```
+
+## FILE: tests/test_ml_cascade_integration.py
+```python
+"""Test Suite for ML Predictor Worker Live Signal Cascade Integration.
+
+Verifies:
+  1. Step 2c Isolation Forest Anomaly Detection veto.
+  2. Step 2c XGBoost Probability + SHAP threshold (< 0.50) veto.
+  3. Step 2c ML Probability enrichment into Signal lineage when proba >= 0.50.
+  4. UI Trade Cards rendering of ML probability and SHAP drivers.
+  5. Internal API recommendation endpoint returning ML metadata.
+"""
+
+from __future__ import annotations
+
+import json
+import sys
+import unittest
+from datetime import datetime
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+ROOT = Path(__file__).resolve().parent.parent
+for d in ("00_data_sensors", "01_memory_core", "02_quant_engine", "03_risk_portfolio", "04_orchestrator_ai", "05_interfaces", "06_api", "07_mcp"):
+    sys.path.insert(0, str(ROOT / d))
+
+from data_models import PortfolioState, Position, Signal, SignalStatus, SignalType
+from signal_priority_cascade import SignalOrchestrator
+import trade_cards
+
+
+class TestMLCascadeIntegration(unittest.TestCase):
+
+    def setUp(self):
+        self.portfolio = PortfolioState(
+            cash_available=10000.0,
+            total_equity=20000.0,
+            positions=[
+                Position(ticker="CW8.PA", qty_shares=20, avg_entry_price=450.0, current_price=500.0, sector="ETF"),
+            ],
+            last_updated=datetime.now(),
+        )
+        self.config_dir = ROOT / "config"
+        self.orchestrator = SignalOrchestrator(config_dir=self.config_dir)
+
+    def test_01_ml_anomaly_veto(self):
+        """Verify Isolation Forest anomaly triggers rejection."""
+        sig = Signal(
+            ticker="MC.PA",
+            signal_type=SignalType.BUY,
+            status=SignalStatus.PENDING,
+            score=82.0,
+            reason="Mean reversion RSI < 30",
+            lineage={"rsi": 25.0, "gap_sma200_pct": 5.0, "atr_pct": 2.0},
+        )
+        with patch.object(self.orchestrator.macro_veto, "check_veto", return_value=(False, "")), \
+             patch.object(self.orchestrator.earnings_blackout, "check_veto", return_value=(False, "")), \
+             patch.object(self.orchestrator.fundamentals_sensor, "calculate_piotroski_score", return_value=(7, {})), \
+             patch.object(self.orchestrator.firewall, "check_correlation", return_value=(True, "")), \
+             patch("signal_priority_cascade.predict_anomaly", return_value=True), \
+             patch("signal_priority_cascade.predict_probability_with_shap", return_value=(0.75, {"rsi": 0.1}, (0.7, 0.8))):
+            processed = self.orchestrator.process_raw_signals(
+                raw_signals=[sig],
+                portfolio=self.portfolio,
+                current_prices={"MC.PA": 600.0},
+                vix_level=16.0,
+            )
+            self.assertEqual(len(processed), 1)
+            self.assertEqual(processed[0].status, SignalStatus.REJECTED)
+            self.assertIn("Structural Anomaly detected by Isolation Forest", processed[0].reason)
+
+    def test_02_ml_low_probability_veto(self):
+        """Verify low ML probability (< 0.50) triggers rejection."""
+        sig = Signal(
+            ticker="MC.PA",
+            signal_type=SignalType.BUY,
+            status=SignalStatus.PENDING,
+            score=82.0,
+            reason="Mean reversion RSI < 30",
+            lineage={"rsi": 25.0, "gap_sma200_pct": 5.0, "atr_pct": 2.0},
+        )
+        with patch.object(self.orchestrator.macro_veto, "check_veto", return_value=(False, "")), \
+             patch.object(self.orchestrator.earnings_blackout, "check_veto", return_value=(False, "")), \
+             patch.object(self.orchestrator.fundamentals_sensor, "calculate_piotroski_score", return_value=(7, {})), \
+             patch.object(self.orchestrator.firewall, "check_correlation", return_value=(True, "")), \
+             patch("signal_priority_cascade.predict_anomaly", return_value=False), \
+             patch("signal_priority_cascade.predict_probability_with_shap", return_value=(0.42, {"rsi": -0.05}, (0.38, 0.46))):
+            processed = self.orchestrator.process_raw_signals(
+                raw_signals=[sig],
+                portfolio=self.portfolio,
+                current_prices={"MC.PA": 600.0},
+                vix_level=16.0,
+            )
+            self.assertEqual(len(processed), 1)
+            self.assertEqual(processed[0].status, SignalStatus.REJECTED)
+            self.assertIn("ML Win Probability too low (42.0%)", processed[0].reason)
+
+    def test_03_ml_pass_enriches_lineage(self):
+        """Verify passing ML check enriches signal lineage with ml_probability and shap_values."""
+        sig = Signal(
+            ticker="MC.PA",
+            signal_type=SignalType.BUY,
+            status=SignalStatus.PENDING,
+            score=82.0,
+            reason="Mean reversion RSI < 30",
+            lineage={"rsi": 25.0, "gap_sma200_pct": 5.0, "atr_pct": 2.0},
+        )
+        mock_shap = {"rsi": 0.12, "gap_sma200_pct": 0.08}
+        with patch.object(self.orchestrator.macro_veto, "check_veto", return_value=(False, "")), \
+             patch.object(self.orchestrator.earnings_blackout, "check_veto", return_value=(False, "")), \
+             patch.object(self.orchestrator.fundamentals_sensor, "calculate_piotroski_score", return_value=(7, {})), \
+             patch.object(self.orchestrator.firewall, "check_correlation", return_value=(True, "")), \
+             patch("signal_priority_cascade.predict_anomaly", return_value=False), \
+             patch("signal_priority_cascade.predict_probability_with_shap", return_value=(0.685, mock_shap, (0.65, 0.72))), \
+             patch.object(self.orchestrator.sizer, "size_with_explanation", return_value=(5, {"raw_shares": 5, "price": 600.0, "weight_pct": 15.0})):
+            processed = self.orchestrator.process_raw_signals(
+                raw_signals=[sig],
+                portfolio=self.portfolio,
+                current_prices={"MC.PA": 600.0},
+                vix_level=16.0,
+            )
+            self.assertEqual(len(processed), 1)
+            self.assertEqual(processed[0].status, SignalStatus.APPROVED)
+            self.assertEqual(processed[0].lineage.get("ml_probability"), 0.685)
+            self.assertEqual(processed[0].lineage.get("shap_values"), mock_shap)
+            self.assertEqual(tuple(processed[0].lineage.get("ml_interval")), (0.65, 0.72))
+
+    def test_04_trade_card_renders_ml_probability(self):
+        """Verify UI trade card displays ML probability, interval, and top SHAP factors."""
+        card_html = trade_cards.render_signal_card(
+            ticker="MC.PA",
+            title="LVMH",
+            signal_type="BUY",
+            score=85.0,
+            qty=4,
+            reason="RSI survendu",
+            lineage={
+                "ml_probability": 0.685,
+                "ml_interval": [0.65, 0.72],
+                "shap_values": {"rsi": 0.15, "gap_sma200_pct": 0.05, "vol_ann": -0.02},
+            },
+        )
+        self.assertIn("ML Probability", card_html)
+        self.assertIn("68.5%", card_html)
+        self.assertIn("Confidence Interval: 65%-72%", card_html)
+        self.assertIn("rsi (+0.15)", card_html)
+        self.assertIn("gap_sma200_pct (+0.05)", card_html)
+
+    def test_05_internal_api_includes_ml_fields(self):
+        """Verify internal API pending recommendations include ml_probability."""
+        from fastapi.testclient import TestClient
+        from internal_api import app
+
+        mock_rows = [
+            {
+                "id": "sig-123",
+                "ticker": "OR.PA",
+                "signal_type": "BUY",
+                "score": 88.0,
+                "quantity": 3,
+                "price": 400.0,
+                "reason": "Mean reversion",
+                "created_at": "2026-08-10T14:00:00Z",
+                "lineage_json": json.dumps({
+                    "ml_probability": 0.72,
+                    "ml_interval": [0.68, 0.76],
+                    "shap_values": {"rsi": 0.14},
+                }),
+            }
+        ]
+        client = TestClient(app)
+        with patch("internal_api._PORTFOLIO_DB.fetch_signals_by_status", return_value=mock_rows):
+            res = client.get("/api/v1/recommendations/pending")
+            self.assertEqual(res.status_code, 200)
+            data = res.json()
+            self.assertEqual(len(data), 1)
+            self.assertEqual(data[0]["ticker"], "OR.PA")
+            self.assertEqual(data[0]["ml_probability"], 0.72)
+            self.assertEqual(data[0]["ml_interval"], [0.68, 0.76])
+            self.assertEqual(data[0]["shap_values"], {"rsi": 0.14})
 
 
 if __name__ == "__main__":

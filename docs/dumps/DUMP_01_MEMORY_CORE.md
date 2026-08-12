@@ -1,5 +1,5 @@
 # PEA Pollux — Memory Core, State Persistence & Data Contracts
-Generated: `2026-08-10 18:02 UTC` | File Count: `8`
+Generated: `2026-08-12 10:00 UTC` | File Count: `8`
 Institutional Systematic Decision Support Architecture for French PEA.
 ---
 ## Included Files Index
@@ -1609,7 +1609,7 @@ class PortfolioDB:
 
         placeholders = ",".join("?" for _ in statuses)
         query = (
-            "SELECT id, ticker, signal_type, status, score, reason, created_at "
+            "SELECT id, ticker, signal_type, status, score, reason, created_at, quantity, price, lineage_json "
             "FROM audit_logs "
             f"WHERE status IN ({placeholders}) "
             "ORDER BY created_at DESC"

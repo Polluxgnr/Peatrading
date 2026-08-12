@@ -94,6 +94,7 @@ def render_signal_card(
     qty: Optional[int],
     reason: str,
     sizing: Optional[dict] = None,
+    lineage: Optional[dict] = None,
     sector_line: str = "",
     risk_line: str = "",
     impact_line: str = "",
@@ -109,6 +110,7 @@ def render_signal_card(
         qty: Target shares (may be None).
         reason: Pipeline explanation.
         sizing: Optional dict from ``PeaSizer.size_with_explanation``.
+        lineage: Optional dict with ML inference feature lineage.
         sector_line: Precomputed sector impact sentence.
         risk_line: Precomputed ATR risk sentence.
         created_at: Timestamp string.
@@ -133,6 +135,46 @@ def render_signal_card(
             f" · poids {sizing.get('weight_pct', 0):.2f}% equity"
             f"</div>"
         )
+
+    # ML Predictor & Conformal Confidence row
+    ml_prob = None
+    shap_vals = None
+    ml_interval = None
+
+    if lineage and isinstance(lineage, dict):
+        ml_prob = lineage.get("ml_probability")
+        shap_vals = lineage.get("shap_values")
+        ml_interval = lineage.get("ml_interval")
+    if ml_prob is None and sizing and isinstance(sizing, dict):
+        ml_prob = sizing.get("ml_probability")
+        shap_vals = sizing.get("shap_values")
+        ml_interval = sizing.get("ml_interval")
+
+    ml_html = ""
+    if ml_prob is not None:
+        try:
+            p_val = float(ml_prob)
+            prob_pct = p_val * 100.0 if p_val <= 1.0 else p_val
+            int_txt = ""
+            if ml_interval and isinstance(ml_interval, (list, tuple)) and len(ml_interval) == 2:
+                low_p = float(ml_interval[0]) * 100.0 if float(ml_interval[0]) <= 1.0 else float(ml_interval[0])
+                high_p = float(ml_interval[1]) * 100.0 if float(ml_interval[1]) <= 1.0 else float(ml_interval[1])
+                int_txt = f" (Confidence Interval: {low_p:.0f}%-{high_p:.0f}%)"
+
+            shap_txt = ""
+            if shap_vals and isinstance(shap_vals, dict):
+                pos_shaps = sorted([(k, v) for k, v in shap_vals.items() if float(v) > 0], key=lambda x: float(x[1]), reverse=True)[:2]
+                if pos_shaps:
+                    shap_items = [f"{k} (+{float(v):.2f})" for k, v in pos_shaps]
+                    shap_txt = f" · <span style='color:{_MUTED};'>Top Drivers: {', '.join(shap_items)}</span>"
+
+            ml_html = (
+                f"<div style='margin-top:6px;color:#A78BFA;font-size:12px;line-height:1.45;'>"
+                f"🧠 <b>ML Probability</b>: <b style='color:#C4B5FD;'>{prob_pct:.1f}%</b>{int_txt}{shap_txt}"
+                f"</div>"
+            )
+        except Exception:
+            ml_html = ""
 
     extras = ""
     if impact_line:
@@ -175,6 +217,7 @@ def render_signal_card(
     {reason}
   </div>
   {sizing_html}
+  {ml_html}
   {extras}
   <div style="margin-top:8px;">{when}</div>
 </div>

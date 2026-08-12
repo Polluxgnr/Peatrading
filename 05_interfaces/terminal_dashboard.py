@@ -311,6 +311,15 @@ def render_pending_trade_cards(pending_df: pd.DataFrame, portfolio_obj) -> None:
             risk_line = atr_risk_line(
                 qty_i, atr, atr_mult, float(portfolio_obj.total_equity)
             )
+        lineage = None
+        raw_lin = row.get("lineage_json")
+        if raw_lin:
+            try:
+                import json
+                lineage = json.loads(raw_lin) if isinstance(raw_lin, str) else raw_lin
+            except Exception:
+                lineage = None
+
         st.markdown(
             render_signal_card(
                 ticker=ticker,
@@ -320,6 +329,7 @@ def render_pending_trade_cards(pending_df: pd.DataFrame, portfolio_obj) -> None:
                 qty=qty_i,
                 reason=str(row.get("reason") or ""),
                 sizing=sizing,
+                lineage=lineage,
                 sector_line=sec_line,
                 risk_line=risk_line,
                 created_at=str(row.get("created_at", ""))[:19],

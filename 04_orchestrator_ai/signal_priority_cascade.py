@@ -28,7 +28,7 @@ import yaml
 
 # --- Cross-package imports (directories start with digits) --------------------
 _ROOT = Path(__file__).resolve().parent.parent
-for _sub in ("01_memory_core", "03_risk_portfolio", "04_orchestrator_ai"):
+for _sub in ("00_data_sensors", "01_memory_core", "02_quant_engine", "03_risk_portfolio", "04_orchestrator_ai"):
     sys.path.insert(0, os.path.join(str(_ROOT), _sub))
 
 from data_models import PortfolioState, Signal, SignalStatus  # noqa: E402
@@ -39,6 +39,12 @@ from earnings_blackout import EarningsBlackoutEngine  # noqa: E402
 from drawdown_breaker import DrawdownBreaker  # noqa: E402
 from fundamentals_api import FundamentalsSensor  # noqa: E402
 from risk_config import load_and_validate_risk_params  # noqa: E402
+
+try:
+    from ml_trainer import predict_probability_with_shap, predict_anomaly
+except ImportError:
+    predict_probability_with_shap = None
+    predict_anomaly = None
 
 logger = logging.getLogger(__name__)
 
@@ -265,6 +271,57 @@ class SignalOrchestrator:
                 processed.append(self._reject(signal, f"REJECTED: {corr_reason}"))
                 continue
 
+            # --- Check 2c: ML Predictive Veto (XGBoost + Isolation Forest) ---
+            if predict_anomaly is not None and predict_probability_with_shap is not None:
+                # Determine current market regime from vix_level (default to VOLATILE)
+                if vix_level is not None:
+                    if vix_level < 17.5:
+                        current_regime = "BULL"
+                    elif vix_level > 23.0:
+                        current_regime = "VOLATILE"
+                    else:
+                        current_regime = "BEAR"
+                else:
+                    current_regime = "VOLATILE"
+
+                feat_snapshot = (
+                    signal.lineage
+                    if hasattr(signal, "lineage") and isinstance(signal.lineage, dict)
+                    else {}
+                )
+
+                # Anomaly Detection via Isolation Forest
+                is_anomaly = predict_anomaly(feat_snapshot)
+                if is_anomaly is True:
+                    processed.append(
+                        self._reject(
+                            signal,
+                            "REJECTED: Structural Anomaly detected by Isolation Forest",
+                        )
+                    )
+                    continue
+
+                # Win Probability & SHAP Scoring via XGBoost
+                proba, shap_dict, interval = predict_probability_with_shap(
+                    feat_snapshot, horizon="tactical", regime=current_regime
+                )
+                if proba is not None:
+                    if proba < 0.50:
+                        processed.append(
+                            self._reject(
+                                signal,
+                                f"REJECTED: ML Win Probability too low ({proba * 100:.1f}%)",
+                            )
+                        )
+                        continue
+
+                    # Inject ML inference features into signal lineage
+                    if not hasattr(signal, "lineage") or not isinstance(signal.lineage, dict):
+                        signal.lineage = {}
+                    signal.lineage["ml_probability"] = proba
+                    signal.lineage["shap_values"] = shap_dict
+                    signal.lineage["ml_interval"] = interval
+
             # --- Check 3: PEA position sizing (volatility & kinetic adjusted) ---
             # TODO: Re-enable RL Sizer only when SizingEnv is connected to real historical trajectories
             # rather than synthetic noise. Current sizing strictly relies on deterministic Half-Kelly,
@@ -299,7 +356,7 @@ class SignalOrchestrator:
                     "execution_price": price,
                     "sizing": sizing,
                     "kinetic_multiplier": kinetic_mult,
-                    "vix": vix,
+                    "vix": vix_level,
                 })
 
             logger.info(

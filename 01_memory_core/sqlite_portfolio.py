@@ -575,7 +575,7 @@ class PortfolioDB:
 
         placeholders = ",".join("?" for _ in statuses)
         query = (
-            "SELECT id, ticker, signal_type, status, score, reason, created_at "
+            "SELECT id, ticker, signal_type, status, score, reason, created_at, quantity, price, lineage_json "
             "FROM audit_logs "
             f"WHERE status IN ({placeholders}) "
             "ORDER BY created_at DESC"
