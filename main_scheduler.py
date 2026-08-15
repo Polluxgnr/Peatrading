@@ -617,8 +617,33 @@ def run_morning_news_routine() -> None:
         logger.error("Morning news routine encountered error: %s", exc, exc_info=True)
 
 
+def run_monthly_ml_retraining() -> None:
+    """Monthly autonomous XGBoost & Isolation Forest model retraining routine (02:00 Paris, 1st of month)."""
+    if datetime.today().day != 1:
+        return
+
+    started = time.perf_counter()
+    logger.info("=== Monthly ML Model Retraining job starting (1st of month) ===")
+    try:
+        from ml_trainer import train_model
+        metrics = train_model()
+        acc_summary = ", ".join([f"{k}: {v.get('accuracy_pct', 0):.1f}%" for k, v in metrics.items() if isinstance(v, dict)])
+        msg = (
+            f"\U0001F9E0 **Autonomous Monthly ML Retraining Complete**\n"
+            f"• Retrained models across regimes in {time.perf_counter() - started:.1f}s\n"
+            f"• Accuracies: `{acc_summary}`"
+        )
+        logger.info(msg)
+        asyncio.run(_post_webhook(msg))
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Monthly ML model retraining failed: %s", exc, exc_info=True)
+        asyncio.run(_post_webhook(f"\u26a0\ufe0f **Monthly ML Retraining Failed**: `{exc}`"))
+
+
 def _schedule_passes() -> None:
     """Register all periodic jobs in Europe/Paris time."""
+    # Monthly ML retraining: probe daily at 02:00, acts only on the 1st of the month.
+    schedule.every().day.at("02:00", _TIMEZONE).do(run_monthly_ml_retraining)
     # Morning pre-market news & newsletter ingestion: 08:00 Paris.
     schedule.every().day.at("08:00", _TIMEZONE).do(run_morning_news_routine)
     for pass_time in _PASS_TIMES:
@@ -633,7 +658,7 @@ def _schedule_passes() -> None:
     # Daily ATR stops (weekdays guarded inside).
     schedule.every().day.at(_ATR_STOP_CHECK_TIME, _TIMEZONE).do(run_daily_atr_stops)
     logger.info(
-        "Scheduled: morning news 08:00; passes at %s; weekly report Fri %s; "
+        "Scheduled: ML retrain 02:00; morning news 08:00; passes at %s; weekly report Fri %s; "
         "earnings sync Fri 18:30; monthly probe %s; ATR stops %s (%s).",
         ", ".join(_PASS_TIMES),
         _WEEKLY_REPORT_TIME,
@@ -678,6 +703,11 @@ def main() -> None:
         action="store_true",
         help="Run pre-market morning news ingestion and FinBERT scoring now.",
     )
+    parser.add_argument(
+        "--retrain-ml",
+        action="store_true",
+        help="Run autonomous monthly ML retraining now (ignores 1st-of-month guard).",
+    )
     args = parser.parse_args()
 
     if args.now:
@@ -710,6 +740,17 @@ def main() -> None:
         logger.info("--morning-news: running morning news & IMAP ingestion now.")
         run_morning_news_routine()
         return
+
+    if args.retrain_ml:
+        logger.info("--retrain-ml: executing ML model retraining now.")
+        try:
+            from ml_trainer import train_model
+            metrics = train_model()
+            logger.info("Retraining complete. Metrics: %s", metrics)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Retraining failed: %s", exc)
+        return
+
 
 
     _schedule_passes()

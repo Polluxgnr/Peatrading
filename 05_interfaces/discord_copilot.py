@@ -389,7 +389,7 @@ class DiscordCopilot(discord.Client):
                 await message.reply(embed=embed, file=discord_file)
 
     def build_embed(self, signal: Signal, explanation: str) -> discord.Embed:
-        """Build the alert embed for a signal."""
+        """Build the alert embed for a signal with enriched AI, NLP, and StatArb metadata."""
         is_buy = signal.signal_type == SignalType.BUY
         embed = discord.Embed(
             title=f"\U0001F6A8 PEA OPPORTUNIT\u00c9 : {signal.signal_type.name} {signal.ticker}",
@@ -397,8 +397,65 @@ class DiscordCopilot(discord.Client):
         )
         embed.add_field(name="Quantit\u00e9", value=f"{signal.target_qty} actions", inline=True)
         embed.add_field(name="Score Technique", value=f"{signal.score:.1f}/100", inline=True)
-        embed.add_field(name="Analyse IA", value=explanation, inline=False)
+
+        lineage = signal.lineage if isinstance(signal.lineage, dict) else {}
+
+        # 1. StatArb Context
+        strategy_str = str(getattr(signal, "strategy", "") or lineage.get("strategy", ""))
+        pair_ticker = lineage.get("pair_ticker") or lineage.get("pair")
+        z_score = lineage.get("z_score") or lineage.get("spread_zscore")
+        p_val = lineage.get("coint_pvalue") or lineage.get("p_value")
+        if "STAT_ARB" in strategy_str.upper() or pair_ticker is not None:
+            z_str = f"{float(z_score):.2f}" if z_score is not None else "N/A"
+            p_str = f"{float(p_val):.4f}" if p_val is not None else "N/A"
+            embed.add_field(
+                name="\u2696\ufe0f Arbitrage Statistique (Paire)",
+                value=f"Paire: **{signal.ticker}** vs **{pair_ticker}** | Z-Score: `{z_str}` (p={p_str})",
+                inline=False,
+            )
+
+        # 2. FinBERT Sentiment
+        sentiment_score = lineage.get("finbert_sentiment") or lineage.get("sentiment_score") or lineage.get("nlp_score")
+        sentiment_label = lineage.get("sentiment_label") or lineage.get("nlp_label")
+        if sentiment_score is not None:
+            try:
+                s_val = float(sentiment_score)
+                label_txt = f" ({sentiment_label})" if sentiment_label else (" (Bullish)" if s_val > 15 else (" (Bearish)" if s_val < -15 else " (Neutre)"))
+                embed.add_field(
+                    name="\U0001F4F0 Sentiment FinBERT (30J)",
+                    value=f"`{s_val:+.1f}/100`{label_txt}",
+                    inline=True,
+                )
+            except Exception:
+                pass
+
+        # 3. ML Win Probability
+        ml_prob = getattr(signal, "ml_probability", None) or lineage.get("ml_probability") or lineage.get("win_probability")
+        if ml_prob is not None:
+            try:
+                prob_pct = float(ml_prob) * 100.0 if float(ml_prob) <= 1.0 else float(ml_prob)
+                ci = lineage.get("conformal_interval")
+                ci_str = f" [IC: {ci[0]:.0f}% - {ci[1]:.0f}%]" if isinstance(ci, (list, tuple)) and len(ci) == 2 else ""
+                embed.add_field(
+                    name="\U0001F916 Probabilit\u00e9 ML (XGBoost)",
+                    value=f"`{prob_pct:.1f}%`{ci_str}",
+                    inline=True,
+                )
+            except Exception:
+                pass
+
+        # 4. Red Team Verdict
+        red_team = lineage.get("red_team_verdict") or lineage.get("judge_synthesis") or lineage.get("red_team_debate")
+        if red_team:
+            embed.add_field(
+                name="\u2696\ufe0f Verdict Comit\u00e9 Red Team",
+                value=str(red_team)[:500],
+                inline=False,
+            )
+
+        embed.add_field(name="Analyse IA", value=explanation[:1000] if explanation else "Aucune synth\u00e8se narrative.", inline=False)
         return embed
+
 
     async def send_signal_alert(
         self,

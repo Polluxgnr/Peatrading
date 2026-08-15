@@ -1,5 +1,5 @@
 # PEA Pollux — Complete Monolithic Repository Dump
-Generated: `2026-08-15 22:18 UTC` | File Count: `133`
+Generated: `2026-08-15 22:20 UTC` | File Count: `134`
 Institutional Systematic Decision Support Architecture for French PEA.
 ---
 ## Included Files Index
@@ -120,6 +120,7 @@ Institutional Systematic Decision Support Architecture for French PEA.
 - [tests/test_api_and_mcp.py](#file-tests-test_api_and_mcp-py)
 - [tests/test_brain_and_decoupling.py](#file-tests-test_brain_and_decoupling-py)
 - [tests/test_finbert_sentiment.py](#file-tests-test_finbert_sentiment-py)
+- [tests/test_fmp_copilot_retraining.py](#file-tests-test_fmp_copilot_retraining-py)
 - [tests/test_funnel_analytics.py](#file-tests-test_funnel_analytics-py)
 - [tests/test_institutional_suite.py](#file-tests-test_institutional_suite-py)
 - [tests/test_ml_cascade_integration.py](#file-tests-test_ml_cascade_integration-py)
@@ -674,6 +675,8 @@ class FundamentalsSensor:
     def calculate_piotroski_score(self, ticker: str) -> Tuple[int, Dict[str, int]]:
         """Calculate the 9-point Piotroski F-Score for a ticker.
 
+        Checks FMP first if FMP_API_KEY is configured, then falls back to yfinance.
+
         Returns:
             Tuple[int, dict]: (total_score 0..9, breakdown_dict).
         """
@@ -682,6 +685,16 @@ class FundamentalsSensor:
         if cached is not None and cached.get("piotroski_score") is not None:
             return int(cached["piotroski_score"]), {}
 
+        # 1. Primary: Financial Modeling Prep (FMP)
+        fmp_key = os.getenv("FMP_API_KEY")
+        if fmp_key:
+            fmp_res = self._calculate_piotroski_fmp(ticker, fmp_key)
+            if fmp_res is not None:
+                score, breakdown = fmp_res
+                self._cache_fundamentals(ticker, score, breakdown)
+                return score, breakdown
+
+        # 2. Fallback: yfinance statements
         breakdown = {
             "roa_pos": 0,
             "cfo_pos": 0,
@@ -705,6 +718,7 @@ class FundamentalsSensor:
                 # Year 0 (latest) and Year 1 (previous)
                 y0_col = financials.columns[0]
                 y1_col = financials.columns[1]
+
 
                 net_income_0 = float(financials.loc["Net Income", y0_col]) if "Net Income" in financials.index else None
                 net_income_1 = float(financials.loc["Net Income", y1_col]) if "Net Income" in financials.index else None
@@ -771,9 +785,146 @@ class FundamentalsSensor:
         score = sum(breakdown.values())
         self._cache_fundamentals(ticker, score, {})
         logger.info("Piotroski F-Score for %s: %d/9", ticker, score)
-        return score, breakdown
+    def _calculate_piotroski_fmp(self, ticker: str, api_key: str) -> Optional[Tuple[int, Dict[str, int]]]:
+        """Fetch statements from Financial Modeling Prep (FMP) and compute Piotroski F-Score."""
+        import requests
+
+        candidates = [ticker]
+        if "." in ticker:
+            candidates.append(ticker.split(".")[0])
+
+        inc_data = None
+        bs_data = None
+        cf_data = None
+
+        for sym in candidates:
+            try:
+                inc_url = f"https://financialmodelingprep.com/api/v3/income-statement/{sym}?limit=2&apikey={api_key}"
+                bs_url = f"https://financialmodelingprep.com/api/v3/balance-sheet-statement/{sym}?limit=2&apikey={api_key}"
+                cf_url = f"https://financialmodelingprep.com/api/v3/cash-flow-statement/{sym}?limit=2&apikey={api_key}"
+
+                r_inc = requests.get(inc_url, timeout=8)
+                r_bs = requests.get(bs_url, timeout=8)
+                r_cf = requests.get(cf_url, timeout=8)
+
+                if r_inc.status_code == 200 and r_bs.status_code == 200 and r_cf.status_code == 200:
+                    inc_json = r_inc.json()
+                    bs_json = r_bs.json()
+                    cf_json = r_cf.json()
+
+                    if isinstance(inc_json, list) and inc_json and isinstance(bs_json, list) and bs_json and isinstance(cf_json, list) and cf_json:
+                        inc_data = inc_json
+                        bs_data = bs_json
+                        cf_data = cf_json
+                        break
+            except Exception as exc:
+                logger.debug("FMP query failed for %s (%s): %s", ticker, sym, exc)
+
+        if not inc_data or not bs_data or not cf_data:
+            return None
+
+        breakdown = {
+            "roa_pos": 0,
+            "cfo_pos": 0,
+            "roa_chg": 0,
+            "accrual": 0,
+            "leverage_chg": 0,
+            "liquidity_chg": 0,
+            "shares_chg": 0,
+            "margin_chg": 0,
+            "turnover_chg": 0,
+        }
+
+        try:
+            inc0 = inc_data[0]
+            bs0 = bs_data[0]
+            cf0 = cf_data[0]
+
+            inc1 = inc_data[1] if len(inc_data) >= 2 else inc0
+            bs1 = bs_data[1] if len(bs_data) >= 2 else bs0
+            cf1 = cf_data[1] if len(cf_data) >= 2 else cf0
+
+            net_income_0 = float(inc0.get("netIncome") or 0.0)
+            net_income_1 = float(inc1.get("netIncome") or 0.0)
+            tot_assets_0 = float(bs0.get("totalAssets") or 0.0)
+            tot_assets_1 = float(bs1.get("totalAssets") or 0.0)
+            cfo_0 = float(cf0.get("operatingCashFlow") or 0.0)
+            cfo_1 = float(cf1.get("operatingCashFlow") or 0.0)
+            lt_debt_0 = float(bs0.get("longTermDebt") or 0.0)
+            lt_debt_1 = float(bs1.get("longTermDebt") or 0.0)
+            curr_assets_0 = float(bs0.get("totalCurrentAssets") or 0.0)
+            curr_liab_0 = float(bs0.get("totalCurrentLiabilities") or 0.0)
+            curr_assets_1 = float(bs1.get("totalCurrentAssets") or 0.0)
+            curr_liab_1 = float(bs1.get("totalCurrentLiabilities") or 0.0)
+            shares_0 = float(inc0.get("weightedAverageShsOut") or bs0.get("commonStock") or 0.0)
+            shares_1 = float(inc1.get("weightedAverageShsOut") or bs1.get("commonStock") or 0.0)
+            gross_profit_0 = float(inc0.get("grossProfit") or 0.0)
+            revenue_0 = float(inc0.get("revenue") or 0.0)
+            gross_profit_1 = float(inc1.get("grossProfit") or 0.0)
+            revenue_1 = float(inc1.get("revenue") or 0.0)
+
+            # 1. ROA > 0
+            if tot_assets_0 > 0:
+                roa_0 = net_income_0 / tot_assets_0
+                if roa_0 > 0:
+                    breakdown["roa_pos"] = 1
+                if tot_assets_1 > 0:
+                    roa_1 = net_income_1 / tot_assets_1
+                    if roa_0 > roa_1:
+                        breakdown["roa_chg"] = 1
+
+            # 2. CFO > 0
+            if cfo_0 > 0:
+                breakdown["cfo_pos"] = 1
+
+            # 4. Accrual (CFO > Net Income)
+            if cfo_0 > net_income_0:
+                breakdown["accrual"] = 1
+
+            # 5. Leverage change (Lower debt/assets)
+            if tot_assets_0 > 0 and tot_assets_1 > 0:
+                lev_0 = lt_debt_0 / tot_assets_0
+                lev_1 = lt_debt_1 / tot_assets_1
+                if lev_0 <= lev_1:
+                    breakdown["leverage_chg"] = 1
+
+            # 6. Liquidity (Current ratio improved)
+            if curr_liab_0 > 0 and curr_liab_1 > 0:
+                cr_0 = curr_assets_0 / curr_liab_0
+                cr_1 = curr_assets_1 / curr_liab_1
+                if cr_0 >= cr_1:
+                    breakdown["liquidity_chg"] = 1
+
+            # 7. Shares (No dilution)
+            if shares_0 > 0 and shares_1 > 0:
+                if shares_0 <= shares_1:
+                    breakdown["shares_chg"] = 1
+            else:
+                breakdown["shares_chg"] = 1
+
+            # 8. Gross Margin improved
+            if revenue_0 > 0 and revenue_1 > 0:
+                gm_0 = gross_profit_0 / revenue_0
+                gm_1 = gross_profit_1 / revenue_1
+                if gm_0 >= gm_1:
+                    breakdown["margin_chg"] = 1
+
+            # 9. Asset Turnover improved
+            if tot_assets_0 > 0 and tot_assets_1 > 0:
+                turn_0 = revenue_0 / tot_assets_0
+                turn_1 = revenue_1 / tot_assets_1
+                if turn_0 >= turn_1:
+                    breakdown["turnover_chg"] = 1
+
+            score = sum(breakdown.values())
+            logger.info("Piotroski F-Score for %s (via FMP): %d/9", ticker, score)
+            return score, breakdown
+        except Exception as exc:
+            logger.debug("FMP Piotroski calculation parsing failed for %s: %s", ticker, exc)
+            return None
 
     def get_cached_fundamentals(self, ticker: str) -> Optional[dict]:
+
         """Fetch cached fundamentals from SQLite."""
         try:
             with self._connect() as conn:
@@ -13515,7 +13666,7 @@ class DiscordCopilot(discord.Client):
                 await message.reply(embed=embed, file=discord_file)
 
     def build_embed(self, signal: Signal, explanation: str) -> discord.Embed:
-        """Build the alert embed for a signal."""
+        """Build the alert embed for a signal with enriched AI, NLP, and StatArb metadata."""
         is_buy = signal.signal_type == SignalType.BUY
         embed = discord.Embed(
             title=f"\U0001F6A8 PEA OPPORTUNIT\u00c9 : {signal.signal_type.name} {signal.ticker}",
@@ -13523,8 +13674,65 @@ class DiscordCopilot(discord.Client):
         )
         embed.add_field(name="Quantit\u00e9", value=f"{signal.target_qty} actions", inline=True)
         embed.add_field(name="Score Technique", value=f"{signal.score:.1f}/100", inline=True)
-        embed.add_field(name="Analyse IA", value=explanation, inline=False)
+
+        lineage = signal.lineage if isinstance(signal.lineage, dict) else {}
+
+        # 1. StatArb Context
+        strategy_str = str(getattr(signal, "strategy", "") or lineage.get("strategy", ""))
+        pair_ticker = lineage.get("pair_ticker") or lineage.get("pair")
+        z_score = lineage.get("z_score") or lineage.get("spread_zscore")
+        p_val = lineage.get("coint_pvalue") or lineage.get("p_value")
+        if "STAT_ARB" in strategy_str.upper() or pair_ticker is not None:
+            z_str = f"{float(z_score):.2f}" if z_score is not None else "N/A"
+            p_str = f"{float(p_val):.4f}" if p_val is not None else "N/A"
+            embed.add_field(
+                name="\u2696\ufe0f Arbitrage Statistique (Paire)",
+                value=f"Paire: **{signal.ticker}** vs **{pair_ticker}** | Z-Score: `{z_str}` (p={p_str})",
+                inline=False,
+            )
+
+        # 2. FinBERT Sentiment
+        sentiment_score = lineage.get("finbert_sentiment") or lineage.get("sentiment_score") or lineage.get("nlp_score")
+        sentiment_label = lineage.get("sentiment_label") or lineage.get("nlp_label")
+        if sentiment_score is not None:
+            try:
+                s_val = float(sentiment_score)
+                label_txt = f" ({sentiment_label})" if sentiment_label else (" (Bullish)" if s_val > 15 else (" (Bearish)" if s_val < -15 else " (Neutre)"))
+                embed.add_field(
+                    name="\U0001F4F0 Sentiment FinBERT (30J)",
+                    value=f"`{s_val:+.1f}/100`{label_txt}",
+                    inline=True,
+                )
+            except Exception:
+                pass
+
+        # 3. ML Win Probability
+        ml_prob = getattr(signal, "ml_probability", None) or lineage.get("ml_probability") or lineage.get("win_probability")
+        if ml_prob is not None:
+            try:
+                prob_pct = float(ml_prob) * 100.0 if float(ml_prob) <= 1.0 else float(ml_prob)
+                ci = lineage.get("conformal_interval")
+                ci_str = f" [IC: {ci[0]:.0f}% - {ci[1]:.0f}%]" if isinstance(ci, (list, tuple)) and len(ci) == 2 else ""
+                embed.add_field(
+                    name="\U0001F916 Probabilit\u00e9 ML (XGBoost)",
+                    value=f"`{prob_pct:.1f}%`{ci_str}",
+                    inline=True,
+                )
+            except Exception:
+                pass
+
+        # 4. Red Team Verdict
+        red_team = lineage.get("red_team_verdict") or lineage.get("judge_synthesis") or lineage.get("red_team_debate")
+        if red_team:
+            embed.add_field(
+                name="\u2696\ufe0f Verdict Comit\u00e9 Red Team",
+                value=str(red_team)[:500],
+                inline=False,
+            )
+
+        embed.add_field(name="Analyse IA", value=explanation[:1000] if explanation else "Aucune synth\u00e8se narrative.", inline=False)
         return embed
+
 
     async def send_signal_alert(
         self,
@@ -22641,8 +22849,33 @@ def run_morning_news_routine() -> None:
         logger.error("Morning news routine encountered error: %s", exc, exc_info=True)
 
 
+def run_monthly_ml_retraining() -> None:
+    """Monthly autonomous XGBoost & Isolation Forest model retraining routine (02:00 Paris, 1st of month)."""
+    if datetime.today().day != 1:
+        return
+
+    started = time.perf_counter()
+    logger.info("=== Monthly ML Model Retraining job starting (1st of month) ===")
+    try:
+        from ml_trainer import train_model
+        metrics = train_model()
+        acc_summary = ", ".join([f"{k}: {v.get('accuracy_pct', 0):.1f}%" for k, v in metrics.items() if isinstance(v, dict)])
+        msg = (
+            f"\U0001F9E0 **Autonomous Monthly ML Retraining Complete**\n"
+            f"• Retrained models across regimes in {time.perf_counter() - started:.1f}s\n"
+            f"• Accuracies: `{acc_summary}`"
+        )
+        logger.info(msg)
+        asyncio.run(_post_webhook(msg))
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Monthly ML model retraining failed: %s", exc, exc_info=True)
+        asyncio.run(_post_webhook(f"\u26a0\ufe0f **Monthly ML Retraining Failed**: `{exc}`"))
+
+
 def _schedule_passes() -> None:
     """Register all periodic jobs in Europe/Paris time."""
+    # Monthly ML retraining: probe daily at 02:00, acts only on the 1st of the month.
+    schedule.every().day.at("02:00", _TIMEZONE).do(run_monthly_ml_retraining)
     # Morning pre-market news & newsletter ingestion: 08:00 Paris.
     schedule.every().day.at("08:00", _TIMEZONE).do(run_morning_news_routine)
     for pass_time in _PASS_TIMES:
@@ -22657,7 +22890,7 @@ def _schedule_passes() -> None:
     # Daily ATR stops (weekdays guarded inside).
     schedule.every().day.at(_ATR_STOP_CHECK_TIME, _TIMEZONE).do(run_daily_atr_stops)
     logger.info(
-        "Scheduled: morning news 08:00; passes at %s; weekly report Fri %s; "
+        "Scheduled: ML retrain 02:00; morning news 08:00; passes at %s; weekly report Fri %s; "
         "earnings sync Fri 18:30; monthly probe %s; ATR stops %s (%s).",
         ", ".join(_PASS_TIMES),
         _WEEKLY_REPORT_TIME,
@@ -22702,6 +22935,11 @@ def main() -> None:
         action="store_true",
         help="Run pre-market morning news ingestion and FinBERT scoring now.",
     )
+    parser.add_argument(
+        "--retrain-ml",
+        action="store_true",
+        help="Run autonomous monthly ML retraining now (ignores 1st-of-month guard).",
+    )
     args = parser.parse_args()
 
     if args.now:
@@ -22734,6 +22972,17 @@ def main() -> None:
         logger.info("--morning-news: running morning news & IMAP ingestion now.")
         run_morning_news_routine()
         return
+
+    if args.retrain_ml:
+        logger.info("--retrain-ml: executing ML model retraining now.")
+        try:
+            from ml_trainer import train_model
+            metrics = train_model()
+            logger.info("Retraining complete. Metrics: %s", metrics)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Retraining failed: %s", exc)
+        return
+
 
 
     _schedule_passes()
@@ -24262,6 +24511,123 @@ class TestFinBertSentimentSuite(unittest.TestCase):
                 Path(db_path).unlink(missing_ok=True)
             except Exception:
                 pass
+
+
+if __name__ == "__main__":
+    unittest.main()
+```
+
+## FILE: tests/test_fmp_copilot_retraining.py
+```python
+"""Unit Tests for FMP Piotroski Fundamentals, Discord Copilot Alert Enrichment, and Autonomous ML Retraining."""
+
+from __future__ import annotations
+
+import os
+import sys
+import unittest
+from datetime import datetime, timezone
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+ROOT = Path(__file__).resolve().parent.parent
+for sub in ("00_data_sensors", "00_data_sensors/scrapers", "01_memory_core", "02_quant_engine", "03_risk_portfolio", "04_orchestrator_ai", "05_interfaces", "06_api"):
+    sys.path.insert(0, str(ROOT / sub))
+
+from fundamentals_api import FundamentalsSensor
+from discord_copilot import DiscordCopilot
+from data_models import Signal, SignalStatus, SignalType
+from main_scheduler import run_monthly_ml_retraining
+
+
+class TestFmpCopilotRetrainingSuite(unittest.TestCase):
+
+    def test_01_fmp_piotroski_score_calculation(self):
+        """Verify _calculate_piotroski_fmp accurately scores statements from FMP JSON."""
+        sensor = FundamentalsSensor()
+
+        mock_income = [
+            {"netIncome": 1500000000, "grossProfit": 4000000000, "revenue": 10000000000, "weightedAverageShsOut": 500000000},
+            {"netIncome": 1200000000, "grossProfit": 3000000000, "revenue": 9000000000, "weightedAverageShsOut": 500000000},
+        ]
+        mock_balance = [
+            {"totalAssets": 20000000000, "longTermDebt": 3000000000, "totalCurrentAssets": 8000000000, "totalCurrentLiabilities": 4000000000},
+            {"totalAssets": 18000000000, "longTermDebt": 3500000000, "totalCurrentAssets": 7000000000, "totalCurrentLiabilities": 4000000000},
+        ]
+        mock_cashflow = [
+            {"operatingCashFlow": 2200000000},
+            {"operatingCashFlow": 1800000000},
+        ]
+
+        mock_resp_inc = MagicMock(status_code=200, json=lambda: mock_income)
+        mock_resp_bs = MagicMock(status_code=200, json=lambda: mock_balance)
+        mock_resp_cf = MagicMock(status_code=200, json=lambda: mock_cashflow)
+
+        def mock_get(url, *args, **kwargs):
+            if "income-statement" in url:
+                return mock_resp_inc
+            elif "balance-sheet-statement" in url:
+                return mock_resp_bs
+            elif "cash-flow-statement" in url:
+                return mock_resp_cf
+            return MagicMock(status_code=404)
+
+        with patch("requests.get", side_effect=mock_get):
+            res = sensor._calculate_piotroski_fmp("MC.PA", "test_key")
+            self.assertIsNotNone(res)
+            score, breakdown = res
+            self.assertGreaterEqual(score, 7)
+            self.assertEqual(breakdown["roa_pos"], 1)
+            self.assertEqual(breakdown["cfo_pos"], 1)
+            self.assertEqual(breakdown["accrual"], 1)
+            self.assertEqual(breakdown["leverage_chg"], 1)
+
+    def test_02_discord_copilot_build_embed_enrichment(self):
+        """Verify DiscordCopilot embeds include FinBERT, Red Team, ML, and StatArb metadata."""
+        copilot = DiscordCopilot()
+
+        sig = Signal(
+            ticker="MC.PA",
+            signal_type=SignalType.BUY,
+            score=88.5,
+            target_qty=5,
+            status=SignalStatus.PENDING,
+            strategy="STAT_ARB_COINTEGRATION",
+            lineage={
+                "pair_ticker": "OR.PA",
+                "z_score": -2.43,
+                "coint_pvalue": 0.0001,
+                "finbert_sentiment": 45.2,
+                "sentiment_label": "Bullish",
+                "ml_probability": 0.685,
+                "conformal_interval": [65.0, 72.0],
+                "red_team_verdict": "Consensus Favorable (Score: 82/100). Croissance confirmée.",
+            }
+        )
+
+        embed = copilot.build_embed(sig, "Excellente opportunité de mean-reversion.")
+        field_names = [f.name for f in embed.fields]
+
+        self.assertIn("Quantité", field_names)
+        self.assertIn("Score Technique", field_names)
+        self.assertTrue(any("Arbitrage Statistique" in name for name in field_names))
+        self.assertTrue(any("Sentiment FinBERT" in name for name in field_names))
+        self.assertTrue(any("Probabilité ML" in name for name in field_names))
+        self.assertTrue(any("Comité Red Team" in name for name in field_names))
+
+    def test_03_monthly_ml_retraining_execution(self):
+        """Verify run_monthly_ml_retraining executes without unhandled errors."""
+        mock_metrics = {
+            "tactical_BULL": {"accuracy_pct": 74.5},
+            "tactical_BEAR": {"accuracy_pct": 68.2},
+        }
+        with patch("ml_trainer.train_model", return_value=mock_metrics), \
+             patch("main_scheduler._post_webhook") as mock_webhook:
+            # Force day = 1 for the test
+            with patch("main_scheduler.datetime") as mock_dt:
+                mock_dt.today.return_value = datetime(2026, 9, 1, 2, 0, 0, tzinfo=timezone.utc)
+                mock_dt.now.return_value = datetime(2026, 9, 1, 2, 0, 0, tzinfo=timezone.utc)
+                run_monthly_ml_retraining()
 
 
 if __name__ == "__main__":
