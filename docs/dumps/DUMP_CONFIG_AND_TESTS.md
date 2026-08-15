@@ -1,5 +1,5 @@
 # PEA Pollux — Configuration Yaml, Test Suites, Root Ops & Documentation
-Generated: `2026-08-15 22:24 UTC` | File Count: `36`
+Generated: `2026-08-15 22:25 UTC` | File Count: `36`
 Institutional Systematic Decision Support Architecture for French PEA.
 ---
 ## Included Files Index
@@ -3110,12 +3110,15 @@ Repository: [github.com/Polluxgnr/Peatrading](https://github.com/Polluxgnr/Peatr
 
 ``​`mermaid
 flowchart TD
-    subgraph SENSORS ["00. DATA SENSORS & JANITOR"]
+    subgraph SENSORS ["00. DATA SENSORS & STEALTH JANITOR"]
         YF["yfinance Batch Ingestion"]
-        AMF["AMF BDIF Legal Insider Scraper"]
+        AMF_SHORT["AMF BDIF Short Interest Scraper (Net Short %)"]
+        AMF_INS["AMF BDIF Legal Insider Scraper"]
         OPENINS["Enhanced OpenInsider EU (Currency Cleaner)"]
-        FMP["Financial Modeling Prep API"]
-        NEWS["RSS / IMAP Bilingual Feeds"]
+        FMP["Financial Modeling Prep (FMP) 9-Point Statements API"]
+        EARNINGS_SYNC["Autonomous Corporate Earnings Calendar Updater"]
+        IMAP_PROD["Production IMAP Ingestion (Yahoo SSL + Whitelist + Jaccard Dedupe)"]
+        CLOUDSCRAPE["Cloudscraper Anti-Bot Bypass Engine (Chrome Fingerprint)"]
         ECB["ECB SDW 10Y OAT-Bund API"]
         FIGI["OpenFIGI Identifier Resolver"]
         CLEAN["Text Sanitizer & Janitor (text_cleaner.py)"]
@@ -3147,6 +3150,7 @@ flowchart TD
         CIRCUIT["Daily/Weekly/Monthly Loss Limiters"]
         FIREWALL["Sector Cap (25%) & Correlation Firewall (0.70)"]
         SIZER["PeaSizer (Half-Kelly x Vol Parity x Sector Scale)"]
+        LIMIT_TIERS["3-Tier Smart Limit Optimizer (Aggressive, Optimal, Patient)"]
         STRESS["Crisis Stress Tester (2008, 2011, 2020, 2022)"]
     end
 
@@ -3158,10 +3162,10 @@ flowchart TD
     end
 
     subgraph INTERFACES ["05-07. APIS, MCP & INTERFACES"]
-        DASHBOARD["Streamlit Bloomberg Terminal HUD (:8501)"]
+        DASHBOARD["Streamlit Bloomberg Terminal HUD (:8501) + AI Radar"]
         API["FastAPI Internal SSOT (:8000)"]
         MCP["Claude Desktop MCP Server"]
-        DISCORD["Discord Copilot (!chart Candlesticks)"]
+        DISCORD["Discord Copilot (Interactive Tiers + !chart)"]
     end
 
     SENSORS --> CLEAN --> FINBERT
@@ -3184,12 +3188,12 @@ The engine is organized into independent, decoupled workers:
 
 | Worker Module | Responsibility | Primary Classes / Functions |
 |---|---|---|
-| **Data Steward & Janitor** (`00_data_sensors`) | Ingests market quotes, resolves FIGI/ISIN, sanitizes HTML news into 1500-char lead text, dumps raw JSON into Bronze lake, scrapes EU insider filings with multi-currency parsing. | `MarketPricesAPI`, `FundamentalsSensor`, `MacroAlphaSensor`, `clean_financial_text`, `OpenInsiderEuScraper`, `clean_numeric_value` |
+| **Data Steward & Stealth Janitor** (`00_data_sensors`) | Ingests market quotes, resolves FIGI/ISIN, bypasses anti-bot/Cloudflare challenges via `cloudscraper`, ingests overnight IMAP newsletters, queries FMP for 9-point Piotroski statements, scrapes AMF BDIF net short positions ($>3\%$), and synchronizes corporate earnings calendars. | `MarketPricesAPI`, `FundamentalsSensor`, `MacroAlphaSensor`, `safe_get`, `amf_short_scraper.py`, `earnings_updater.py`, `imap_ingest/`, `clean_financial_text`, `OpenInsiderEuScraper` |
 | **Memory Core & Gateways** (`01_memory_core`) | Manages SQLite thread-safe transactions, DuckDB timeseries tables, and immutable audit logs with lineage serialization. | `PortfolioDB`, `TimeSeriesDB`, `data_models.py` |
-| **Quant Strategy Workers** (`02_quant_engine`) | Computes technical setups, cointegrated pairs, CAC 40 HMM market regimes, FinBERT sentiment, dynamic UCB bandit weights, and ML win probabilities with SHAP explainability. | `SignalGenerator`, `StatArbEngine`, `HMMRegimeClassifier`, `NewsSentimentScorer`, `UCBBandit`, `DynamicEnsemble`, `VolatilityRegimeSentinel`, `WalkForwardBacktester` |
-| **Risk Sentinel** (`03_risk_portfolio`) | Enforces Pydantic strict parameter validation, drawdown circuit breakers, kinetic exposure scaling, and proportional sector rescaling. | `RiskParamsConfig`, `DrawdownBreaker`, `CorrelationFirewall`, `PeaSizer`, `StressTester` |
+| **Quant Strategy Workers** (`02_quant_engine`) | Computes technical setups, cointegrated pairs, CAC 40 HMM market regimes, FinBERT sentiment, dynamic UCB bandit weights, dynamic ML ensemble weighting, and ML win probabilities with SHAP explainability. | `SignalGenerator`, `StatArbEngine`, `HMMRegimeClassifier`, `NewsSentimentScorer`, `UCBBandit`, `DynamicEnsemble`, `VolatilityRegimeSentinel`, `WalkForwardBacktester`, `ml_trainer.py` |
+| **Risk Sentinel & Execution Tiers** (`03_risk_portfolio`) | Enforces Pydantic strict parameter validation, drawdown circuit breakers, kinetic exposure scaling, proportional sector rescaling, and 3-tier ATR limit order pricing (Aggressive, Optimal, Patient). | `RiskParamsConfig`, `DrawdownBreaker`, `CorrelationFirewall`, `PeaSizer`, `calculate_smart_limit_price`, `StressTester` |
 | **Decision Orchestrator & AI Judges** (`04_orchestrator_ai`) | Executes the 7-stage veto cascade, conducts Red Team debates, generates CIO reports, and updates the contextual bandit reinforcement loop. | `SignalOrchestrator`, `RedTeamDebateAgent`, `TradePostMortemEngine`, `WeeklyHistorian` |
-| **Interface & Visual HUD** (`05_interfaces`) | Renders the Bloomberg-style Streamlit terminal, consuming FastAPI endpoints, interactive decision funnel waterfalls, trade cards, and Discord copilot. | `terminal_dashboard.py`, `trade_cards.py`, `discord_copilot.py` |
+| **Interface & Visual HUD** (`05_interfaces`) | Renders the Bloomberg-style Streamlit terminal, consuming FastAPI endpoints, interactive decision funnel waterfalls, AI strategy weight radar charts (`line_polar`), trade cards, and Discord copilot. | `terminal_dashboard.py`, `trade_cards.py`, `discord_copilot.py` |
 | **Central API (SSOT)** (`06_api`) | Single Source of Truth FastAPI service exposing portfolio state, pending recommendations, health metrics, funnel analytics, and backtest runners. | `internal_api.py` |
 | **MCP Server** (`07_mcp`) | Model Context Protocol gateway enabling Claude Desktop and external LLMs to query live portfolio status and quantitative recommendations. | `pollux_mcp.py` |
 
@@ -3285,6 +3289,8 @@ Every raw signal must pass sequentially through the unyielding risk pipeline in 
 ├───────────┼─────────────────────────────────────────────────────────────────┤
 │  STEP 1e  │ Liquidity Threshold (Average Daily Volume >= 150,000 €)         │
 ├───────────┼─────────────────────────────────────────────────────────────────┤
+│  STEP 1f  │ AMF Short Interest Veto (Active Net Short Position > 3.0% -> VETO│
+├───────────┼─────────────────────────────────────────────────────────────────┤
 │  STEP 2a  │ Sector Concentration Firewall (Max 25% with Proportional Scale) │
 ├───────────┼─────────────────────────────────────────────────────────────────┤
 │  STEP 2b  │ Pearson Correlation Firewall (rho <= 0.70 vs existing holdings) │
@@ -3293,6 +3299,7 @@ Every raw signal must pass sequentially through the unyielding risk pipeline in 
 ├───────────┼─────────────────────────────────────────────────────────────────┤
 │  STEP 3   │ Half-Kelly Sizing x Volatility Parity x Kinetic Multiplier      │
 │           │ -> math.floor(target_cash / price) Whole Shares                 │
+│           │ -> 3-Tier Execution Limits (Aggressive, Optimal, Patient)       │
 └─────────────────────────────────────────────────────────────────────────────┘
 ``​`
 
@@ -3314,7 +3321,7 @@ When a position is closed in SQLite, `04_orchestrator_ai/post_mortem_engine.py` 
 Launch with `./run_dashboard.ps1` or `make run`:
 - **Decoupled API Client**: Consumes FastAPI Single Source of Truth (`http://localhost:8000/api/v1/...`) with a 2-second timeout and offline SQLite fallback.
 - **Top HUD & Live Ticker Tape**: Real-time equity, cash balance, latent PnL, VIX gauge, regime status, and streaming TradingView quotes.
-- **📊 General & Signaux**: Multi-horizon portfolio suggestions, **Entonnoir de Décision (7J/30J decision funnel waterfall & rejection pie)**, rich trade cards with ML probability badges, and geopolitical briefing.
+- **📊 General & Signaux**: Multi-horizon portfolio suggestions, **Entonnoir de Décision (7J/30J decision funnel waterfall & rejection pie)**, rich trade cards with ML probability badges, **🧠 Répartition des Stratégies (IA & Bandit Contextuel)** polar radar chart (`plotly.express.line_polar`), and geopolitical briefing.
 - **🎯 Portefeuille & Allocation**: Daily equity curve, **Sharpe, Sortino, Max Drawdown, CAGR**, sector breakdown, and interactive wallet editor.
 - **🌌 Universe & Screener**: Real-time multi-horizon screener (1M/3M/1Y returns, RSI, Trend Quality), interactive filters, and live news flow with FinBERT sentiment.
 - **🌍 Exploration (Ticker Deep-Dive)**: Fullscreen TradingView charting, Plain-French TA narrative, Valuation buy zone ($52\text{w low} \leftrightarrow \text{analyst target}$), 10-year annual returns bar chart, insider transactions (AMF BDIF / OpenInsider / FMP), and **⚖️ Red Team Investment Committee Debate**.
@@ -3323,9 +3330,31 @@ Launch with `./run_dashboard.ps1` or `make run`:
 - **🧠 Architecture & Logs**: Real-time rotating log file viewer, tailer, and system telemetry.
 
 ### 2. Discord Copilot (`05_interfaces/discord_copilot.py`)
-- Real-time push notifications of approved trade recommendations.
+- Real-time push notifications of approved trade recommendations enriched with **FinBERT 30-day sentiment**, **Red Team committee verdicts**, **ML win probabilities with Conformal Prediction intervals**, and **StatArb pair cointegration Z-scores**.
+- Interactive **Execution Tickets** featuring 3 smart limit pricing tiers calculated via ATR-14:
+  - 🟢 **Aggressif (Fill rapide)** : $P_{\text{ref}} \pm 0.05 \times \text{ATR}_{14}$
+  - 🎯 **Optimal (Recommandé)** : $P_{\text{ref}} \mp 0.10 \times \text{ATR}_{14}$
+  - 🐢 **Patient (Bon R:R)** : $P_{\text{ref}} \mp 0.25 \times \text{ATR}_{14}$
 - Interactive `!chart <TICKER>` command generating dark-themed candlestick charts with SMA200, SMA50, and RSI subplots.
 - Friday CIO Digest delivery to private channel.
+
+---
+
+## ⏰ Autonomous Market Scheduler Timeline (`main_scheduler.py`)
+
+The terminal operates fully autonomously under European market hours (`Europe/Paris` timezone):
+
+| Time (Paris) | Frequency | Routine | Description |
+|---|---|---|---|
+| **02:00** | Monthly (1st) | `run_monthly_ml_retraining()` | Retrains XGBoost classifiers & Isolation Forest models across regimes and posts Discord accuracy report. |
+| **08:00** | Weekdays | `run_morning_news_routine()` | Ingests overnight newsletters via IMAP, cleans HTML, and batch scores sentiment with local FinBERT. |
+| **08:30** | Monthly (1st) | `run_monthly_rebalance()` | Evaluates $+20\%$ profit-shaving thresholds and trims satellite winners into cash runway. |
+| **08:35** | Weekdays | `run_daily_atr_stops()` | Evaluates $2.5\times$ ATR trailing stop-loss exits on all open satellite holdings. |
+| **09:00** | Market Days | `run_analysis_pass()` | **Morning Market Open Pass**: Full universe scan, technical scoring, 7-stage risk cascade, and trade generation. |
+| **13:30** | Market Days | `run_analysis_pass()` | **Midday US Pre-Market Pass**: Intraday sanity check, spread recalibration, and US macro impact scan. |
+| **17:10** | Market Days | `run_analysis_pass()` | **Pre-Close Euronext Pass**: Final daily trade recommendation evaluation before Euronext fixing (17:35). |
+| **Fri 18:00** | Weekly (Fri) | `run_weekly_report()` | Generates CIO Weekly Historian Digest and delivers markdown summary to Discord. |
+| **Fri 18:30** | Weekly (Fri) | `run_earnings_sync()` | Synchronizes corporate earnings calendar and dividend dates for the entire PEA universe. |
 
 ---
 
@@ -3388,7 +3417,7 @@ pip install -r requirements.txt
 
 # Configure environment variables
 cp config/api_keys.env.example config/api_keys.env
-# Edit config/api_keys.env with your API keys (Discord, FMP, OpenRouter)
+# Edit config/api_keys.env with your API keys (Discord, FMP, OpenRouter, Yahoo Mail IMAP)
 
 # Seed initial portfolio capital
 python seed_account.py --cash 10000
@@ -3454,11 +3483,13 @@ make api         # Launch the FastAPI Internal SSOT (:8000)
 make mcp         # Launch the Model Context Protocol Server for Claude Desktop
 make scheduler   # Run the Paris market scheduler daemon
 make pass        # Execute a synchronous market analysis pass immediately (--now)
+make morning-news# Run pre-market IMAP ingestion and FinBERT scoring (--morning-news)
+make retrain-ml  # Run monthly ML model retraining immediately (--retrain-ml)
 make atr-stops   # Evaluate daily ATR stops now (--atr-stops)
 make rebalance   # Evaluate monthly profit-shaving rebalancer now (--rebalance)
 make weekly      # Generate Friday CIO weekly report now (--weekly)
 make backtest    # Run the event-driven Walk-Forward Backtester
-make test        # Run the full automated unit and regression test suite
+make test        # Run the full automated unit and regression test suite (61/61 passing)
 make dump        # Regenerate all LLM context dumps (global + categorized)
 make clean       # Clean temporary cache and bytecode files
 ``​`
@@ -3472,12 +3503,12 @@ For external LLM analysis, fine-tuning, or pair programming, the repository incl
 | Dump File | Description | Target Sub-Domain |
 |---|---|---|
 | **`PROJECT_FULL_DUMP_FOR_LLM.md`** | Complete monolithic project codebase dump. | Global LLM Context |
-| `docs/dumps/DUMP_00_DATA_SENSORS.md` | Data sensors, scrapers, text cleaner, and APIs. | Data Engineering |
+| `docs/dumps/DUMP_00_DATA_SENSORS.md` | Data sensors, scrapers, text cleaner, IMAP ingest, and APIs. | Data Engineering |
 | `docs/dumps/DUMP_01_MEMORY_CORE.md` | Pydantic contracts, SQLite, and DuckDB managers. | Persistence & Contracts |
 | `docs/dumps/DUMP_02_QUANT_ENGINE.md` | Technical scorer, Bandit, Ensemble, StatArb, HMM, FinBERT, ML trainer, Backtest. | Quantitative Alpha Models |
-| `docs/dumps/DUMP_03_RISK_PORTFOLIO.md` | Risk parameters, Kinetic brake, Sizers, Stress tester. | Risk Governance & Sizing |
+| `docs/dumps/DUMP_03_RISK_PORTFOLIO.md` | Risk parameters, Kinetic brake, Sizers, Limit price tiers, Stress tester. | Risk Governance & Sizing |
 | `docs/dumps/DUMP_04_ORCHESTRATOR_AI.md` | Signal cascade, Red Team agent, Post-mortems, Historian. | AI Orchestration |
-| `docs/dumps/DUMP_05_INTERFACES.md` | Streamlit terminal HUD, trade cards, Discord bot. | User Interfaces |
+| `docs/dumps/DUMP_05_INTERFACES.md` | Streamlit terminal HUD, AI Radar chart, trade cards, Discord bot. | User Interfaces |
 | `docs/dumps/DUMP_06_07_API_MCP.md` | Central FastAPI SSOT and Claude Desktop MCP server. | API & Integrations |
 | `docs/dumps/DUMP_CONFIG_AND_TESTS.md` | YAML configurations, test suites, and operational scripts. | Config & Quality Assurance |
 
@@ -3490,7 +3521,7 @@ python tools/build_llm_dump.py
 
 ## 🧪 Verification & Test Suites
 
-The project features an automated test suite covering all layers:
+The project features a **100% passing automated test suite (61 / 61 tests)** covering all architectural layers:
 
 ``​`bash
 # Run all tests
@@ -3500,16 +3531,20 @@ python -m unittest discover tests
 python -m pytest -v
 ``​`
 
-### Test Suite Breakdown
+### Test Suite Inventory
+- `test_limit_tiers_and_radar.py`: Tests 3-tier ATR limit price calculations (Aggressive, Optimal, Patient), direction reversals, and UCB Bandit + Dynamic Ensemble polar radar chart weights.
+- `test_fmp_copilot_retraining.py`: Tests Financial Modeling Prep (FMP) 9-point Piotroski scoring with yfinance fallback, enriched Discord copilot embeds, and autonomous monthly ML retraining.
+- `test_stealth_and_imap_ingest.py`: Tests Cloudscraper anti-bot resilience, Boursorama scraper error recovery, and production IMAP newsletter ingestion with Jaccard deduplication.
+- `test_amf_and_earnings_sync.py`: Tests AMF BDIF Short Interest API scraper, corporate earnings calendar updater, and Step 1f short interest veto.
 - `test_brain_and_decoupling.py`: Tests `VolatilityRegimeSentinel` continuous VIX conviction floors, `UCBBandit` + `DynamicEnsemble` weight lineage in `SignalGenerator`, OpenInsider currency cleaners, and decoupled FastAPI endpoints.
-- `test_ml_cascade_integration.py`: Live Isolation Forest anomaly veto, XGBoost probability scoring threshold ($p < 0.50$), signal lineage enrichment, trade card rendering, and API serialization.
-- `test_text_cleaner_and_feedback.py`: Data Janitor HTML entity unescaping, bilingual disclaimer removal, 1500-char truncation, and Contextual Bandit UCB trade closure reward updates.
-- `test_finbert_sentiment.py`: Offline `ProsusAI/finbert` classification, score scaling, and heuristic keyword fallbacks.
-- `test_stat_arb_and_backtest.py`: Cointegration pairs discovery, sector isolation, Z-score spread computation, and walk-forward backtest execution at T+1 Open.
-- `test_api_and_mcp.py`: FastAPI endpoints (`/portfolio/summary`, `/recommendations/pending`, `/system/health`), recommendation paradigm adherence, and Claude Desktop MCP tool formatters.
-- `test_institutional_suite.py`: Pydantic `RiskParamsConfig` strictness (`extra='forbid', frozen=True`), DrawdownBreaker kinetic multipliers, Piotroski F-Score calculation, HRP allocation, and VaR/CVaR risk math.
-- `test_funnel_analytics.py`: Decision funnel waterfall classification and rejection taxonomy.
-- `test_phase16_foundations.py`: Core/satellite sizing, ATR stops, profit-shaving rebalancer, and correlation firewall.
+- `test_ml_cascade_integration.py`: Tests live Isolation Forest anomaly veto, XGBoost probability scoring threshold ($p < 0.50$), signal lineage enrichment, trade card rendering, and API serialization.
+- `test_text_cleaner_and_feedback.py`: Tests Data Janitor HTML entity unescaping, bilingual disclaimer removal, 1500-char truncation, and Contextual Bandit UCB trade closure reward updates.
+- `test_finbert_sentiment.py`: Tests offline `ProsusAI/finbert` classification, score scaling, and heuristic keyword fallbacks.
+- `test_stat_arb_and_backtest.py`: Tests cointegration pairs discovery, sector isolation, Z-score spread computation, and walk-forward backtest execution at T+1 Open.
+- `test_api_and_mcp.py`: Tests FastAPI endpoints (`/portfolio/summary`, `/recommendations/pending`, `/system/health`), recommendation paradigm adherence, and Claude Desktop MCP tool formatters.
+- `test_institutional_suite.py`: Tests Pydantic `RiskParamsConfig` strictness (`extra='forbid', frozen=True`), DrawdownBreaker kinetic multipliers, Piotroski F-Score calculation, HRP allocation, and VaR/CVaR risk math.
+- `test_funnel_analytics.py`: Tests decision funnel waterfall classification and rejection taxonomy.
+- `test_phase16_foundations.py`: Tests core/satellite sizing, ATR stops, profit-shaving rebalancer, and correlation firewall.
 
 ---
 
