@@ -1,5 +1,5 @@
 # PEA Pollux — Complete Monolithic Repository Dump
-Generated: `2026-08-15 22:20 UTC` | File Count: `134`
+Generated: `2026-08-15 22:24 UTC` | File Count: `135`
 Institutional Systematic Decision Support Architecture for French PEA.
 ---
 ## Included Files Index
@@ -123,6 +123,7 @@ Institutional Systematic Decision Support Architecture for French PEA.
 - [tests/test_fmp_copilot_retraining.py](#file-tests-test_fmp_copilot_retraining-py)
 - [tests/test_funnel_analytics.py](#file-tests-test_funnel_analytics-py)
 - [tests/test_institutional_suite.py](#file-tests-test_institutional_suite-py)
+- [tests/test_limit_tiers_and_radar.py](#file-tests-test_limit_tiers_and_radar-py)
 - [tests/test_ml_cascade_integration.py](#file-tests-test_ml_cascade_integration-py)
 - [tests/test_newsletter_whitelist.py](#file-tests-test_newsletter_whitelist-py)
 - [tests/test_phase16_foundations.py](#file-tests-test_phase16_foundations-py)
@@ -10484,47 +10485,76 @@ if __name__ == "__main__":
 
 ## FILE: 03_risk_portfolio/limit_price_optimizer.py
 ```python
+"""Smart Limit Price Optimizer for PEA Pollux.
+
+Calculates multi-tiered limit order execution prices to maximize fill probability
+or optimize risk/reward while avoiding chasing price spikes on Euronext Paris.
+"""
+
+from __future__ import annotations
+
 import logging
-import math
+from typing import Dict
 
 logger = logging.getLogger(__name__)
 
-def calculate_smart_limit_price(ticker: str, current_price: float, atr_14: float, direction: str = "BUY") -> float:
-    """
-    Calculates a smart limit price maximizing fill probability while avoiding chasing spikes.
-    
+
+def calculate_smart_limit_price(
+    ticker: str,
+    current_price: float,
+    atr_14: float = 0.0,
+    direction: str = "BUY",
+) -> Dict[str, float]:
+    """Calculates 3 tiers of smart limit prices based on current price and ATR volatility.
+
     Args:
-        ticker: The stock ticker.
-        current_price: The latest known closing price or mid price.
-        atr_14: The 14-day Average True Range.
-        direction: "BUY" or "SELL".
-        
+        ticker: Asset ticker (e.g. 'MC.PA').
+        current_price: Current market price.
+        atr_14: 14-day Average True Range (defaults to ~2% of price if 0).
+        direction: 'BUY' or 'SELL'.
+
     Returns:
-        The suggested limit price rounded to 2 decimal places (Euronext tick rules proxy).
+        Dict[str, float]: Dictionary with 'aggressive', 'optimal', 'patient' limit prices.
     """
     if current_price <= 0:
-        logger.warning(f"Invalid current_price {current_price} for {ticker}")
-        return current_price
-        
-    if atr_14 < 0:
-        logger.warning(f"Invalid negative ATR {atr_14} for {ticker}, defaulting to 0.")
-        atr_14 = 0.0
+        logger.warning("Invalid current_price %s for %s", current_price, ticker)
+        return {"aggressive": 0.0, "optimal": 0.0, "patient": 0.0}
 
-    direction = str(direction).strip().upper()
-    
-    if direction == "BUY":
-        # Do not pay more than +0.2% or +15% of ATR, whichever is lower
-        limit_px = min(current_price * 1.002, current_price + 0.15 * atr_14)
-    elif direction == "SELL":
-        # Do not sell for less than -0.2% or -15% of ATR, whichever is lower
-        limit_px = max(current_price * 0.998, current_price - 0.15 * atr_14)
+    # Default ATR to 2% if missing or invalid
+    if atr_14 <= 0:
+        atr_14 = current_price * 0.02
+
+    direction_clean = str(direction).strip().upper()
+
+    if direction_clean == "BUY":
+        # Aggressive: high fill probability (+0.05 ATR)
+        p_agg = current_price + 0.05 * atr_14
+        # Optimal: balanced (-0.10 ATR)
+        p_opt = current_price - 0.10 * atr_14
+        # Patient: better entry/RR, lower fill (-0.25 ATR)
+        p_pat = current_price - 0.25 * atr_14
+    elif direction_clean == "SELL":
+        # Aggressive: high fill probability (-0.05 ATR)
+        p_agg = current_price - 0.05 * atr_14
+        # Optimal: balanced (+0.10 ATR)
+        p_opt = current_price + 0.10 * atr_14
+        # Patient: better exit/RR (+0.25 ATR)
+        p_pat = current_price + 0.25 * atr_14
     else:
-        logger.warning(f"Unknown direction '{direction}' for {ticker}, defaulting to current_price.")
-        limit_px = current_price
-        
-    # Euronext typically rounds to 2 or 3 decimals depending on the asset price.
-    # We round to 2 decimals for general liquidity on PEA stocks.
-    return round(limit_px, 2)
+        logger.warning("Unknown direction '%s' for %s, defaulting to current price.", direction, ticker)
+        p_agg = p_opt = p_pat = current_price
+
+    return {
+        "aggressive": round(float(p_agg), 2),
+        "optimal": round(float(p_opt), 2),
+        "patient": round(float(p_pat), 2),
+    }
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    res = calculate_smart_limit_price("MC.PA", 600.0, 15.0, "BUY")
+    print("Buy Limit Tiers for LVMH (600€, ATR 15€):", res)
 ```
 
 ## FILE: 03_risk_portfolio/monthly_rebalancer.py
@@ -13307,13 +13337,21 @@ except Exception:  # noqa: BLE001
 
 _INTERFACES_DIR = os.path.dirname(os.path.abspath(__file__))
 _CORE_DIR = os.path.join(os.path.dirname(_INTERFACES_DIR), "01_memory_core")
+_RISK_DIR = os.path.join(os.path.dirname(_INTERFACES_DIR), "03_risk_portfolio")
 sys.path.insert(0, _INTERFACES_DIR)
 sys.path.insert(0, _CORE_DIR)
+sys.path.insert(0, _RISK_DIR)
 
 from data_models import PortfolioState, Position, Signal, SignalStatus, SignalType  # noqa: E402
 from llm_explainer import NarrativeExplainer  # noqa: E402
 
+try:
+    from limit_price_optimizer import calculate_smart_limit_price  # noqa: E402
+except ImportError:
+    calculate_smart_limit_price = None
+
 logger = logging.getLogger(__name__)
+
 
 _GREEN = discord.Color.from_str("#00E676")
 _RED = discord.Color.from_str("#FF3B30")
@@ -13423,18 +13461,40 @@ class TradeActionView(discord.ui.View):
     async def approve(
         self, interaction: discord.Interaction, button: discord.ui.Button
     ) -> None:
-        """Persist the execution and update the message."""
+        """Persist the execution and update the message with tiered limit prices."""
         try:
             cost = self._execute_in_db()
             self._disable_all()
             embed = interaction.message.embeds[0] if interaction.message.embeds else discord.Embed()
             embed.color = _GREEN
-            embed.title = f"\u2705 TRADE EXECUTED : {self.signal.ticker}"
+            embed.title = f"\u2705 ORDRE EX\u00c9CUT\u00c9 EN BASE : {self.signal.ticker}"
+
+            atr = 0.0
+            if isinstance(self.signal.lineage, dict):
+                atr = float(self.signal.lineage.get("atr_14") or self.signal.lineage.get("atr") or 0.0)
+
+            tiers = {}
+            if calculate_smart_limit_price is not None:
+                tiers = calculate_smart_limit_price(
+                    self.signal.ticker,
+                    self.current_price,
+                    atr_14=atr,
+                    direction=self.signal.signal_type.name,
+                )
+
+            tiers_md = (
+                f"\U0001F7E2 **Aggressif (Fill rapide)** : `{tiers.get('aggressive', self.current_price):.2f} \u20ac`\n"
+                f"\U0001F3AF **Optimal (Recommand\u00e9)** : `{tiers.get('optimal', self.current_price):.2f} \u20ac`\n"
+                f"\U0001F422 **Patient (Bon R:R)** : `{tiers.get('patient', self.current_price):.2f} \u20ac`"
+            )
+
             embed.add_field(
-                name="Execution",
+                name="\U0001F4CB Ticket d'Ex\u00e9cution PEA",
                 value=(
-                    f"{self.signal.target_qty} action(s) @ {self.current_price:.2f} EUR "
-                    f"(co\u00fbt {cost:.2f} EUR)"
+                    f"**Volume** : {self.signal.target_qty} action(s)\n"
+                    f"**Notional Estim\u00e9** : {cost:.2f} EUR\n"
+                    f"**Prix de March\u00e9** : {self.current_price:.2f} EUR\n\n"
+                    f"**Paliers de Prix Limite Sugg\u00e9r\u00e9s** :\n{tiers_md}"
                 ),
                 inline=False,
             )
@@ -13448,6 +13508,7 @@ class TradeActionView(discord.ui.View):
                 )
         finally:
             self.stop()
+
 
     @discord.ui.button(label="Rejeter", style=discord.ButtonStyle.danger,
                        emoji="\U0001F534")
@@ -17207,8 +17268,107 @@ with tab_gen:
                 width="stretch",
                 key="gen_hist_signals_table",
             )
+
+    # --- Phase 7: AI Transparency & Strategy Weight Radar ---
+    st.markdown("---")
+    st.markdown("### \U0001F9E0 R\u00e9partition des Strat\u00e9gies (IA & Bandit Contextuel)")
+    st.markdown(
+        "<div class='info-text'>Pond\u00e9rations dynamiques allou\u00e9es aux sous-mod\u00e8les par le "
+        "<b>Bandit Contextuel UCB</b> et le <b>Dynamic Ensemble ML</b> selon le r\u00e9gime actif.</div>",
+        unsafe_allow_html=True,
+    )
+
+    try:
+        try:
+            from contextual_bandit import UCBBandit
+        except ImportError:
+            UCBBandit = None
+
+        try:
+            from ensemble_optimizer import DynamicEnsemble
+        except ImportError:
+            DynamicEnsemble = None
+
+        curr_regime = "NORMAL"
+        if isinstance(regime, dict):
+            curr_regime = regime.get("regime", "BULL")
+        elif isinstance(regime, str):
+            curr_regime = regime
+        if curr_regime not in ("BULL", "BEAR", "VOLATILE"):
+            curr_regime = "BULL"
+
+        bandit_w = {}
+        if UCBBandit is not None:
+            bandit_w = UCBBandit().get_weights(curr_regime)
+
+        ensemble_w = {}
+        if DynamicEnsemble is not None:
+            ensemble_w = DynamicEnsemble().get_optimized_weights()
+
+        categories = ["Mean-Reversion", "Trend Following", "Breakout", "StatArb Context"]
+
+        bw_mr = float(bandit_w.get("mean_reversion", 0.25)) * 100.0
+        bw_tf = float(bandit_w.get("trend", 0.30)) * 100.0
+        bw_bo = float(bandit_w.get("breakout", 0.20)) * 100.0
+        bw_ctx = float(bandit_w.get("context", 0.25)) * 100.0
+        bandit_vals = [bw_mr, bw_tf, bw_bo, bw_ctx]
+
+        ew_mr = float(ensemble_w.get("heuristic_mr_weight", 0.25)) * 100.0
+        ew_tf = float(ensemble_w.get("heuristic_trend_weight", 0.30)) * 100.0
+        ew_bo = float(ensemble_w.get("heuristic_breakout_weight", 0.20)) * 100.0
+        ew_ctx = float(ensemble_w.get("heuristic_context_weight", 0.25)) * 100.0
+        ensemble_vals = [ew_mr, ew_tf, ew_bo, ew_ctx]
+
+        radar_col1, radar_col2 = st.columns([1.2, 0.8])
+        with radar_col1:
+            radar_df = pd.DataFrame({
+                "Strat\u00e9gie": categories * 2,
+                "Poids (%)": bandit_vals + ensemble_vals,
+                "Moteur": ["Bandit Contextuel (UCB)"] * 4 + ["Dynamic Ensemble (ML)"] * 4,
+            })
+            fig_radar = pex.line_polar(
+                radar_df,
+                r="Poids (%)",
+                theta="Strat\u00e9gie",
+                color="Moteur",
+                line_close=True,
+                color_discrete_map={
+                    "Bandit Contextuel (UCB)": _NEON,
+                    "Dynamic Ensemble (ML)": _CYAN,
+                },
+            )
+            fig_radar.update_traces(fill="toself", opacity=0.3)
+            fig_radar = _style_dark_fig(fig_radar)
+            fig_radar.update_layout(
+                polar=dict(
+                    bgcolor="#0A0A0A",
+                    radialaxis=dict(visible=True, range=[0, max(50, max(bandit_vals + ensemble_vals) + 5)], showticklabels=True, tickfont=dict(color="#888888", size=10)),
+                    angularaxis=dict(tickfont=dict(color="#FFFFFF", size=12)),
+                ),
+                height=350,
+                legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="center", x=0.5),
+            )
+            st.plotly_chart(fig_radar, width="stretch", key="gen_ai_radar_chart")
+
+        with radar_col2:
+            st.markdown(f"**R\u00e9gime de March\u00e9 Actif** : `{curr_regime}`")
+            st.markdown(
+                f"\u2022 **Mean-Reversion** : `{bw_mr:.1f}%` (Bandit) | `{ew_mr:.1f}%` (Ensemble)\n"
+                f"\u2022 **Trend Following** : `{bw_tf:.1f}%` (Bandit) | `{ew_tf:.1f}%` (Ensemble)\n"
+                f"\u2022 **Breakout** : `{bw_bo:.1f}%` (Bandit) | `{ew_bo:.1f}%` (Ensemble)\n"
+                f"\u2022 **StatArb Context** : `{bw_ctx:.1f}%` (Bandit) | `{ew_ctx:.1f}%` (Ensemble)\n"
+                f"\u2022 **Poids Total ML** : `{ensemble_w.get('ml_total_weight', 0.5)*100:.1f}%` (Pr\u00e9cision: `{ensemble_w.get('avg_accuracy', 0.5)*100:.1f}%`)"
+            )
+            st.caption(
+                "Le bandit UCB favorise Mean-Reversion en r\u00e9gime Volatile/Bear et Trend Following en Bull. "
+                "Le Dynamic Ensemble ajuste le poids des mod\u00e8les ML vs r\u00e8gles expertes selon la performance hors-\u00e9chantillon."
+            )
+    except Exception as exc:
+        st.warning(f"Impossible de g\u00e9n\u00e9rer le radar de strat\u00e9gies IA : {exc}")
+
     st.markdown("---")
     p1, p2 = st.columns(2)
+
     with p1:
         st.markdown("#### 📈 Top / Flop (1 mois)")
         perf_watch = get_market_performance(watch, period="1mo")
@@ -24919,6 +25079,95 @@ class TestInstitutionalSuite(unittest.TestCase):
         )
         self.assertEqual(res.ticker, "MC.PA")
         self.assertIn(res.final_verdict, ("GO", "REDUCE_SIZE", "NO_GO"))
+
+
+if __name__ == "__main__":
+    unittest.main()
+```
+
+## FILE: tests/test_limit_tiers_and_radar.py
+```python
+"""Unit Tests for Smart Limit Price Tiers and AI Radar Chart Telemetry."""
+
+from __future__ import annotations
+
+import sys
+import unittest
+from pathlib import Path
+from unittest.mock import MagicMock
+
+ROOT = Path(__file__).resolve().parent.parent
+for sub in ("00_data_sensors", "01_memory_core", "02_quant_engine", "03_risk_portfolio", "04_orchestrator_ai", "05_interfaces", "06_api"):
+    sys.path.insert(0, str(ROOT / sub))
+
+from limit_price_optimizer import calculate_smart_limit_price
+from contextual_bandit import UCBBandit
+from ensemble_optimizer import DynamicEnsemble
+
+
+class TestLimitTiersAndRadarSuite(unittest.TestCase):
+
+    def test_01_buy_smart_limit_price_tiers(self):
+        """Verify BUY limit price tiers (aggressive, optimal, patient)."""
+        current_price = 100.0
+        atr_14 = 4.0
+
+        tiers = calculate_smart_limit_price("MC.PA", current_price, atr_14, direction="BUY")
+        self.assertIn("aggressive", tiers)
+        self.assertIn("optimal", tiers)
+        self.assertIn("patient", tiers)
+
+        # Aggressive = current + 0.05 * ATR = 100 + 0.20 = 100.20
+        self.assertEqual(tiers["aggressive"], 100.20)
+        # Optimal = current - 0.10 * ATR = 100 - 0.40 = 99.60
+        self.assertEqual(tiers["optimal"], 99.60)
+        # Patient = current - 0.25 * ATR = 100 - 1.00 = 99.00
+        self.assertEqual(tiers["patient"], 99.00)
+
+        # Ensure aggressive >= optimal >= patient for BUY
+        self.assertGreater(tiers["aggressive"], tiers["optimal"])
+        self.assertGreater(tiers["optimal"], tiers["patient"])
+
+    def test_02_sell_smart_limit_price_tiers(self):
+        """Verify SELL limit price tiers (aggressive, optimal, patient)."""
+        current_price = 200.0
+        atr_14 = 8.0
+
+        tiers = calculate_smart_limit_price("AI.PA", current_price, atr_14, direction="SELL")
+
+        # Aggressive = current - 0.05 * ATR = 200 - 0.40 = 199.60
+        self.assertEqual(tiers["aggressive"], 199.60)
+        # Optimal = current + 0.10 * ATR = 200 + 0.80 = 200.80
+        self.assertEqual(tiers["optimal"], 200.80)
+        # Patient = current + 0.25 * ATR = 200 + 2.00 = 202.00
+        self.assertEqual(tiers["patient"], 202.00)
+
+        # Ensure patient >= optimal >= aggressive for SELL
+        self.assertGreater(tiers["patient"], tiers["optimal"])
+        self.assertGreater(tiers["optimal"], tiers["aggressive"])
+
+    def test_03_zero_or_negative_inputs(self):
+        """Verify graceful fallback for invalid prices or zero ATR."""
+        tiers_zero = calculate_smart_limit_price("TTE.PA", 0.0, 5.0, direction="BUY")
+        self.assertEqual(tiers_zero["aggressive"], 0.0)
+
+        tiers_no_atr = calculate_smart_limit_price("TTE.PA", 60.0, 0.0, direction="BUY")
+        self.assertGreater(tiers_no_atr["aggressive"], 0.0)
+        self.assertGreater(tiers_no_atr["optimal"], 0.0)
+
+    def test_04_bandit_and_ensemble_weights(self):
+        """Verify UCBBandit and DynamicEnsemble provide valid normalized weights."""
+        bandit = UCBBandit()
+        weights_bull = bandit.get_weights("BULL")
+        self.assertIn("trend", weights_bull)
+        self.assertIn("mean_reversion", weights_bull)
+        self.assertAlmostEqual(sum(weights_bull.values()), 1.0, places=2)
+
+        ensemble = DynamicEnsemble()
+        ens_weights = ensemble.get_optimized_weights()
+        self.assertIn("heuristic_mr_weight", ens_weights)
+        self.assertIn("heuristic_trend_weight", ens_weights)
+        self.assertIn("ml_total_weight", ens_weights)
 
 
 if __name__ == "__main__":

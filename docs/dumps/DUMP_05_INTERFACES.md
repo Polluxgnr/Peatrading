@@ -1,5 +1,5 @@
 # PEA Pollux — Interfaces, Streamlit Bloomberg Terminal HUD & Discord Copilot
-Generated: `2026-08-15 22:20 UTC` | File Count: `8`
+Generated: `2026-08-15 22:24 UTC` | File Count: `8`
 Institutional Systematic Decision Support Architecture for French PEA.
 ---
 ## Included Files Index
@@ -57,13 +57,21 @@ except Exception:  # noqa: BLE001
 
 _INTERFACES_DIR = os.path.dirname(os.path.abspath(__file__))
 _CORE_DIR = os.path.join(os.path.dirname(_INTERFACES_DIR), "01_memory_core")
+_RISK_DIR = os.path.join(os.path.dirname(_INTERFACES_DIR), "03_risk_portfolio")
 sys.path.insert(0, _INTERFACES_DIR)
 sys.path.insert(0, _CORE_DIR)
+sys.path.insert(0, _RISK_DIR)
 
 from data_models import PortfolioState, Position, Signal, SignalStatus, SignalType  # noqa: E402
 from llm_explainer import NarrativeExplainer  # noqa: E402
 
+try:
+    from limit_price_optimizer import calculate_smart_limit_price  # noqa: E402
+except ImportError:
+    calculate_smart_limit_price = None
+
 logger = logging.getLogger(__name__)
+
 
 _GREEN = discord.Color.from_str("#00E676")
 _RED = discord.Color.from_str("#FF3B30")
@@ -173,18 +181,40 @@ class TradeActionView(discord.ui.View):
     async def approve(
         self, interaction: discord.Interaction, button: discord.ui.Button
     ) -> None:
-        """Persist the execution and update the message."""
+        """Persist the execution and update the message with tiered limit prices."""
         try:
             cost = self._execute_in_db()
             self._disable_all()
             embed = interaction.message.embeds[0] if interaction.message.embeds else discord.Embed()
             embed.color = _GREEN
-            embed.title = f"\u2705 TRADE EXECUTED : {self.signal.ticker}"
+            embed.title = f"\u2705 ORDRE EX\u00c9CUT\u00c9 EN BASE : {self.signal.ticker}"
+
+            atr = 0.0
+            if isinstance(self.signal.lineage, dict):
+                atr = float(self.signal.lineage.get("atr_14") or self.signal.lineage.get("atr") or 0.0)
+
+            tiers = {}
+            if calculate_smart_limit_price is not None:
+                tiers = calculate_smart_limit_price(
+                    self.signal.ticker,
+                    self.current_price,
+                    atr_14=atr,
+                    direction=self.signal.signal_type.name,
+                )
+
+            tiers_md = (
+                f"\U0001F7E2 **Aggressif (Fill rapide)** : `{tiers.get('aggressive', self.current_price):.2f} \u20ac`\n"
+                f"\U0001F3AF **Optimal (Recommand\u00e9)** : `{tiers.get('optimal', self.current_price):.2f} \u20ac`\n"
+                f"\U0001F422 **Patient (Bon R:R)** : `{tiers.get('patient', self.current_price):.2f} \u20ac`"
+            )
+
             embed.add_field(
-                name="Execution",
+                name="\U0001F4CB Ticket d'Ex\u00e9cution PEA",
                 value=(
-                    f"{self.signal.target_qty} action(s) @ {self.current_price:.2f} EUR "
-                    f"(co\u00fbt {cost:.2f} EUR)"
+                    f"**Volume** : {self.signal.target_qty} action(s)\n"
+                    f"**Notional Estim\u00e9** : {cost:.2f} EUR\n"
+                    f"**Prix de March\u00e9** : {self.current_price:.2f} EUR\n\n"
+                    f"**Paliers de Prix Limite Sugg\u00e9r\u00e9s** :\n{tiers_md}"
                 ),
                 inline=False,
             )
@@ -198,6 +228,7 @@ class TradeActionView(discord.ui.View):
                 )
         finally:
             self.stop()
+
 
     @discord.ui.button(label="Rejeter", style=discord.ButtonStyle.danger,
                        emoji="\U0001F534")
@@ -3957,8 +3988,107 @@ with tab_gen:
                 width="stretch",
                 key="gen_hist_signals_table",
             )
+
+    # --- Phase 7: AI Transparency & Strategy Weight Radar ---
+    st.markdown("---")
+    st.markdown("### \U0001F9E0 R\u00e9partition des Strat\u00e9gies (IA & Bandit Contextuel)")
+    st.markdown(
+        "<div class='info-text'>Pond\u00e9rations dynamiques allou\u00e9es aux sous-mod\u00e8les par le "
+        "<b>Bandit Contextuel UCB</b> et le <b>Dynamic Ensemble ML</b> selon le r\u00e9gime actif.</div>",
+        unsafe_allow_html=True,
+    )
+
+    try:
+        try:
+            from contextual_bandit import UCBBandit
+        except ImportError:
+            UCBBandit = None
+
+        try:
+            from ensemble_optimizer import DynamicEnsemble
+        except ImportError:
+            DynamicEnsemble = None
+
+        curr_regime = "NORMAL"
+        if isinstance(regime, dict):
+            curr_regime = regime.get("regime", "BULL")
+        elif isinstance(regime, str):
+            curr_regime = regime
+        if curr_regime not in ("BULL", "BEAR", "VOLATILE"):
+            curr_regime = "BULL"
+
+        bandit_w = {}
+        if UCBBandit is not None:
+            bandit_w = UCBBandit().get_weights(curr_regime)
+
+        ensemble_w = {}
+        if DynamicEnsemble is not None:
+            ensemble_w = DynamicEnsemble().get_optimized_weights()
+
+        categories = ["Mean-Reversion", "Trend Following", "Breakout", "StatArb Context"]
+
+        bw_mr = float(bandit_w.get("mean_reversion", 0.25)) * 100.0
+        bw_tf = float(bandit_w.get("trend", 0.30)) * 100.0
+        bw_bo = float(bandit_w.get("breakout", 0.20)) * 100.0
+        bw_ctx = float(bandit_w.get("context", 0.25)) * 100.0
+        bandit_vals = [bw_mr, bw_tf, bw_bo, bw_ctx]
+
+        ew_mr = float(ensemble_w.get("heuristic_mr_weight", 0.25)) * 100.0
+        ew_tf = float(ensemble_w.get("heuristic_trend_weight", 0.30)) * 100.0
+        ew_bo = float(ensemble_w.get("heuristic_breakout_weight", 0.20)) * 100.0
+        ew_ctx = float(ensemble_w.get("heuristic_context_weight", 0.25)) * 100.0
+        ensemble_vals = [ew_mr, ew_tf, ew_bo, ew_ctx]
+
+        radar_col1, radar_col2 = st.columns([1.2, 0.8])
+        with radar_col1:
+            radar_df = pd.DataFrame({
+                "Strat\u00e9gie": categories * 2,
+                "Poids (%)": bandit_vals + ensemble_vals,
+                "Moteur": ["Bandit Contextuel (UCB)"] * 4 + ["Dynamic Ensemble (ML)"] * 4,
+            })
+            fig_radar = pex.line_polar(
+                radar_df,
+                r="Poids (%)",
+                theta="Strat\u00e9gie",
+                color="Moteur",
+                line_close=True,
+                color_discrete_map={
+                    "Bandit Contextuel (UCB)": _NEON,
+                    "Dynamic Ensemble (ML)": _CYAN,
+                },
+            )
+            fig_radar.update_traces(fill="toself", opacity=0.3)
+            fig_radar = _style_dark_fig(fig_radar)
+            fig_radar.update_layout(
+                polar=dict(
+                    bgcolor="#0A0A0A",
+                    radialaxis=dict(visible=True, range=[0, max(50, max(bandit_vals + ensemble_vals) + 5)], showticklabels=True, tickfont=dict(color="#888888", size=10)),
+                    angularaxis=dict(tickfont=dict(color="#FFFFFF", size=12)),
+                ),
+                height=350,
+                legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="center", x=0.5),
+            )
+            st.plotly_chart(fig_radar, width="stretch", key="gen_ai_radar_chart")
+
+        with radar_col2:
+            st.markdown(f"**R\u00e9gime de March\u00e9 Actif** : `{curr_regime}`")
+            st.markdown(
+                f"\u2022 **Mean-Reversion** : `{bw_mr:.1f}%` (Bandit) | `{ew_mr:.1f}%` (Ensemble)\n"
+                f"\u2022 **Trend Following** : `{bw_tf:.1f}%` (Bandit) | `{ew_tf:.1f}%` (Ensemble)\n"
+                f"\u2022 **Breakout** : `{bw_bo:.1f}%` (Bandit) | `{ew_bo:.1f}%` (Ensemble)\n"
+                f"\u2022 **StatArb Context** : `{bw_ctx:.1f}%` (Bandit) | `{ew_ctx:.1f}%` (Ensemble)\n"
+                f"\u2022 **Poids Total ML** : `{ensemble_w.get('ml_total_weight', 0.5)*100:.1f}%` (Pr\u00e9cision: `{ensemble_w.get('avg_accuracy', 0.5)*100:.1f}%`)"
+            )
+            st.caption(
+                "Le bandit UCB favorise Mean-Reversion en r\u00e9gime Volatile/Bear et Trend Following en Bull. "
+                "Le Dynamic Ensemble ajuste le poids des mod\u00e8les ML vs r\u00e8gles expertes selon la performance hors-\u00e9chantillon."
+            )
+    except Exception as exc:
+        st.warning(f"Impossible de g\u00e9n\u00e9rer le radar de strat\u00e9gies IA : {exc}")
+
     st.markdown("---")
     p1, p2 = st.columns(2)
+
     with p1:
         st.markdown("#### 📈 Top / Flop (1 mois)")
         perf_watch = get_market_performance(watch, period="1mo")

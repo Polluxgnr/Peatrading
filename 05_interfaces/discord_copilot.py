@@ -30,13 +30,21 @@ except Exception:  # noqa: BLE001
 
 _INTERFACES_DIR = os.path.dirname(os.path.abspath(__file__))
 _CORE_DIR = os.path.join(os.path.dirname(_INTERFACES_DIR), "01_memory_core")
+_RISK_DIR = os.path.join(os.path.dirname(_INTERFACES_DIR), "03_risk_portfolio")
 sys.path.insert(0, _INTERFACES_DIR)
 sys.path.insert(0, _CORE_DIR)
+sys.path.insert(0, _RISK_DIR)
 
 from data_models import PortfolioState, Position, Signal, SignalStatus, SignalType  # noqa: E402
 from llm_explainer import NarrativeExplainer  # noqa: E402
 
+try:
+    from limit_price_optimizer import calculate_smart_limit_price  # noqa: E402
+except ImportError:
+    calculate_smart_limit_price = None
+
 logger = logging.getLogger(__name__)
+
 
 _GREEN = discord.Color.from_str("#00E676")
 _RED = discord.Color.from_str("#FF3B30")
@@ -146,18 +154,40 @@ class TradeActionView(discord.ui.View):
     async def approve(
         self, interaction: discord.Interaction, button: discord.ui.Button
     ) -> None:
-        """Persist the execution and update the message."""
+        """Persist the execution and update the message with tiered limit prices."""
         try:
             cost = self._execute_in_db()
             self._disable_all()
             embed = interaction.message.embeds[0] if interaction.message.embeds else discord.Embed()
             embed.color = _GREEN
-            embed.title = f"\u2705 TRADE EXECUTED : {self.signal.ticker}"
+            embed.title = f"\u2705 ORDRE EX\u00c9CUT\u00c9 EN BASE : {self.signal.ticker}"
+
+            atr = 0.0
+            if isinstance(self.signal.lineage, dict):
+                atr = float(self.signal.lineage.get("atr_14") or self.signal.lineage.get("atr") or 0.0)
+
+            tiers = {}
+            if calculate_smart_limit_price is not None:
+                tiers = calculate_smart_limit_price(
+                    self.signal.ticker,
+                    self.current_price,
+                    atr_14=atr,
+                    direction=self.signal.signal_type.name,
+                )
+
+            tiers_md = (
+                f"\U0001F7E2 **Aggressif (Fill rapide)** : `{tiers.get('aggressive', self.current_price):.2f} \u20ac`\n"
+                f"\U0001F3AF **Optimal (Recommand\u00e9)** : `{tiers.get('optimal', self.current_price):.2f} \u20ac`\n"
+                f"\U0001F422 **Patient (Bon R:R)** : `{tiers.get('patient', self.current_price):.2f} \u20ac`"
+            )
+
             embed.add_field(
-                name="Execution",
+                name="\U0001F4CB Ticket d'Ex\u00e9cution PEA",
                 value=(
-                    f"{self.signal.target_qty} action(s) @ {self.current_price:.2f} EUR "
-                    f"(co\u00fbt {cost:.2f} EUR)"
+                    f"**Volume** : {self.signal.target_qty} action(s)\n"
+                    f"**Notional Estim\u00e9** : {cost:.2f} EUR\n"
+                    f"**Prix de March\u00e9** : {self.current_price:.2f} EUR\n\n"
+                    f"**Paliers de Prix Limite Sugg\u00e9r\u00e9s** :\n{tiers_md}"
                 ),
                 inline=False,
             )
@@ -171,6 +201,7 @@ class TradeActionView(discord.ui.View):
                 )
         finally:
             self.stop()
+
 
     @discord.ui.button(label="Rejeter", style=discord.ButtonStyle.danger,
                        emoji="\U0001F534")
