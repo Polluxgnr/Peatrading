@@ -46,6 +46,19 @@ from risk_config import load_and_validate_risk_params  # noqa: E402
 from market_regime import VolatilityRegimeSentinel  # noqa: E402
 
 try:
+    from amf_short_scraper import AmfShortScraper
+except ImportError:
+    try:
+        from scrapers.amf_short_scraper import AmfShortScraper
+    except ImportError:
+        AmfShortScraper = None
+
+try:
+    from openfigi_mapper import OpenFigiMapper
+except ImportError:
+    OpenFigiMapper = None
+
+try:
     from ml_trainer import predict_probability_with_shap, predict_anomaly
 except ImportError:
     predict_probability_with_shap = None
@@ -88,6 +101,17 @@ class SignalOrchestrator:
         )
         self.fundamentals_sensor = FundamentalsSensor()
         self.vol_sentinel = VolatilityRegimeSentinel(window=252)
+
+        if AmfShortScraper is not None:
+            self.amf_scraper = AmfShortScraper()
+        else:
+            self.amf_scraper = None
+
+        if OpenFigiMapper is not None:
+            self.figi_mapper = OpenFigiMapper(config_path.parent / "database" / "portfolio.db")
+        else:
+            self.figi_mapper = None
+
 
         logger.debug("SignalOrchestrator initialized with validated config at %s", config_path)
 
@@ -301,7 +325,30 @@ class SignalOrchestrator:
                 )
                 continue
 
+            # --- Check 1f: Short Interest Veto (AMF BDIF) ---
+            short_interest = 0.0
+            if self.amf_scraper is not None and self.figi_mapper is not None and ticker != self.core_ticker:
+                try:
+                    isin = self.figi_mapper.ticker_to_isin(ticker)
+                    if isin:
+                        short_interest = float(self.amf_scraper.get_short_interest(isin))
+                except Exception as exc:
+                    logger.debug("Failed to check AMF short interest for %s: %s", ticker, exc)
+
+            if isinstance(signal.lineage, dict):
+                signal.lineage["short_interest"] = short_interest
+
+            if short_interest > 3.0:
+                processed.append(
+                    self._reject(
+                        signal,
+                        f"REJECTED: High Short Interest ({short_interest:.1f}%) - Toxic asset risk",
+                    )
+                )
+                continue
+
             # --- Check 2a: Sector concentration limit (cheap arithmetic) ---
+
             if not self.firewall.check_sector_limit(ticker, portfolio):
                 processed.append(
                     self._reject(signal, "REJECTED: Sector weight limit reached")

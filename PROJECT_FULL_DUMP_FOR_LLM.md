@@ -1,5 +1,5 @@
 # PEA Pollux — Complete Monolithic Repository Dump
-Generated: `2026-08-15 22:07 UTC` | File Count: `125`
+Generated: `2026-08-15 22:15 UTC` | File Count: `127`
 Institutional Systematic Decision Support Architecture for French PEA.
 ---
 ## Included Files Index
@@ -8,6 +8,7 @@ Institutional Systematic Decision Support Architecture for French PEA.
 - [.streamlit/config.toml](#file--streamlit-config-toml)
 - [00_data_sensors/__init__.py](#file-00_data_sensors-__init__-py)
 - [00_data_sensors/deep_news_scraper.py](#file-00_data_sensors-deep_news_scraper-py)
+- [00_data_sensors/earnings_updater.py](#file-00_data_sensors-earnings_updater-py)
 - [00_data_sensors/fundamentals_api.py](#file-00_data_sensors-fundamentals_api-py)
 - [00_data_sensors/insiders_api.py](#file-00_data_sensors-insiders_api-py)
 - [00_data_sensors/macro_alpha_api.py](#file-00_data_sensors-macro_alpha_api-py)
@@ -110,6 +111,7 @@ Institutional Systematic Decision Support Architecture for French PEA.
 - [run_quant_pipeline.py](#file-run_quant_pipeline-py)
 - [seed_account.py](#file-seed_account-py)
 - [tests/__init__.py](#file-tests-__init__-py)
+- [tests/test_amf_and_earnings_sync.py](#file-tests-test_amf_and_earnings_sync-py)
 - [tests/test_api_and_mcp.py](#file-tests-test_api_and_mcp-py)
 - [tests/test_brain_and_decoupling.py](#file-tests-test_brain_and_decoupling-py)
 - [tests/test_finbert_sentiment.py](#file-tests-test_finbert_sentiment-py)
@@ -390,6 +392,216 @@ Do not include any markdown formatting around the JSON (like ``​`json), just o
             "guidance": "N/A",
             "hidden_risks": "N/A",
         }
+```
+
+## FILE: 00_data_sensors/earnings_updater.py
+```python
+"""Autonomous Earnings & Dividend Calendar Synchronizer for PEA Pollux.
+
+Automatically scans the investable PEA universe via yfinance calendar hooks,
+resolves upcoming corporate earnings announcements and ex-dividend dates,
+and updates ``config/earnings_calendar.yaml`` to protect against volatility gap-downs.
+"""
+
+from __future__ import annotations
+
+import logging
+from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Set
+
+import yaml
+
+try:
+    import yfinance as yf
+except ImportError:
+    yf = None
+
+logger = logging.getLogger(__name__)
+
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_DEFAULT_CONFIG_DIR = _PROJECT_ROOT / "config"
+
+
+def _extract_universe_tickers(universe_path: Path, max_tickers: int = 100) -> List[str]:
+    """Extract prioritized tickers from pea_universe.yaml (srd=true, pea_pme=true first)."""
+    if not universe_path.exists():
+        return ["MC.PA", "OR.PA", "AI.PA", "SAN.PA", "TTE.PA", "BNP.PA", "AIR.PA", "SU.PA", "EL.PA", "CW8.PA"]
+
+    try:
+        with open(universe_path, "r", encoding="utf-8") as fh:
+            data = yaml.safe_load(fh) or {}
+    except Exception as exc:
+        logger.warning("Could not parse pea_universe.yaml: %s", exc)
+        return ["MC.PA", "OR.PA", "AI.PA", "SAN.PA", "TTE.PA"]
+
+    universe = data.get("universe", {})
+    priority_tickers: List[str] = []
+    other_tickers: List[str] = []
+
+    for sector, items in universe.items():
+        if isinstance(items, list):
+            for entry in items:
+                if isinstance(entry, dict) and "ticker" in entry:
+                    t = str(entry["ticker"]).strip().upper()
+                    if entry.get("srd") or entry.get("held"):
+                        priority_tickers.append(t)
+                    else:
+                        other_tickers.append(t)
+                elif isinstance(entry, str):
+                    other_tickers.append(entry.strip().upper())
+
+    combined = list(dict.fromkeys(priority_tickers + other_tickers))
+    return combined[:max_tickers]
+
+
+def fetch_ticker_corporate_events(ticker: str) -> Dict[str, str]:
+    """Fetch upcoming earnings dates and ex-dividend dates for a single ticker via yfinance.
+
+    Args:
+        ticker: Yahoo Finance ticker (e.g. 'MC.PA').
+
+    Returns:
+        Dict[str, str]: Mapping of "YYYY-MM-DD" -> "Event Name".
+    """
+    events: Dict[str, str] = {}
+    if yf is None:
+        return events
+
+    try:
+        t = yf.Ticker(ticker)
+        # 1. Check calendar
+        cal = getattr(t, "calendar", None)
+        if cal is not None:
+            if isinstance(cal, dict):
+                # Standard dict format
+                for key in ("Earnings Date", "Earnings High", "Earnings Low", "Earnings Average"):
+                    val = cal.get(key)
+                    if isinstance(val, list):
+                        for item in val:
+                            if isinstance(item, (datetime, date)):
+                                d_str = item.strftime("%Y-%m-%d")
+                                events[d_str] = "Earnings Report"
+                            elif isinstance(item, str) and len(item) >= 10:
+                                events[item[:10]] = "Earnings Report"
+                    elif isinstance(val, (datetime, date)):
+                        events[val.strftime("%Y-%m-%d")] = "Earnings Report"
+
+                # Ex-Dividend Date
+                ex_div = cal.get("Ex-Dividend Date") or cal.get("Dividend Date")
+                if isinstance(ex_div, (datetime, date)):
+                    events[ex_div.strftime("%Y-%m-%d")] = "Ex-Dividend"
+                elif isinstance(ex_div, list) and ex_div:
+                    first = ex_div[0]
+                    if isinstance(first, (datetime, date)):
+                        events[first.strftime("%Y-%m-%d")] = "Ex-Dividend"
+
+            elif hasattr(cal, "T") or hasattr(cal, "iterrows"):
+                # DataFrame format
+                for col in cal.columns if hasattr(cal, "columns") else []:
+                    c_str = str(col).lower()
+                    if "earnings" in c_str or "date" in c_str:
+                        for item in cal[col].dropna():
+                            if isinstance(item, (datetime, date)):
+                                events[item.strftime("%Y-%m-%d")] = "Earnings Report"
+
+        # 2. Check info for upcoming ex-dividend or earnings timestamp
+        info = getattr(t, "info", None)
+        if isinstance(info, dict):
+            ex_ts = info.get("exDividendDate")
+            if ex_ts and isinstance(ex_ts, (int, float)) and ex_ts > 0:
+                try:
+                    d_obj = datetime.fromtimestamp(ex_ts, tz=timezone.utc).date()
+                    if d_obj >= date.today() - timedelta(days=5):
+                        events[d_obj.strftime("%Y-%m-%d")] = "Ex-Dividend"
+                except Exception:
+                    pass
+
+    except Exception as exc:
+        logger.debug("Failed to fetch corporate calendar for %s: %s", ticker, exc)
+
+    return events
+
+
+def run_earnings_sync(config_dir: str | Path | None = None, max_tickers: int = 100) -> int:
+    """Synchronize corporate earnings and dividend dates for the PEA universe into earnings_calendar.yaml.
+
+    Args:
+        config_dir: Directory containing config YAML files.
+        max_tickers: Maximum number of universe tickers to inspect.
+
+    Returns:
+        int: Number of tickers with upcoming corporate events synchronized.
+    """
+    conf_path = Path(config_dir) if config_dir else _DEFAULT_CONFIG_DIR
+    universe_path = conf_path / "pea_universe.yaml"
+    earnings_path = conf_path / "earnings_calendar.yaml"
+
+    tickers = _extract_universe_tickers(universe_path, max_tickers=max_tickers)
+    logger.info("Starting autonomous earnings calendar sync for %d PEA tickers...", len(tickers))
+
+    existing_calendar: Dict[str, Dict[str, str]] = {}
+    if earnings_path.exists():
+        try:
+            with open(earnings_path, "r", encoding="utf-8") as fh:
+                raw = yaml.safe_load(fh) or {}
+                events = raw.get("events", raw) if isinstance(raw, dict) else {}
+                if isinstance(events, dict):
+                    existing_calendar = {
+                        str(t).upper(): {str(k): str(v) for k, v in d.items()}
+                        for t, d in events.items()
+                        if isinstance(d, dict)
+                    }
+        except Exception as exc:
+            logger.warning("Could not parse existing earnings_calendar.yaml: %s", exc)
+
+    updated_count = 0
+    today_str = date.today().strftime("%Y-%m-%d")
+
+    for ticker in tickers:
+        new_events = fetch_ticker_corporate_events(ticker)
+        if new_events:
+            ticker_events = existing_calendar.get(ticker, {})
+            # Merge while keeping future dates
+            for d_str, ev_name in new_events.items():
+                if d_str >= today_str:
+                    ticker_events[d_str] = ev_name
+            if ticker_events:
+                existing_calendar[ticker] = ticker_events
+                updated_count += 1
+
+    # Clean old past dates (older than 14 days)
+    cutoff_str = (date.today() - timedelta(days=14)).strftime("%Y-%m-%d")
+    cleaned_calendar: Dict[str, Dict[str, str]] = {}
+    for t, dates in existing_calendar.items():
+        future_dates = {d: name for d, name in dates.items() if d >= cutoff_str}
+        if future_dates:
+            cleaned_calendar[t] = future_dates
+
+    # Write back to earnings_calendar.yaml
+    output_payload = {
+        "events": cleaned_calendar
+    }
+
+    try:
+        with open(earnings_path, "w", encoding="utf-8") as fh:
+            yaml.dump(output_payload, fh, default_flow_style=False, sort_keys=True, allow_unicode=True)
+        logger.info(
+            "Earnings calendar synchronized: %d active tickers saved to %s.",
+            len(cleaned_calendar),
+            earnings_path,
+        )
+    except Exception as exc:
+        logger.error("Failed to write earnings_calendar.yaml: %s", exc)
+
+    return len(cleaned_calendar)
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    print("Running autonomous earnings calendar sync...")
+    count = run_earnings_sync(max_tickers=20)
+    print(f"Sync complete. {count} tickers with upcoming events.")
 ```
 
 ## FILE: 00_data_sensors/fundamentals_api.py
@@ -2371,7 +2583,28 @@ _CORE_OFFLINE_MAP = {
     "FR0000121667": {"ticker": "EL.PA", "figi": "BBG000BCB9W4", "name": "EssilorLuxottica", "exch": "PA"},
     "NL0010273215": {"ticker": "ASML.AS", "figi": "BBG000D00908", "name": "ASML Holding", "exch": "AS"},
     "LU1681043599": {"ticker": "CW8.PA", "figi": "BBG00F4W0P74", "name": "Amundi MSCI World UCITS ETF", "exch": "PA"},
+    "FR0000120628": {"ticker": "CS.PA", "figi": "BBG000BDY8V8", "name": "AXA", "exch": "PA"},
+    "FR0000125486": {"ticker": "DG.PA", "figi": "BBG000BCH4P6", "name": "Vinci", "exch": "PA"},
+    "FR0000073272": {"ticker": "SAF.PA", "figi": "BBG000BDYKV9", "name": "Safran", "exch": "PA"},
+    "FR0000121485": {"ticker": "KER.PA", "figi": "BBG000BCJ814", "name": "Kering", "exch": "PA"},
+    "NL00150001Q9": {"ticker": "STLAP.PA", "figi": "BBG00YD2H6W5", "name": "Stellantis", "exch": "PA"},
+    "FR0000131906": {"ticker": "RNO.PA", "figi": "BBG000BDYMS4", "name": "Renault", "exch": "PA"},
+    "FR0000133308": {"ticker": "ORA.PA", "figi": "BBG000BDYL02", "name": "Orange", "exch": "PA"},
+    "FR0010208488": {"ticker": "ENGI.PA", "figi": "BBG000BCN7Z3", "name": "Engie", "exch": "PA"},
+    "FR0000125338": {"ticker": "CAP.PA", "figi": "BBG000BCT2L5", "name": "Capgemini", "exch": "PA"},
+    "FR0014003TT8": {"ticker": "DSY.PA", "figi": "BBG0112V0400", "name": "Dassault Systemes", "exch": "PA"},
+    "FR0000121329": {"ticker": "HO.PA", "figi": "BBG000BDYPV8", "name": "Thales", "exch": "PA"},
+    "FR001400AJ45": {"ticker": "ML.PA", "figi": "BBG0175S1W23", "name": "Michelin", "exch": "PA"},
+    "FR0000125007": {"ticker": "SGO.PA", "figi": "BBG000BDYRJ4", "name": "Saint-Gobain", "exch": "PA"},
+    "FR0000130809": {"ticker": "GLE.PA", "figi": "BBG000BDYTX8", "name": "Societe Generale", "exch": "PA"},
+    "FR0000045072": {"ticker": "ACA.PA", "figi": "BBG000BC97W7", "name": "Credit Agricole", "exch": "PA"},
+    "FR0000124141": {"ticker": "VIE.PA", "figi": "BBG000BC99P2", "name": "Veolia", "exch": "PA"},
+    "FR0000130577": {"ticker": "PUB.PA", "figi": "BBG000BDYW33", "name": "Publicis", "exch": "PA"},
+    "FR0000120644": {"ticker": "BN.PA", "figi": "BBG000BDZ173", "name": "Danone", "exch": "PA"},
+    "FR0000120693": {"ticker": "RI.PA", "figi": "BBG000BDZ351", "name": "Pernod Ricard", "exch": "PA"},
+    "DE0007164600": {"ticker": "SAP.DE", "figi": "BBG000C12D31", "name": "SAP SE", "exch": "DE"},
 }
+
 
 
 class OpenFigiMapper:
@@ -2453,19 +2686,36 @@ class OpenFigiMapper:
 
     def ticker_to_isin(self, ticker: str) -> Optional[str]:
         """Reverse lookup: Ticker to ISIN."""
+        clean_ticker = ticker.strip().upper()
         for isin, d in _CORE_OFFLINE_MAP.items():
-            if d["ticker"] == ticker:
+            if d["ticker"].upper() == clean_ticker:
                 return isin
 
         try:
             with self._connect() as conn:
-                row = conn.execute("SELECT isin FROM figi_ticker_map WHERE ticker = ?;", (ticker,)).fetchone()
+                row = conn.execute("SELECT isin FROM figi_ticker_map WHERE ticker = ?;", (clean_ticker,)).fetchone()
                 if row:
                     return str(row["isin"])
         except Exception:
             pass
 
+        # 3. Dynamic lookup via yfinance
+        try:
+            import yfinance as yf
+            t = yf.Ticker(clean_ticker)
+            isin_val = getattr(t, "isin", None)
+            if isin_val and isinstance(isin_val, str) and len(isin_val) == 12 and isin_val != "-":
+                self._cache_mapping(isin_val, clean_ticker, None, None, None)
+                return isin_val
+        except Exception:
+            pass
+
         return None
+
+    def get_isin_for_ticker(self, ticker: str) -> Optional[str]:
+        """Alias for ticker_to_isin."""
+        return self.ticker_to_isin(ticker)
+
 
     def _cache_mapping(self, isin: str, ticker: str, figi: Optional[str], name: Optional[str], exchange: Optional[str]) -> None:
         try:
@@ -2988,36 +3238,142 @@ class AmfInsiderScraper:
 ```python
 """AMF Short Interest Scraper for PEA Pollux.
 
-Best-effort scraper for "Positions courtes nettes" published by the AMF.
-Provides data on heavily shorted French equities.
+Scrapes and computes Net Short Positions ("Positions courtes nettes")
+published by the Autorité des Marchés Financiers (AMF) under EU Regulation 236/2012.
+Provides quantitative data on heavily shorted French and European equities to veto toxic assets.
 """
+
+from __future__ import annotations
+
 import logging
-import requests
-import pandas as pd
-from typing import Optional
+from typing import Any, Dict, List, Optional
+
+try:
+    from ._http import safe_get, stealth_headers
+except ImportError:
+    try:
+        from _http import safe_get, stealth_headers
+    except ImportError:
+        import requests
+        def safe_get(url: str, **kwargs):
+            try:
+                headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+                resp = requests.get(url, headers=headers, timeout=kwargs.get("timeout", 10))
+                return resp if resp.status_code == 200 else None
+            except Exception:
+                return None
 
 logger = logging.getLogger(__name__)
 
+
 class AmfShortScraper:
-    """Scrape net short positions from AMF (or use fallback proxy)."""
-    
-    def __init__(self):
-        self.base_url = "https://bdif.amf-france.org/api/v1/positions-courtes"
-        
+    """Scrape net short positions from AMF BDIF API with robust fallback."""
+
+    def __init__(self, base_url: str = "https://bdif.amf-france.org/api/v1/positions-courtes") -> None:
+        self.base_url = base_url
+
     def get_short_interest(self, isin: str) -> float:
         """Get net short percentage for a given ISIN.
-        
+
+        Sums the most recent active short positions reported by hedge funds and asset managers.
+
+        Args:
+            isin: 12-character ISIN code (e.g. 'FR0000121014').
+
         Returns:
-            float: Short interest percentage (0.0 to 100.0). Returns 0.0 if unknown.
+            float: Total short interest percentage (e.g. 4.5 for 4.5%). Returns 0.0 if unknown or none.
         """
-        if not isin:
+        if not isin or len(isin.strip()) < 8:
             return 0.0
-            
-        try:
+
+        clean_isin = isin.strip().upper()
+
+        # Try both primary and fallback AMF BDIF endpoints
+        endpoints = [
+            f"{self.base_url}?isin={clean_isin}",
+            f"https://bdif.amf-france.org/back/api/v1/positions-courtes?isin={clean_isin}",
+            f"https://bdif.amf-france.org/api/v1/positions-courtes/recherche?isin={clean_isin}",
+        ]
+
+        for url in endpoints:
+            try:
+                resp = safe_get(url, timeout=8, expect_json=True, quiet=True)
+                if resp is not None and resp.status_code == 200:
+                    data = resp.json()
+                    total_pct = self._parse_short_payload(data, clean_isin)
+                    if total_pct > 0.0:
+                        logger.info("AMF Short Interest for %s: %.2f%%", clean_isin, total_pct)
+                        return round(total_pct, 2)
+            except Exception as exc:
+                logger.debug("AMF short scrape attempt failed for %s at %s: %s", clean_isin, url, exc)
+
+        return 0.0
+
+    def _parse_short_payload(self, data: Any, isin: str) -> float:
+        """Parse positions JSON from AMF BDIF response and sum active manager positions."""
+        if not data:
             return 0.0
-        except Exception as exc:
-            logger.debug("AMF short scrape failed for ISIN %s: %s", isin, exc)
+
+        items: List[Dict[str, Any]] = []
+        if isinstance(data, list):
+            items = data
+        elif isinstance(data, dict):
+            for k in ("datas", "items", "positions", "results", "data", "result"):
+                if k in data and isinstance(data[k], list):
+                    items = data[k]
+                    break
+            if not items and "positionsCourtes" in data:
+                items = data["positionsCourtes"] if isinstance(data["positionsCourtes"], list) else []
+
+        if not items:
             return 0.0
+
+        # Group by holder/fund name to take the latest reported position
+        holder_latest_pos: Dict[str, float] = {}
+
+        for row in items:
+            if not isinstance(row, dict):
+                continue
+
+            # Verify ISIN matches if present
+            row_isin = str(row.get("isin") or row.get("codeIsin") or "").strip().upper()
+            if row_isin and row_isin != isin:
+                continue
+
+            # Extract holder / fund
+            holder = str(
+                row.get("detenteur")
+                or row.get("gestionnaire")
+                or row.get("holder")
+                or row.get("nom")
+                or row.get("id")
+                or "Unknown"
+            ).strip()
+
+            # Extract position value (e.g. 0.85 or 0.85% or 0.0085)
+            raw_pos = row.get("position") or row.get("ratio") or row.get("positionPct") or row.get("valeur") or 0.0
+            try:
+                pos_val = float(str(raw_pos).replace("%", "").replace(",", ".").strip())
+                if 0 < pos_val < 0.05 and row.get("isFraction"):
+                    pos_val *= 100.0
+            except (ValueError, TypeError):
+                pos_val = 0.0
+
+            # Store latest position for this holder (subsequent entries overwrite earlier ones)
+            holder_latest_pos[holder] = pos_val
+
+        # Sum all active positions (AMF reporting threshold >= 0.5%)
+        active_sum = sum(p for p in holder_latest_pos.values() if p > 0.0)
+        return float(active_sum)
+
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    scraper = AmfShortScraper()
+    print("Testing AMF Short Scraper for LVMH (FR0000121014)...")
+    res = scraper.get_short_interest("FR0000121014")
+    print(f"Short Interest: {res:.2f}%")
 ```
 
 ## FILE: 00_data_sensors/scrapers/bourso_scraper.py
@@ -11548,6 +11904,19 @@ from risk_config import load_and_validate_risk_params  # noqa: E402
 from market_regime import VolatilityRegimeSentinel  # noqa: E402
 
 try:
+    from amf_short_scraper import AmfShortScraper
+except ImportError:
+    try:
+        from scrapers.amf_short_scraper import AmfShortScraper
+    except ImportError:
+        AmfShortScraper = None
+
+try:
+    from openfigi_mapper import OpenFigiMapper
+except ImportError:
+    OpenFigiMapper = None
+
+try:
     from ml_trainer import predict_probability_with_shap, predict_anomaly
 except ImportError:
     predict_probability_with_shap = None
@@ -11590,6 +11959,17 @@ class SignalOrchestrator:
         )
         self.fundamentals_sensor = FundamentalsSensor()
         self.vol_sentinel = VolatilityRegimeSentinel(window=252)
+
+        if AmfShortScraper is not None:
+            self.amf_scraper = AmfShortScraper()
+        else:
+            self.amf_scraper = None
+
+        if OpenFigiMapper is not None:
+            self.figi_mapper = OpenFigiMapper(config_path.parent / "database" / "portfolio.db")
+        else:
+            self.figi_mapper = None
+
 
         logger.debug("SignalOrchestrator initialized with validated config at %s", config_path)
 
@@ -11803,7 +12183,30 @@ class SignalOrchestrator:
                 )
                 continue
 
+            # --- Check 1f: Short Interest Veto (AMF BDIF) ---
+            short_interest = 0.0
+            if self.amf_scraper is not None and self.figi_mapper is not None and ticker != self.core_ticker:
+                try:
+                    isin = self.figi_mapper.ticker_to_isin(ticker)
+                    if isin:
+                        short_interest = float(self.amf_scraper.get_short_interest(isin))
+                except Exception as exc:
+                    logger.debug("Failed to check AMF short interest for %s: %s", ticker, exc)
+
+            if isinstance(signal.lineage, dict):
+                signal.lineage["short_interest"] = short_interest
+
+            if short_interest > 3.0:
+                processed.append(
+                    self._reject(
+                        signal,
+                        f"REJECTED: High Short Interest ({short_interest:.1f}%) - Toxic asset risk",
+                    )
+                )
+                continue
+
             # --- Check 2a: Sector concentration limit (cheap arithmetic) ---
+
             if not self.firewall.check_sector_limit(ticker, portfolio):
                 processed.append(
                     self._reject(signal, "REJECTED: Sector weight limit reached")
@@ -21176,7 +21579,13 @@ from weekly_historian import WeeklyHistorian  # noqa: E402
 from discord_copilot import DiscordCopilot  # noqa: E402
 from logging_setup import get_component_logger, setup_app_logging, write_pipeline_status  # noqa: E402
 
+try:
+    from earnings_updater import run_earnings_sync  # noqa: E402
+except ImportError:
+    run_earnings_sync = None
+
 logger = get_component_logger("scheduler")
+
 
 _CONFIG_DIR = _ROOT / "config"
 _UNIVERSE_PATH = _CONFIG_DIR / "pea_universe.yaml"
@@ -21691,6 +22100,9 @@ def _schedule_passes() -> None:
         schedule.every().day.at(pass_time, _TIMEZONE).do(run_analysis_pass)
     # Weekly CIO digest: Friday 18:00 Paris.
     schedule.every().friday.at(_WEEKLY_REPORT_TIME, _TIMEZONE).do(run_weekly_report)
+    # Weekly Earnings Calendar sync: Friday 18:30 Paris.
+    if run_earnings_sync is not None:
+        schedule.every().friday.at("18:30", _TIMEZONE).do(run_earnings_sync)
     # Monthly profit-shave: probe daily, act only on the 1st (guarded inside).
     schedule.every().day.at(_MONTHLY_CHECK_TIME, _TIMEZONE).do(run_monthly_rebalance)
     # Daily ATR stops (weekdays guarded inside).
@@ -21731,6 +22143,11 @@ def main() -> None:
         action="store_true",
         help="Run daily ATR stop-loss evaluation now.",
     )
+    parser.add_argument(
+        "--sync-earnings",
+        action="store_true",
+        help="Run autonomous earnings calendar sync now.",
+    )
     args = parser.parse_args()
 
     if args.now:
@@ -21753,8 +22170,15 @@ def main() -> None:
         asyncio.run(run_monthly_rebalance_async())
         return
 
+    if args.sync_earnings:
+        logger.info("--sync-earnings: syncing corporate earnings calendar now.")
+        if run_earnings_sync is not None:
+            run_earnings_sync()
+        return
+
     _schedule_passes()
     logger.info("\U0001F6E1\uFE0F PEA Sniper Terminal Daemon started. "
+
                 "Waiting for scheduled runs...")
     while True:
         try:
@@ -22814,6 +23238,135 @@ if __name__ == "__main__":
 ## FILE: tests/__init__.py
 ```python
 # Empty package marker for pytest discovery.
+```
+
+## FILE: tests/test_amf_and_earnings_sync.py
+```python
+"""Unit Tests for AMF Short Scraper, Autonomous Earnings Calendar, and Cascade Veto."""
+
+from __future__ import annotations
+
+import os
+import sys
+import tempfile
+import unittest
+from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import yaml
+
+ROOT = Path(__file__).resolve().parent.parent
+for sub in ("00_data_sensors", "00_data_sensors/scrapers", "01_memory_core", "02_quant_engine", "03_risk_portfolio", "04_orchestrator_ai", "05_interfaces", "06_api"):
+    sys.path.insert(0, str(ROOT / sub))
+
+from amf_short_scraper import AmfShortScraper
+from earnings_updater import run_earnings_sync, _extract_universe_tickers
+from signal_priority_cascade import SignalOrchestrator
+from data_models import PortfolioState, Signal, SignalStatus, SignalType
+
+
+class TestAmfAndEarningsSuite(unittest.TestCase):
+
+    def test_01_amf_short_scraper_parsing(self):
+        """Verify AMF BDIF JSON parser calculates active short interest accurately."""
+        scraper = AmfShortScraper()
+
+        # Mock JSON with multiple funds reporting positions on same ISIN
+        mock_payload = {
+            "datas": [
+                {"detenteur": "Citadel Advisors", "isin": "FR0000121014", "position": "1.25", "datePosition": "2026-03-01"},
+                {"detenteur": "Millennium Capital", "isin": "FR0000121014", "position": 0.85, "datePosition": "2026-03-05"},
+                {"detenteur": "Citadel Advisors", "isin": "FR0000121014", "position": "1.40", "datePosition": "2026-03-10"}, # Updated position
+                {"detenteur": "Qube Research", "isin": "FR0000120321", "position": "0.60"}, # Different ISIN
+            ]
+        }
+
+        total = scraper._parse_short_payload(mock_payload, "FR0000121014")
+        # Citadel latest = 1.40, Millennium = 0.85 -> Total = 2.25
+        self.assertAlmostEqual(total, 2.25, places=2)
+
+    def test_02_amf_short_scraper_empty_fallback(self):
+        """Verify scraper gracefully returns 0.0 for unknown or empty responses."""
+        scraper = AmfShortScraper()
+        self.assertEqual(scraper.get_short_interest(""), 0.0)
+        self.assertEqual(scraper.get_short_interest("INVALID"), 0.0)
+        self.assertEqual(scraper._parse_short_payload({}, "FR0000121014"), 0.0)
+        self.assertEqual(scraper._parse_short_payload([], "FR0000121014"), 0.0)
+
+    def test_03_extract_universe_tickers(self):
+        """Verify universe ticker extraction prioritizes liquid assets."""
+        tickers = _extract_universe_tickers(ROOT / "config" / "pea_universe.yaml", max_tickers=15)
+        self.assertGreaterEqual(len(tickers), 5)
+        self.assertIn("AI.PA", tickers)
+
+    def test_04_earnings_sync_execution(self):
+        """Verify autonomous earnings updater writes structured YAML calendar."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            # Create mock universe
+            univ = {
+                "universe": {
+                    "Luxury": [{"ticker": "MC.PA", "srd": True}]
+                }
+            }
+            with open(tmp_path / "pea_universe.yaml", "w", encoding="utf-8") as fh:
+                yaml.dump(univ, fh)
+
+            # Run earnings sync with mock
+            future_date = (date.today() + timedelta(days=20)).strftime("%Y-%m-%d")
+            with patch("earnings_updater.fetch_ticker_corporate_events", return_value={future_date: "Q3 Earnings"}):
+                res_count = run_earnings_sync(config_dir=tmp_path, max_tickers=5)
+
+            self.assertEqual(res_count, 1)
+            cal_file = tmp_path / "earnings_calendar.yaml"
+            self.assertTrue(cal_file.exists())
+
+            with open(cal_file, "r", encoding="utf-8") as fh:
+                saved = yaml.safe_load(fh)
+            self.assertIn("events", saved)
+            self.assertIn("MC.PA", saved["events"])
+            self.assertEqual(saved["events"]["MC.PA"].get(future_date), "Q3 Earnings")
+
+    def test_05_short_interest_cascade_veto(self):
+        """Verify SignalOrchestrator rejects signals on tickers with > 3.0% short interest."""
+        orchestrator = SignalOrchestrator()
+
+        # Mock short scraper to return 4.5% for MC.PA
+        mock_scraper = MagicMock()
+        mock_scraper.get_short_interest.return_value = 4.5
+        orchestrator.amf_scraper = mock_scraper
+
+        pf = PortfolioState(
+            cash_available=10000.0,
+            total_equity=10000.0,
+            positions=[],
+            last_updated=datetime.now(timezone.utc),
+        )
+
+        sig = Signal(
+            ticker="MC.PA",
+            signal_type=SignalType.BUY,
+            score=88.0,
+            status=SignalStatus.PENDING,
+            lineage={},
+        )
+
+        res = orchestrator.process_raw_signals(
+            raw_signals=[sig],
+            portfolio=pf,
+            current_prices={"MC.PA": 600.0},
+            vix_level=16.0,
+        )
+
+        self.assertEqual(len(res), 1)
+        self.assertEqual(res[0].status, SignalStatus.REJECTED)
+        self.assertIn("High Short Interest (4.5%)", res[0].reason)
+        self.assertEqual(res[0].lineage.get("short_interest"), 4.5)
+
+
+if __name__ == "__main__":
+    unittest.main()
 ```
 
 ## FILE: tests/test_api_and_mcp.py

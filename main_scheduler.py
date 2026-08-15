@@ -58,7 +58,13 @@ from weekly_historian import WeeklyHistorian  # noqa: E402
 from discord_copilot import DiscordCopilot  # noqa: E402
 from logging_setup import get_component_logger, setup_app_logging, write_pipeline_status  # noqa: E402
 
+try:
+    from earnings_updater import run_earnings_sync  # noqa: E402
+except ImportError:
+    run_earnings_sync = None
+
 logger = get_component_logger("scheduler")
+
 
 _CONFIG_DIR = _ROOT / "config"
 _UNIVERSE_PATH = _CONFIG_DIR / "pea_universe.yaml"
@@ -573,6 +579,9 @@ def _schedule_passes() -> None:
         schedule.every().day.at(pass_time, _TIMEZONE).do(run_analysis_pass)
     # Weekly CIO digest: Friday 18:00 Paris.
     schedule.every().friday.at(_WEEKLY_REPORT_TIME, _TIMEZONE).do(run_weekly_report)
+    # Weekly Earnings Calendar sync: Friday 18:30 Paris.
+    if run_earnings_sync is not None:
+        schedule.every().friday.at("18:30", _TIMEZONE).do(run_earnings_sync)
     # Monthly profit-shave: probe daily, act only on the 1st (guarded inside).
     schedule.every().day.at(_MONTHLY_CHECK_TIME, _TIMEZONE).do(run_monthly_rebalance)
     # Daily ATR stops (weekdays guarded inside).
@@ -613,6 +622,11 @@ def main() -> None:
         action="store_true",
         help="Run daily ATR stop-loss evaluation now.",
     )
+    parser.add_argument(
+        "--sync-earnings",
+        action="store_true",
+        help="Run autonomous earnings calendar sync now.",
+    )
     args = parser.parse_args()
 
     if args.now:
@@ -635,8 +649,15 @@ def main() -> None:
         asyncio.run(run_monthly_rebalance_async())
         return
 
+    if args.sync_earnings:
+        logger.info("--sync-earnings: syncing corporate earnings calendar now.")
+        if run_earnings_sync is not None:
+            run_earnings_sync()
+        return
+
     _schedule_passes()
     logger.info("\U0001F6E1\uFE0F PEA Sniper Terminal Daemon started. "
+
                 "Waiting for scheduled runs...")
     while True:
         try:

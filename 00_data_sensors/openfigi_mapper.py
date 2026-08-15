@@ -32,7 +32,28 @@ _CORE_OFFLINE_MAP = {
     "FR0000121667": {"ticker": "EL.PA", "figi": "BBG000BCB9W4", "name": "EssilorLuxottica", "exch": "PA"},
     "NL0010273215": {"ticker": "ASML.AS", "figi": "BBG000D00908", "name": "ASML Holding", "exch": "AS"},
     "LU1681043599": {"ticker": "CW8.PA", "figi": "BBG00F4W0P74", "name": "Amundi MSCI World UCITS ETF", "exch": "PA"},
+    "FR0000120628": {"ticker": "CS.PA", "figi": "BBG000BDY8V8", "name": "AXA", "exch": "PA"},
+    "FR0000125486": {"ticker": "DG.PA", "figi": "BBG000BCH4P6", "name": "Vinci", "exch": "PA"},
+    "FR0000073272": {"ticker": "SAF.PA", "figi": "BBG000BDYKV9", "name": "Safran", "exch": "PA"},
+    "FR0000121485": {"ticker": "KER.PA", "figi": "BBG000BCJ814", "name": "Kering", "exch": "PA"},
+    "NL00150001Q9": {"ticker": "STLAP.PA", "figi": "BBG00YD2H6W5", "name": "Stellantis", "exch": "PA"},
+    "FR0000131906": {"ticker": "RNO.PA", "figi": "BBG000BDYMS4", "name": "Renault", "exch": "PA"},
+    "FR0000133308": {"ticker": "ORA.PA", "figi": "BBG000BDYL02", "name": "Orange", "exch": "PA"},
+    "FR0010208488": {"ticker": "ENGI.PA", "figi": "BBG000BCN7Z3", "name": "Engie", "exch": "PA"},
+    "FR0000125338": {"ticker": "CAP.PA", "figi": "BBG000BCT2L5", "name": "Capgemini", "exch": "PA"},
+    "FR0014003TT8": {"ticker": "DSY.PA", "figi": "BBG0112V0400", "name": "Dassault Systemes", "exch": "PA"},
+    "FR0000121329": {"ticker": "HO.PA", "figi": "BBG000BDYPV8", "name": "Thales", "exch": "PA"},
+    "FR001400AJ45": {"ticker": "ML.PA", "figi": "BBG0175S1W23", "name": "Michelin", "exch": "PA"},
+    "FR0000125007": {"ticker": "SGO.PA", "figi": "BBG000BDYRJ4", "name": "Saint-Gobain", "exch": "PA"},
+    "FR0000130809": {"ticker": "GLE.PA", "figi": "BBG000BDYTX8", "name": "Societe Generale", "exch": "PA"},
+    "FR0000045072": {"ticker": "ACA.PA", "figi": "BBG000BC97W7", "name": "Credit Agricole", "exch": "PA"},
+    "FR0000124141": {"ticker": "VIE.PA", "figi": "BBG000BC99P2", "name": "Veolia", "exch": "PA"},
+    "FR0000130577": {"ticker": "PUB.PA", "figi": "BBG000BDYW33", "name": "Publicis", "exch": "PA"},
+    "FR0000120644": {"ticker": "BN.PA", "figi": "BBG000BDZ173", "name": "Danone", "exch": "PA"},
+    "FR0000120693": {"ticker": "RI.PA", "figi": "BBG000BDZ351", "name": "Pernod Ricard", "exch": "PA"},
+    "DE0007164600": {"ticker": "SAP.DE", "figi": "BBG000C12D31", "name": "SAP SE", "exch": "DE"},
 }
+
 
 
 class OpenFigiMapper:
@@ -114,19 +135,36 @@ class OpenFigiMapper:
 
     def ticker_to_isin(self, ticker: str) -> Optional[str]:
         """Reverse lookup: Ticker to ISIN."""
+        clean_ticker = ticker.strip().upper()
         for isin, d in _CORE_OFFLINE_MAP.items():
-            if d["ticker"] == ticker:
+            if d["ticker"].upper() == clean_ticker:
                 return isin
 
         try:
             with self._connect() as conn:
-                row = conn.execute("SELECT isin FROM figi_ticker_map WHERE ticker = ?;", (ticker,)).fetchone()
+                row = conn.execute("SELECT isin FROM figi_ticker_map WHERE ticker = ?;", (clean_ticker,)).fetchone()
                 if row:
                     return str(row["isin"])
         except Exception:
             pass
 
+        # 3. Dynamic lookup via yfinance
+        try:
+            import yfinance as yf
+            t = yf.Ticker(clean_ticker)
+            isin_val = getattr(t, "isin", None)
+            if isin_val and isinstance(isin_val, str) and len(isin_val) == 12 and isin_val != "-":
+                self._cache_mapping(isin_val, clean_ticker, None, None, None)
+                return isin_val
+        except Exception:
+            pass
+
         return None
+
+    def get_isin_for_ticker(self, ticker: str) -> Optional[str]:
+        """Alias for ticker_to_isin."""
+        return self.ticker_to_isin(ticker)
+
 
     def _cache_mapping(self, isin: str, ticker: str, figi: Optional[str], name: Optional[str], exchange: Optional[str]) -> None:
         try:
