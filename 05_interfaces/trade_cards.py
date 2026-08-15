@@ -163,18 +163,24 @@ def render_signal_card(
 
             shap_txt = ""
             if shap_vals and isinstance(shap_vals, dict):
-                pos_shaps = sorted([(k, v) for k, v in shap_vals.items() if float(v) > 0], key=lambda x: float(x[1]), reverse=True)[:2]
-                if pos_shaps:
-                    shap_items = [f"{k} (+{float(v):.2f})" for k, v in pos_shaps]
-                    shap_txt = f" · <span style='color:{_MUTED};'>Top Drivers: {', '.join(shap_items)}</span>"
+                top_shaps = sorted(
+                    [(k, float(v)) for k, v in shap_vals.items()],
+                    key=lambda x: abs(x[1]),
+                    reverse=True,
+                )[:2]
+                if top_shaps:
+                    shap_items = [f"{k} ({'+' if v > 0 else ''}{v:.2f})" for k, v in top_shaps]
+                    shap_txt = f" | Top Drivers: {', '.join(shap_items)}"
 
             ml_html = (
-                f"<div style='margin-top:6px;color:#A78BFA;font-size:12px;line-height:1.45;'>"
-                f"🧠 <b>ML Probability</b>: <b style='color:#C4B5FD;'>{prob_pct:.1f}%</b>{int_txt}{shap_txt}"
+                f"<div style='margin-top:6px;color:#38BDF8;font-size:12px;line-height:1.45;'>"
+                f"🧠 <b>ML Probability</b>: <b style='color:#7DD3FC;'>{prob_pct:.1f}%</b>{int_txt}{shap_txt}"
                 f"</div>"
             )
         except Exception:
             ml_html = ""
+
+
 
     extras = ""
     if impact_line:

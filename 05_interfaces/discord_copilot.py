@@ -465,15 +465,21 @@ class DiscordCopilot(discord.Client):
         if ml_prob is not None:
             try:
                 prob_pct = float(ml_prob) * 100.0 if float(ml_prob) <= 1.0 else float(ml_prob)
-                ci = lineage.get("conformal_interval")
-                ci_str = f" [IC: {ci[0]:.0f}% - {ci[1]:.0f}%]" if isinstance(ci, (list, tuple)) and len(ci) == 2 else ""
+                ci = lineage.get("ml_interval") or lineage.get("conformal_interval")
+                ci_str = ""
+                if isinstance(ci, (list, tuple)) and len(ci) == 2:
+                    low_p = float(ci[0]) * 100.0 if float(ci[0]) <= 1.0 else float(ci[0])
+                    high_p = float(ci[1]) * 100.0 if float(ci[1]) <= 1.0 else float(ci[1])
+                    ci_str = f" [{low_p:.0f}% - {high_p:.0f}%]"
                 embed.add_field(
-                    name="\U0001F916 Probabilit\u00e9 ML (XGBoost)",
-                    value=f"`{prob_pct:.1f}%`{ci_str}",
+                    name="🧠 ML Probability (Probabilité ML)",
+                    value=f"{prob_pct:.1f}%{ci_str}",
                     inline=True,
                 )
             except Exception:
                 pass
+
+
 
         # 4. Red Team Verdict
         red_team = lineage.get("red_team_verdict") or lineage.get("judge_synthesis") or lineage.get("red_team_debate")
