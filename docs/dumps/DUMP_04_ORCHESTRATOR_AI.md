@@ -1,5 +1,5 @@
 # PEA Pollux — AI Orchestration, Priority Cascade, Red Team Debate & Post-Mortem
-Generated: `2026-08-15 17:35 UTC` | File Count: `11`
+Generated: `2026-08-15 22:06 UTC` | File Count: `11`
 Institutional Systematic Decision Support Architecture for French PEA.
 ---
 ## Included Files Index
@@ -573,6 +573,58 @@ class NewsSentimentScorer:
         final_score = max(-100.0, min(100.0, round(final_score, 1)))
         logger.info("FinBERT sentiment for %s: %.1f (from %d headlines).", ticker, final_score, len(headlines))
         return final_score
+
+
+def score_news_batch(db, limit: int = 50) -> int:
+    """Batch score unprocessed news in SQLite using FinBERT.
+
+    Args:
+        db: PortfolioDB instance.
+        limit: Max news items to process.
+
+    Returns:
+        int: Number of news items successfully scored.
+    """
+    if db is None:
+        return 0
+    unproc = db.get_unprocessed_news(limit=limit) if hasattr(db, "get_unprocessed_news") else []
+    if not unproc:
+        return 0
+    scorer = NewsSentimentScorer(portfolio_db=db)
+    updates = []
+    for item in unproc:
+        title = item.get("title", "")
+        content = item.get("content", "")
+        text = f"{title}. {content}".strip()
+        score, label = scorer.score_single_headline(text)
+        news_id = item.get("id")
+        ticker = item.get("ticker", "MARCHE")
+        if news_id:
+            updates.append({
+                "id": news_id,
+                "sentiment_score": score,
+                "sentiment_label": label,
+            })
+            if hasattr(db, "upsert_sentiment_history"):
+                try:
+                    db.upsert_sentiment_history(
+                        ticker=ticker,
+                        score=score,
+                        source=item.get("source", "batch"),
+                        headline=title[:120],
+                    )
+                except Exception:
+                    pass
+
+    if updates and hasattr(db, "update_news_sentiment"):
+        db.update_news_sentiment(updates)
+    elif updates and hasattr(db, "mark_news_processed"):
+        for u in updates:
+            db.mark_news_processed(u["id"], sentiment_score=u["sentiment_score"], sentiment_label=u["sentiment_label"])
+
+    return len(updates)
+
+
 
 
 
@@ -1149,14 +1201,18 @@ and ``reason``. Pure logical routing: no LLMs, no APIs. All paths use
 ``pathlib``/``os.path`` for cross-platform compatibility.
 """
 
+from __future__ import annotations
+
 import logging
 import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional, Union
 
+import pandas as pd
 import yaml
+
 
 # --- Cross-package imports (directories start with digits) --------------------
 _ROOT = Path(__file__).resolve().parent.parent
@@ -1171,6 +1227,7 @@ from earnings_blackout import EarningsBlackoutEngine  # noqa: E402
 from drawdown_breaker import DrawdownBreaker  # noqa: E402
 from fundamentals_api import FundamentalsSensor  # noqa: E402
 from risk_config import load_and_validate_risk_params  # noqa: E402
+from market_regime import VolatilityRegimeSentinel  # noqa: E402
 
 try:
     from ml_trainer import predict_probability_with_shap, predict_anomaly
@@ -1214,6 +1271,7 @@ class SignalOrchestrator:
             monthly_max_loss=risk_cfg.MONTHLY_MAX_LOSS_PCT,
         )
         self.fundamentals_sensor = FundamentalsSensor()
+        self.vol_sentinel = VolatilityRegimeSentinel(window=252)
 
         logger.debug("SignalOrchestrator initialized with validated config at %s", config_path)
 
@@ -1272,6 +1330,20 @@ class SignalOrchestrator:
         except Exception:  # noqa: BLE001
             return None
 
+    def _get_vix_history(self, days: int = 252) -> pd.Series | None:
+        """Fetch historical VIX/V2TX series for rolling volatility percentile ranking."""
+        if self.timeseries_db is not None:
+            try:
+                for sym in ("^V2TX", "^VIX"):
+                    df = self.timeseries_db.get_historical_prices(sym, days=days)
+                    if df is not None and not df.empty and "Close" in df.columns:
+                        s = df["Close"].dropna().astype(float)
+                        if len(s) >= 10:
+                            return s
+            except Exception as exc:
+                logger.debug("Failed to load VIX history from TimeSeriesDB: %s", exc)
+        return None
+
     def _satellite_line_count(self, portfolio: PortfolioState) -> int:
         return sum(
             1
@@ -1303,11 +1375,36 @@ class SignalOrchestrator:
                 processed.append(self._reject(signal, f"REJECTED: {dd_reason}"))
             return processed
 
-        # Market-wide panic brake (VIX / V2TX)
-        vix_ok = self.firewall.check_vix_panic(vix_level) if vix_level is not None else True
+        # =====================================================================
+        # Continuous Volatility Regime & Dynamic Conviction Floor (Brain Sentinel)
+        # =====================================================================
+        vix_hist = self._get_vix_history(days=252)
+        cur_vix = float(vix_level) if vix_level is not None else 16.0
+        base_threshold = int(self.risk_cfg.SIGNAL_BUY_THRESHOLD)
 
-        # Conviction floor enforcement: raised to 85 in degraded mode
-        conviction_floor = 85.0 if data_degraded_mode else float(self.risk_cfg.SIGNAL_BUY_THRESHOLD)
+        vol_eval = self.vol_sentinel.evaluate_vix_regime(
+            vix_history=vix_hist,
+            current_vix=cur_vix,
+            base_floor=base_threshold,
+        )
+
+        regime_name = vol_eval.get("regime", "NORMAL")
+        pct_rank = vol_eval.get("percentile", 50.0)
+        eff_floor = float(vol_eval.get("effective_floor", base_threshold))
+        is_panic = vol_eval.get("is_panic", False)
+
+        # Conviction floor enforcement: raised in elevated vol or degraded mode
+        conviction_floor = max(85.0, eff_floor) if data_degraded_mode else eff_floor
+
+        logger.info(
+            "Continuous Volatility Regime: %s (VIX=%.1f, Percentile=%.1f%%) -> Floor set to %.0f",
+            regime_name,
+            cur_vix,
+            pct_rank,
+            conviction_floor,
+        )
+
+        vix_ok = not is_panic
 
         for signal in raw_signals:
             ticker = signal.ticker

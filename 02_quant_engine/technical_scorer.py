@@ -43,6 +43,22 @@ sys.path.insert(0, _CORE_DIR)
 
 from data_models import Signal, SignalStatus, SignalType  # noqa: E402
 
+try:
+    from contextual_bandit import UCBBandit
+except ImportError:
+    try:
+        from .contextual_bandit import UCBBandit
+    except Exception:
+        UCBBandit = None
+
+try:
+    from ensemble_optimizer import DynamicEnsemble
+except ImportError:
+    try:
+        from .ensemble_optimizer import DynamicEnsemble
+    except Exception:
+        DynamicEnsemble = None
+
 logger = logging.getLogger(__name__)
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -177,28 +193,51 @@ class SignalGenerator:
         tickers: List[str],
         apply_quality_filter: bool = True,
         apply_momentum_filter: bool = True,
+        current_regime: str = "BULL",
     ) -> List[Signal]:
         """Evaluate each ticker and emit raw Mean-Reversion Exhaustion signals.
 
         Rule (BUY): the most recent bar has ``Close > SMA_200`` (long-term
         uptrend) AND ``RSI_14 < RSI_OVERSOLD_THRESHOLD`` (default 30), refined by:
 
-          * Quality filter (Phase 11): the company must be profitable (EPS > 0).
-          * Momentum filter (Phase 11): do not catch falling knives — require
+          * Quality filter: the company must be profitable (EPS > 0).
+          * Momentum filter: do not catch falling knives — require
             ``Close > SMA_5`` so the pullback is already stabilizing.
           * Trend Quality boost (Aegis): +0 to +15 points for clean linear uptrends (R^2 * slope).
+          * Dynamic weighting: scaled by Contextual Bandit arm weights & Dynamic Ensemble optimization.
 
         Args:
-            db_manager: A Phase 2 ``TimeSeriesDB`` exposing
-                ``get_historical_prices(ticker, days)``.
+            db_manager: A TimeSeriesDB exposing ``get_historical_prices(ticker, days)``.
             tickers: Ticker symbols to evaluate.
             apply_quality_filter: Skip loss-making companies when ``True``.
             apply_momentum_filter: Require ``Close > SMA_5`` when ``True``.
+            current_regime: Current macro regime ("BULL", "BEAR", "VOLATILE").
 
         Returns:
             List[Signal]: PENDING BUY signals for tickers meeting all rules.
         """
         signals: List[Signal] = []
+
+        # Retrieve Dynamic Ensemble and UCB Bandit weights
+        ensemble_weights = {}
+        if DynamicEnsemble is not None:
+            try:
+                ensemble_weights = DynamicEnsemble().get_optimized_weights()
+            except Exception as exc:
+                logger.debug("Failed to get DynamicEnsemble weights: %s", exc)
+
+        bandit_weights = {}
+        if UCBBandit is not None:
+            try:
+                bandit_weights = UCBBandit().get_weights(regime=current_regime)
+            except Exception as exc:
+                logger.debug("Failed to get UCBBandit weights: %s", exc)
+
+        # Baseline weights: MR (0.25), Trend (0.30)
+        mr_arm_w = float(bandit_weights.get("mean_reversion", 0.25)) if bandit_weights else 0.25
+        trend_arm_w = float(bandit_weights.get("trend", 0.30)) if bandit_weights else 0.30
+        mr_ens_w = float(ensemble_weights.get("heuristic_mr_weight", 0.25)) if ensemble_weights else 0.25
+        trend_ens_w = float(ensemble_weights.get("heuristic_trend_weight", 0.30)) if ensemble_weights else 0.30
 
         for ticker in tickers:
             df = db_manager.get_historical_prices(ticker, days=252)
@@ -248,10 +287,17 @@ class SignalGenerator:
                 t_qual = self.calculate_trend_quality(df["Close"])
                 # Aegis Trend Quality boost: up to +15 pts for smooth linear uptrends
                 qual_bonus = min(15.0, max(0.0, t_qual * 30.0)) if t_qual > 0.05 else 0.0
-                final_score = float(min(100.0, base_score + qual_bonus))
 
-                qual_txt = f" · Trend Quality +{qual_bonus:.1f}pts (TQ={t_qual:.2f})" if qual_bonus > 0 else ""
-                # Complete feature snapshot dump for ML training replay
+                # Dynamic Bandit & Ensemble Scaling
+                mr_multiplier = (mr_arm_w / 0.25) * (mr_ens_w / 0.25)
+                trend_multiplier = (trend_arm_w / 0.30) * (trend_ens_w / 0.30)
+
+                scaled_mr_score = base_score * mr_multiplier
+                scaled_trend_score = qual_bonus * trend_multiplier
+                final_score = float(min(100.0, max(0.0, scaled_mr_score + scaled_trend_score)))
+
+                qual_txt = f" · Trend Quality +{scaled_trend_score:.1f}pts (TQ={t_qual:.2f})" if scaled_trend_score > 0 else ""
+                # Complete feature snapshot dump for ML training replay and auditability
                 atr_14 = float(enriched.ta.atr(length=14).iloc[-1]) if hasattr(enriched, "ta") and "High" in enriched.columns else 0.0
                 vol_s = enriched["Volume"] if "Volume" in enriched.columns else pd.Series([1000] * len(enriched))
                 vol_z = float((vol_s.iloc[-1] - vol_s.tail(20).mean()) / (vol_s.tail(20).std() + 1e-6))
@@ -270,6 +316,11 @@ class SignalGenerator:
                     "trailing_eps": float(self._trailing_eps(ticker) or 0.0),
                     "base_score": float(base_score),
                     "final_score": float(final_score),
+                    "current_regime": current_regime,
+                    "bandit_weights": bandit_weights,
+                    "ensemble_weights": ensemble_weights,
+                    "scaled_mr_score": round(scaled_mr_score, 2),
+                    "scaled_trend_score": round(scaled_trend_score, 2),
                 }
 
                 signal = Signal(

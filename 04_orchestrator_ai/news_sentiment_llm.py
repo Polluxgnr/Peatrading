@@ -158,6 +158,58 @@ class NewsSentimentScorer:
         return final_score
 
 
+def score_news_batch(db, limit: int = 50) -> int:
+    """Batch score unprocessed news in SQLite using FinBERT.
+
+    Args:
+        db: PortfolioDB instance.
+        limit: Max news items to process.
+
+    Returns:
+        int: Number of news items successfully scored.
+    """
+    if db is None:
+        return 0
+    unproc = db.get_unprocessed_news(limit=limit) if hasattr(db, "get_unprocessed_news") else []
+    if not unproc:
+        return 0
+    scorer = NewsSentimentScorer(portfolio_db=db)
+    updates = []
+    for item in unproc:
+        title = item.get("title", "")
+        content = item.get("content", "")
+        text = f"{title}. {content}".strip()
+        score, label = scorer.score_single_headline(text)
+        news_id = item.get("id")
+        ticker = item.get("ticker", "MARCHE")
+        if news_id:
+            updates.append({
+                "id": news_id,
+                "sentiment_score": score,
+                "sentiment_label": label,
+            })
+            if hasattr(db, "upsert_sentiment_history"):
+                try:
+                    db.upsert_sentiment_history(
+                        ticker=ticker,
+                        score=score,
+                        source=item.get("source", "batch"),
+                        headline=title[:120],
+                    )
+                except Exception:
+                    pass
+
+    if updates and hasattr(db, "update_news_sentiment"):
+        db.update_news_sentiment(updates)
+    elif updates and hasattr(db, "mark_news_processed"):
+        for u in updates:
+            db.mark_news_processed(u["id"], sentiment_score=u["sentiment_score"], sentiment_label=u["sentiment_label"])
+
+    return len(updates)
+
+
+
+
 
 class OpenRouterClient:
     """Optional client for OpenRouter generative queries (Red Team debate, Friday CIO digest, AI ticker summaries)."""

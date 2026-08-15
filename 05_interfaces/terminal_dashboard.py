@@ -93,6 +93,8 @@ _DB_DIR = _ROOT / "database"
 _SQLITE_PATH = _DB_DIR / "portfolio.db"
 _UNIVERSE_PATH = _ROOT / "config" / "pea_universe.yaml"
 _RISK_PATH = _ROOT / "config" / "risk_params.yaml"
+_API_BASE_URL = "http://localhost:8000/api/v1"
+
 
 
 def _load_risk() -> dict:
@@ -609,29 +611,88 @@ def load_universe() -> pd.DataFrame:
         )
 
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=30)
 def load_portfolio_state():
-    """Load the current portfolio snapshot (cached 60s)."""
-    if not _SQLITE_PATH.exists():
-        return None
-    return PortfolioDB(db_path=_SQLITE_PATH).get_portfolio_state()
+    """Load the current portfolio snapshot from FastAPI SSOT with SQLite fallback."""
+    # 1. Try FastAPI SSOT
+    try:
+        import requests
+        resp = requests.get(f"{_API_BASE_URL}/portfolio/summary", timeout=2.0)
+        if resp.status_code == 200:
+            data = resp.json()
+            positions = []
+            for p in data.get("positions", []):
+                positions.append(
+                    Position(
+                        ticker=p["ticker"],
+                        qty_shares=int(p["qty_shares"]),
+                        avg_entry_price=float(p["avg_entry_price"]),
+                        current_price=float(p["current_price"]),
+                        sector=str(p.get("sector", "Unknown")),
+                    )
+                )
+            return PortfolioState(
+                cash_available=float(data.get("cash_available", 0.0)),
+                total_equity=float(data.get("total_equity", 0.0)),
+                positions=positions,
+                last_updated=datetime.fromisoformat(data["last_updated"]) if "last_updated" in data else datetime.now(timezone.utc),
+            )
+    except Exception:
+        pass
+
+    # 2. SQLite Fallback
+    if _SQLITE_PATH.exists():
+        try:
+            return PortfolioDB(db_path=_SQLITE_PATH).get_portfolio_state()
+        except Exception:
+            pass
+    return None
 
 
 @st.cache_data(ttl=60)
 def load_equity_curve() -> pd.DataFrame:
-    """Load the daily equity curve from SQLite (cached 60s)."""
-    if not _SQLITE_PATH.exists():
-        return pd.DataFrame(columns=["date", "equity", "cash"])
-    return PortfolioDB(db_path=_SQLITE_PATH).get_equity_curve()
+    """Load the daily equity curve from FastAPI SSOT with SQLite fallback."""
+    try:
+        import requests
+        resp = requests.get(f"{_API_BASE_URL}/portfolio/equity_curve", timeout=2.0)
+        if resp.status_code == 200:
+            data = resp.json()
+            if data:
+                return pd.DataFrame(data)
+    except Exception:
+        pass
+
+    if _SQLITE_PATH.exists():
+        try:
+            return PortfolioDB(db_path=_SQLITE_PATH).get_equity_curve()
+        except Exception:
+            pass
+    return pd.DataFrame(columns=["date", "equity", "cash"])
 
 
 @st.cache_data(ttl=60)
 def load_signals(statuses: tuple[str, ...], limit: int | None = None) -> pd.DataFrame:
-    """Load audit-log rows for the given statuses (cached 60s)."""
-    if not _SQLITE_PATH.exists():
-        return pd.DataFrame()
-    db = PortfolioDB(db_path=_SQLITE_PATH)
-    return pd.DataFrame(db.fetch_signals_by_status(list(statuses), limit=limit))
+    """Load audit-log rows for the given statuses via FastAPI SSOT with SQLite fallback."""
+    try:
+        import requests
+        params = [("status", s) for s in statuses]
+        if limit:
+            params.append(("limit", str(limit)))
+        resp = requests.get(f"{_API_BASE_URL}/signals", params=params, timeout=2.0)
+        if resp.status_code == 200:
+            data = resp.json()
+            if data:
+                return pd.DataFrame(data)
+    except Exception:
+        pass
+
+    if _SQLITE_PATH.exists():
+        try:
+            db = PortfolioDB(db_path=_SQLITE_PATH)
+            return pd.DataFrame(db.fetch_signals_by_status(list(statuses), limit=limit))
+        except Exception:
+            pass
+    return pd.DataFrame()
 
 
 def _classify_audit_row(row: dict) -> str:
@@ -690,9 +751,7 @@ def _map_reject_to_funnel_drop(classified: str, reason: str) -> str:
 
 @st.cache_data(ttl=300, show_spinner=False)
 def get_funnel_metrics(days: int = 7) -> dict:
-    """Build decision-funnel stats from SQLite audit logs (last ``days``).
-
-    Reuses ``WeeklyHistorian._classify`` taxonomy. No new tables.
+    """Build decision-funnel stats via FastAPI SSOT with SQLite fallback.
 
     Returns:
         dict: Counts, waterfall series, rejection pie series, survival rate.
@@ -717,6 +776,16 @@ def get_funnel_metrics(days: int = 7) -> dict:
         "waterfall_measure": [],
         "empty": True,
     }
+    # 1. Try FastAPI SSOT
+    try:
+        import requests
+        resp = requests.get(f"{_API_BASE_URL}/analytics/funnel", params={"days": days}, timeout=2.0)
+        if resp.status_code == 200:
+            return resp.json()
+    except Exception:
+        pass
+
+    # 2. SQLite Fallback
     if not _SQLITE_PATH.exists():
         return empty
     try:
@@ -4411,7 +4480,21 @@ with tab_postmortem:
 
     st.markdown("---")
     st.markdown("#### 📜 Registre Global des Signaux Exécutés & Clôturés (Audit Logs)")
-    closed_logs = db_pm.fetch_closed_signals(limit=30)
+    closed_logs = []
+    try:
+        import requests
+        resp = requests.get(f"{_API_BASE_URL}/ledger/closed", params={"limit": 30}, timeout=2.0)
+        if resp.status_code == 200:
+            closed_logs = resp.json()
+    except Exception:
+        pass
+
+    if not closed_logs and hasattr(db_pm, "fetch_closed_signals"):
+        try:
+            closed_logs = db_pm.fetch_closed_signals(limit=30)
+        except Exception:
+            closed_logs = []
+
     if closed_logs:
         df_logs = pd.DataFrame(closed_logs)
         disp_logs = pd.DataFrame({

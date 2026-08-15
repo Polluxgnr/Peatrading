@@ -11,9 +11,9 @@ ROOT = Path(__file__).resolve().parent.parent
 for sub in ("00_data_sensors", "01_memory_core", "02_quant_engine", "03_risk_portfolio", "04_orchestrator_ai"):
     sys.path.insert(0, str(ROOT / sub))
 
-from news_sentiment_llm import NewsSentimentScorer
-from nlp_sentiment_engine import score_news_batch
+from news_sentiment_llm import NewsSentimentScorer, score_news_batch
 from sqlite_portfolio import SQLitePortfolioDB
+
 
 
 class TestFinBertSentimentSuite(unittest.TestCase):

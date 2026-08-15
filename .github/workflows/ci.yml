@@ -22,7 +22,7 @@ jobs:
           pip install pytest ruff
       - name: Lint with Ruff
         run: |
-          ruff check . --exit-zero
+          ruff check .
       - name: Run Test Suite
         run: |
           python -m pytest -q

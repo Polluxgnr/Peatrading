@@ -1,5 +1,5 @@
 # PEA Pollux — Complete Monolithic Repository Dump
-Generated: `2026-08-15 17:35 UTC` | File Count: `127`
+Generated: `2026-08-15 22:06 UTC` | File Count: `125`
 Institutional Systematic Decision Support Architecture for French PEA.
 ---
 ## Included Files Index
@@ -48,12 +48,9 @@ Institutional Systematic Decision Support Architecture for French PEA.
 - [02_quant_engine/cross_sectional.py](#file-02_quant_engine-cross_sectional-py)
 - [02_quant_engine/ensemble_optimizer.py](#file-02_quant_engine-ensemble_optimizer-py)
 - [02_quant_engine/hmm_regime.py](#file-02_quant_engine-hmm_regime-py)
-- [02_quant_engine/llm_sentiment_engine.py](#file-02_quant_engine-llm_sentiment_engine-py)
 - [02_quant_engine/market_regime.py](#file-02_quant_engine-market_regime-py)
-- [02_quant_engine/ml_backtester.py](#file-02_quant_engine-ml_backtester-py)
 - [02_quant_engine/ml_feature_store.py](#file-02_quant_engine-ml_feature_store-py)
 - [02_quant_engine/ml_trainer.py](#file-02_quant_engine-ml_trainer-py)
-- [02_quant_engine/nlp_sentiment_engine.py](#file-02_quant_engine-nlp_sentiment_engine-py)
 - [02_quant_engine/quantitative_math.py](#file-02_quant_engine-quantitative_math-py)
 - [02_quant_engine/risk_engine.py](#file-02_quant_engine-risk_engine-py)
 - [02_quant_engine/smart_dca_engine.py](#file-02_quant_engine-smart_dca_engine-py)
@@ -114,6 +111,7 @@ Institutional Systematic Decision Support Architecture for French PEA.
 - [seed_account.py](#file-seed_account-py)
 - [tests/__init__.py](#file-tests-__init__-py)
 - [tests/test_api_and_mcp.py](#file-tests-test_api_and_mcp-py)
+- [tests/test_brain_and_decoupling.py](#file-tests-test_brain_and_decoupling-py)
 - [tests/test_finbert_sentiment.py](#file-tests-test_finbert_sentiment-py)
 - [tests/test_funnel_analytics.py](#file-tests-test_funnel_analytics-py)
 - [tests/test_institutional_suite.py](#file-tests-test_institutional_suite-py)
@@ -158,7 +156,7 @@ jobs:
           pip install pytest ruff
       - name: Lint with Ruff
         run: |
-          ruff check . --exit-zero
+          ruff check .
       - name: Run Test Suite
         run: |
           python -m pytest -q
@@ -3710,18 +3708,85 @@ clean, de-duplicated database of insider operations.
 
 from __future__ import annotations
 
+import io
 import logging
+import re
 import sqlite3
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 import requests
 
+try:
+    from ._http import rate_limit, stealth_headers
+except ImportError:
+    try:
+        from _http import rate_limit, stealth_headers
+    except ImportError:
+        def stealth_headers() -> dict[str, str]:
+            return {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+        def rate_limit(min_s: float = 0.5, max_s: float = 1.2) -> None:
+            pass
+
 logger = logging.getLogger(__name__)
 
 _DEFAULT_DB_PATH = Path(__file__).resolve().parent.parent.parent / "database" / "portfolio.db"
+
+
+def clean_numeric_value(val: Any) -> float:
+    """Parse numeric values with currency symbols (€, $, £), commas, or suffixes (k, M).
+
+    Args:
+        val: String or raw numeric value.
+
+    Returns:
+        float: Clean parsed float value.
+    """
+    if val is None or pd.isna(val):
+        return 0.0
+    if isinstance(val, (int, float)):
+        return float(val)
+
+    s = str(val).strip()
+    # Remove currency symbols and non-breaking spaces
+    for char in ("€", "$", "£", "¥", " ", "\xa0", "\t", "\n", "\r"):
+        s = s.replace(char, "")
+
+    if not s:
+        return 0.0
+
+    multiplier = 1.0
+    if s.endswith(("k", "K")):
+        multiplier = 1_000.0
+        s = s[:-1]
+    elif s.endswith(("m", "M")):
+        multiplier = 1_000_000.0
+        s = s[:-1]
+    elif s.endswith(("b", "B")):
+        multiplier = 1_000_000_000.0
+        s = s[:-1]
+
+    # Handle European comma decimals or thousands separators
+    if "," in s and "." in s:
+        if s.rfind(",") > s.rfind("."):
+            s = s.replace(".", "").replace(",", ".")
+        else:
+            s = s.replace(",", "")
+    elif "," in s:
+        parts = s.split(",")
+        if len(parts) == 2 and len(parts[1]) in (1, 2):
+            s = s.replace(",", ".")
+        else:
+            s = s.replace(",", "")
+
+    cleaned_digits = re.sub(r"[^\d.-]", "", s)
+    try:
+        return float(cleaned_digits) * multiplier
+    except (ValueError, TypeError):
+        return 0.0
 
 
 class OpenInsiderEuScraper:
@@ -3738,7 +3803,7 @@ class OpenInsiderEuScraper:
         return conn
 
     def _init_db(self) -> None:
-        """Create insiders_cache table for cross-verified insider signals."""
+        """Create insiders_master table for cross-verified insider signals."""
         try:
             with self._connect() as conn:
                 conn.execute(
@@ -3762,34 +3827,77 @@ class OpenInsiderEuScraper:
         except sqlite3.Error as exc:
             logger.debug("insiders_master schema error: %s", exc)
 
-    def fetch_openinsider_trades(self, ticker_or_isin: str) -> List[Dict]:
-        """Fetch transactions from OpenInsider EU."""
-        trades = []
+    @staticmethod
+    def _find_column(df: pd.DataFrame, candidates: List[str]) -> Optional[str]:
+        """Find the matching column name case-insensitively."""
+        cols_lower = {str(c).lower().strip(): c for c in df.columns}
+        for cand in candidates:
+            cand_l = cand.lower().strip()
+            if cand_l in cols_lower:
+                return cols_lower[cand_l]
+        return None
+
+    def fetch_openinsider_trades(self, ticker_or_isin: str, auto_save: bool = True) -> List[Dict]:
+        """Fetch transactions from OpenInsider EU with stealth headers and robust mapping.
+
+        Args:
+            ticker_or_isin: Ticker symbol (e.g. 'MC.PA') or ISIN code.
+            auto_save: Automatically insert and deduplicate records into SQLite.
+
+        Returns:
+            List[Dict]: Normalized insider transactions.
+        """
+        trades: List[Dict] = []
         try:
-            # OpenInsider EU public feed request
+            rate_limit(0.5, 1.2)
             url = f"https://openinsider.eu/search?q={ticker_or_isin}"
-            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-            resp = requests.get(url, headers=headers, timeout=6)
-            if resp.status_code == 200:
-                # Basic parser for HTML table
-                # (Antifragile: if empty or parsing error, returns empty list)
-                tables = pd.read_html(resp.text)
+            headers = stealth_headers()
+            resp = requests.get(url, headers=headers, timeout=8)
+            if resp.status_code == 200 and resp.text:
+                # Read HTML tables with error tolerance
+                tables = pd.read_html(io.StringIO(resp.text))
                 if tables:
                     df = tables[0]
-                    for _, row in df.head(15).iterrows():
-                        trades.append({
-                            "source": "openinsider_eu",
-                            "ticker": str(ticker_or_isin),
-                            "trade_date": str(row.get("Filing Date", "")),
-                            "insider_name": str(row.get("Insider Name", "Unknown")),
-                            "role": str(row.get("Title", "")),
-                            "transaction_type": "BUY" if "purchase" in str(row.get("Trade Type", "")).lower() else "SELL",
-                            "shares": float(row.get("Qty", 0) or 0),
-                            "price": float(row.get("Price", 0.0) or 0.0),
-                            "amount_eur": float(row.get("Value", 0.0) or 0.0),
-                        })
+                    # Map columns flexibly
+                    c_date = self._find_column(df, ["Filing Date", "Trade Date", "Date", "FilingDate", "TradeDate"])
+                    c_name = self._find_column(df, ["Insider Name", "Insider", "Name", "Officer", "Reporting Owner"])
+                    c_role = self._find_column(df, ["Title", "Role", "Relationship", "Officer Title"])
+                    c_type = self._find_column(df, ["Trade Type", "Type", "Transaction", "Txn Type"])
+                    c_qty = self._find_column(df, ["Qty", "Shares", "Quantity", "Number of Shares", "Volume"])
+                    c_price = self._find_column(df, ["Price", "Price/Share", "Cost"])
+                    c_value = self._find_column(df, ["Value", "Amount", "Total Value", "EUR Value", "Cost"])
+
+                    for _, row in df.head(25).iterrows():
+                        raw_tdate = str(row.get(c_date, "") if c_date else "").strip()
+                        raw_name = str(row.get(c_name, "Unknown") if c_name else "Unknown").strip()
+                        raw_role = str(row.get(c_role, "") if c_role else "").strip()
+                        raw_type = str(row.get(c_type, "") if c_type else "").lower().strip()
+
+                        ttype = "BUY" if any(w in raw_type for w in ("purchase", "buy", "achat", "p")) else "SELL"
+                        shares = clean_numeric_value(row.get(c_qty) if c_qty else 0)
+                        price = clean_numeric_value(row.get(c_price) if c_price else 0)
+                        value = clean_numeric_value(row.get(c_value) if c_value else 0)
+
+                        if value <= 0.0 and price > 0.0 and shares > 0.0:
+                            value = round(price * shares, 2)
+
+                        if raw_tdate or raw_name != "Unknown":
+                            trades.append({
+                                "source": "openinsider_eu",
+                                "ticker": str(ticker_or_isin).upper(),
+                                "trade_date": raw_tdate or datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+                                "insider_name": raw_name,
+                                "role": raw_role,
+                                "transaction_type": ttype,
+                                "shares": shares,
+                                "price": price,
+                                "amount_eur": value,
+                            })
         except Exception as exc:  # noqa: BLE001
             logger.debug("OpenInsider EU scrape failed for %s: %s", ticker_or_isin, exc)
+
+        if auto_save and trades:
+            self.save_and_deduplicate(trades)
 
         return trades
 
@@ -3803,7 +3911,7 @@ class OpenInsiderEuScraper:
         try:
             with self._connect() as conn:
                 for tx in transactions:
-                    ticker = str(tx.get("ticker", "UNKNOWN"))
+                    ticker = str(tx.get("ticker", "UNKNOWN")).upper()
                     name = str(tx.get("insider_name", "UNKNOWN"))
                     tdate = str(tx.get("trade_date", "UNKNOWN"))
                     ttype = str(tx.get("transaction_type", "BUY"))
@@ -3820,7 +3928,7 @@ class OpenInsiderEuScraper:
                             tx_id,
                             ticker,
                             tx.get("isin", ""),
-                            tx.get("source", "unknown"),
+                            tx.get("source", "openinsider_eu"),
                             name,
                             tx.get("role", ""),
                             ttype,
@@ -3841,7 +3949,10 @@ class OpenInsiderEuScraper:
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     scraper = OpenInsiderEuScraper()
-    print("OpenInsider EU Scraper initialized.")
+    print("OpenInsider EU Scraper initialized. Testing numeric cleaner:")
+    print("€ 1,200,000 ->", clean_numeric_value("€ 1,200,000"))
+    print("$ 500k ->", clean_numeric_value("$ 500k"))
+    print("12.50 € ->", clean_numeric_value("12.50 €"))
 ```
 
 ## FILE: 00_data_sensors/symbol_mapper.py
@@ -5682,6 +5793,18 @@ class PortfolioDB:
         """Alias for save_news_items to insert batch news."""
         return self.save_news_items(items)
 
+    def mark_news_processed(
+        self, news_id: str, sentiment_score: float = 0.0, sentiment_label: str = "neutral"
+    ) -> bool:
+        """Mark a single news article as processed with sentiment score and label."""
+        return (
+            self.update_news_sentiment(
+                [{"id": news_id, "sentiment_score": sentiment_score, "sentiment_label": sentiment_label}]
+            )
+            > 0
+        )
+
+
     def fetch_recent_post_mortems(self, limit: int = 50) -> list[dict]:
         """Fetch historical post-mortems from trade_post_mortems table."""
         try:
@@ -6298,154 +6421,6 @@ if __name__ == "__main__":
     print(f"Market Regime: {reg.value} (Confidence: {conf:.2f})")
 ```
 
-## FILE: 02_quant_engine/llm_sentiment_engine.py
-```python
-import os
-import sys
-import json
-import requests
-from pathlib import Path
-from dotenv import load_dotenv
-
-_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_ROOT / "01_memory_core"))
-
-from logging_setup import get_logger
-from sqlite_portfolio import SQLitePortfolioDB
-
-logger = get_logger("llm_sentiment_engine")
-
-load_dotenv(_ROOT / ".env")
-
-OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "mistral")
-
-# Load VADER as a fallback
-try:
-    from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
-    vader_analyzer = SentimentIntensityAnalyzer()
-except ImportError:
-    logger.warning("vaderSentiment not installed. Fallback sentiment will be 0.0.")
-    vader_analyzer = None
-
-
-def fallback_vader(text: str) -> tuple[float, str, str]:
-    """Fallback sentiment calculation using VADER."""
-    if not vader_analyzer:
-        return 0.0, "Neutral", "Fallback to neutral due to missing VADER."
-    
-    scores = vader_analyzer.polarity_scores(text)
-    compound = float(scores["compound"])
-    
-    if compound >= 0.05:
-        label = "Bullish"
-    elif compound <= -0.05:
-        label = "Bearish"
-    else:
-        label = "Neutral"
-        
-    return compound, label, "Calculated using VADER heuristic fallback."
-
-
-def call_ollama(text: str) -> tuple[float, str, str] | None:
-    """Send text to Ollama and ask for structured JSON."""
-    prompt = f"""You are a professional quantitative analyst. 
-Analyze the following financial news article and return a strict JSON object with EXACTLY these three keys:
-- "guidance_score": A float between -1.0 (extremely bearish) and 1.0 (extremely bullish).
-- "sentiment_label": Must be exactly one of "Bullish", "Bearish", or "Neutral".
-- "reasoning": A brief one-sentence financial justification for the score.
-
-News text:
-{text}
-
-Return ONLY the JSON object. Do not include markdown formatting or conversational text."""
-
-    payload = {
-        "model": OLLAMA_MODEL,
-        "prompt": prompt,
-        "stream": False,
-        "format": "json"
-    }
-
-    try:
-        url = f"{OLLAMA_URL.rstrip('/')}/api/generate"
-        response = requests.post(url, json=payload, timeout=20)
-        response.raise_for_status()
-        
-        result = response.json()
-        output_text = result.get("response", "").strip()
-        
-        # Ollama might wrap JSON in markdown block even with format="json" in some models
-        if output_text.startswith("``​`json"):
-            output_text = output_text[7:]
-        if output_text.endswith("``​`"):
-            output_text = output_text[:-3]
-            
-        data = json.loads(output_text.strip())
-        
-        g_score = float(data.get("guidance_score", 0.0))
-        label = str(data.get("sentiment_label", "Neutral"))
-        reasoning = str(data.get("reasoning", "No reasoning provided."))
-        
-        # Ensure label validity
-        if label not in ("Bullish", "Bearish", "Neutral"):
-            label = "Neutral"
-            
-        # Ensure score bounds
-        g_score = max(-1.0, min(1.0, g_score))
-        
-        return g_score, label, reasoning
-        
-    except Exception as e:
-        logger.warning(f"Ollama inference failed: {e}")
-        return None
-
-
-def score_news_batch(db: SQLitePortfolioDB):
-    """Fetch unprocessed news, score them using Ollama (or VADER), and update the DB."""
-    unprocessed = db.get_unprocessed_news()
-    if not unprocessed:
-        logger.info("No unprocessed news found.")
-        return
-        
-    logger.info("Scoring %d unprocessed news items with Ollama (%s)...", len(unprocessed), OLLAMA_MODEL)
-    
-    updates = []
-    
-    for item in unprocessed:
-        text = f"{item['title']} {item['content'] or ''}"
-        # Truncate text if it's too long for typical small LLM context
-        text = text[:4000]
-        
-        res = call_ollama(text)
-        if res:
-            compound, label, reasoning = res
-            logger.debug("Ollama success for news ID %s: %s", item["id"], label)
-        else:
-            compound, label, reasoning = fallback_vader(text)
-            logger.debug("VADER fallback for news ID %s: %s", item["id"], label)
-            
-        # We also might want to store reasoning, but our news_master schema might not have it yet.
-        # We will just log it for now and update sentiment.
-        # The prompt requested we use the database, the schema has:
-        # id, published_at, ticker, source, url, title, content, sentiment_score, sentiment_label
-        
-        updates.append({
-            "id": item["id"],
-            "sentiment_score": compound,
-            "sentiment_label": label
-        })
-        
-    if updates:
-        db.update_news_sentiment(updates)
-        logger.info("LLM Sentiment scoring completed for %d items.", len(updates))
-
-
-if __name__ == "__main__":
-    db = SQLitePortfolioDB()
-    score_news_batch(db)
-```
-
 ## FILE: 02_quant_engine/market_regime.py
 ```python
 """Market Regime & Volatility Percentile Tiers for PEA Sniper Terminal.
@@ -6593,32 +6568,6 @@ if __name__ == "__main__":
     fake_vix = np.random.normal(18.0, 4.0, 252)
     res = sentinel.evaluate_vix_regime(fake_vix, current_vix=28.5)
     print("Regime Assessment:", res)
-```
-
-## FILE: 02_quant_engine/ml_backtester.py
-```python
-import pandas as pd
-import numpy as np
-
-def run_autonomous_backtest(csv_path: str, initial_capital: float = 10000.0) -> pd.DataFrame:
-    """Run an autonomous backtest on the ML dataset vs CW8.
-    
-    Dynamically sizes trades based on Score/Probability.
-    Includes 0.5% slippage/fees.
-    Uses a threshold to avoid high frequency (e.g. Score > 70).
-    """
-    try:
-        df = pd.read_csv(csv_path)
-    except Exception:
-        return pd.DataFrame()
-
-    if df.empty or 'Date' not in df.columns:
-        return pd.DataFrame()
-
-    df['Date'] = pd.to_datetime(df['Date'])
-    df = df.sort_values('Date')
-    
-    return df
 ```
 
 ## FILE: 02_quant_engine/ml_feature_store.py
@@ -7171,109 +7120,6 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     m = train_model()
     print(json.dumps(m, indent=2))
-```
-
-## FILE: 02_quant_engine/nlp_sentiment_engine.py
-```python
-"""Batch NLP News Sentiment Engine using ProsusAI/finbert transformer model.
-
-Scores unprocessed news items in SQLite database and persists sentiment labels
-('Bullish', 'Bearish', 'Neutral') and numeric compound scores in [-1.0, 1.0].
-"""
-
-from __future__ import annotations
-
-import logging
-import sys
-from pathlib import Path
-from typing import Any, Dict, List
-
-_ROOT = Path(__file__).resolve().parent.parent
-for _d in ("00_data_sensors", "01_memory_core", "02_quant_engine", "03_risk_portfolio", "04_orchestrator_ai"):
-    sys.path.insert(0, str(_ROOT / _d))
-
-from sqlite_portfolio import SQLitePortfolioDB
-from news_sentiment_llm import get_finbert_pipeline
-
-logger = logging.getLogger("nlp_sentiment_engine")
-
-
-def score_news_batch(db: SQLitePortfolioDB) -> None:
-    """Fetch unprocessed news, score them using ProsusAI/finbert, and update the database."""
-    unprocessed = db.get_unprocessed_news()
-    if not unprocessed:
-        logger.info("No unprocessed news found.")
-        return
-
-    logger.info("Scoring %d unprocessed news items with FinBERT...", len(unprocessed))
-
-    nlp = get_finbert_pipeline()
-    updates: List[Dict[str, Any]] = []
-
-    for item in unprocessed:
-        # Sanitize and truncate content to avoid token limit and boilerplate
-        raw_combined = f"{item['title']} {item.get('content') or ''}"
-        try:
-            from text_cleaner import clean_financial_text
-            text = clean_financial_text(raw_combined, max_chars=1500)
-        except Exception:
-            text = raw_combined[:1500].strip()
-
-        if not text:
-            continue
-
-        label = "Neutral"
-        compound = 0.0
-
-        if nlp is not None:
-            try:
-                outputs = nlp(text)
-                if outputs and isinstance(outputs[0], list):
-                    sorted_preds = sorted(outputs[0], key=lambda x: x.get("score", 0.0), reverse=True)
-                    top = sorted_preds[0]
-                elif outputs and isinstance(outputs[0], dict):
-                    top = outputs[0]
-                else:
-                    top = {"label": "neutral", "score": 1.0}
-
-                pred_label = str(top.get("label", "neutral")).lower()
-                prob = float(top.get("score", 0.0))
-
-                if pred_label == "positive" and prob > 0.50:
-                    label = "Bullish"
-                    compound = prob
-                elif pred_label == "negative" and prob > 0.50:
-                    label = "Bearish"
-                    compound = -prob
-                else:
-                    label = "Neutral"
-                    compound = 0.0
-            except Exception as exc:
-                logger.debug("FinBERT inference error on news item %s: %s", item.get("id"), exc)
-        else:
-            # Fallback keyword scoring
-            t_lower = text.lower()
-            if any(w in t_lower for w in ("record", "croissance", "hausse", "bénéfice", "upgrade", "beat")):
-                label = "Bullish"
-                compound = 0.70
-            elif any(w in t_lower for w in ("chute", "baisse", "perte", "déficit", "downgrade", "miss")):
-                label = "Bearish"
-                compound = -0.70
-
-        updates.append({
-            "id": item["id"],
-            "sentiment_score": round(compound, 4),
-            "sentiment_label": label,
-        })
-
-    if updates:
-        db.update_news_sentiment(updates)
-        logger.info("FinBERT sentiment scoring completed for %d items.", len(updates))
-
-
-if __name__ == "__main__":
-    db = SQLitePortfolioDB()
-    score_news_batch(db)
 ```
 
 ## FILE: 02_quant_engine/quantitative_math.py
@@ -8089,6 +7935,22 @@ sys.path.insert(0, _CORE_DIR)
 
 from data_models import Signal, SignalStatus, SignalType  # noqa: E402
 
+try:
+    from contextual_bandit import UCBBandit
+except ImportError:
+    try:
+        from .contextual_bandit import UCBBandit
+    except Exception:
+        UCBBandit = None
+
+try:
+    from ensemble_optimizer import DynamicEnsemble
+except ImportError:
+    try:
+        from .ensemble_optimizer import DynamicEnsemble
+    except Exception:
+        DynamicEnsemble = None
+
 logger = logging.getLogger(__name__)
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -8223,28 +8085,51 @@ class SignalGenerator:
         tickers: List[str],
         apply_quality_filter: bool = True,
         apply_momentum_filter: bool = True,
+        current_regime: str = "BULL",
     ) -> List[Signal]:
         """Evaluate each ticker and emit raw Mean-Reversion Exhaustion signals.
 
         Rule (BUY): the most recent bar has ``Close > SMA_200`` (long-term
         uptrend) AND ``RSI_14 < RSI_OVERSOLD_THRESHOLD`` (default 30), refined by:
 
-          * Quality filter (Phase 11): the company must be profitable (EPS > 0).
-          * Momentum filter (Phase 11): do not catch falling knives — require
+          * Quality filter: the company must be profitable (EPS > 0).
+          * Momentum filter: do not catch falling knives — require
             ``Close > SMA_5`` so the pullback is already stabilizing.
           * Trend Quality boost (Aegis): +0 to +15 points for clean linear uptrends (R^2 * slope).
+          * Dynamic weighting: scaled by Contextual Bandit arm weights & Dynamic Ensemble optimization.
 
         Args:
-            db_manager: A Phase 2 ``TimeSeriesDB`` exposing
-                ``get_historical_prices(ticker, days)``.
+            db_manager: A TimeSeriesDB exposing ``get_historical_prices(ticker, days)``.
             tickers: Ticker symbols to evaluate.
             apply_quality_filter: Skip loss-making companies when ``True``.
             apply_momentum_filter: Require ``Close > SMA_5`` when ``True``.
+            current_regime: Current macro regime ("BULL", "BEAR", "VOLATILE").
 
         Returns:
             List[Signal]: PENDING BUY signals for tickers meeting all rules.
         """
         signals: List[Signal] = []
+
+        # Retrieve Dynamic Ensemble and UCB Bandit weights
+        ensemble_weights = {}
+        if DynamicEnsemble is not None:
+            try:
+                ensemble_weights = DynamicEnsemble().get_optimized_weights()
+            except Exception as exc:
+                logger.debug("Failed to get DynamicEnsemble weights: %s", exc)
+
+        bandit_weights = {}
+        if UCBBandit is not None:
+            try:
+                bandit_weights = UCBBandit().get_weights(regime=current_regime)
+            except Exception as exc:
+                logger.debug("Failed to get UCBBandit weights: %s", exc)
+
+        # Baseline weights: MR (0.25), Trend (0.30)
+        mr_arm_w = float(bandit_weights.get("mean_reversion", 0.25)) if bandit_weights else 0.25
+        trend_arm_w = float(bandit_weights.get("trend", 0.30)) if bandit_weights else 0.30
+        mr_ens_w = float(ensemble_weights.get("heuristic_mr_weight", 0.25)) if ensemble_weights else 0.25
+        trend_ens_w = float(ensemble_weights.get("heuristic_trend_weight", 0.30)) if ensemble_weights else 0.30
 
         for ticker in tickers:
             df = db_manager.get_historical_prices(ticker, days=252)
@@ -8294,10 +8179,17 @@ class SignalGenerator:
                 t_qual = self.calculate_trend_quality(df["Close"])
                 # Aegis Trend Quality boost: up to +15 pts for smooth linear uptrends
                 qual_bonus = min(15.0, max(0.0, t_qual * 30.0)) if t_qual > 0.05 else 0.0
-                final_score = float(min(100.0, base_score + qual_bonus))
 
-                qual_txt = f" · Trend Quality +{qual_bonus:.1f}pts (TQ={t_qual:.2f})" if qual_bonus > 0 else ""
-                # Complete feature snapshot dump for ML training replay
+                # Dynamic Bandit & Ensemble Scaling
+                mr_multiplier = (mr_arm_w / 0.25) * (mr_ens_w / 0.25)
+                trend_multiplier = (trend_arm_w / 0.30) * (trend_ens_w / 0.30)
+
+                scaled_mr_score = base_score * mr_multiplier
+                scaled_trend_score = qual_bonus * trend_multiplier
+                final_score = float(min(100.0, max(0.0, scaled_mr_score + scaled_trend_score)))
+
+                qual_txt = f" · Trend Quality +{scaled_trend_score:.1f}pts (TQ={t_qual:.2f})" if scaled_trend_score > 0 else ""
+                # Complete feature snapshot dump for ML training replay and auditability
                 atr_14 = float(enriched.ta.atr(length=14).iloc[-1]) if hasattr(enriched, "ta") and "High" in enriched.columns else 0.0
                 vol_s = enriched["Volume"] if "Volume" in enriched.columns else pd.Series([1000] * len(enriched))
                 vol_z = float((vol_s.iloc[-1] - vol_s.tail(20).mean()) / (vol_s.tail(20).std() + 1e-6))
@@ -8316,6 +8208,11 @@ class SignalGenerator:
                     "trailing_eps": float(self._trailing_eps(ticker) or 0.0),
                     "base_score": float(base_score),
                     "final_score": float(final_score),
+                    "current_regime": current_regime,
+                    "bandit_weights": bandit_weights,
+                    "ensemble_weights": ensemble_weights,
+                    "scaled_mr_score": round(scaled_mr_score, 2),
+                    "scaled_trend_score": round(scaled_trend_score, 2),
                 }
 
                 signal = Signal(
@@ -10996,6 +10893,58 @@ class NewsSentimentScorer:
         return final_score
 
 
+def score_news_batch(db, limit: int = 50) -> int:
+    """Batch score unprocessed news in SQLite using FinBERT.
+
+    Args:
+        db: PortfolioDB instance.
+        limit: Max news items to process.
+
+    Returns:
+        int: Number of news items successfully scored.
+    """
+    if db is None:
+        return 0
+    unproc = db.get_unprocessed_news(limit=limit) if hasattr(db, "get_unprocessed_news") else []
+    if not unproc:
+        return 0
+    scorer = NewsSentimentScorer(portfolio_db=db)
+    updates = []
+    for item in unproc:
+        title = item.get("title", "")
+        content = item.get("content", "")
+        text = f"{title}. {content}".strip()
+        score, label = scorer.score_single_headline(text)
+        news_id = item.get("id")
+        ticker = item.get("ticker", "MARCHE")
+        if news_id:
+            updates.append({
+                "id": news_id,
+                "sentiment_score": score,
+                "sentiment_label": label,
+            })
+            if hasattr(db, "upsert_sentiment_history"):
+                try:
+                    db.upsert_sentiment_history(
+                        ticker=ticker,
+                        score=score,
+                        source=item.get("source", "batch"),
+                        headline=title[:120],
+                    )
+                except Exception:
+                    pass
+
+    if updates and hasattr(db, "update_news_sentiment"):
+        db.update_news_sentiment(updates)
+    elif updates and hasattr(db, "mark_news_processed"):
+        for u in updates:
+            db.mark_news_processed(u["id"], sentiment_score=u["sentiment_score"], sentiment_label=u["sentiment_label"])
+
+    return len(updates)
+
+
+
+
 
 class OpenRouterClient:
     """Optional client for OpenRouter generative queries (Red Team debate, Friday CIO digest, AI ticker summaries)."""
@@ -11570,14 +11519,18 @@ and ``reason``. Pure logical routing: no LLMs, no APIs. All paths use
 ``pathlib``/``os.path`` for cross-platform compatibility.
 """
 
+from __future__ import annotations
+
 import logging
 import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional, Union
 
+import pandas as pd
 import yaml
+
 
 # --- Cross-package imports (directories start with digits) --------------------
 _ROOT = Path(__file__).resolve().parent.parent
@@ -11592,6 +11545,7 @@ from earnings_blackout import EarningsBlackoutEngine  # noqa: E402
 from drawdown_breaker import DrawdownBreaker  # noqa: E402
 from fundamentals_api import FundamentalsSensor  # noqa: E402
 from risk_config import load_and_validate_risk_params  # noqa: E402
+from market_regime import VolatilityRegimeSentinel  # noqa: E402
 
 try:
     from ml_trainer import predict_probability_with_shap, predict_anomaly
@@ -11635,6 +11589,7 @@ class SignalOrchestrator:
             monthly_max_loss=risk_cfg.MONTHLY_MAX_LOSS_PCT,
         )
         self.fundamentals_sensor = FundamentalsSensor()
+        self.vol_sentinel = VolatilityRegimeSentinel(window=252)
 
         logger.debug("SignalOrchestrator initialized with validated config at %s", config_path)
 
@@ -11693,6 +11648,20 @@ class SignalOrchestrator:
         except Exception:  # noqa: BLE001
             return None
 
+    def _get_vix_history(self, days: int = 252) -> pd.Series | None:
+        """Fetch historical VIX/V2TX series for rolling volatility percentile ranking."""
+        if self.timeseries_db is not None:
+            try:
+                for sym in ("^V2TX", "^VIX"):
+                    df = self.timeseries_db.get_historical_prices(sym, days=days)
+                    if df is not None and not df.empty and "Close" in df.columns:
+                        s = df["Close"].dropna().astype(float)
+                        if len(s) >= 10:
+                            return s
+            except Exception as exc:
+                logger.debug("Failed to load VIX history from TimeSeriesDB: %s", exc)
+        return None
+
     def _satellite_line_count(self, portfolio: PortfolioState) -> int:
         return sum(
             1
@@ -11724,11 +11693,36 @@ class SignalOrchestrator:
                 processed.append(self._reject(signal, f"REJECTED: {dd_reason}"))
             return processed
 
-        # Market-wide panic brake (VIX / V2TX)
-        vix_ok = self.firewall.check_vix_panic(vix_level) if vix_level is not None else True
+        # =====================================================================
+        # Continuous Volatility Regime & Dynamic Conviction Floor (Brain Sentinel)
+        # =====================================================================
+        vix_hist = self._get_vix_history(days=252)
+        cur_vix = float(vix_level) if vix_level is not None else 16.0
+        base_threshold = int(self.risk_cfg.SIGNAL_BUY_THRESHOLD)
 
-        # Conviction floor enforcement: raised to 85 in degraded mode
-        conviction_floor = 85.0 if data_degraded_mode else float(self.risk_cfg.SIGNAL_BUY_THRESHOLD)
+        vol_eval = self.vol_sentinel.evaluate_vix_regime(
+            vix_history=vix_hist,
+            current_vix=cur_vix,
+            base_floor=base_threshold,
+        )
+
+        regime_name = vol_eval.get("regime", "NORMAL")
+        pct_rank = vol_eval.get("percentile", 50.0)
+        eff_floor = float(vol_eval.get("effective_floor", base_threshold))
+        is_panic = vol_eval.get("is_panic", False)
+
+        # Conviction floor enforcement: raised in elevated vol or degraded mode
+        conviction_floor = max(85.0, eff_floor) if data_degraded_mode else eff_floor
+
+        logger.info(
+            "Continuous Volatility Regime: %s (VIX=%.1f, Percentile=%.1f%%) -> Floor set to %.0f",
+            regime_name,
+            cur_vix,
+            pct_rank,
+            conviction_floor,
+        )
+
+        vix_ok = not is_panic
 
         for signal in raw_signals:
             ticker = signal.ticker
@@ -12970,6 +12964,8 @@ _DB_DIR = _ROOT / "database"
 _SQLITE_PATH = _DB_DIR / "portfolio.db"
 _UNIVERSE_PATH = _ROOT / "config" / "pea_universe.yaml"
 _RISK_PATH = _ROOT / "config" / "risk_params.yaml"
+_API_BASE_URL = "http://localhost:8000/api/v1"
+
 
 
 def _load_risk() -> dict:
@@ -13486,29 +13482,88 @@ def load_universe() -> pd.DataFrame:
         )
 
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=30)
 def load_portfolio_state():
-    """Load the current portfolio snapshot (cached 60s)."""
-    if not _SQLITE_PATH.exists():
-        return None
-    return PortfolioDB(db_path=_SQLITE_PATH).get_portfolio_state()
+    """Load the current portfolio snapshot from FastAPI SSOT with SQLite fallback."""
+    # 1. Try FastAPI SSOT
+    try:
+        import requests
+        resp = requests.get(f"{_API_BASE_URL}/portfolio/summary", timeout=2.0)
+        if resp.status_code == 200:
+            data = resp.json()
+            positions = []
+            for p in data.get("positions", []):
+                positions.append(
+                    Position(
+                        ticker=p["ticker"],
+                        qty_shares=int(p["qty_shares"]),
+                        avg_entry_price=float(p["avg_entry_price"]),
+                        current_price=float(p["current_price"]),
+                        sector=str(p.get("sector", "Unknown")),
+                    )
+                )
+            return PortfolioState(
+                cash_available=float(data.get("cash_available", 0.0)),
+                total_equity=float(data.get("total_equity", 0.0)),
+                positions=positions,
+                last_updated=datetime.fromisoformat(data["last_updated"]) if "last_updated" in data else datetime.now(timezone.utc),
+            )
+    except Exception:
+        pass
+
+    # 2. SQLite Fallback
+    if _SQLITE_PATH.exists():
+        try:
+            return PortfolioDB(db_path=_SQLITE_PATH).get_portfolio_state()
+        except Exception:
+            pass
+    return None
 
 
 @st.cache_data(ttl=60)
 def load_equity_curve() -> pd.DataFrame:
-    """Load the daily equity curve from SQLite (cached 60s)."""
-    if not _SQLITE_PATH.exists():
-        return pd.DataFrame(columns=["date", "equity", "cash"])
-    return PortfolioDB(db_path=_SQLITE_PATH).get_equity_curve()
+    """Load the daily equity curve from FastAPI SSOT with SQLite fallback."""
+    try:
+        import requests
+        resp = requests.get(f"{_API_BASE_URL}/portfolio/equity_curve", timeout=2.0)
+        if resp.status_code == 200:
+            data = resp.json()
+            if data:
+                return pd.DataFrame(data)
+    except Exception:
+        pass
+
+    if _SQLITE_PATH.exists():
+        try:
+            return PortfolioDB(db_path=_SQLITE_PATH).get_equity_curve()
+        except Exception:
+            pass
+    return pd.DataFrame(columns=["date", "equity", "cash"])
 
 
 @st.cache_data(ttl=60)
 def load_signals(statuses: tuple[str, ...], limit: int | None = None) -> pd.DataFrame:
-    """Load audit-log rows for the given statuses (cached 60s)."""
-    if not _SQLITE_PATH.exists():
-        return pd.DataFrame()
-    db = PortfolioDB(db_path=_SQLITE_PATH)
-    return pd.DataFrame(db.fetch_signals_by_status(list(statuses), limit=limit))
+    """Load audit-log rows for the given statuses via FastAPI SSOT with SQLite fallback."""
+    try:
+        import requests
+        params = [("status", s) for s in statuses]
+        if limit:
+            params.append(("limit", str(limit)))
+        resp = requests.get(f"{_API_BASE_URL}/signals", params=params, timeout=2.0)
+        if resp.status_code == 200:
+            data = resp.json()
+            if data:
+                return pd.DataFrame(data)
+    except Exception:
+        pass
+
+    if _SQLITE_PATH.exists():
+        try:
+            db = PortfolioDB(db_path=_SQLITE_PATH)
+            return pd.DataFrame(db.fetch_signals_by_status(list(statuses), limit=limit))
+        except Exception:
+            pass
+    return pd.DataFrame()
 
 
 def _classify_audit_row(row: dict) -> str:
@@ -13567,9 +13622,7 @@ def _map_reject_to_funnel_drop(classified: str, reason: str) -> str:
 
 @st.cache_data(ttl=300, show_spinner=False)
 def get_funnel_metrics(days: int = 7) -> dict:
-    """Build decision-funnel stats from SQLite audit logs (last ``days``).
-
-    Reuses ``WeeklyHistorian._classify`` taxonomy. No new tables.
+    """Build decision-funnel stats via FastAPI SSOT with SQLite fallback.
 
     Returns:
         dict: Counts, waterfall series, rejection pie series, survival rate.
@@ -13594,6 +13647,16 @@ def get_funnel_metrics(days: int = 7) -> dict:
         "waterfall_measure": [],
         "empty": True,
     }
+    # 1. Try FastAPI SSOT
+    try:
+        import requests
+        resp = requests.get(f"{_API_BASE_URL}/analytics/funnel", params={"days": days}, timeout=2.0)
+        if resp.status_code == 200:
+            return resp.json()
+    except Exception:
+        pass
+
+    # 2. SQLite Fallback
     if not _SQLITE_PATH.exists():
         return empty
     try:
@@ -17288,7 +17351,21 @@ with tab_postmortem:
 
     st.markdown("---")
     st.markdown("#### 📜 Registre Global des Signaux Exécutés & Clôturés (Audit Logs)")
-    closed_logs = db_pm.fetch_closed_signals(limit=30)
+    closed_logs = []
+    try:
+        import requests
+        resp = requests.get(f"{_API_BASE_URL}/ledger/closed", params={"limit": 30}, timeout=2.0)
+        if resp.status_code == 200:
+            closed_logs = resp.json()
+    except Exception:
+        pass
+
+    if not closed_logs and hasattr(db_pm, "fetch_closed_signals"):
+        try:
+            closed_logs = db_pm.fetch_closed_signals(limit=30)
+        except Exception:
+            closed_logs = []
+
     if closed_logs:
         df_logs = pd.DataFrame(closed_logs)
         disp_logs = pd.DataFrame({
@@ -18165,6 +18242,195 @@ def get_ticker_context(symbol: str = FastPath(..., description="Ticker symbol, e
         raise
     except Exception as exc:
         logger.exception("Context error for %s: %s", clean_sym, exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/api/v1/portfolio/equity_curve", response_model=List[Dict[str, Any]])
+def get_equity_curve() -> List[Dict[str, Any]]:
+    """Return historical daily equity curve."""
+    try:
+        df = _PORTFOLIO_DB.get_equity_curve()
+        if df is None or df.empty:
+            return []
+        return df.to_dict(orient="records")
+    except Exception as exc:
+        logger.exception("Failed to retrieve equity curve: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/api/v1/analytics/funnel", response_model=Dict[str, Any])
+def get_funnel_analytics(days: int = Query(default=7, ge=1, le=365)) -> Dict[str, Any]:
+    """Compute decision funnel statistics and rejection distribution over a time window."""
+    try:
+        from datetime import timedelta
+        since = (datetime.now() - timedelta(days=int(days))).strftime("%Y-%m-%dT00:00:00")
+        rows = _PORTFOLIO_DB.fetch_signals_since(since)
+
+        empty = {
+            "days": days,
+            "total": 0,
+            "approved": 0,
+            "rejected": 0,
+            "survival_rate": 0.0,
+            "drops": {
+                "sanity_liquidity": 0,
+                "macro_vix": 0,
+                "sector": 0,
+                "correlation": 0,
+                "cash_sizing": 0,
+            },
+            "rejection_counts": {},
+            "waterfall_x": [],
+            "waterfall_y": [],
+            "waterfall_measure": [],
+            "empty": True,
+        }
+        if not rows:
+            return empty
+
+        def _classify(row: dict) -> str:
+            status = (row.get("status") or "").upper()
+            reason = (row.get("reason") or "").lower()
+            if status in ("EXECUTED", "APPROVED"):
+                return "executed"
+            if status == "REVOKED":
+                return "revoked"
+            if status == "REJECTED":
+                if "vix" in reason or "panic" in reason:
+                    return "vetoed_vix"
+                if "earnings" in reason or "blackout" in reason:
+                    return "vetoed_earnings"
+                if "illiquid" in reason or "adv" in reason:
+                    return "vetoed_liquidity"
+                if "max satellite" in reason or "max positions" in reason:
+                    return "vetoed_max_positions"
+                if "macro" in reason or ("veto" in reason and "earnings" not in reason):
+                    return "vetoed_macro"
+                if "sector" in reason:
+                    return "vetoed_sector"
+                if "correlation" in reason or "correlated" in reason:
+                    return "vetoed_correlation"
+                return "rejected_other"
+            return "other"
+
+        def _map_drop(classified: str, reason: str) -> str:
+            reason_l = (reason or "").lower()
+            if "insufficient cash" in reason_l or "insufficient cash for 1 share" in reason_l:
+                return "cash_sizing"
+            if classified in ("vetoed_liquidity", "vetoed_max_positions"):
+                return "sanity_liquidity"
+            if "no current price" in reason_l or "no price" in reason_l:
+                return "sanity_liquidity"
+            if classified in ("vetoed_vix", "vetoed_macro", "vetoed_earnings"):
+                return "macro_vix"
+            if classified == "vetoed_sector":
+                return "sector"
+            if classified == "vetoed_correlation":
+                return "correlation"
+            return "sanity_liquidity"
+
+        drops = {
+            "sanity_liquidity": 0,
+            "macro_vix": 0,
+            "sector": 0,
+            "correlation": 0,
+            "cash_sizing": 0,
+        }
+        rejection_counts: Dict[str, int] = {}
+        approved = 0
+        rejected = 0
+
+        for row in rows:
+            bucket = _classify(row)
+            status = (row.get("status") or "").upper()
+            if bucket == "executed" or status in ("APPROVED", "EXECUTED"):
+                approved += 1
+                continue
+            if status != "REJECTED":
+                continue
+            rejected += 1
+            rejection_counts[bucket] = rejection_counts.get(bucket, 0) + 1
+            drop_key = _map_drop(bucket, str(row.get("reason") or ""))
+            drops[drop_key] = drops.get(drop_key, 0) + 1
+
+        total = len(rows)
+        drop_sum = sum(drops.values())
+        remainder = max(0, total - drop_sum - approved)
+        survival = (approved / total * 100.0) if total else 0.0
+
+        x = ["Signaux bruts"]
+        y = [float(total)]
+        measure = ["absolute"]
+        drop_steps = [
+            ("sanity_liquidity", "− Sanity & liquidité"),
+            ("macro_vix", "− Macro / VIX / earnings"),
+            ("sector", "− Limite secteur"),
+            ("correlation", "− Corrélation"),
+            ("cash_sizing", "− Cash / sizing"),
+        ]
+        for key, label in drop_steps:
+            n = int(drops.get(key, 0))
+            if n <= 0:
+                continue
+            x.append(label)
+            y.append(float(-n))
+            measure.append("relative")
+        if remainder > 0:
+            x.append("− Pending / révoqués / autres")
+            y.append(float(-remainder))
+            measure.append("relative")
+        x.append("Survivants (APPROVED)")
+        y.append(0.0)
+        measure.append("total")
+
+        return {
+            "days": days,
+            "total": total,
+            "approved": approved,
+            "rejected": rejected,
+            "remainder": remainder,
+            "survival_rate": round(survival, 1),
+            "drops": drops,
+            "rejection_counts": rejection_counts,
+            "waterfall_x": x,
+            "waterfall_y": y,
+            "waterfall_measure": measure,
+            "empty": False,
+        }
+    except Exception as exc:
+        logger.exception("Failed to compute funnel analytics: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/api/v1/ledger/closed", response_model=List[Dict[str, Any]])
+def get_closed_ledger(limit: int = Query(default=50, ge=1, le=200)) -> List[Dict[str, Any]]:
+    """Return historical closed or executed transactions from audit logs."""
+    try:
+        import sqlite3
+        with sqlite3.connect(_PORTFOLIO_DB.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT id, ticker, signal_type, quantity, price, score, reason, created_at "
+                "FROM audit_logs WHERE status='CLOSED' OR status='EXECUTED' "
+                "ORDER BY created_at DESC LIMIT ?;",
+                (limit,)
+            ).fetchall()
+            return [dict(r) for r in rows]
+    except Exception as exc:
+        logger.exception("Failed to query closed ledger: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/api/v1/signals", response_model=List[Dict[str, Any]])
+def get_signals_by_status(
+    status: List[str] = Query(default=["PENDING"]),
+    limit: Optional[int] = Query(default=None, ge=1, le=200),
+) -> List[Dict[str, Any]]:
+    """Return audit log signals filtered by statuses."""
+    try:
+        return _PORTFOLIO_DB.fetch_signals_by_status(status, limit=limit)
+    except Exception as exc:
+        logger.exception("Failed to fetch signals: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc))
 
 
@@ -22640,6 +22906,147 @@ if __name__ == "__main__":
     unittest.main()
 ```
 
+## FILE: tests/test_brain_and_decoupling.py
+```python
+"""Unit Tests for Brain Wiring (Bandit, Ensemble, Continuous VIX), UI Decoupling, and OpenInsider."""
+
+from __future__ import annotations
+
+import gc
+import os
+import sys
+import tempfile
+import unittest
+from datetime import datetime, timezone
+from pathlib import Path
+
+import pandas as pd
+from fastapi.testclient import TestClient
+
+ROOT = Path(__file__).resolve().parent.parent
+for sub in ("00_data_sensors", "00_data_sensors/scrapers", "01_memory_core", "02_quant_engine", "03_risk_portfolio", "04_orchestrator_ai", "05_interfaces", "06_api"):
+    sys.path.insert(0, str(ROOT / sub))
+
+from openinsider_eu_scraper import OpenInsiderEuScraper, clean_numeric_value
+from technical_scorer import SignalGenerator
+from signal_priority_cascade import SignalOrchestrator
+from data_models import PortfolioState, Position, Signal, SignalStatus, SignalType
+from internal_api import app
+
+
+class TestBrainAndDecouplingSuite(unittest.TestCase):
+
+    def test_01_openinsider_numeric_cleaner(self):
+        """Verify currency and numeric string parsing in OpenInsider scraper."""
+        self.assertEqual(clean_numeric_value("€ 1,200,000"), 1200000.0)
+        self.assertEqual(clean_numeric_value("$ 500k"), 500000.0)
+        self.assertEqual(clean_numeric_value("12.50 €"), 12.50)
+        self.assertEqual(clean_numeric_value("1,250.75"), 1250.75)
+        self.assertEqual(clean_numeric_value(""), 0.0)
+        self.assertEqual(clean_numeric_value(None), 0.0)
+        self.assertEqual(clean_numeric_value(1500), 1500.0)
+
+    def test_02_technical_scorer_bandit_ensemble_lineage(self):
+        """Verify SignalGenerator dynamically applies bandit and ensemble weights and records in lineage."""
+        dates = pd.date_range("2024-01-01", periods=260, freq="B")
+        base = [100.0 + i * 0.5 for i in range(260)]
+        close = list(base)
+        # Create oversold pullback with 2-bar bounce
+        for idx, mult in enumerate([0.95, 0.92, 0.89, 0.86, 0.84, 0.83, 0.85, 0.86]):
+            close[-8 + idx] = close[-9] * mult
+
+        mock_df = pd.DataFrame({
+            "Ticker": "TEST.PA",
+            "Date": dates,
+            "Open": close,
+            "High": [c * 1.01 for c in close],
+            "Low": [c * 0.99 for c in close],
+            "Close": close,
+            "Volume": [1_000_000] * len(close),
+        })
+
+        class _MockDB:
+            def get_historical_prices(self, ticker: str, days: int = 252) -> pd.DataFrame:
+                return mock_df
+
+        gen = SignalGenerator()
+        signals = gen.generate_raw_signals(
+            _MockDB(),
+            ["TEST.PA"],
+            apply_quality_filter=False,
+            current_regime="BULL",
+        )
+
+        self.assertGreaterEqual(len(signals), 1)
+        sig = signals[0]
+        self.assertEqual(sig.signal_type, SignalType.BUY)
+        self.assertIn("bandit_weights", sig.lineage)
+        self.assertIn("ensemble_weights", sig.lineage)
+        self.assertIn("scaled_mr_score", sig.lineage)
+        self.assertIn("scaled_trend_score", sig.lineage)
+
+    def test_03_continuous_vix_regime_cascade(self):
+        """Verify SignalOrchestrator evaluates continuous VIX regime and sets dynamic floor."""
+        orchestrator = SignalOrchestrator()
+        self.assertIsNotNone(orchestrator.vol_sentinel)
+
+        pf = PortfolioState(
+            cash_available=10000.0,
+            total_equity=10000.0,
+            positions=[],
+            last_updated=datetime.now(timezone.utc),
+        )
+
+        sig = Signal(
+            ticker="MC.PA",
+            signal_type=SignalType.BUY,
+            score=72.0,  # Below 75 floor
+            status=SignalStatus.PENDING,
+        )
+
+        # In elevated volatility (VIX=28.0), conviction floor is raised (+5 pts -> 75 -> 80)
+        res = orchestrator.process_raw_signals(
+            raw_signals=[sig],
+            portfolio=pf,
+            current_prices={"MC.PA": 600.0},
+            vix_level=28.0,
+        )
+
+        self.assertEqual(len(res), 1)
+        self.assertEqual(res[0].status, SignalStatus.REJECTED)
+        self.assertIn("conviction floor", res[0].reason.lower())
+
+    def test_04_fastapi_decoupled_endpoints(self):
+        """Verify newly decoupled FastAPI endpoints (/equity_curve, /analytics/funnel, /ledger/closed, /signals)."""
+        client = TestClient(app)
+
+        # 1. Equity Curve
+        resp_eq = client.get("/api/v1/portfolio/equity_curve")
+        self.assertEqual(resp_eq.status_code, 200)
+        self.assertIsInstance(resp_eq.json(), list)
+
+        # 2. Funnel Analytics
+        resp_funnel = client.get("/api/v1/analytics/funnel?days=7")
+        self.assertEqual(resp_funnel.status_code, 200)
+        data_funnel = resp_funnel.json()
+        self.assertIn("drops", data_funnel)
+        self.assertIn("survival_rate", data_funnel)
+
+        # 3. Closed Ledger
+        resp_ledger = client.get("/api/v1/ledger/closed?limit=10")
+        self.assertEqual(resp_ledger.status_code, 200)
+        self.assertIsInstance(resp_ledger.json(), list)
+
+        # 4. Signals by Status
+        resp_sig = client.get("/api/v1/signals?status=PENDING&limit=10")
+        self.assertEqual(resp_sig.status_code, 200)
+        self.assertIsInstance(resp_sig.json(), list)
+
+
+if __name__ == "__main__":
+    unittest.main()
+```
+
 ## FILE: tests/test_finbert_sentiment.py
 ```python
 """Unit Tests for FinBERT Sentiment Scorer and Batch NLP Engine."""
@@ -22655,9 +23062,9 @@ ROOT = Path(__file__).resolve().parent.parent
 for sub in ("00_data_sensors", "01_memory_core", "02_quant_engine", "03_risk_portfolio", "04_orchestrator_ai"):
     sys.path.insert(0, str(ROOT / sub))
 
-from news_sentiment_llm import NewsSentimentScorer
-from nlp_sentiment_engine import score_news_batch
+from news_sentiment_llm import NewsSentimentScorer, score_news_batch
 from sqlite_portfolio import SQLitePortfolioDB
+
 
 
 class TestFinBertSentimentSuite(unittest.TestCase):

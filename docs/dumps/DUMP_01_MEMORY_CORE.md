@@ -1,5 +1,5 @@
 # PEA Pollux — Memory Core, State Persistence & Data Contracts
-Generated: `2026-08-15 17:35 UTC` | File Count: `8`
+Generated: `2026-08-15 22:06 UTC` | File Count: `8`
 Institutional Systematic Decision Support Architecture for French PEA.
 ---
 ## Included Files Index
@@ -1550,6 +1550,18 @@ class PortfolioDB:
     def insert_raw_news(self, items: list[dict]) -> int:
         """Alias for save_news_items to insert batch news."""
         return self.save_news_items(items)
+
+    def mark_news_processed(
+        self, news_id: str, sentiment_score: float = 0.0, sentiment_label: str = "neutral"
+    ) -> bool:
+        """Mark a single news article as processed with sentiment score and label."""
+        return (
+            self.update_news_sentiment(
+                [{"id": news_id, "sentiment_score": sentiment_score, "sentiment_label": sentiment_label}]
+            )
+            > 0
+        )
+
 
     def fetch_recent_post_mortems(self, limit: int = 50) -> list[dict]:
         """Fetch historical post-mortems from trade_post_mortems table."""

@@ -1,5 +1,5 @@
 # PEA Pollux — Quantitative Strategy, Indicators, HMM Regimes & ML Feature Store
-Generated: `2026-08-15 17:35 UTC` | File Count: `19`
+Generated: `2026-08-15 22:06 UTC` | File Count: `16`
 Institutional Systematic Decision Support Architecture for French PEA.
 ---
 ## Included Files Index
@@ -8,12 +8,9 @@ Institutional Systematic Decision Support Architecture for French PEA.
 - [02_quant_engine/cross_sectional.py](#file-02_quant_engine-cross_sectional-py)
 - [02_quant_engine/ensemble_optimizer.py](#file-02_quant_engine-ensemble_optimizer-py)
 - [02_quant_engine/hmm_regime.py](#file-02_quant_engine-hmm_regime-py)
-- [02_quant_engine/llm_sentiment_engine.py](#file-02_quant_engine-llm_sentiment_engine-py)
 - [02_quant_engine/market_regime.py](#file-02_quant_engine-market_regime-py)
-- [02_quant_engine/ml_backtester.py](#file-02_quant_engine-ml_backtester-py)
 - [02_quant_engine/ml_feature_store.py](#file-02_quant_engine-ml_feature_store-py)
 - [02_quant_engine/ml_trainer.py](#file-02_quant_engine-ml_trainer-py)
-- [02_quant_engine/nlp_sentiment_engine.py](#file-02_quant_engine-nlp_sentiment_engine-py)
 - [02_quant_engine/quantitative_math.py](#file-02_quant_engine-quantitative_math-py)
 - [02_quant_engine/risk_engine.py](#file-02_quant_engine-risk_engine-py)
 - [02_quant_engine/smart_dca_engine.py](#file-02_quant_engine-smart_dca_engine-py)
@@ -411,154 +408,6 @@ if __name__ == "__main__":
     print(f"Market Regime: {reg.value} (Confidence: {conf:.2f})")
 ```
 
-## FILE: 02_quant_engine/llm_sentiment_engine.py
-```python
-import os
-import sys
-import json
-import requests
-from pathlib import Path
-from dotenv import load_dotenv
-
-_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_ROOT / "01_memory_core"))
-
-from logging_setup import get_logger
-from sqlite_portfolio import SQLitePortfolioDB
-
-logger = get_logger("llm_sentiment_engine")
-
-load_dotenv(_ROOT / ".env")
-
-OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "mistral")
-
-# Load VADER as a fallback
-try:
-    from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
-    vader_analyzer = SentimentIntensityAnalyzer()
-except ImportError:
-    logger.warning("vaderSentiment not installed. Fallback sentiment will be 0.0.")
-    vader_analyzer = None
-
-
-def fallback_vader(text: str) -> tuple[float, str, str]:
-    """Fallback sentiment calculation using VADER."""
-    if not vader_analyzer:
-        return 0.0, "Neutral", "Fallback to neutral due to missing VADER."
-    
-    scores = vader_analyzer.polarity_scores(text)
-    compound = float(scores["compound"])
-    
-    if compound >= 0.05:
-        label = "Bullish"
-    elif compound <= -0.05:
-        label = "Bearish"
-    else:
-        label = "Neutral"
-        
-    return compound, label, "Calculated using VADER heuristic fallback."
-
-
-def call_ollama(text: str) -> tuple[float, str, str] | None:
-    """Send text to Ollama and ask for structured JSON."""
-    prompt = f"""You are a professional quantitative analyst. 
-Analyze the following financial news article and return a strict JSON object with EXACTLY these three keys:
-- "guidance_score": A float between -1.0 (extremely bearish) and 1.0 (extremely bullish).
-- "sentiment_label": Must be exactly one of "Bullish", "Bearish", or "Neutral".
-- "reasoning": A brief one-sentence financial justification for the score.
-
-News text:
-{text}
-
-Return ONLY the JSON object. Do not include markdown formatting or conversational text."""
-
-    payload = {
-        "model": OLLAMA_MODEL,
-        "prompt": prompt,
-        "stream": False,
-        "format": "json"
-    }
-
-    try:
-        url = f"{OLLAMA_URL.rstrip('/')}/api/generate"
-        response = requests.post(url, json=payload, timeout=20)
-        response.raise_for_status()
-        
-        result = response.json()
-        output_text = result.get("response", "").strip()
-        
-        # Ollama might wrap JSON in markdown block even with format="json" in some models
-        if output_text.startswith("``​`json"):
-            output_text = output_text[7:]
-        if output_text.endswith("``​`"):
-            output_text = output_text[:-3]
-            
-        data = json.loads(output_text.strip())
-        
-        g_score = float(data.get("guidance_score", 0.0))
-        label = str(data.get("sentiment_label", "Neutral"))
-        reasoning = str(data.get("reasoning", "No reasoning provided."))
-        
-        # Ensure label validity
-        if label not in ("Bullish", "Bearish", "Neutral"):
-            label = "Neutral"
-            
-        # Ensure score bounds
-        g_score = max(-1.0, min(1.0, g_score))
-        
-        return g_score, label, reasoning
-        
-    except Exception as e:
-        logger.warning(f"Ollama inference failed: {e}")
-        return None
-
-
-def score_news_batch(db: SQLitePortfolioDB):
-    """Fetch unprocessed news, score them using Ollama (or VADER), and update the DB."""
-    unprocessed = db.get_unprocessed_news()
-    if not unprocessed:
-        logger.info("No unprocessed news found.")
-        return
-        
-    logger.info("Scoring %d unprocessed news items with Ollama (%s)...", len(unprocessed), OLLAMA_MODEL)
-    
-    updates = []
-    
-    for item in unprocessed:
-        text = f"{item['title']} {item['content'] or ''}"
-        # Truncate text if it's too long for typical small LLM context
-        text = text[:4000]
-        
-        res = call_ollama(text)
-        if res:
-            compound, label, reasoning = res
-            logger.debug("Ollama success for news ID %s: %s", item["id"], label)
-        else:
-            compound, label, reasoning = fallback_vader(text)
-            logger.debug("VADER fallback for news ID %s: %s", item["id"], label)
-            
-        # We also might want to store reasoning, but our news_master schema might not have it yet.
-        # We will just log it for now and update sentiment.
-        # The prompt requested we use the database, the schema has:
-        # id, published_at, ticker, source, url, title, content, sentiment_score, sentiment_label
-        
-        updates.append({
-            "id": item["id"],
-            "sentiment_score": compound,
-            "sentiment_label": label
-        })
-        
-    if updates:
-        db.update_news_sentiment(updates)
-        logger.info("LLM Sentiment scoring completed for %d items.", len(updates))
-
-
-if __name__ == "__main__":
-    db = SQLitePortfolioDB()
-    score_news_batch(db)
-```
-
 ## FILE: 02_quant_engine/market_regime.py
 ```python
 """Market Regime & Volatility Percentile Tiers for PEA Sniper Terminal.
@@ -706,32 +555,6 @@ if __name__ == "__main__":
     fake_vix = np.random.normal(18.0, 4.0, 252)
     res = sentinel.evaluate_vix_regime(fake_vix, current_vix=28.5)
     print("Regime Assessment:", res)
-```
-
-## FILE: 02_quant_engine/ml_backtester.py
-```python
-import pandas as pd
-import numpy as np
-
-def run_autonomous_backtest(csv_path: str, initial_capital: float = 10000.0) -> pd.DataFrame:
-    """Run an autonomous backtest on the ML dataset vs CW8.
-    
-    Dynamically sizes trades based on Score/Probability.
-    Includes 0.5% slippage/fees.
-    Uses a threshold to avoid high frequency (e.g. Score > 70).
-    """
-    try:
-        df = pd.read_csv(csv_path)
-    except Exception:
-        return pd.DataFrame()
-
-    if df.empty or 'Date' not in df.columns:
-        return pd.DataFrame()
-
-    df['Date'] = pd.to_datetime(df['Date'])
-    df = df.sort_values('Date')
-    
-    return df
 ```
 
 ## FILE: 02_quant_engine/ml_feature_store.py
@@ -1284,109 +1107,6 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     m = train_model()
     print(json.dumps(m, indent=2))
-```
-
-## FILE: 02_quant_engine/nlp_sentiment_engine.py
-```python
-"""Batch NLP News Sentiment Engine using ProsusAI/finbert transformer model.
-
-Scores unprocessed news items in SQLite database and persists sentiment labels
-('Bullish', 'Bearish', 'Neutral') and numeric compound scores in [-1.0, 1.0].
-"""
-
-from __future__ import annotations
-
-import logging
-import sys
-from pathlib import Path
-from typing import Any, Dict, List
-
-_ROOT = Path(__file__).resolve().parent.parent
-for _d in ("00_data_sensors", "01_memory_core", "02_quant_engine", "03_risk_portfolio", "04_orchestrator_ai"):
-    sys.path.insert(0, str(_ROOT / _d))
-
-from sqlite_portfolio import SQLitePortfolioDB
-from news_sentiment_llm import get_finbert_pipeline
-
-logger = logging.getLogger("nlp_sentiment_engine")
-
-
-def score_news_batch(db: SQLitePortfolioDB) -> None:
-    """Fetch unprocessed news, score them using ProsusAI/finbert, and update the database."""
-    unprocessed = db.get_unprocessed_news()
-    if not unprocessed:
-        logger.info("No unprocessed news found.")
-        return
-
-    logger.info("Scoring %d unprocessed news items with FinBERT...", len(unprocessed))
-
-    nlp = get_finbert_pipeline()
-    updates: List[Dict[str, Any]] = []
-
-    for item in unprocessed:
-        # Sanitize and truncate content to avoid token limit and boilerplate
-        raw_combined = f"{item['title']} {item.get('content') or ''}"
-        try:
-            from text_cleaner import clean_financial_text
-            text = clean_financial_text(raw_combined, max_chars=1500)
-        except Exception:
-            text = raw_combined[:1500].strip()
-
-        if not text:
-            continue
-
-        label = "Neutral"
-        compound = 0.0
-
-        if nlp is not None:
-            try:
-                outputs = nlp(text)
-                if outputs and isinstance(outputs[0], list):
-                    sorted_preds = sorted(outputs[0], key=lambda x: x.get("score", 0.0), reverse=True)
-                    top = sorted_preds[0]
-                elif outputs and isinstance(outputs[0], dict):
-                    top = outputs[0]
-                else:
-                    top = {"label": "neutral", "score": 1.0}
-
-                pred_label = str(top.get("label", "neutral")).lower()
-                prob = float(top.get("score", 0.0))
-
-                if pred_label == "positive" and prob > 0.50:
-                    label = "Bullish"
-                    compound = prob
-                elif pred_label == "negative" and prob > 0.50:
-                    label = "Bearish"
-                    compound = -prob
-                else:
-                    label = "Neutral"
-                    compound = 0.0
-            except Exception as exc:
-                logger.debug("FinBERT inference error on news item %s: %s", item.get("id"), exc)
-        else:
-            # Fallback keyword scoring
-            t_lower = text.lower()
-            if any(w in t_lower for w in ("record", "croissance", "hausse", "bénéfice", "upgrade", "beat")):
-                label = "Bullish"
-                compound = 0.70
-            elif any(w in t_lower for w in ("chute", "baisse", "perte", "déficit", "downgrade", "miss")):
-                label = "Bearish"
-                compound = -0.70
-
-        updates.append({
-            "id": item["id"],
-            "sentiment_score": round(compound, 4),
-            "sentiment_label": label,
-        })
-
-    if updates:
-        db.update_news_sentiment(updates)
-        logger.info("FinBERT sentiment scoring completed for %d items.", len(updates))
-
-
-if __name__ == "__main__":
-    db = SQLitePortfolioDB()
-    score_news_batch(db)
 ```
 
 ## FILE: 02_quant_engine/quantitative_math.py
@@ -2202,6 +1922,22 @@ sys.path.insert(0, _CORE_DIR)
 
 from data_models import Signal, SignalStatus, SignalType  # noqa: E402
 
+try:
+    from contextual_bandit import UCBBandit
+except ImportError:
+    try:
+        from .contextual_bandit import UCBBandit
+    except Exception:
+        UCBBandit = None
+
+try:
+    from ensemble_optimizer import DynamicEnsemble
+except ImportError:
+    try:
+        from .ensemble_optimizer import DynamicEnsemble
+    except Exception:
+        DynamicEnsemble = None
+
 logger = logging.getLogger(__name__)
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -2336,28 +2072,51 @@ class SignalGenerator:
         tickers: List[str],
         apply_quality_filter: bool = True,
         apply_momentum_filter: bool = True,
+        current_regime: str = "BULL",
     ) -> List[Signal]:
         """Evaluate each ticker and emit raw Mean-Reversion Exhaustion signals.
 
         Rule (BUY): the most recent bar has ``Close > SMA_200`` (long-term
         uptrend) AND ``RSI_14 < RSI_OVERSOLD_THRESHOLD`` (default 30), refined by:
 
-          * Quality filter (Phase 11): the company must be profitable (EPS > 0).
-          * Momentum filter (Phase 11): do not catch falling knives — require
+          * Quality filter: the company must be profitable (EPS > 0).
+          * Momentum filter: do not catch falling knives — require
             ``Close > SMA_5`` so the pullback is already stabilizing.
           * Trend Quality boost (Aegis): +0 to +15 points for clean linear uptrends (R^2 * slope).
+          * Dynamic weighting: scaled by Contextual Bandit arm weights & Dynamic Ensemble optimization.
 
         Args:
-            db_manager: A Phase 2 ``TimeSeriesDB`` exposing
-                ``get_historical_prices(ticker, days)``.
+            db_manager: A TimeSeriesDB exposing ``get_historical_prices(ticker, days)``.
             tickers: Ticker symbols to evaluate.
             apply_quality_filter: Skip loss-making companies when ``True``.
             apply_momentum_filter: Require ``Close > SMA_5`` when ``True``.
+            current_regime: Current macro regime ("BULL", "BEAR", "VOLATILE").
 
         Returns:
             List[Signal]: PENDING BUY signals for tickers meeting all rules.
         """
         signals: List[Signal] = []
+
+        # Retrieve Dynamic Ensemble and UCB Bandit weights
+        ensemble_weights = {}
+        if DynamicEnsemble is not None:
+            try:
+                ensemble_weights = DynamicEnsemble().get_optimized_weights()
+            except Exception as exc:
+                logger.debug("Failed to get DynamicEnsemble weights: %s", exc)
+
+        bandit_weights = {}
+        if UCBBandit is not None:
+            try:
+                bandit_weights = UCBBandit().get_weights(regime=current_regime)
+            except Exception as exc:
+                logger.debug("Failed to get UCBBandit weights: %s", exc)
+
+        # Baseline weights: MR (0.25), Trend (0.30)
+        mr_arm_w = float(bandit_weights.get("mean_reversion", 0.25)) if bandit_weights else 0.25
+        trend_arm_w = float(bandit_weights.get("trend", 0.30)) if bandit_weights else 0.30
+        mr_ens_w = float(ensemble_weights.get("heuristic_mr_weight", 0.25)) if ensemble_weights else 0.25
+        trend_ens_w = float(ensemble_weights.get("heuristic_trend_weight", 0.30)) if ensemble_weights else 0.30
 
         for ticker in tickers:
             df = db_manager.get_historical_prices(ticker, days=252)
@@ -2407,10 +2166,17 @@ class SignalGenerator:
                 t_qual = self.calculate_trend_quality(df["Close"])
                 # Aegis Trend Quality boost: up to +15 pts for smooth linear uptrends
                 qual_bonus = min(15.0, max(0.0, t_qual * 30.0)) if t_qual > 0.05 else 0.0
-                final_score = float(min(100.0, base_score + qual_bonus))
 
-                qual_txt = f" · Trend Quality +{qual_bonus:.1f}pts (TQ={t_qual:.2f})" if qual_bonus > 0 else ""
-                # Complete feature snapshot dump for ML training replay
+                # Dynamic Bandit & Ensemble Scaling
+                mr_multiplier = (mr_arm_w / 0.25) * (mr_ens_w / 0.25)
+                trend_multiplier = (trend_arm_w / 0.30) * (trend_ens_w / 0.30)
+
+                scaled_mr_score = base_score * mr_multiplier
+                scaled_trend_score = qual_bonus * trend_multiplier
+                final_score = float(min(100.0, max(0.0, scaled_mr_score + scaled_trend_score)))
+
+                qual_txt = f" · Trend Quality +{scaled_trend_score:.1f}pts (TQ={t_qual:.2f})" if scaled_trend_score > 0 else ""
+                # Complete feature snapshot dump for ML training replay and auditability
                 atr_14 = float(enriched.ta.atr(length=14).iloc[-1]) if hasattr(enriched, "ta") and "High" in enriched.columns else 0.0
                 vol_s = enriched["Volume"] if "Volume" in enriched.columns else pd.Series([1000] * len(enriched))
                 vol_z = float((vol_s.iloc[-1] - vol_s.tail(20).mean()) / (vol_s.tail(20).std() + 1e-6))
@@ -2429,6 +2195,11 @@ class SignalGenerator:
                     "trailing_eps": float(self._trailing_eps(ticker) or 0.0),
                     "base_score": float(base_score),
                     "final_score": float(final_score),
+                    "current_regime": current_regime,
+                    "bandit_weights": bandit_weights,
+                    "ensemble_weights": ensemble_weights,
+                    "scaled_mr_score": round(scaled_mr_score, 2),
+                    "scaled_trend_score": round(scaled_trend_score, 2),
                 }
 
                 signal = Signal(

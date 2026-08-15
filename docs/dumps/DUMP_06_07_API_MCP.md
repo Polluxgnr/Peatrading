@@ -1,5 +1,5 @@
 # PEA Pollux — Internal FastAPI Gateway & Claude Desktop MCP Server
-Generated: `2026-08-15 17:35 UTC` | File Count: `4`
+Generated: `2026-08-15 22:06 UTC` | File Count: `4`
 Institutional Systematic Decision Support Architecture for French PEA.
 ---
 ## Included Files Index
@@ -243,6 +243,195 @@ def get_ticker_context(symbol: str = FastPath(..., description="Ticker symbol, e
         raise
     except Exception as exc:
         logger.exception("Context error for %s: %s", clean_sym, exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/api/v1/portfolio/equity_curve", response_model=List[Dict[str, Any]])
+def get_equity_curve() -> List[Dict[str, Any]]:
+    """Return historical daily equity curve."""
+    try:
+        df = _PORTFOLIO_DB.get_equity_curve()
+        if df is None or df.empty:
+            return []
+        return df.to_dict(orient="records")
+    except Exception as exc:
+        logger.exception("Failed to retrieve equity curve: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/api/v1/analytics/funnel", response_model=Dict[str, Any])
+def get_funnel_analytics(days: int = Query(default=7, ge=1, le=365)) -> Dict[str, Any]:
+    """Compute decision funnel statistics and rejection distribution over a time window."""
+    try:
+        from datetime import timedelta
+        since = (datetime.now() - timedelta(days=int(days))).strftime("%Y-%m-%dT00:00:00")
+        rows = _PORTFOLIO_DB.fetch_signals_since(since)
+
+        empty = {
+            "days": days,
+            "total": 0,
+            "approved": 0,
+            "rejected": 0,
+            "survival_rate": 0.0,
+            "drops": {
+                "sanity_liquidity": 0,
+                "macro_vix": 0,
+                "sector": 0,
+                "correlation": 0,
+                "cash_sizing": 0,
+            },
+            "rejection_counts": {},
+            "waterfall_x": [],
+            "waterfall_y": [],
+            "waterfall_measure": [],
+            "empty": True,
+        }
+        if not rows:
+            return empty
+
+        def _classify(row: dict) -> str:
+            status = (row.get("status") or "").upper()
+            reason = (row.get("reason") or "").lower()
+            if status in ("EXECUTED", "APPROVED"):
+                return "executed"
+            if status == "REVOKED":
+                return "revoked"
+            if status == "REJECTED":
+                if "vix" in reason or "panic" in reason:
+                    return "vetoed_vix"
+                if "earnings" in reason or "blackout" in reason:
+                    return "vetoed_earnings"
+                if "illiquid" in reason or "adv" in reason:
+                    return "vetoed_liquidity"
+                if "max satellite" in reason or "max positions" in reason:
+                    return "vetoed_max_positions"
+                if "macro" in reason or ("veto" in reason and "earnings" not in reason):
+                    return "vetoed_macro"
+                if "sector" in reason:
+                    return "vetoed_sector"
+                if "correlation" in reason or "correlated" in reason:
+                    return "vetoed_correlation"
+                return "rejected_other"
+            return "other"
+
+        def _map_drop(classified: str, reason: str) -> str:
+            reason_l = (reason or "").lower()
+            if "insufficient cash" in reason_l or "insufficient cash for 1 share" in reason_l:
+                return "cash_sizing"
+            if classified in ("vetoed_liquidity", "vetoed_max_positions"):
+                return "sanity_liquidity"
+            if "no current price" in reason_l or "no price" in reason_l:
+                return "sanity_liquidity"
+            if classified in ("vetoed_vix", "vetoed_macro", "vetoed_earnings"):
+                return "macro_vix"
+            if classified == "vetoed_sector":
+                return "sector"
+            if classified == "vetoed_correlation":
+                return "correlation"
+            return "sanity_liquidity"
+
+        drops = {
+            "sanity_liquidity": 0,
+            "macro_vix": 0,
+            "sector": 0,
+            "correlation": 0,
+            "cash_sizing": 0,
+        }
+        rejection_counts: Dict[str, int] = {}
+        approved = 0
+        rejected = 0
+
+        for row in rows:
+            bucket = _classify(row)
+            status = (row.get("status") or "").upper()
+            if bucket == "executed" or status in ("APPROVED", "EXECUTED"):
+                approved += 1
+                continue
+            if status != "REJECTED":
+                continue
+            rejected += 1
+            rejection_counts[bucket] = rejection_counts.get(bucket, 0) + 1
+            drop_key = _map_drop(bucket, str(row.get("reason") or ""))
+            drops[drop_key] = drops.get(drop_key, 0) + 1
+
+        total = len(rows)
+        drop_sum = sum(drops.values())
+        remainder = max(0, total - drop_sum - approved)
+        survival = (approved / total * 100.0) if total else 0.0
+
+        x = ["Signaux bruts"]
+        y = [float(total)]
+        measure = ["absolute"]
+        drop_steps = [
+            ("sanity_liquidity", "− Sanity & liquidité"),
+            ("macro_vix", "− Macro / VIX / earnings"),
+            ("sector", "− Limite secteur"),
+            ("correlation", "− Corrélation"),
+            ("cash_sizing", "− Cash / sizing"),
+        ]
+        for key, label in drop_steps:
+            n = int(drops.get(key, 0))
+            if n <= 0:
+                continue
+            x.append(label)
+            y.append(float(-n))
+            measure.append("relative")
+        if remainder > 0:
+            x.append("− Pending / révoqués / autres")
+            y.append(float(-remainder))
+            measure.append("relative")
+        x.append("Survivants (APPROVED)")
+        y.append(0.0)
+        measure.append("total")
+
+        return {
+            "days": days,
+            "total": total,
+            "approved": approved,
+            "rejected": rejected,
+            "remainder": remainder,
+            "survival_rate": round(survival, 1),
+            "drops": drops,
+            "rejection_counts": rejection_counts,
+            "waterfall_x": x,
+            "waterfall_y": y,
+            "waterfall_measure": measure,
+            "empty": False,
+        }
+    except Exception as exc:
+        logger.exception("Failed to compute funnel analytics: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/api/v1/ledger/closed", response_model=List[Dict[str, Any]])
+def get_closed_ledger(limit: int = Query(default=50, ge=1, le=200)) -> List[Dict[str, Any]]:
+    """Return historical closed or executed transactions from audit logs."""
+    try:
+        import sqlite3
+        with sqlite3.connect(_PORTFOLIO_DB.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT id, ticker, signal_type, quantity, price, score, reason, created_at "
+                "FROM audit_logs WHERE status='CLOSED' OR status='EXECUTED' "
+                "ORDER BY created_at DESC LIMIT ?;",
+                (limit,)
+            ).fetchall()
+            return [dict(r) for r in rows]
+    except Exception as exc:
+        logger.exception("Failed to query closed ledger: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/api/v1/signals", response_model=List[Dict[str, Any]])
+def get_signals_by_status(
+    status: List[str] = Query(default=["PENDING"]),
+    limit: Optional[int] = Query(default=None, ge=1, le=200),
+) -> List[Dict[str, Any]]:
+    """Return audit log signals filtered by statuses."""
+    try:
+        return _PORTFOLIO_DB.fetch_signals_by_status(status, limit=limit)
+    except Exception as exc:
+        logger.exception("Failed to fetch signals: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc))
 
 
