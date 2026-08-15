@@ -1,5 +1,5 @@
 # PEA Pollux — Configuration Yaml, Test Suites, Root Ops & Documentation
-Generated: `2026-08-15 22:06 UTC` | File Count: `32`
+Generated: `2026-08-15 22:07 UTC` | File Count: `32`
 Institutional Systematic Decision Support Architecture for French PEA.
 ---
 ## Included Files Index
@@ -2914,11 +2914,11 @@ train:
 ```markdown
 # PEA Pollux — Institutional Systematic Quantitative Terminal
 
-> **Sovereign Execution · Continuous Kinetic Risk Sentinel · Absolute Quantitative Transparency**
+> **Sovereign Execution · Continuous Kinetic Risk Sentinel · Adaptive Multi-Armed Bandit Brain · Absolute Transparency**
 > 
 > Institutional-grade, zero-leverage **Quantitative Recommendation & Decision Support Engine** specifically engineered for the French **PEA** (Plan d'Épargne en Actions).
 
-The PEA Pollux platform ingests multi-source market quotes, macro spreads, insider filings, and bilingual financial news, computes multi-horizon quantitative alpha signals (Mean-Reversion Exhaustion, Statistical Arbitrage / Pairs Cointegration, Trend Quality $R^2 \times \text{slope}$, 3-State Gaussian HMM CAC 40 regimes), vets every candidate through an unyielding 7-stage risk cascade (including live Isolation Forest anomaly detection and XGBoost win probability scoring), and surfaces curated **Quantitative Recommendations** to the portfolio manager via a **Streamlit Bloomberg Terminal HUD**, a **FastAPI Central Engine (SSOT)**, and a **Claude Desktop Model Context Protocol (MCP) Server**.
+The PEA Pollux platform ingests multi-source market quotes, macro spreads, insider filings, and bilingual financial news, computes multi-horizon quantitative alpha signals (Mean-Reversion Exhaustion, Statistical Arbitrage / Pairs Cointegration, Trend Quality $R^2 \times \text{slope}$, 3-State Gaussian HMM CAC 40 regimes), dynamically weighs alpha sub-models using a **Contextual Multi-Armed Bandit (UCB)** and **Dynamic Ensemble Optimizer**, evaluates continuous 252-day volatility percentile tiers, vets every candidate through an unyielding 7-stage risk cascade (including live Isolation Forest anomaly detection and XGBoost win probability scoring), and surfaces curated **Quantitative Recommendations** to the portfolio manager via a **Streamlit Bloomberg Terminal HUD**, a **FastAPI Central Engine (SSOT)**, and a **Claude Desktop Model Context Protocol (MCP) Server**.
 
 **The system never executes broker orders autonomously.** Mathematical and statistical models generate data-backed recommendations; the human portfolio manager retains sovereign execution authority at all times.
 
@@ -2943,16 +2943,17 @@ Repository: [github.com/Polluxgnr/Peatrading](https://github.com/Polluxgnr/Peatr
 4. [End-to-End System Architecture](#-end-to-end-system-architecture)
 5. [Specialized Worker Federation](#-specialized-worker-federation)
 6. [Quantitative Alpha Streams](#-quantitative-alpha-streams)
-7. [The 7-Stage Risk & Sizing Cascade](#-the-7-stage-risk--sizing-cascade)
-8. [Autonomous Reinforcement Feedback Loop](#-autonomous-reinforcement-feedback-loop)
-9. [Operator Interfaces & Command Center](#-operator-interfaces--command-center)
-10. [Central API & Model Context Protocol (MCP)](#-central-api--model-context-protocol-mcp)
-11. [Installation & Quickstart Guide](#-installation--quickstart-guide)
-12. [Configuration Reference](#-configuration-reference)
-13. [Makefile Command Reference](#-makefile-command-reference)
-14. [LLM Context Dumps](#-llm-context-dumps)
-15. [Verification & Test Suites](#-verification--test-suites)
-16. [Institutional Disclaimer](#-institutional-disclaimer)
+7. [Adaptive AI Brain & Continuous Volatility Tiers](#-adaptive-ai-brain--continuous-volatility-tiers)
+8. [The 7-Stage Risk & Sizing Cascade](#-the-7-stage-risk--sizing-cascade)
+9. [Autonomous Reinforcement Feedback Loop](#-autonomous-reinforcement-feedback-loop)
+10. [Operator Interfaces & Command Center](#-operator-interfaces--command-center)
+11. [Central API & Model Context Protocol (MCP)](#-central-api--model-context-protocol-mcp)
+12. [Installation & Quickstart Guide](#-installation--quickstart-guide)
+13. [Configuration Reference](#-configuration-reference)
+14. [Makefile Command Reference](#-makefile-command-reference)
+15. [LLM Context Dumps](#-llm-context-dumps)
+16. [Verification & Test Suites](#-verification--test-suites)
+17. [Institutional Disclaimer](#-institutional-disclaimer)
 
 ---
 
@@ -2989,6 +2990,7 @@ flowchart TD
     subgraph SENSORS ["00. DATA SENSORS & JANITOR"]
         YF["yfinance Batch Ingestion"]
         AMF["AMF BDIF Legal Insider Scraper"]
+        OPENINS["Enhanced OpenInsider EU (Currency Cleaner)"]
         FMP["Financial Modeling Prep API"]
         NEWS["RSS / IMAP Bilingual Feeds"]
         ECB["ECB SDW 10Y OAT-Bund API"]
@@ -3009,6 +3011,9 @@ flowchart TD
         STATARB["Statistical Arbitrage Pairs (Cointegration)"]
         HMM["3-State Gaussian HMM (CAC 40 Regimes)"]
         FINBERT["ProsusAI/finbert NLP Sentiment (-100..+100)"]
+        BANDIT["Contextual UCB Bandit (Dynamic Arm Weights)"]
+        ENSEMBLE["Dynamic Ensemble Optimizer (ML vs Heuristics)"]
+        VOLTIERS["Volatility Regime Sentinel (252D Percentiles)"]
         ML_PRED["XGBoost Classifier + SHAP + Isolation Forest"]
         BACKTEST["Walk-Forward T+1 Open Backtester"]
     end
@@ -3044,7 +3049,7 @@ flowchart TD
     RISK --> ORCHESTRATOR
     ORCHESTRATOR --> MEMORY
     MEMORY --> API --> MCP
-    MEMORY --> DASHBOARD
+    API --> DASHBOARD
     ORCHESTRATOR --> DISCORD
 ``​`
 
@@ -3056,13 +3061,13 @@ The engine is organized into independent, decoupled workers:
 
 | Worker Module | Responsibility | Primary Classes / Functions |
 |---|---|---|
-| **Data Steward & Janitor** (`00_data_sensors`) | Ingests market quotes, resolves FIGI/ISIN, sanitizes HTML news into 1500-char lead text, dumps raw JSON into Bronze lake. | `MarketPricesAPI`, `FundamentalsSensor`, `MacroAlphaSensor`, `clean_financial_text`, `OpenFigiMapper` |
+| **Data Steward & Janitor** (`00_data_sensors`) | Ingests market quotes, resolves FIGI/ISIN, sanitizes HTML news into 1500-char lead text, dumps raw JSON into Bronze lake, scrapes EU insider filings with multi-currency parsing. | `MarketPricesAPI`, `FundamentalsSensor`, `MacroAlphaSensor`, `clean_financial_text`, `OpenInsiderEuScraper`, `clean_numeric_value` |
 | **Memory Core & Gateways** (`01_memory_core`) | Manages SQLite thread-safe transactions, DuckDB timeseries tables, and immutable audit logs with lineage serialization. | `PortfolioDB`, `TimeSeriesDB`, `data_models.py` |
-| **Quant Strategy Workers** (`02_quant_engine`) | Computes technical setups, cointegrated pairs, CAC 40 HMM market regimes, FinBERT sentiment, and ML win probabilities with SHAP explainability. | `SignalGenerator`, `StatArbEngine`, `HMMRegimeClassifier`, `NewsSentimentScorer`, `predict_probability_with_shap`, `WalkForwardBacktester` |
+| **Quant Strategy Workers** (`02_quant_engine`) | Computes technical setups, cointegrated pairs, CAC 40 HMM market regimes, FinBERT sentiment, dynamic UCB bandit weights, and ML win probabilities with SHAP explainability. | `SignalGenerator`, `StatArbEngine`, `HMMRegimeClassifier`, `NewsSentimentScorer`, `UCBBandit`, `DynamicEnsemble`, `VolatilityRegimeSentinel`, `WalkForwardBacktester` |
 | **Risk Sentinel** (`03_risk_portfolio`) | Enforces Pydantic strict parameter validation, drawdown circuit breakers, kinetic exposure scaling, and proportional sector rescaling. | `RiskParamsConfig`, `DrawdownBreaker`, `CorrelationFirewall`, `PeaSizer`, `StressTester` |
 | **Decision Orchestrator & AI Judges** (`04_orchestrator_ai`) | Executes the 7-stage veto cascade, conducts Red Team debates, generates CIO reports, and updates the contextual bandit reinforcement loop. | `SignalOrchestrator`, `RedTeamDebateAgent`, `TradePostMortemEngine`, `WeeklyHistorian` |
-| **Interface & Visual HUD** (`05_interfaces`) | Renders the Bloomberg-style Streamlit terminal, interactive decision funnel waterfalls, trade cards, and Discord copilot. | `terminal_dashboard.py`, `trade_cards.py`, `discord_copilot.py` |
-| **Central API (SSOT)** (`06_api`) | Single Source of Truth FastAPI service exposing portfolio state, pending recommendations, health metrics, and backtest runners. | `internal_api.py` |
+| **Interface & Visual HUD** (`05_interfaces`) | Renders the Bloomberg-style Streamlit terminal, consuming FastAPI endpoints, interactive decision funnel waterfalls, trade cards, and Discord copilot. | `terminal_dashboard.py`, `trade_cards.py`, `discord_copilot.py` |
+| **Central API (SSOT)** (`06_api`) | Single Source of Truth FastAPI service exposing portfolio state, pending recommendations, health metrics, funnel analytics, and backtest runners. | `internal_api.py` |
 | **MCP Server** (`07_mcp`) | Model Context Protocol gateway enabling Claude Desktop and external LLMs to query live portfolio status and quantitative recommendations. | `pollux_mcp.py` |
 
 ---
@@ -3084,7 +3089,7 @@ $$\text{BUY} \iff (P > \text{SMA}_{200}) \land (\text{RSI}_{14} < 30.0) \land (P
 - **Trend Quality ($R^2 \times \text{slope}$)**: Filters out erratic or noisy price action.
 - **Quality Factor**: Trailing EPS $> 0$ eliminates speculative, unprofitable companies.
 
-### 3. Statistical Arbitrage & Pairs Trading Engine
+### 3. Market-Neutral Statistical Arbitrage & Pairs Trading Engine
 - **Sector Isolation**: Cointegration tests are strictly bounded within the same industry sector (defined in `config/pea_universe.yaml`) to eliminate spurious mathematical correlations.
 - **Engle-Granger Two-Step Cointegration**: Evaluates stationarity of residuals with $p\text{-value} < 0.05$.
 - **OLS Spread & Rolling Z-Score**: Computes dynamic hedge ratio $\beta = \frac{\text{Cov}(P_A, P_B)}{\text{Var}(P_B)}$ and tracks 20-day rolling Z-score:
@@ -3112,6 +3117,24 @@ $$\text{BUY} \iff (P > \text{SMA}_{200}) \land (\text{RSI}_{14} < 30.0) \land (P
 
 ---
 
+## 🧠 Adaptive AI Brain & Continuous Volatility Tiers
+
+### 1. Dynamic Weighting via Contextual UCB Bandit & Ensemble
+Rather than static additions, candidate signal conviction scores are computed dynamically based on the current macro regime and machine learning performance:
+$$\text{Final Score} = \text{Score}_{\text{MR}} \times \left(\frac{w_{\text{bandit, MR}}}{0.25}\right)\left(\frac{w_{\text{ens, MR}}}{0.25}\right) + \text{Score}_{\text{TQ}} \times \left(\frac{w_{\text{bandit, Trend}}}{0.30}\right)\left(\frac{w_{\text{ens, Trend}}}{0.30}\right)$$
+- `UCBBandit` adjusts sub-model exploration/exploitation based on closed-trade PnL across `BULL`, `BEAR`, and `VOLATILE` states.
+- `DynamicEnsemble` balances ML vs Heuristic influence based on XGBoost out-of-sample accuracy.
+- Complete lineage is recorded into `lineage_json` for full auditability.
+
+### 2. Continuous 252-Day Volatility Percentile Tiers (`market_regime.py`)
+Replaces binary panic cutoffs with rolling percentile rankings over European/Global volatility (`^V2TX` / `^VIX`):
+- **Percentile $\ge 95\text{th}$ or VIX $\ge 32.0$ (PANIC)**: Emergency circuit-breaker active. Satellite buys frozen.
+- **Percentile $\ge 80\text{th}$ (ELEVATED_VOL)**: Conviction floor raised by $+5$ pts (e.g., $75 \to 80$).
+- **Percentile $\ge 50\text{th}$ (NORMAL)**: Standard conviction floor ($75$).
+- **Percentile $< 50\text{th}$ (LOW_VOL)**: Standard conviction floor ($75$).
+
+---
+
 ## 🛡️ The 7-Stage Risk & Sizing Cascade
 
 Every raw signal must pass sequentially through the unyielding risk pipeline in `04_orchestrator_ai/signal_priority_cascade.py`:
@@ -3123,11 +3146,11 @@ Every raw signal must pass sequentially through the unyielding risk pipeline in 
 │  STEP 0   │ Multi-Horizon Loss Circuit Breakers (Daily/Weekly/Monthly)     │
 │           │ Continuous Kinetic Drawdown Brake (1.0x -> 0.5x -> 0.2x -> 0x) │
 ├───────────┼─────────────────────────────────────────────────────────────────┤
-│  STEP 0a  │ Conviction Score Floor (>= 70 normal, >= 85 in Degraded Mode)   │
+│  STEP 0a  │ Continuous Volatility Regime Conviction Floor (75 -> 80 -> 90)  │
 ├───────────┼─────────────────────────────────────────────────────────────────┤
 │  STEP 0b  │ Price Sanity & Availability Gate                                │
 ├───────────┼─────────────────────────────────────────────────────────────────┤
-│  STEP 0c  │ VIX Panic Circuit Breaker (V2TX/VIX > 30.0 -> Freeze Buys)      │
+│  STEP 0c  │ Continuous Volatility Sentinel Panic Veto (Percentile >= 95th)  │
 ├───────────┼─────────────────────────────────────────────────────────────────┤
 │  STEP 1a  │ Macroeconomic Calendar Veto (3-day blackout ECB / CPI / NFP)   │
 ├───────────┼─────────────────────────────────────────────────────────────────┤
@@ -3150,21 +3173,15 @@ Every raw signal must pass sequentially through the unyielding risk pipeline in 
 └─────────────────────────────────────────────────────────────────────────────┘
 ``​`
 
-### Dynamic Exits & Position Defense
-1. **Dynamic Daily ATR Stop-Loss** (`main_scheduler.py --atr-stops`):
-   Evaluated daily at 08:35 Paris time. If $P_{\text{close}} < P_{\text{entry}} - 2.5 \times \text{ATR}_{14}$, the satellite position is marked for 100% liquidation.
-2. **Monthly Profit-Shaving** (`main_scheduler.py --rebalance`):
-   Evaluated on the 1st trading day of each month. If unrealized gain $> +20.0\%$, the engine generates a recommendation to shave 20% of the position's shares, locking in gains while letting winners run.
-
 ---
 
 ## 🔄 Autonomous Reinforcement Feedback Loop
 
 When a position is closed in SQLite, `04_orchestrator_ai/post_mortem_engine.py` conducts an automated post-mortem analysis:
 1. Calculates holding duration, realized PnL in EUR and %, and records maximum adverse excursion (MAE).
-2. Closes the reinforcement loop by updating a **Contextual Upper Confidence Bound (UCB) Multi-Armed Bandit** (`02_quant_engine/contextual_bandit.py`):
+2. Closes the reinforcement loop by updating the Contextual UCB Bandit:
    $$\text{Reward} = \frac{\text{Realized PnL €}}{\text{Initial Notional €}}$$
-3. The Bandit updates arm weights for sub-strategies (`mean_reversion`, `stat_arb`, `trend_following`) specifically conditioned on the active market regime (`BULL`, `BEAR`, `VOLATILE`), enabling continuous self-optimization without overfitting.
+3. The Bandit updates arm weights for sub-strategies conditioned on the active market regime, enabling continuous self-optimization without overfitting.
 
 ---
 
@@ -3172,11 +3189,12 @@ When a position is closed in SQLite, `04_orchestrator_ai/post_mortem_engine.py` 
 
 ### 1. Streamlit Bloomberg Terminal HUD (`05_interfaces/terminal_dashboard.py`)
 Launch with `./run_dashboard.ps1` or `make run`:
+- **Decoupled API Client**: Consumes FastAPI Single Source of Truth (`http://localhost:8000/api/v1/...`) with a 2-second timeout and offline SQLite fallback.
 - **Top HUD & Live Ticker Tape**: Real-time equity, cash balance, latent PnL, VIX gauge, regime status, and streaming TradingView quotes.
 - **📊 General & Signaux**: Multi-horizon portfolio suggestions, **Entonnoir de Décision (7J/30J decision funnel waterfall & rejection pie)**, rich trade cards with ML probability badges, and geopolitical briefing.
 - **🎯 Portefeuille & Allocation**: Daily equity curve, **Sharpe, Sortino, Max Drawdown, CAGR**, sector breakdown, and interactive wallet editor.
 - **🌌 Universe & Screener**: Real-time multi-horizon screener (1M/3M/1Y returns, RSI, Trend Quality), interactive filters, and live news flow with FinBERT sentiment.
-- **🌍 Exploration (Ticker Deep-Dive)**: Fullscreen TradingView charting, Plain-French TA narrative, Valuation buy zone ($52\text{w low} \leftrightarrow \text{analyst target}$), 10-year annual returns bar chart, insider transactions (AMF BDIF / FMP / Yahoo), and **⚖️ Red Team Investment Committee Debate**.
+- **🌍 Exploration (Ticker Deep-Dive)**: Fullscreen TradingView charting, Plain-French TA narrative, Valuation buy zone ($52\text{w low} \leftrightarrow \text{analyst target}$), 10-year annual returns bar chart, insider transactions (AMF BDIF / OpenInsider / FMP), and **⚖️ Red Team Investment Committee Debate**.
 - **📓 Ledger & Post-Mortems**: Immutable SQLite audit logs, closed trade post-mortem diagnostics.
 - **🧪 Backtest & Calibration**: Event-driven Walk-Forward backtester with execution at **T+1 Open**, parameter calibration sliders, and historical crisis stress testing.
 - **🧠 Architecture & Logs**: Real-time rotating log file viewer, tailer, and system telemetry.
@@ -3193,10 +3211,13 @@ Launch with `./run_dashboard.ps1` or `make run`:
 ### Internal FastAPI SSOT (`06_api/internal_api.py`)
 Launch with `make api` on `http://127.0.0.1:8000`:
 - `GET /api/v1/portfolio/summary`: Real-time cash, equity, exposure %, and active holdings.
-- `GET /api/v1/recommendations/pending`: Active trade recommendations including score, target quantity, rationale, `ml_probability`, and SHAP values.
+- `GET /api/v1/portfolio/equity_curve`: Historical daily equity curve data.
+- `GET /api/v1/recommendations/pending`: Active trade recommendations with `ml_probability` and SHAP factors.
+- `GET /api/v1/analytics/funnel`: Decision funnel statistics, drops breakdown, and waterfall series.
+- `GET /api/v1/ledger/closed`: Historical closed/executed transactions.
+- `GET /api/v1/signals`: Audit logs filtered by status.
 - `GET /api/v1/system/health`: Pipeline heartbeat, database statuses, and execution model metadata.
 - `GET /api/v1/data/ticker/{ticker}/context`: Complete consolidated snapshot (profile, indicators, valuation, news, insiders).
-- `POST /api/v1/models/backtest/run`: On-demand walk-forward backtest execution.
 
 ### Claude Desktop MCP Server (`07_mcp/pollux_mcp.py`)
 Connect Claude Desktop to PEA Pollux by adding this to `claude_desktop_config.json`:
@@ -3330,7 +3351,7 @@ For external LLM analysis, fine-tuning, or pair programming, the repository incl
 | **`PROJECT_FULL_DUMP_FOR_LLM.md`** | Complete monolithic project codebase dump. | Global LLM Context |
 | `docs/dumps/DUMP_00_DATA_SENSORS.md` | Data sensors, scrapers, text cleaner, and APIs. | Data Engineering |
 | `docs/dumps/DUMP_01_MEMORY_CORE.md` | Pydantic contracts, SQLite, and DuckDB managers. | Persistence & Contracts |
-| `docs/dumps/DUMP_02_QUANT_ENGINE.md` | Technical scorer, StatArb, HMM, FinBERT, ML trainer, Backtest. | Quantitative Alpha Models |
+| `docs/dumps/DUMP_02_QUANT_ENGINE.md` | Technical scorer, Bandit, Ensemble, StatArb, HMM, FinBERT, ML trainer, Backtest. | Quantitative Alpha Models |
 | `docs/dumps/DUMP_03_RISK_PORTFOLIO.md` | Risk parameters, Kinetic brake, Sizers, Stress tester. | Risk Governance & Sizing |
 | `docs/dumps/DUMP_04_ORCHESTRATOR_AI.md` | Signal cascade, Red Team agent, Post-mortems, Historian. | AI Orchestration |
 | `docs/dumps/DUMP_05_INTERFACES.md` | Streamlit terminal HUD, trade cards, Discord bot. | User Interfaces |
@@ -3346,7 +3367,7 @@ python tools/build_llm_dump.py
 
 ## 🧪 Verification & Test Suites
 
-The project features a test suite covering all layers:
+The project features an automated test suite covering all layers:
 
 ``​`bash
 # Run all tests
@@ -3357,6 +3378,7 @@ python -m pytest -v
 ``​`
 
 ### Test Suite Breakdown
+- `test_brain_and_decoupling.py`: Tests `VolatilityRegimeSentinel` continuous VIX conviction floors, `UCBBandit` + `DynamicEnsemble` weight lineage in `SignalGenerator`, OpenInsider currency cleaners, and decoupled FastAPI endpoints.
 - `test_ml_cascade_integration.py`: Live Isolation Forest anomaly veto, XGBoost probability scoring threshold ($p < 0.50$), signal lineage enrichment, trade card rendering, and API serialization.
 - `test_text_cleaner_and_feedback.py`: Data Janitor HTML entity unescaping, bilingual disclaimer removal, 1500-char truncation, and Contextual Bandit UCB trade closure reward updates.
 - `test_finbert_sentiment.py`: Offline `ProsusAI/finbert` classification, score scaling, and heuristic keyword fallbacks.
