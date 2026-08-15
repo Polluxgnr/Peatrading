@@ -17,10 +17,8 @@ Polymarket), universe, architecture docs.
 
 Run (auto-opens browser):
     .\\run_dashboard.ps1
-    # or: venv_x64\\Scripts\\streamlit run 05_interfaces/terminal_dashboard.py
-"""
-
 import asyncio
+import os
 import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -33,6 +31,30 @@ import streamlit.components.v1 as components
 import yaml
 import yfinance as yf
 
+st.set_page_config(
+    page_title="PEA Sniper Terminal V-Prime",
+    page_icon="\U0001F6E1\uFE0F",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+# --- Basic Streamlit Auth & Lock ---
+_DASHBOARD_PASS = os.getenv("DASHBOARD_PASSWORD")
+if _DASHBOARD_PASS:
+    if not st.session_state.get("authenticated", False):
+        _, auth_col, _ = st.columns([1, 1.2, 1])
+        with auth_col:
+            st.markdown("### \U0001F512 Acc\u00e8s S\u00e9curis\u00e9 \u2022 PEA Sniper Terminal")
+            st.caption("Terminal Quantitatif Haute Performance. Saisissez votre mot de passe pour continuer.")
+            pwd_input = st.text_input("Mot de passe", type="password", key="pwd_input_field")
+            if st.button("\U0001F513 D\u00e9verrouiller", type="primary", use_container_width=True):
+                if pwd_input == _DASHBOARD_PASS:
+                    st.session_state["authenticated"] = True
+                    st.rerun()
+                else:
+                    st.error("\u274c Mot de passe incorrect.")
+            st.stop()
+
 # --- Cross-package imports (dirs start with digits) --------------------------
 _ROOT = Path(__file__).resolve().parent.parent
 for _sub in ("00_data_sensors", "01_memory_core", "02_quant_engine",
@@ -41,6 +63,7 @@ for _sub in ("00_data_sensors", "01_memory_core", "02_quant_engine",
 
 from sqlite_portfolio import PortfolioDB  # noqa: E402
 from data_models import Position, PortfolioState  # noqa: E402
+
 
 try:
     from equity_metrics import compute_equity_metrics  # noqa: E402
@@ -3590,7 +3613,44 @@ with tab_pf:
                 "Ticker Yahoo (ex. MC.PA). Qte=0 pour retirer une ligne."
             )
 
+        st.markdown("---")
+        st.markdown("##### \U0001F4C1 R\u00e9conciliation Automatique CSV Courtier")
+        st.markdown(
+            "<div class='info-text'>Importe l'export CSV officiel de ton courtier (Boursorama, Bourse Direct, Fortuneo, Degiro) "
+            "pour synchroniser automatiquement tes positions, PRU, et liquidit\u00e9s avec la base SQLite.</div>",
+            unsafe_allow_html=True,
+        )
+
+        up_file = st.file_uploader("Importer CSV Courtier (Boursorama / Bourse Direct)", type=["csv"], key="broker_csv_uploader")
+        actual_cash_input = st.number_input(
+            "Liquidit\u00e9s r\u00e9elles constat\u00e9es sur le compte (\u20ac)",
+            min_value=0.0,
+            value=float(portfolio.cash_available),
+            step=10.0,
+            key="broker_real_cash_input",
+        )
+
+        if st.button("\U0001F504 Synchroniser avec le Courtier", type="primary", key="sync_broker_btn"):
+            if up_file is None:
+                st.warning("\u26a0\ufe0f Veuillez s\u00e9lectionner un fichier CSV \u00e0 importer.")
+            else:
+                try:
+                    from broker_reconciliation import BrokerReconciliator
+                    reconciliator = BrokerReconciliator()
+                    content = up_file.getvalue().decode("utf-8", errors="ignore")
+                    parsed_positions = reconciliator.parse_broker_csv(content)
+                    if not parsed_positions:
+                        st.error("\u274c Aucun titre valide n'a pu \u00eatre extrait du CSV. V\u00e9rifiez le format.")
+                    else:
+                        db = PortfolioDB(_SQLITE_PATH)
+                        res = reconciliator.reconcile_with_sqlite(parsed_positions, actual_cash_input, db)
+                        st.success(f"\u2705 Wallet synchronis\u00e9 avec succ\u00e8s ({res['positions_synced']} lignes, Cash: {res['cash_available']:,.2f} \u20ac, Equity: {res['total_equity']:,.2f} \u20ac).")
+                        st.rerun()
+                except Exception as exc:
+                    st.error(f"\u274c Erreur lors de la r\u00e9conciliation : {exc}")
+
     # --- Portfolio Ledger (Audit logs) ---
+
     st.markdown("---")
     st.markdown("#### 📜 Journal d'Exécution & Ledger (Audit Logs)")
     st.markdown(

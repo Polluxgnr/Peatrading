@@ -640,6 +640,21 @@ def run_monthly_ml_retraining() -> None:
         asyncio.run(_post_webhook(f"\u26a0\ufe0f **Monthly ML Retraining Failed**: `{exc}`"))
 
 
+def run_cloud_backup() -> None:
+    """Run local Parquet database exports and upload to AWS S3 (Friday 19:00 Paris)."""
+    started = time.perf_counter()
+    logger.info("=== Weekly Database Backup Routine starting (Friday 19:00 Paris) ===")
+    try:
+        import subprocess
+        res = subprocess.run([sys.executable, str(_ROOT / "tools" / "backup_databases.py")], capture_output=True, text=True, check=False)
+        if res.returncode == 0:
+            logger.info("Database backup completed in %.1fs: %s", time.perf_counter() - started, res.stdout.strip())
+        else:
+            logger.error("Database backup script failed (code %d): %s", res.returncode, res.stderr.strip())
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Database backup routine failed: %s", exc, exc_info=True)
+
+
 def _schedule_passes() -> None:
     """Register all periodic jobs in Europe/Paris time."""
     # Monthly ML retraining: probe daily at 02:00, acts only on the 1st of the month.
@@ -653,13 +668,15 @@ def _schedule_passes() -> None:
     # Weekly Earnings Calendar sync: Friday 18:30 Paris.
     if run_earnings_sync is not None:
         schedule.every().friday.at("18:30", _TIMEZONE).do(run_earnings_sync)
+    # Weekly Cloud Backup: Friday 19:00 Paris.
+    schedule.every().friday.at("19:00", _TIMEZONE).do(run_cloud_backup)
     # Monthly profit-shave: probe daily, act only on the 1st (guarded inside).
     schedule.every().day.at(_MONTHLY_CHECK_TIME, _TIMEZONE).do(run_monthly_rebalance)
     # Daily ATR stops (weekdays guarded inside).
     schedule.every().day.at(_ATR_STOP_CHECK_TIME, _TIMEZONE).do(run_daily_atr_stops)
     logger.info(
         "Scheduled: ML retrain 02:00; morning news 08:00; passes at %s; weekly report Fri %s; "
-        "earnings sync Fri 18:30; monthly probe %s; ATR stops %s (%s).",
+        "earnings sync Fri 18:30; backup Fri 19:00; monthly probe %s; ATR stops %s (%s).",
         ", ".join(_PASS_TIMES),
         _WEEKLY_REPORT_TIME,
         _MONTHLY_CHECK_TIME,
@@ -708,6 +725,11 @@ def main() -> None:
         action="store_true",
         help="Run autonomous monthly ML retraining now (ignores 1st-of-month guard).",
     )
+    parser.add_argument(
+        "--backup",
+        action="store_true",
+        help="Run database Parquet export and cloud backup now.",
+    )
     args = parser.parse_args()
 
     if args.now:
@@ -751,6 +773,10 @@ def main() -> None:
             logger.error("Retraining failed: %s", exc)
         return
 
+    if args.backup:
+        logger.info("--backup: executing database backup now.")
+        run_cloud_backup()
+        return
 
 
     _schedule_passes()
@@ -771,3 +797,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
