@@ -1,5 +1,5 @@
 # PEA Pollux — Data Sensors, Scrapers & External Ingestion Layer
-Generated: `2026-08-12 10:00 UTC` | File Count: `29`
+Generated: `2026-08-15 17:35 UTC` | File Count: `29`
 Institutional Systematic Decision Support Architecture for French PEA.
 ---
 ## Included Files Index

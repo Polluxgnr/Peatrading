@@ -1,5 +1,5 @@
 # PEA Pollux — Interfaces, Streamlit Bloomberg Terminal HUD & Discord Copilot
-Generated: `2026-08-12 10:00 UTC` | File Count: `8`
+Generated: `2026-08-15 17:35 UTC` | File Count: `8`
 Institutional Systematic Decision Support Architecture for French PEA.
 ---
 ## Included Files Index

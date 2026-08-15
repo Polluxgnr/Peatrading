@@ -1,5 +1,5 @@
 # PEA Pollux — AI Orchestration, Priority Cascade, Red Team Debate & Post-Mortem
-Generated: `2026-08-12 10:00 UTC` | File Count: `11`
+Generated: `2026-08-15 17:35 UTC` | File Count: `11`
 Institutional Systematic Decision Support Architecture for French PEA.
 ---
 ## Included Files Index
@@ -573,6 +573,49 @@ class NewsSentimentScorer:
         final_score = max(-100.0, min(100.0, round(final_score, 1)))
         logger.info("FinBERT sentiment for %s: %.1f (from %d headlines).", ticker, final_score, len(headlines))
         return final_score
+
+
+
+class OpenRouterClient:
+    """Optional client for OpenRouter generative queries (Red Team debate, Friday CIO digest, AI ticker summaries)."""
+
+    def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None) -> None:
+        self.api_key = api_key or os.getenv("OPENROUTER_API_KEY")
+        self.model = model or os.getenv("OPENROUTER_MODEL", "meta-llama/llama-3.3-70b-instruct:free")
+        self.is_configured = bool(self.api_key and self.api_key.strip())
+
+    def query_sync(self, prompt: str, max_tokens: int = 300) -> Optional[str]:
+        """Synchronously query the OpenRouter API."""
+        if not self.is_configured:
+            return None
+        try:
+            import requests
+            headers = {
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+                "HTTP-Referer": "https://github.com/Polluxgnr/Peatrading",
+                "X-Title": "PEA Pollux Terminal",
+            }
+            payload = {
+                "model": self.model,
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": max_tokens,
+                "temperature": 0.2,
+            }
+            resp = requests.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers=headers,
+                json=payload,
+                timeout=12,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                choices = data.get("choices") or []
+                if choices:
+                    return choices[0].get("message", {}).get("content", "").strip()
+        except Exception as exc:
+            logger.debug("OpenRouter query failed: %s", exc)
+        return None
 
 
 if __name__ == "__main__":
