@@ -63,7 +63,18 @@ try:
 except ImportError:
     run_earnings_sync = None
 
+try:
+    from news_email_scraper import run_email_scraper  # noqa: E402
+except ImportError:
+    run_email_scraper = None
+
+try:
+    from news_sentiment_llm import score_news_batch  # noqa: E402
+except ImportError:
+    score_news_batch = None
+
 logger = get_component_logger("scheduler")
+
 
 
 _CONFIG_DIR = _ROOT / "config"
@@ -573,8 +584,43 @@ def run_monthly_rebalance() -> None:
         logger.critical("Monthly rebalance FAILED: %s", exc, exc_info=True)
 
 
+def run_morning_news_routine() -> None:
+    """Pre-market morning routine (08:00 Paris weekdays):
+    1. Ingest overnight email newsletters via IMAP into SQLite news_master.
+    2. Batch score unprocessed news articles with local FinBERT sentiment.
+    """
+    if datetime.today().weekday() >= 5:
+        logger.info("Morning news routine: skipping weekend day.")
+        return
+
+    started = time.perf_counter()
+    logger.info("=== Pre-market Morning News & IMAP Routine starting (08:00 Paris) ===")
+    try:
+        pdb = PortfolioDB(_ROOT / "database" / "portfolio.db")
+        scraped = 0
+        if run_email_scraper is not None:
+            scraped = run_email_scraper(pdb)
+            logger.info("Morning IMAP ingestion completed: %d articles fetched.", scraped)
+
+        scored = 0
+        if score_news_batch is not None:
+            scored = score_news_batch(pdb, limit=50)
+            logger.info("Morning FinBERT sentiment scoring completed: %d articles scored.", scored)
+
+        logger.info(
+            "=== Morning news routine finished in %.1fs (scraped=%d, scored=%d) ===",
+            time.perf_counter() - started,
+            scraped,
+            scored,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Morning news routine encountered error: %s", exc, exc_info=True)
+
+
 def _schedule_passes() -> None:
     """Register all periodic jobs in Europe/Paris time."""
+    # Morning pre-market news & newsletter ingestion: 08:00 Paris.
+    schedule.every().day.at("08:00", _TIMEZONE).do(run_morning_news_routine)
     for pass_time in _PASS_TIMES:
         schedule.every().day.at(pass_time, _TIMEZONE).do(run_analysis_pass)
     # Weekly CIO digest: Friday 18:00 Paris.
@@ -587,8 +633,8 @@ def _schedule_passes() -> None:
     # Daily ATR stops (weekdays guarded inside).
     schedule.every().day.at(_ATR_STOP_CHECK_TIME, _TIMEZONE).do(run_daily_atr_stops)
     logger.info(
-        "Scheduled: passes at %s; weekly report Fri %s; monthly probe %s; "
-        "ATR stops %s (%s).",
+        "Scheduled: morning news 08:00; passes at %s; weekly report Fri %s; "
+        "earnings sync Fri 18:30; monthly probe %s; ATR stops %s (%s).",
         ", ".join(_PASS_TIMES),
         _WEEKLY_REPORT_TIME,
         _MONTHLY_CHECK_TIME,
@@ -627,6 +673,11 @@ def main() -> None:
         action="store_true",
         help="Run autonomous earnings calendar sync now.",
     )
+    parser.add_argument(
+        "--morning-news",
+        action="store_true",
+        help="Run pre-market morning news ingestion and FinBERT scoring now.",
+    )
     args = parser.parse_args()
 
     if args.now:
@@ -654,6 +705,12 @@ def main() -> None:
         if run_earnings_sync is not None:
             run_earnings_sync()
         return
+
+    if args.morning_news:
+        logger.info("--morning-news: running morning news & IMAP ingestion now.")
+        run_morning_news_routine()
+        return
+
 
     _schedule_passes()
     logger.info("\U0001F6E1\uFE0F PEA Sniper Terminal Daemon started. "

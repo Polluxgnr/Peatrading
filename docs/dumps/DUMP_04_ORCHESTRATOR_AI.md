@@ -1,5 +1,5 @@
 # PEA Pollux — AI Orchestration, Priority Cascade, Red Team Debate & Post-Mortem
-Generated: `2026-08-15 22:15 UTC` | File Count: `11`
+Generated: `2026-08-15 22:18 UTC` | File Count: `11`
 Institutional Systematic Decision Support Architecture for French PEA.
 ---
 ## Included Files Index

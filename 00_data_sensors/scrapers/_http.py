@@ -1,4 +1,4 @@
-"""Shared HTTP helpers for fragile French-market scrapers."""
+"""Shared HTTP helpers for fragile French-market scrapers with Anti-Bot bypass."""
 
 from __future__ import annotations
 
@@ -8,6 +8,11 @@ import time
 from typing import Any
 
 import requests
+
+try:
+    import cloudscraper
+except ImportError:
+    cloudscraper = None
 
 logger = logging.getLogger(__name__)
 
@@ -48,12 +53,21 @@ def safe_get(
     expect_json: bool = False,
     quiet: bool = False,
 ) -> requests.Response | None:
-    """GET with stealth headers. Returns ``None`` on any failure (never raises)."""
+    """GET with anti-bot bypass and stealth headers. Returns ``None`` on any failure (never raises)."""
     log = logger.debug if quiet else logger.warning
     try:
         rate_limit()
         hdrs = {**stealth_headers(), **(headers or {})}
-        client = session or requests
+
+        if session is not None:
+            client = session
+        elif cloudscraper is not None:
+            client = cloudscraper.create_scraper(
+                browser={"browser": "chrome", "platform": "windows", "mobile": False}
+            )
+        else:
+            client = requests
+
         resp = client.get(url, headers=hdrs, params=params, timeout=timeout)
         if resp.status_code in (403, 429):
             log("Scraper blocked (%s) for %s", resp.status_code, url)

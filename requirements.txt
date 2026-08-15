@@ -12,8 +12,10 @@ duckdb>=0.10
 # --- Data sensors (Phase 3) ---
 yfinance>=0.2.40
 requests>=2.31
+cloudscraper>=1.2.71
 beautifulsoup4>=4.12
 feedparser>=6.0
+
 
 # --- Quant & ML Engine (Phases 4, 42-55+) ---
 pandas>=2.1

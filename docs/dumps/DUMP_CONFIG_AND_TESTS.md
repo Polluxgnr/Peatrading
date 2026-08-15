@@ -1,5 +1,5 @@
 # PEA Pollux — Configuration Yaml, Test Suites, Root Ops & Documentation
-Generated: `2026-08-15 22:15 UTC` | File Count: `33`
+Generated: `2026-08-15 22:18 UTC` | File Count: `34`
 Institutional Systematic Decision Support Architecture for French PEA.
 ---
 ## Included Files Index
@@ -27,6 +27,7 @@ Institutional Systematic Decision Support Architecture for French PEA.
 - [tests/test_newsletter_whitelist.py](#file-tests-test_newsletter_whitelist-py)
 - [tests/test_phase16_foundations.py](#file-tests-test_phase16_foundations-py)
 - [tests/test_stat_arb_and_backtest.py](#file-tests-test_stat_arb_and_backtest-py)
+- [tests/test_stealth_and_imap_ingest.py](#file-tests-test_stealth_and_imap_ingest-py)
 - [tests/test_text_cleaner_and_feedback.py](#file-tests-test_text_cleaner_and_feedback-py)
 - [tests/test_ui_and_sandbox.py](#file-tests-test_ui_and_sandbox-py)
 - [tools/backup_databases.py](#file-tools-backup_databases-py)
@@ -2273,7 +2274,18 @@ try:
 except ImportError:
     run_earnings_sync = None
 
+try:
+    from news_email_scraper import run_email_scraper  # noqa: E402
+except ImportError:
+    run_email_scraper = None
+
+try:
+    from news_sentiment_llm import score_news_batch  # noqa: E402
+except ImportError:
+    score_news_batch = None
+
 logger = get_component_logger("scheduler")
+
 
 
 _CONFIG_DIR = _ROOT / "config"
@@ -2783,8 +2795,43 @@ def run_monthly_rebalance() -> None:
         logger.critical("Monthly rebalance FAILED: %s", exc, exc_info=True)
 
 
+def run_morning_news_routine() -> None:
+    """Pre-market morning routine (08:00 Paris weekdays):
+    1. Ingest overnight email newsletters via IMAP into SQLite news_master.
+    2. Batch score unprocessed news articles with local FinBERT sentiment.
+    """
+    if datetime.today().weekday() >= 5:
+        logger.info("Morning news routine: skipping weekend day.")
+        return
+
+    started = time.perf_counter()
+    logger.info("=== Pre-market Morning News & IMAP Routine starting (08:00 Paris) ===")
+    try:
+        pdb = PortfolioDB(_ROOT / "database" / "portfolio.db")
+        scraped = 0
+        if run_email_scraper is not None:
+            scraped = run_email_scraper(pdb)
+            logger.info("Morning IMAP ingestion completed: %d articles fetched.", scraped)
+
+        scored = 0
+        if score_news_batch is not None:
+            scored = score_news_batch(pdb, limit=50)
+            logger.info("Morning FinBERT sentiment scoring completed: %d articles scored.", scored)
+
+        logger.info(
+            "=== Morning news routine finished in %.1fs (scraped=%d, scored=%d) ===",
+            time.perf_counter() - started,
+            scraped,
+            scored,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Morning news routine encountered error: %s", exc, exc_info=True)
+
+
 def _schedule_passes() -> None:
     """Register all periodic jobs in Europe/Paris time."""
+    # Morning pre-market news & newsletter ingestion: 08:00 Paris.
+    schedule.every().day.at("08:00", _TIMEZONE).do(run_morning_news_routine)
     for pass_time in _PASS_TIMES:
         schedule.every().day.at(pass_time, _TIMEZONE).do(run_analysis_pass)
     # Weekly CIO digest: Friday 18:00 Paris.
@@ -2797,8 +2844,8 @@ def _schedule_passes() -> None:
     # Daily ATR stops (weekdays guarded inside).
     schedule.every().day.at(_ATR_STOP_CHECK_TIME, _TIMEZONE).do(run_daily_atr_stops)
     logger.info(
-        "Scheduled: passes at %s; weekly report Fri %s; monthly probe %s; "
-        "ATR stops %s (%s).",
+        "Scheduled: morning news 08:00; passes at %s; weekly report Fri %s; "
+        "earnings sync Fri 18:30; monthly probe %s; ATR stops %s (%s).",
         ", ".join(_PASS_TIMES),
         _WEEKLY_REPORT_TIME,
         _MONTHLY_CHECK_TIME,
@@ -2837,6 +2884,11 @@ def main() -> None:
         action="store_true",
         help="Run autonomous earnings calendar sync now.",
     )
+    parser.add_argument(
+        "--morning-news",
+        action="store_true",
+        help="Run pre-market morning news ingestion and FinBERT scoring now.",
+    )
     args = parser.parse_args()
 
     if args.now:
@@ -2864,6 +2916,12 @@ def main() -> None:
         if run_earnings_sync is not None:
             run_earnings_sync()
         return
+
+    if args.morning_news:
+        logger.info("--morning-news: running morning news & IMAP ingestion now.")
+        run_morning_news_routine()
+        return
+
 
     _schedule_passes()
     logger.info("\U0001F6E1\uFE0F PEA Sniper Terminal Daemon started. "
@@ -3441,8 +3499,10 @@ duckdb>=0.10
 # --- Data sensors (Phase 3) ---
 yfinance>=0.2.40
 requests>=2.31
+cloudscraper>=1.2.71
 beautifulsoup4>=4.12
 feedparser>=6.0
+
 
 # --- Quant & ML Engine (Phases 4, 42-55+) ---
 pandas>=2.1
@@ -4787,6 +4847,138 @@ class TestStatArbAndBacktestSuite(unittest.TestCase):
         self.assertIsInstance(s_map, dict)
         self.assertIn("MC.PA", s_map)
         self.assertEqual(s_map["MC.PA"], "Consumer Cyclical")
+
+
+if __name__ == "__main__":
+    unittest.main()
+```
+
+## FILE: tests/test_stealth_and_imap_ingest.py
+```python
+"""Unit Tests for Stealth Anti-Bot Scraping (cloudscraper) and Production IMAP Newsletter Ingest."""
+
+from __future__ import annotations
+
+import os
+import sys
+import unittest
+from datetime import datetime, timezone
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+ROOT = Path(__file__).resolve().parent.parent
+for sub in ("00_data_sensors", "00_data_sensors/scrapers", "00_data_sensors/imap_ingest", "01_memory_core", "02_quant_engine", "03_risk_portfolio", "04_orchestrator_ai", "05_interfaces", "06_api"):
+    sys.path.insert(0, str(ROOT / sub))
+
+from _http import safe_get, stealth_headers
+from bourso_scraper import BoursoramaScraper
+from imap_ingest import RawMessage, parse_newsletter, is_allowed_sender, dedupe_articles
+from news_email_scraper import run_email_scraper
+from main_scheduler import run_morning_news_routine
+
+
+class TestStealthAndImapIngestSuite(unittest.TestCase):
+
+    def test_01_stealth_headers(self):
+        """Verify rotating stealth headers include appropriate browser signatures."""
+        hdrs = stealth_headers()
+        self.assertIn("User-Agent", hdrs)
+        self.assertIn("Accept-Language", hdrs)
+        self.assertIn("Connection", hdrs)
+
+    def test_02_bourso_scraper_init_and_resilience(self):
+        """Verify Boursorama scraper initializes session and gracefully handles anti-bot challenges."""
+        scraper = BoursoramaScraper()
+        self.assertIsNotNone(scraper._session)
+
+        # Mock safe_get to return captcha response
+        mock_resp = MagicMock()
+        mock_resp.text = "<html><body>Please solve this DataDome captcha</body></html>"
+        with patch("bourso_scraper.safe_get", return_value=mock_resp):
+            profile = scraper.get_instrument_profile("MC.PA")
+            self.assertEqual(profile, {})
+
+    def test_03_imap_whitelist(self):
+        """Verify strict sender whitelist accurately identifies trusted financial sources."""
+        self.assertTrue(is_allowed_sender("Brief Eco <hello@brief.eco>"))
+        self.assertTrue(is_allowed_sender("Substack <plancash@substack.com>"))
+        self.assertTrue(is_allowed_sender("newsletter@boursorama.fr"))
+        self.assertFalse(is_allowed_sender("Spam Guy <spam@phishing.net>"))
+        self.assertFalse(is_allowed_sender(""))
+
+    def test_04_html_parser_article_extraction(self):
+        """Verify HTML parser extracts clean article links and contextual paragraphs."""
+        html_body = """
+        <html>
+            <body>
+                <p>Bienvenue dans la lettre financière.</p>
+                <div>
+                    <a href="https://www.brief.eco/article/l-oreal-resultats-record-2026?utm_source=email">
+                        L'Oréal affiche des résultats record au premier semestre 2026
+                    </a>
+                    <p>La marge opérationnelle du groupe de cosmétiques progresse de 12% grâce au marché asiatique.</p>
+                </div>
+                <a href="https://www.brief.eco/unsubscribe">Unsubscribe</a>
+            </body>
+        </html>
+        """
+        msg = RawMessage(
+            uid="123",
+            subject="Brief Éco du jour",
+            sender="Brief Eco <hello@brief.eco>",
+            date="2026-08-15 08:00:00",
+            html=html_body,
+            text="",
+        )
+        parsed = parse_newsletter(msg)
+        self.assertEqual(parsed["subject"], "Brief Éco du jour")
+        articles = parsed["articles"]
+        self.assertEqual(len(articles), 1)
+        self.assertIn("L'Oréal", articles[0]["title"])
+        self.assertNotIn("utm_source", articles[0]["url"])
+
+    def test_05_dedupe_articles(self):
+        """Verify token Jaccard deduplication collapses near-duplicate headlines."""
+        articles = [
+            {"title": "L'Oréal affiche des résultats record au premier semestre", "url": "https://a.com/1"},
+            {"title": "L'Oréal affiche des résultats record au premier semestre !", "url": "https://a.com/2"},
+            {"title": "Air Liquide signe un contrat majeur pour l'hydrogène vert", "url": "https://b.com/1"},
+        ]
+        deduped = dedupe_articles(articles)
+        self.assertEqual(len(deduped), 2)
+
+    def test_06_production_news_email_scraper_flow(self):
+        """Verify run_email_scraper parses messages, cleans text, and saves to PortfolioDB."""
+        mock_db = MagicMock()
+        mock_db.save_news_items.return_value = 1
+
+        mock_msg = RawMessage(
+            uid="456",
+            subject="L'Oréal : Nouvelle dynamique de croissance en Europe",
+            sender="Substack <plancash@substack.com>",
+            date=datetime.now(timezone.utc).isoformat(),
+            html="<p>Analyse détaillée des résultats de L'Oréal et Air Liquide pour le PEA.</p>",
+            text="",
+        )
+
+        with patch.dict(os.environ, {"YAHOO_MAIL_USER": "test@yahoo.com", "YAHOO_MAIL_APP_PASSWORD": "secretpassword"}):
+            with patch("news_email_scraper.YahooImapClient") as MockClient:
+                instance = MockClient.return_value
+                instance.fetch_recent.return_value = [mock_msg]
+
+                saved = run_email_scraper(mock_db)
+                self.assertEqual(saved, 1)
+                self.assertTrue(mock_db.save_news_items.called)
+                args = mock_db.save_news_items.call_args[0][0]
+                self.assertEqual(len(args), 1)
+                self.assertIn("L'Oréal", args[0]["title"])
+
+    def test_07_morning_news_routine_execution(self):
+        """Verify run_morning_news_routine runs without crashing."""
+        with patch("main_scheduler.run_email_scraper", return_value=2), \
+             patch("main_scheduler.score_news_batch", return_value=2), \
+             patch("main_scheduler.PortfolioDB"):
+            run_morning_news_routine()
 
 
 if __name__ == "__main__":

@@ -1,5 +1,5 @@
 # PEA Pollux — Complete Monolithic Repository Dump
-Generated: `2026-08-15 22:15 UTC` | File Count: `127`
+Generated: `2026-08-15 22:18 UTC` | File Count: `133`
 Institutional Systematic Decision Support Architecture for French PEA.
 ---
 ## Included Files Index
@@ -10,6 +10,11 @@ Institutional Systematic Decision Support Architecture for French PEA.
 - [00_data_sensors/deep_news_scraper.py](#file-00_data_sensors-deep_news_scraper-py)
 - [00_data_sensors/earnings_updater.py](#file-00_data_sensors-earnings_updater-py)
 - [00_data_sensors/fundamentals_api.py](#file-00_data_sensors-fundamentals_api-py)
+- [00_data_sensors/imap_ingest/__init__.py](#file-00_data_sensors-imap_ingest-__init__-py)
+- [00_data_sensors/imap_ingest/dedupe.py](#file-00_data_sensors-imap_ingest-dedupe-py)
+- [00_data_sensors/imap_ingest/html_parser.py](#file-00_data_sensors-imap_ingest-html_parser-py)
+- [00_data_sensors/imap_ingest/imap_client.py](#file-00_data_sensors-imap_ingest-imap_client-py)
+- [00_data_sensors/imap_ingest/whitelist.py](#file-00_data_sensors-imap_ingest-whitelist-py)
 - [00_data_sensors/insiders_api.py](#file-00_data_sensors-insiders_api-py)
 - [00_data_sensors/macro_alpha_api.py](#file-00_data_sensors-macro_alpha_api-py)
 - [00_data_sensors/market_prices_api.py](#file-00_data_sensors-market_prices_api-py)
@@ -121,6 +126,7 @@ Institutional Systematic Decision Support Architecture for French PEA.
 - [tests/test_newsletter_whitelist.py](#file-tests-test_newsletter_whitelist-py)
 - [tests/test_phase16_foundations.py](#file-tests-test_phase16_foundations-py)
 - [tests/test_stat_arb_and_backtest.py](#file-tests-test_stat_arb_and_backtest-py)
+- [tests/test_stealth_and_imap_ingest.py](#file-tests-test_stealth_and_imap_ingest-py)
 - [tests/test_text_cleaner_and_feedback.py](#file-tests-test_text_cleaner_and_feedback-py)
 - [tests/test_ui_and_sandbox.py](#file-tests-test_ui_and_sandbox-py)
 - [tools/backup_databases.py](#file-tools-backup_databases-py)
@@ -805,6 +811,444 @@ if __name__ == "__main__":
     sensor = FundamentalsSensor()
     sc, bd = sensor.calculate_piotroski_score("MC.PA")
     print(f"MC.PA Piotroski Score: {sc}/9 | Breakdown: {bd}")
+```
+
+## FILE: 00_data_sensors/imap_ingest/__init__.py
+```python
+"""Production IMAP Newsletter Ingestion Package for PEA Pollux."""
+
+from .imap_client import RawMessage, YahooImapClient
+from .html_parser import parse_newsletter
+from .whitelist import ALLOWED_SENDERS, is_allowed_sender, extract_sender_email
+from .dedupe import dedupe_articles
+
+__all__ = [
+    "RawMessage",
+    "YahooImapClient",
+    "parse_newsletter",
+    "ALLOWED_SENDERS",
+    "is_allowed_sender",
+    "extract_sender_email",
+    "dedupe_articles",
+]
+```
+
+## FILE: 00_data_sensors/imap_ingest/dedupe.py
+```python
+"""Simple near-duplicate headline collapse (no ML)."""
+
+from __future__ import annotations
+
+import logging
+import re
+from typing import List
+
+logger = logging.getLogger(__name__)
+
+
+def _norm(title: str) -> str:
+    t = (title or "").lower()
+    t = re.sub(r"[^a-z0-9àâäéèêëïîôùûüç\s]", " ", t)
+    t = re.sub(r"\s+", " ", t).strip()
+    return t
+
+
+def _token_set(title: str) -> set[str]:
+    return {w for w in _norm(title).split() if len(w) > 2}
+
+
+def _similar(a: str, b: str, threshold: float = 0.72) -> bool:
+    """Jaccard similarity on token sets — cheap and good enough for newsletters."""
+    ta, tb = _token_set(a), _token_set(b)
+    if not ta or not tb:
+        return _norm(a) == _norm(b) and bool(_norm(a))
+    inter = len(ta & tb)
+    union = len(ta | tb)
+    return (inter / union) >= threshold if union else False
+
+
+def dedupe_articles(articles: List[dict]) -> List[dict]:
+    """Drop near-identical titles republished the same day across digests.
+
+    Keeps the first occurrence (stable order). Logs how many were removed.
+    """
+    kept: List[dict] = []
+    for art in articles:
+        title = art.get("title") or ""
+        if any(_similar(title, k.get("title") or "") for k in kept):
+            continue
+        # Also collapse exact same cleaned URL
+        url = art.get("url") or ""
+        if url and any(url == (k.get("url") or "") for k in kept):
+            continue
+        kept.append(art)
+    removed = len(articles) - len(kept)
+    if removed:
+        logger.info("Removed %d near-duplicate headline(s).", removed)
+    return kept
+```
+
+## FILE: 00_data_sensors/imap_ingest/html_parser.py
+```python
+"""Extract article titles/links from verbose newsletter HTML."""
+
+from __future__ import annotations
+
+import logging
+import re
+from typing import Any, List, Set
+from urllib.parse import urlparse, urlunparse
+
+from bs4 import BeautifulSoup
+
+from .imap_client import RawMessage
+
+logger = logging.getLogger(__name__)
+
+_TRACKER_HOST_BITS = (
+    "doubleclick", "googleadservices", "facebook.com/tr", "mailchi.mp/track",
+    "list-manage.com/track", "click.", "/track/", "utm_source=",
+)
+
+
+def _clean_url(url: str) -> str:
+    """Strip common tracking query noise while keeping the path."""
+    try:
+        p = urlparse(url)
+        if any(b in url.lower() for b in ("unsubscribe", "mailto:")):
+            return ""
+        return urlunparse((p.scheme, p.netloc, p.path, "", "", ""))
+    except Exception:  # noqa: BLE001
+        return url.strip()
+
+
+def _looks_like_article(title: str, href: str) -> bool:
+    t = (title or "").strip()
+    if len(t) < 18:
+        return False
+    bad = (
+        "unsubscribe", "view in browser", "voir dans le navigateur",
+        "privacy", "preferences", "manage subscription", "ouvrir dans",
+        "share on", "twitter", "linkedin", "facebook", "instagram",
+    )
+    low = t.lower()
+    if any(b in low for b in bad):
+        return False
+    if not href.startswith("http"):
+        return False
+    if any(b in href.lower() for b in _TRACKER_HOST_BITS) and "http" in href:
+        cleaned = _clean_url(href)
+        if not cleaned or cleaned.count("/") < 3:
+            return False
+    return True
+
+
+def parse_newsletter(msg: RawMessage) -> dict[str, Any]:
+    """Parse one email into metadata + article candidates.
+
+    Args:
+        msg: Raw IMAP message.
+
+    Returns:
+        dict: subject/sender/date + ``articles`` list of
+        ``{title, url, source_subject, source_sender, date, content}``.
+    """
+    html = msg.html or ""
+    text = msg.text or ""
+    articles: List[dict[str, str]] = []
+    seen_href: Set[str] = set()
+
+    if html:
+        soup = BeautifulSoup(html, "html.parser")
+        for a in soup.find_all("a", href=True):
+            title = a.get_text(" ", strip=True)
+            href = a["href"].strip()
+            if not _looks_like_article(title, href):
+                continue
+            clean = _clean_url(href) or href
+            if clean in seen_href:
+                continue
+            seen_href.add(clean)
+            
+            # Extract surrounding paragraph context if available
+            parent = a.find_parent(["p", "div", "td", "li"])
+            context_text = parent.get_text(" ", strip=True) if parent else title
+
+            articles.append({
+                "title": re.sub(r"\s+", " ", title)[:240],
+                "url": clean,
+                "source_subject": msg.subject,
+                "source_sender": msg.sender,
+                "date": msg.date,
+                "content": re.sub(r"\s+", " ", context_text)[:1500],
+            })
+    elif text:
+        for m in re.finditer(r"https?://\S+", text):
+            href = m.group(0).rstrip(").,]")
+            title = href
+            if not _looks_like_article(title, href):
+                continue
+            clean = _clean_url(href) or href
+            if clean in seen_href:
+                continue
+            seen_href.add(clean)
+            articles.append({
+                "title": title[:240],
+                "url": clean,
+                "source_subject": msg.subject,
+                "source_sender": msg.sender,
+                "date": msg.date,
+                "content": text[:1500],
+            })
+
+    # If no links qualified as articles, use the subject and lead text
+    if not articles and (msg.subject or text):
+        clean_subj = re.sub(r"\s+", " ", msg.subject).strip()
+        if len(clean_subj) >= 10:
+            articles.append({
+                "title": clean_subj[:240],
+                "url": "",
+                "source_subject": msg.subject,
+                "source_sender": msg.sender,
+                "date": msg.date,
+                "content": (text or html)[:1500],
+            })
+
+    return {
+        "uid": msg.uid,
+        "subject": msg.subject,
+        "sender": msg.sender,
+        "date": msg.date,
+        "articles": articles,
+    }
+```
+
+## FILE: 00_data_sensors/imap_ingest/imap_client.py
+```python
+"""Read-only Yahoo Mail IMAP client (SSL, app password)."""
+
+from __future__ import annotations
+
+import email
+import imaplib
+import logging
+from dataclasses import dataclass
+from email.header import decode_header
+from typing import List, Optional
+
+logger = logging.getLogger(__name__)
+
+_HOST = "imap.mail.yahoo.com"
+_PORT = 993
+
+
+@dataclass
+class RawMessage:
+    """Minimal email payload for the HTML parser."""
+
+    uid: str
+    subject: str
+    sender: str
+    date: str
+    html: str
+    text: str
+
+
+def _decode_mime(value: Optional[str]) -> str:
+    if not value:
+        return ""
+    parts = []
+    for chunk, enc in decode_header(value):
+        if isinstance(chunk, bytes):
+            parts.append(chunk.decode(enc or "utf-8", errors="replace"))
+        else:
+            parts.append(str(chunk))
+    return " ".join(parts).strip()
+
+
+class YahooImapClient:
+    """Connect, fetch recent messages, always close cleanly.
+
+    Never deletes, moves, or flags messages as deleted.
+    """
+
+    def __init__(self, user: str, app_password: str) -> None:
+        self.user = user
+        self.app_password = app_password
+        self._conn: Optional[imaplib.IMAP4_SSL] = None
+
+    def connect(self) -> None:
+        """Open an SSL IMAP session."""
+        logger.info("Connecting to %s:%s as %s …", _HOST, _PORT, self.user)
+        self._conn = imaplib.IMAP4_SSL(_HOST, _PORT)
+        self._conn.login(self.user, self.app_password)
+        logger.info("IMAP login OK.")
+
+    def close(self) -> None:
+        """Logout and close; swallow errors (never crash the CLI)."""
+        if self._conn is None:
+            return
+        try:
+            self._conn.close()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            self._conn.logout()
+        except Exception:  # noqa: BLE001
+            pass
+        self._conn = None
+        logger.info("IMAP session closed.")
+
+    def fetch_recent(self, folder: str = "Finance", limit: int = 20) -> List[RawMessage]:
+        """Fetch the ``limit`` most recent messages from ``folder`` (read-only).
+
+        Args:
+            folder: IMAP mailbox / Yahoo label name.
+            limit: Max messages to return (newest first).
+
+        Returns:
+            list[RawMessage]: Parsed envelopes + body parts.
+        """
+        if self._conn is None:
+            self.connect()
+        assert self._conn is not None
+
+        candidates = [folder, f'"{folder}"', "INBOX"]
+        selected = None
+        for name in candidates:
+            try:
+                typ, _ = self._conn.select(name, readonly=True)
+                if typ == "OK":
+                    selected = name
+                    break
+            except Exception:
+                continue
+
+        if selected is None:
+            logger.warning("Could not SELECT folder '%s' (tried %s).", folder, candidates)
+            return []
+
+        typ, data = self._conn.search(None, "ALL")
+        if typ != "OK" or not data or not data[0]:
+            logger.info("No messages found in folder '%s'.", selected)
+            return []
+
+        uids = data[0].split()
+        uids_to_fetch = uids[-limit:]
+        uids_to_fetch.reverse()
+
+        messages: List[RawMessage] = []
+        for uid_bytes in uids_to_fetch:
+            uid = uid_bytes.decode()
+            typ, msg_data = self._conn.fetch(uid_bytes, "(RFC822)")
+            if typ != "OK" or not msg_data:
+                continue
+
+            raw_bytes = None
+            for part in msg_data:
+                if isinstance(part, tuple) and len(part) >= 2:
+                    raw_bytes = part[1]
+                    break
+            if not raw_bytes:
+                continue
+
+            msg = email.message_from_bytes(raw_bytes)
+            subject = _decode_mime(msg.get("Subject", ""))
+            sender = _decode_mime(msg.get("From", ""))
+            date_hdr = msg.get("Date", "")
+
+            html_body = ""
+            text_body = ""
+            if msg.is_multipart():
+                for subpart in msg.walk():
+                    ct = subpart.get_content_type()
+                    payload = subpart.get_payload(decode=True) or b""
+                    charset = subpart.get_content_charset() or "utf-8"
+                    try:
+                        decoded = payload.decode(charset, errors="replace")
+                    except Exception:
+                        decoded = payload.decode("utf-8", errors="replace")
+                    if ct == "text/html" and not html_body:
+                        html_body = decoded
+                    elif ct == "text/plain" and not text_body:
+                        text_body = decoded
+            else:
+                ct = msg.get_content_type()
+                payload = msg.get_payload(decode=True) or b""
+                charset = msg.get_content_charset() or "utf-8"
+                try:
+                    decoded = payload.decode(charset, errors="replace")
+                except Exception:
+                    decoded = payload.decode("utf-8", errors="replace")
+                if ct == "text/html":
+                    html_body = decoded
+                else:
+                    text_body = decoded
+
+            messages.append(
+                RawMessage(
+                    uid=uid,
+                    subject=subject,
+                    sender=sender,
+                    date=date_hdr,
+                    html=html_body,
+                    text=text_body,
+                )
+            )
+
+        return messages
+```
+
+## FILE: 00_data_sensors/imap_ingest/whitelist.py
+```python
+"""Strict sender whitelist for newsletter IMAP ingest.
+
+Only these From addresses are parsed; receipts / security alerts are skipped.
+"""
+
+from __future__ import annotations
+
+import re
+from typing import FrozenSet
+
+ALLOWED_SENDERS: FrozenSet[str] = frozenset({
+    # FR / PEA-oriented additions
+    "hello@brief.me",
+    "hello@brief.eco",
+    "contact@cafedelabourse.com",
+    "plancash@substack.com",
+    "europeansmallcapideas@substack.com",
+    "frenchhiddenchampions@substack.com",
+    "newsletter@zonebourse.com",
+    "contact@zonebourse.com",
+    "investir@lesechos.fr",
+    "newsletter@boursorama.fr",
+})
+
+_EMAIL_RE = re.compile(r"[\w.+-]+@[\w.-]+\.\w+", re.IGNORECASE)
+
+
+def extract_sender_email(from_header: str) -> str:
+    """Pull the bare email from a From header (``Name <a@b.c>`` or bare)."""
+    if not from_header:
+        return ""
+    match = _EMAIL_RE.search(from_header)
+    return match.group(0).lower() if match else ""
+
+
+def is_allowed_sender(from_header: str) -> bool:
+    """Return True iff the From address is on the newsletter whitelist."""
+    if not from_header:
+        return False
+    email = extract_sender_email(from_header)
+    if not email:
+        return False
+    if email in ALLOWED_SENDERS:
+        return True
+    # If domain is substack or finance provider, allow
+    if "@substack.com" in email or "@brief." in email or "@lesechos." in email:
+        return True
+    return False
 ```
 
 ## FILE: 00_data_sensors/insiders_api.py
@@ -1651,26 +2095,43 @@ if __name__ == "__main__":
 
 ## FILE: 00_data_sensors/news_email_scraper.py
 ```python
-"""News Email / Newsletter Scraper for PEA Sniper Terminal.
+"""Production News Email / Newsletter Scraper for PEA Pollux.
 
-Ingests financial newsletters via IMAP or from local JSON output exports,
-normalizes them, and persists them into SQLite ``news_master``.
+Ingests financial newsletters via Yahoo IMAP, filters via strict sender whitelist,
+sanitizes HTML/content via text_cleaner, and persists articles into SQLite news_master.
 """
 
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
 import os
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, List
 
-logger = logging.getLogger(__name__)
-
 _ROOT = Path(__file__).resolve().parent.parent
-_OUTPUT_DIR = _ROOT / "experiments" / "newsletter_ingest" / "output"
+sys.path.insert(0, str(_ROOT / "00_data_sensors"))
+
+try:
+    from text_cleaner import clean_financial_text
+except ImportError:
+    def clean_financial_text(t: str) -> str:
+        return t[:1500] if t else ""
+
+try:
+    from imap_ingest import YahooImapClient, parse_newsletter, is_allowed_sender, dedupe_articles
+except ImportError:
+    try:
+        from .imap_ingest import YahooImapClient, parse_newsletter, is_allowed_sender, dedupe_articles
+    except ImportError:
+        YahooImapClient = None
+        parse_newsletter = None
+        is_allowed_sender = None
+        dedupe_articles = None
+
+logger = logging.getLogger(__name__)
 
 
 def _hash_id(source: str, title: str, published_at: str) -> str:
@@ -1678,93 +2139,110 @@ def _hash_id(source: str, title: str, published_at: str) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
 
 
-def ingest_local_newsletter_files() -> List[dict]:
-    """Read parsed newsletter JSONs produced by the sandbox ingestor."""
-    items: List[dict] = []
-    if not _OUTPUT_DIR.exists():
-        return items
-
-    for json_file in _OUTPUT_DIR.glob("*.json"):
-        try:
-            content = json.loads(json_file.read_text(encoding="utf-8"))
-            if isinstance(content, list):
-                raw_items = content
-            elif isinstance(content, dict):
-                raw_items = content.get("articles") or content.get("items") or [content]
-            else:
-                continue
-
-            for row in raw_items:
-                title = str(row.get("subject") or row.get("title") or "").strip()
-                if not title:
-                    continue
-                sender = str(row.get("sender") or row.get("source") or "Newsletter")
-                pub = str(row.get("date") or row.get("published_at") or datetime.now(timezone.utc).isoformat())
-                items.append({
-                    "id": _hash_id("newsletter", title, pub),
-                    "ticker": row.get("ticker"),
-                    "title": title,
-                    "source": sender,
-                    "url": str(row.get("url") or ""),
-                    "published_at": pub,
-                    "sentiment_score": None,
-                })
-        except Exception as exc:  # noqa: BLE001
-            logger.debug("Failed reading newsletter json %s: %s", json_file.name, exc)
-
-    return items
-
-
-def run_email_scraper(portfolio_db: Any) -> int:
-    """Entry point: pull email newsletter content and save to news_master.
+def run_email_scraper(portfolio_db: Any = None, folder: str = "Finance", limit: int = 20) -> int:
+    """Production entry point: pull email newsletter content from Yahoo Mail IMAP,
+    filter, clean, deduplicate, and persist to news_master in SQLite.
 
     Args:
         portfolio_db: PortfolioDB instance.
+        folder: IMAP folder to poll (defaults to "Finance").
+        limit: Max messages to fetch.
 
     Returns:
-        int: Number of items saved.
+        int: Number of new news items saved to SQLite.
     """
-    logger.info("Running News Email / Newsletter Scraper...")
-    items: List[dict] = []
+    user = os.getenv("YAHOO_MAIL_USER")
+    app_pwd = os.getenv("YAHOO_MAIL_APP_PASSWORD")
 
-    # 1. Try running live IMAP ingest if configured
+    if not user or not app_pwd:
+        logger.info("YAHOO_MAIL_USER or YAHOO_MAIL_APP_PASSWORD not set. Skipping live IMAP email scrape.")
+        return 0
+
+    if YahooImapClient is None or parse_newsletter is None:
+        logger.error("IMAP ingestion modules not available.")
+        return 0
+
+    client = YahooImapClient(user=user, app_password=app_pwd)
+    raw_articles: List[dict] = []
+
     try:
-        from experiments.newsletter_ingest.run_ingest import run_ingest_pipeline
-        # If env variables are set, this will download and write output JSONs
-        res = run_ingest_pipeline()
-        if isinstance(res, list):
-            for r in res:
-                title = str(r.get("subject") or r.get("title") or "").strip()
-                if title:
-                    pub = str(r.get("date") or datetime.now(timezone.utc).isoformat())
-                    items.append({
-                        "id": _hash_id("newsletter_live", title, pub),
-                        "ticker": r.get("ticker"),
-                        "title": title,
-                        "source": str(r.get("sender") or "Newsletter"),
-                        "url": str(r.get("url") or ""),
-                        "published_at": pub,
-                        "sentiment_score": None,
-                    })
-    except Exception as exc:  # noqa: BLE001
-        logger.debug("Live email IMAP ingest skipped/failed: %s", exc)
+        messages = client.fetch_recent(folder=folder, limit=limit)
+        logger.info("Fetched %d messages from IMAP folder '%s'.", len(messages), folder)
 
-    # 2. Ingest existing output files
-    file_items = ingest_local_newsletter_files()
-    items.extend(file_items)
+        for msg in messages:
+            if is_allowed_sender and not is_allowed_sender(msg.sender):
+                logger.debug("Skipping message from non-whitelisted sender: %s", msg.sender)
+                continue
 
-    if portfolio_db is not None and hasattr(portfolio_db, "save_news_items"):
-        count = portfolio_db.save_news_items(items)
-        logger.info("News Email Scraper completed: %d items persisted.", count)
-        return count
+            parsed = parse_newsletter(msg)
+            for art in parsed.get("articles", []):
+                raw_articles.append(art)
 
-    return len(items)
+    except Exception as exc:
+        logger.error("IMAP email scraping failed: %s", exc, exc_info=True)
+        return 0
+    finally:
+        client.close()
+
+    if not raw_articles:
+        logger.info("No new newsletter articles found.")
+        return 0
+
+    if dedupe_articles:
+        unique_articles = dedupe_articles(raw_articles)
+    else:
+        unique_articles = raw_articles
+
+    items_to_save: List[dict] = []
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    for art in unique_articles:
+        raw_title = art.get("title", "")
+        raw_content = art.get("content", "") or raw_title
+        clean_title = clean_financial_text(raw_title)[:240]
+        clean_content = clean_financial_text(raw_content)[:1500]
+
+        if not clean_title or len(clean_title) < 10:
+            continue
+
+        pub = art.get("date") or now_iso
+        source = art.get("source_sender") or "Newsletter"
+        item_id = _hash_id("newsletter", clean_title, str(pub))
+
+        items_to_save.append({
+            "id": item_id,
+            "ticker": "MARCHE",
+            "title": clean_title,
+            "source": source,
+            "url": art.get("url", ""),
+            "published_at": pub,
+            "sentiment_score": None,
+            "sentiment_label": None,
+            "content": clean_content,
+        })
+
+    if not items_to_save:
+        return 0
+
+    saved_count = 0
+    if portfolio_db is not None:
+        try:
+            if hasattr(portfolio_db, "save_news_items"):
+                saved_count = portfolio_db.save_news_items(items_to_save)
+            elif hasattr(portfolio_db, "insert_raw_news"):
+                saved_count = portfolio_db.insert_raw_news(items_to_save)
+            logger.info("Successfully persisted %d newsletter articles into SQLite news_master.", saved_count)
+        except Exception as exc:
+            logger.error("Failed to save newsletter items to DB: %s", exc)
+
+    return saved_count
 
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-    n = run_email_scraper(None)
-    print(f"Discovered {n} newsletter items.")
+    print("Testing News Email Scraper...")
+    res = run_email_scraper()
+    print(f"Scraped and saved: {res} articles.")
 ```
 
 ## FILE: 00_data_sensors/news_rss_scraper.py
@@ -2871,7 +3349,7 @@ __all__ = [
 
 ## FILE: 00_data_sensors/scrapers/_http.py
 ```python
-"""Shared HTTP helpers for fragile French-market scrapers."""
+"""Shared HTTP helpers for fragile French-market scrapers with Anti-Bot bypass."""
 
 from __future__ import annotations
 
@@ -2881,6 +3359,11 @@ import time
 from typing import Any
 
 import requests
+
+try:
+    import cloudscraper
+except ImportError:
+    cloudscraper = None
 
 logger = logging.getLogger(__name__)
 
@@ -2921,12 +3404,21 @@ def safe_get(
     expect_json: bool = False,
     quiet: bool = False,
 ) -> requests.Response | None:
-    """GET with stealth headers. Returns ``None`` on any failure (never raises)."""
+    """GET with anti-bot bypass and stealth headers. Returns ``None`` on any failure (never raises)."""
     log = logger.debug if quiet else logger.warning
     try:
         rate_limit()
         hdrs = {**stealth_headers(), **(headers or {})}
-        client = session or requests
+
+        if session is not None:
+            client = session
+        elif cloudscraper is not None:
+            client = cloudscraper.create_scraper(
+                browser={"browser": "chrome", "platform": "windows", "mobile": False}
+            )
+        else:
+            client = requests
+
         resp = client.get(url, headers=hdrs, params=params, timeout=timeout)
         if resp.status_code in (403, 429):
             log("Scraper blocked (%s) for %s", resp.status_code, url)
@@ -3395,6 +3887,11 @@ import requests
 from bs4 import BeautifulSoup
 
 try:
+    import cloudscraper
+except ImportError:
+    cloudscraper = None
+
+try:
     from _http import rate_limit, safe_get, stealth_headers
 except ImportError:  # pragma: no cover
     from scrapers._http import rate_limit, safe_get, stealth_headers  # type: ignore
@@ -3475,7 +3972,13 @@ class BoursoramaScraper:
     """Rich Boursorama client: profile, news, consensus, PEA universe."""
 
     def __init__(self) -> None:
-        self._session = requests.Session()
+        if cloudscraper is not None:
+            self._session = cloudscraper.create_scraper(
+                browser={"browser": "chrome", "platform": "windows", "mobile": False}
+            )
+        else:
+            self._session = requests.Session()
+
 
     # ------------------------------------------------------------------ API
     def get_retail_sentiment_and_news(self, ticker: str) -> dict:
@@ -21584,7 +22087,18 @@ try:
 except ImportError:
     run_earnings_sync = None
 
+try:
+    from news_email_scraper import run_email_scraper  # noqa: E402
+except ImportError:
+    run_email_scraper = None
+
+try:
+    from news_sentiment_llm import score_news_batch  # noqa: E402
+except ImportError:
+    score_news_batch = None
+
 logger = get_component_logger("scheduler")
+
 
 
 _CONFIG_DIR = _ROOT / "config"
@@ -22094,8 +22608,43 @@ def run_monthly_rebalance() -> None:
         logger.critical("Monthly rebalance FAILED: %s", exc, exc_info=True)
 
 
+def run_morning_news_routine() -> None:
+    """Pre-market morning routine (08:00 Paris weekdays):
+    1. Ingest overnight email newsletters via IMAP into SQLite news_master.
+    2. Batch score unprocessed news articles with local FinBERT sentiment.
+    """
+    if datetime.today().weekday() >= 5:
+        logger.info("Morning news routine: skipping weekend day.")
+        return
+
+    started = time.perf_counter()
+    logger.info("=== Pre-market Morning News & IMAP Routine starting (08:00 Paris) ===")
+    try:
+        pdb = PortfolioDB(_ROOT / "database" / "portfolio.db")
+        scraped = 0
+        if run_email_scraper is not None:
+            scraped = run_email_scraper(pdb)
+            logger.info("Morning IMAP ingestion completed: %d articles fetched.", scraped)
+
+        scored = 0
+        if score_news_batch is not None:
+            scored = score_news_batch(pdb, limit=50)
+            logger.info("Morning FinBERT sentiment scoring completed: %d articles scored.", scored)
+
+        logger.info(
+            "=== Morning news routine finished in %.1fs (scraped=%d, scored=%d) ===",
+            time.perf_counter() - started,
+            scraped,
+            scored,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Morning news routine encountered error: %s", exc, exc_info=True)
+
+
 def _schedule_passes() -> None:
     """Register all periodic jobs in Europe/Paris time."""
+    # Morning pre-market news & newsletter ingestion: 08:00 Paris.
+    schedule.every().day.at("08:00", _TIMEZONE).do(run_morning_news_routine)
     for pass_time in _PASS_TIMES:
         schedule.every().day.at(pass_time, _TIMEZONE).do(run_analysis_pass)
     # Weekly CIO digest: Friday 18:00 Paris.
@@ -22108,8 +22657,8 @@ def _schedule_passes() -> None:
     # Daily ATR stops (weekdays guarded inside).
     schedule.every().day.at(_ATR_STOP_CHECK_TIME, _TIMEZONE).do(run_daily_atr_stops)
     logger.info(
-        "Scheduled: passes at %s; weekly report Fri %s; monthly probe %s; "
-        "ATR stops %s (%s).",
+        "Scheduled: morning news 08:00; passes at %s; weekly report Fri %s; "
+        "earnings sync Fri 18:30; monthly probe %s; ATR stops %s (%s).",
         ", ".join(_PASS_TIMES),
         _WEEKLY_REPORT_TIME,
         _MONTHLY_CHECK_TIME,
@@ -22148,6 +22697,11 @@ def main() -> None:
         action="store_true",
         help="Run autonomous earnings calendar sync now.",
     )
+    parser.add_argument(
+        "--morning-news",
+        action="store_true",
+        help="Run pre-market morning news ingestion and FinBERT scoring now.",
+    )
     args = parser.parse_args()
 
     if args.now:
@@ -22175,6 +22729,12 @@ def main() -> None:
         if run_earnings_sync is not None:
             run_earnings_sync()
         return
+
+    if args.morning_news:
+        logger.info("--morning-news: running morning news & IMAP ingestion now.")
+        run_morning_news_routine()
+        return
+
 
     _schedule_passes()
     logger.info("\U0001F6E1\uFE0F PEA Sniper Terminal Daemon started. "
@@ -22752,8 +23312,10 @@ duckdb>=0.10
 # --- Data sensors (Phase 3) ---
 yfinance>=0.2.40
 requests>=2.31
+cloudscraper>=1.2.71
 beautifulsoup4>=4.12
 feedparser>=6.0
+
 
 # --- Quant & ML Engine (Phases 4, 42-55+) ---
 pandas>=2.1
@@ -24408,6 +24970,138 @@ class TestStatArbAndBacktestSuite(unittest.TestCase):
         self.assertIsInstance(s_map, dict)
         self.assertIn("MC.PA", s_map)
         self.assertEqual(s_map["MC.PA"], "Consumer Cyclical")
+
+
+if __name__ == "__main__":
+    unittest.main()
+```
+
+## FILE: tests/test_stealth_and_imap_ingest.py
+```python
+"""Unit Tests for Stealth Anti-Bot Scraping (cloudscraper) and Production IMAP Newsletter Ingest."""
+
+from __future__ import annotations
+
+import os
+import sys
+import unittest
+from datetime import datetime, timezone
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+ROOT = Path(__file__).resolve().parent.parent
+for sub in ("00_data_sensors", "00_data_sensors/scrapers", "00_data_sensors/imap_ingest", "01_memory_core", "02_quant_engine", "03_risk_portfolio", "04_orchestrator_ai", "05_interfaces", "06_api"):
+    sys.path.insert(0, str(ROOT / sub))
+
+from _http import safe_get, stealth_headers
+from bourso_scraper import BoursoramaScraper
+from imap_ingest import RawMessage, parse_newsletter, is_allowed_sender, dedupe_articles
+from news_email_scraper import run_email_scraper
+from main_scheduler import run_morning_news_routine
+
+
+class TestStealthAndImapIngestSuite(unittest.TestCase):
+
+    def test_01_stealth_headers(self):
+        """Verify rotating stealth headers include appropriate browser signatures."""
+        hdrs = stealth_headers()
+        self.assertIn("User-Agent", hdrs)
+        self.assertIn("Accept-Language", hdrs)
+        self.assertIn("Connection", hdrs)
+
+    def test_02_bourso_scraper_init_and_resilience(self):
+        """Verify Boursorama scraper initializes session and gracefully handles anti-bot challenges."""
+        scraper = BoursoramaScraper()
+        self.assertIsNotNone(scraper._session)
+
+        # Mock safe_get to return captcha response
+        mock_resp = MagicMock()
+        mock_resp.text = "<html><body>Please solve this DataDome captcha</body></html>"
+        with patch("bourso_scraper.safe_get", return_value=mock_resp):
+            profile = scraper.get_instrument_profile("MC.PA")
+            self.assertEqual(profile, {})
+
+    def test_03_imap_whitelist(self):
+        """Verify strict sender whitelist accurately identifies trusted financial sources."""
+        self.assertTrue(is_allowed_sender("Brief Eco <hello@brief.eco>"))
+        self.assertTrue(is_allowed_sender("Substack <plancash@substack.com>"))
+        self.assertTrue(is_allowed_sender("newsletter@boursorama.fr"))
+        self.assertFalse(is_allowed_sender("Spam Guy <spam@phishing.net>"))
+        self.assertFalse(is_allowed_sender(""))
+
+    def test_04_html_parser_article_extraction(self):
+        """Verify HTML parser extracts clean article links and contextual paragraphs."""
+        html_body = """
+        <html>
+            <body>
+                <p>Bienvenue dans la lettre financière.</p>
+                <div>
+                    <a href="https://www.brief.eco/article/l-oreal-resultats-record-2026?utm_source=email">
+                        L'Oréal affiche des résultats record au premier semestre 2026
+                    </a>
+                    <p>La marge opérationnelle du groupe de cosmétiques progresse de 12% grâce au marché asiatique.</p>
+                </div>
+                <a href="https://www.brief.eco/unsubscribe">Unsubscribe</a>
+            </body>
+        </html>
+        """
+        msg = RawMessage(
+            uid="123",
+            subject="Brief Éco du jour",
+            sender="Brief Eco <hello@brief.eco>",
+            date="2026-08-15 08:00:00",
+            html=html_body,
+            text="",
+        )
+        parsed = parse_newsletter(msg)
+        self.assertEqual(parsed["subject"], "Brief Éco du jour")
+        articles = parsed["articles"]
+        self.assertEqual(len(articles), 1)
+        self.assertIn("L'Oréal", articles[0]["title"])
+        self.assertNotIn("utm_source", articles[0]["url"])
+
+    def test_05_dedupe_articles(self):
+        """Verify token Jaccard deduplication collapses near-duplicate headlines."""
+        articles = [
+            {"title": "L'Oréal affiche des résultats record au premier semestre", "url": "https://a.com/1"},
+            {"title": "L'Oréal affiche des résultats record au premier semestre !", "url": "https://a.com/2"},
+            {"title": "Air Liquide signe un contrat majeur pour l'hydrogène vert", "url": "https://b.com/1"},
+        ]
+        deduped = dedupe_articles(articles)
+        self.assertEqual(len(deduped), 2)
+
+    def test_06_production_news_email_scraper_flow(self):
+        """Verify run_email_scraper parses messages, cleans text, and saves to PortfolioDB."""
+        mock_db = MagicMock()
+        mock_db.save_news_items.return_value = 1
+
+        mock_msg = RawMessage(
+            uid="456",
+            subject="L'Oréal : Nouvelle dynamique de croissance en Europe",
+            sender="Substack <plancash@substack.com>",
+            date=datetime.now(timezone.utc).isoformat(),
+            html="<p>Analyse détaillée des résultats de L'Oréal et Air Liquide pour le PEA.</p>",
+            text="",
+        )
+
+        with patch.dict(os.environ, {"YAHOO_MAIL_USER": "test@yahoo.com", "YAHOO_MAIL_APP_PASSWORD": "secretpassword"}):
+            with patch("news_email_scraper.YahooImapClient") as MockClient:
+                instance = MockClient.return_value
+                instance.fetch_recent.return_value = [mock_msg]
+
+                saved = run_email_scraper(mock_db)
+                self.assertEqual(saved, 1)
+                self.assertTrue(mock_db.save_news_items.called)
+                args = mock_db.save_news_items.call_args[0][0]
+                self.assertEqual(len(args), 1)
+                self.assertIn("L'Oréal", args[0]["title"])
+
+    def test_07_morning_news_routine_execution(self):
+        """Verify run_morning_news_routine runs without crashing."""
+        with patch("main_scheduler.run_email_scraper", return_value=2), \
+             patch("main_scheduler.score_news_batch", return_value=2), \
+             patch("main_scheduler.PortfolioDB"):
+            run_morning_news_routine()
 
 
 if __name__ == "__main__":

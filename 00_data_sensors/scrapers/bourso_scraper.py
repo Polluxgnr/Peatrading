@@ -15,6 +15,11 @@ import requests
 from bs4 import BeautifulSoup
 
 try:
+    import cloudscraper
+except ImportError:
+    cloudscraper = None
+
+try:
     from _http import rate_limit, safe_get, stealth_headers
 except ImportError:  # pragma: no cover
     from scrapers._http import rate_limit, safe_get, stealth_headers  # type: ignore
@@ -95,7 +100,13 @@ class BoursoramaScraper:
     """Rich Boursorama client: profile, news, consensus, PEA universe."""
 
     def __init__(self) -> None:
-        self._session = requests.Session()
+        if cloudscraper is not None:
+            self._session = cloudscraper.create_scraper(
+                browser={"browser": "chrome", "platform": "windows", "mobile": False}
+            )
+        else:
+            self._session = requests.Session()
+
 
     # ------------------------------------------------------------------ API
     def get_retail_sentiment_and_news(self, ticker: str) -> dict:
