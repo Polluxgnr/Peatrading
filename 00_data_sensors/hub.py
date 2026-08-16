@@ -22,7 +22,9 @@ for sub in ("00_data_sensors", "00_data_sensors/adapters", "01_memory_core"):
 from adapters.amf_adapter import AmfInsiderAdapter, AmfShortAdapter
 from adapters.base_adapters import AbstractPollAdapter
 from adapters.bourso_adapter import BoursoUniverseAdapter
+from adapters.fundamentals_adapter import FmpFundamentalsAdapter
 from adapters.macro_adapter import MacroAlphaAdapter
+from adapters.market_adapter import YFinanceMarketAdapter
 from adapters.news_adapter import ConsolidatedNewsAdapter
 from data_contracts import AlternativeSignal
 
@@ -46,12 +48,14 @@ class DataIngestionHub:
             logger.info("Registered adapter: %s (interval=%ds)", type(adapter).__name__, adapter.interval_seconds)
 
     def register_default_adapters(self) -> None:
-        """Register the standard concrete adapters (AMF Short, AMF Insider, News, Boursorama, Macro)."""
+        """Register the standard concrete adapters (AMF Short, AMF Insider, News, Boursorama, Macro, Fundamentals)."""
         self.register_adapter(AmfShortAdapter())
         self.register_adapter(AmfInsiderAdapter())
         self.register_adapter(ConsolidatedNewsAdapter())
         self.register_adapter(BoursoUniverseAdapter())
         self.register_adapter(MacroAlphaAdapter())
+        self.register_adapter(FmpFundamentalsAdapter())
+
 
     async def fetch_all_alternative_signals(self) -> List[AlternativeSignal]:
         """Fetch all alternative signals concurrently across registered adapters."""
@@ -140,3 +144,27 @@ class DataIngestionHub:
         finally:
             if should_close and conn is not None:
                 conn.close()
+
+    async def fetch_and_store_market_data(
+        self,
+        tickers: List[str],
+        db_manager: Any,
+        lookback_days: int = 252,
+    ) -> int:
+        """Fetch daily OHLCV via YFinanceMarketAdapter and persist/upsert directly into DuckDB."""
+        market_adapter = YFinanceMarketAdapter()
+        df = await market_adapter.fetch_ohlcv(tickers=tickers, lookback_days=lookback_days)
+        if df is None or df.empty:
+            logger.warning("No market data fetched by YFinanceMarketAdapter.")
+            return 0
+
+        # Upsert into DuckDB manager
+        if hasattr(db_manager, "upsert_daily_ohlcv"):
+            inserted = db_manager.upsert_daily_ohlcv(df)
+            logger.info("Upserted %d OHLCV rows into DuckDB.", inserted if isinstance(inserted, int) else len(df))
+            return inserted if isinstance(inserted, int) else len(df)
+        elif hasattr(db_manager, "append_ohlcv"):
+            db_manager.append_ohlcv(df)
+            return len(df)
+        return len(df)
+
