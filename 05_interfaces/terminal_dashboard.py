@@ -58,8 +58,9 @@ if _DASHBOARD_PASS:
 # --- Cross-package imports (dirs start with digits) --------------------------
 _ROOT = Path(__file__).resolve().parent.parent
 for _sub in ("00_data_sensors", "01_memory_core", "02_quant_engine",
-             "03_risk_portfolio", "04_orchestrator_ai", "05_interfaces"):
+             "03_risk_portfolio", "04_orchestrator_ai", "05_interfaces", "05_interfaces/components"):
     sys.path.insert(0, str(_ROOT / _sub))
+
 
 from sqlite_portfolio import PortfolioDB  # noqa: E402
 from data_models import Position, PortfolioState  # noqa: E402
@@ -4405,8 +4406,94 @@ with tab_mkt:
     """
     components.html(chart_html, height=640)
 
+    # --- Glass-Box Interactive Plotly Charts (Candlesticks, SMAs, HMM Regimes, Dynamic RSI) ---
+    st.markdown("#### 🔬 Graphique Interactif Haute Précision & Régimes HMM (Glass-Box)")
+    try:
+        from charts import render_advanced_price_chart, render_rsi_chart
+        hist_raw = yf.download(selected, period="1y", interval="1d", progress=False, auto_adjust=True)
+        if hist_raw is not None and not hist_raw.empty:
+            if hasattr(hist_raw.columns, "get_level_values"):
+                hist_raw.columns = hist_raw.columns.get_level_values(0)
+            
+            c_series = hist_raw["Close"].dropna().astype(float)
+            sma50_s = c_series.rolling(50).mean()
+            sma200_s = c_series.rolling(200).mean()
+
+            # 14-day RSI
+            delta = c_series.diff()
+            gain = (delta.where(delta > 0, 0)).rolling(14).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+            rs = gain / loss.replace(0, np.nan)
+            rsi_s = 100 - (100 / (1 + rs))
+
+            cur_reg = str(thermo_res.get("mode", "BULL")).upper() if "thermo_res" in locals() and isinstance(thermo_res, dict) else "BULL"
+            dyn_thresh = 38.0 if cur_reg == "BULL" else (25.0 if cur_reg == "BEAR" else 30.0)
+
+            # Build HMM regimes series
+            reg_series = pd.Series(cur_reg, index=hist_raw.index)
+
+            fig_adv = render_advanced_price_chart(selected, hist_raw, hmm_regimes=reg_series, sma_50=sma50_s, sma_200=sma200_s)
+            st.plotly_chart(fig_adv, width="stretch")
+
+            fig_rsi = render_rsi_chart(rsi_s, dynamic_threshold=dyn_thresh)
+            st.plotly_chart(fig_rsi, width="stretch")
+    except Exception as exc:
+        logger.debug("Advanced chart error for %s: %s", selected, exc)
+
+    # --- On-Demand LLM Synthesis (Cost-Optimized Button) ---
+    st.markdown("---")
+    st.markdown(f"#### 🧠 Synthèse Institutionnelle IA — {format_name(selected)}")
+    st.markdown(
+        "<div class='info-text'>Génération à la demande d'une note d'analyse institutionnelle complète "
+        "(moteurs quantitatifs, valorisation fondamentale, sentiment de marché et actualités). "
+        "<b>Contrôle des coûts API OpenRouter : aucun appel automatique en arrière-plan.</b></div>",
+        unsafe_allow_html=True,
+    )
+
+    c_llm1, c_llm2 = st.columns([1.8, 2.2])
+    with c_llm1:
+        btn_llm = st.button(
+            "🧠 Générer la Synthèse IA (OpenRouter)",
+            type="secondary",
+            key=f"btn_llm_explore_{selected}",
+            use_container_width=True,
+        )
+
+    if btn_llm:
+        with st.spinner(f"Analyse institutionnelle approfondie en cours pour {selected}…"):
+            try:
+                from analyst_agent import InstitutionalAnalyst
+                analyst = InstitutionalAnalyst()
+                p_stub = type("PortStub", (), {"total_equity": float(portfolio.total_equity), "cash_available": float(portfolio.cash_available)})()
+                t_stub = {
+                    "mode": str(thermo_res.get("mode", "ATTACK")) if "thermo_res" in locals() and isinstance(thermo_res, dict) else "ATTACK",
+                    "attack_pct": float(thermo_res.get("attack_pct", 0.70)) if "thermo_res" in locals() and isinstance(thermo_res, dict) else 0.70,
+                    "defense_pct": float(thermo_res.get("defense_pct", 0.30)) if "thermo_res" in locals() and isinstance(thermo_res, dict) else 0.30,
+                    "vix": float(vix),
+                    "vol_21d": float(thermo_res.get("vol_21d", 0.15)) if "thermo_res" in locals() and isinstance(thermo_res, dict) else 0.15,
+                }
+                cand_sig = [{
+                    "ticker": selected,
+                    "score": float(ind.get("rsi", 50.0)) if ind else 50.0,
+                    "reason": f"Dossier {dossier.get('name', selected)} - RSI {ind.get('rsi', 'N/A') if ind else 'N/A'}, Tendance {ind.get('trend', 'N/A') if ind else 'N/A'}",
+                }]
+                brief_text = analyst.generate_daily_brief_sync(p_stub, t_stub, cand_sig)
+                st.session_state[f"llm_brief_{selected}"] = brief_text
+            except Exception as exc:
+                st.error(f"Erreur lors de la génération IA : {exc}")
+
+    if st.session_state.get(f"llm_brief_{selected}"):
+        st.markdown(
+            f"<div style='border:1px solid #333;background:#0A0A0A;padding:14px;margin-top:10px;border-left:4px solid {_CYAN};'>"
+            f"<div style='color:{_CYAN};font-weight:700;font-size:13px;margin-bottom:8px;'>NOTE STRATÉGIQUE INSTITUTIONNELLE ({selected}) :</div>"
+            f"{st.session_state[f'llm_brief_{selected}']}"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
     # TA widget + SMAs under chart
     tw1, tw2 = st.columns([1, 1])
+
     with tw1:
         ta_html = f"""
         <div class="tradingview-widget-container">
@@ -4749,8 +4836,51 @@ with tab_mkt:
             )
         st.markdown("\n".join(lines))
 
+    # --- Statistical Arbitrage / Pairs Trading Visualizer ---
+    st.markdown("---")
+    st.markdown("#### ⚖️ Arbitrage Statistique & Paires Cointégrées (Z-Score)")
+    st.markdown(
+        "<div class='info-text'>Modèle de cointégration (Engle-Granger) et suivi en temps réel du Z-Score du spread. "
+        "Une anomalie $|Z| \ge 2.0\sigma$ signale une divergence statistique temporaire propice au retour à la moyenne.</div>",
+        unsafe_allow_html=True,
+    )
+    try:
+        from stat_arb_pairs import StatArbEngine
+        from charts import render_statarb_zscore_chart
+        
+        c_p1, c_p2 = st.columns([1, 2])
+        with c_p1:
+            pair_choice = st.selectbox(
+                "Paire Sectorielle Cointégrée",
+                ["MC.PA / OR.PA (Luxe & Conso)", "BNP.PA / GLE.PA (Banques)", "AIR.PA / SAF.PA (Aéronautique)"],
+                key="statarb_pair_choice",
+            )
+        leg_a, leg_b = ("MC.PA", "OR.PA")
+        if "BNP" in pair_choice:
+            leg_a, leg_b = "BNP.PA", "GLE.PA"
+        elif "AIR" in pair_choice:
+            leg_a, leg_b = "AIR.PA", "SAF.PA"
+
+        df_pair = yf.download([leg_a, leg_b], period="1y", interval="1d", progress=False, auto_adjust=True)
+        if df_pair is not None and not df_pair.empty:
+            c_pair = df_pair["Close"] if "Close" in df_pair else df_pair
+            if leg_a in c_pair.columns and leg_b in c_pair.columns:
+                engine = StatArbEngine()
+                p_val, beta, z_series, cur_z = engine.compute_pair_spread(c_pair[leg_a], c_pair[leg_b])
+                
+                z_tail = z_series.tail(120).dropna()
+                if not z_tail.empty:
+                    fig_z = render_statarb_zscore_chart(z_tail.index, z_tail, leg_a, leg_b, threshold=2.0)
+                    st.plotly_chart(fig_z, width="stretch")
+                    
+                    z_status = "🔴 SURÉVALUATION (+2σ)" if cur_z >= 2.0 else ("🟢 SOUS-ÉVALUATION (-2σ)" if cur_z <= -2.0 else "⚪ ZONE NEUTRE")
+                    st.caption(f"Paire: **{leg_a} / {leg_b}** · Z-Score Actuel: **{cur_z:+.2f}σ** ({z_status}) · Ratio Hedge (β): **{beta:.3f}** · Cointégration p-value: **{p_val:.4f}**")
+    except Exception as exc:
+        logger.debug("StatArb visualizer error: %s", exc)
+
 # --- Tab: Ledger & Post-Mortems -------------------------------------------
 with tab_postmortem:
+
     st.markdown(
         "<div class='info-text'><b>Auditeur Algorithmique & Post-Mortems de Trading</b> : "
         "Analyse rétrospective systématique de chaque position débouclée "
