@@ -2648,8 +2648,41 @@ def get_sector_performance(
     return agg
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_cached_institutional_brief(
+    total_equity: float,
+    cash: float,
+    mode: str,
+    attack_pct: float,
+    defense_pct: float,
+    vix_val: float,
+    vol_21d_val: float,
+    top_signals_repr: str,
+    is_watchdog_alert: bool,
+) -> str:
+    """Generate or retrieve cached institutional LLM daily brief for portfolio management."""
+    try:
+        from analyst_agent import InstitutionalAnalyst
+        analyst = InstitutionalAnalyst()
+        port_stub = type("StubPort", (), {"total_equity": total_equity, "cash_available": cash})()
+        thermo_stub = {
+            "mode": mode,
+            "attack_pct": attack_pct,
+            "defense_pct": defense_pct,
+            "vix": vix_val,
+            "vol_21d": vol_21d_val,
+        }
+        import json
+        signals = json.loads(top_signals_repr) if top_signals_repr else []
+        w_alert = {"alert": is_watchdog_alert} if is_watchdog_alert else None
+        return analyst.generate_daily_brief_sync(port_stub, thermo_stub, signals, w_alert)
+    except Exception as exc:
+        return f"Note d'analyse institutionnelle indisponible : {exc}"
+
+
 @st.cache_data(ttl=1800, show_spinner=False)
 def get_polymarket_macro(limit: int = 8) -> list[dict]:
+
     """Fetch live macro-relevant Polymarket events (Gamma API, no auth)."""
     try:
         import json
@@ -2815,11 +2848,26 @@ with c4:
 
 
 # =============================================================================
-# Risk / Macro HUD (VIX, regime, satellite budget, sector concentration)
+# Risk / Macro HUD (VIX, regime, satellite budget, sector concentration, Watchdog)
 # =============================================================================
+watchdog_res = {"alert": False}
+try:
+    from watchdog import MarketWatchdog
+    watchdog = MarketWatchdog(default_threshold=-0.10)
+    watchdog_res = watchdog.check_intraday_crash("^FCHI")
+    if watchdog_res.get("alert"):
+        st.error(
+            f"🚨 **CRITICAL: Intraday Flash Crash Detected on {watchdog_res['ticker']}** "
+            f"(Chute: {watchdog_res['drop_pct']*100:.1f}% depuis le plus haut du jour : {watchdog_res['day_high']} € ➔ {watchdog_res['current_price']} €). "
+            f"Protocole de préservation du capital activé : suspension immédiate de tout nouvel engagement."
+        )
+except Exception as exc:
+    logger.debug("Watchdog check failed: %s", exc)
+
 macro_snap = get_macro_regime_snapshot()
 vix = float(macro_snap.get("vix", get_vix()))
 vix_roc_5d = float(macro_snap.get("vix_roc_5d", 0.0))
+
 vix_panic = vix > _VIX_PANIC or vix_roc_5d > 0.25
 regime = get_core_regime()
 
@@ -3084,14 +3132,47 @@ with tab_gen:
     st.markdown(
         "<div class='info-text'>Briefing + registre des signaux + "
         "<b>suggestion de portefeuille adaptative</b> selon ton capital. "
-        "Aucun ordre n'est envoye depuis ici — Discord reste le copilot.</div>",
+        "Outil d'aide à la décision : les recommandations analytiques sont soumises à validation discrétionnaire.</div>",
         unsafe_allow_html=True,
     )
+
+    # --- Synthèse Institutionnelle IA (Aide à la Décision) ---
+    pending_gen = load_signals(("PENDING",))
+    with st.expander("📝 Synthèse Institutionnelle IA (Aide à la Décision & Stratégie)", expanded=True):
+        raw_sigs = []
+        if pending_gen is not None and not pending_gen.empty:
+            for _, r in pending_gen.head(3).iterrows():
+                raw_sigs.append({
+                    "ticker": str(r.get("ticker", "")),
+                    "score": float(r.get("score", 0)),
+                    "reason": str(r.get("reason", "")),
+                    "ml_probability": float(r.get("ml_probability", 0.0)) if "ml_probability" in r else None,
+                })
+        import json
+        t_mode = str(thermo_res.get("mode", "ATTACK")) if "thermo_res" in locals() and isinstance(thermo_res, dict) else "ATTACK"
+        t_atk = float(thermo_res.get("attack_pct", 0.70)) if "thermo_res" in locals() and isinstance(thermo_res, dict) else 0.70
+        t_def = float(thermo_res.get("defense_pct", 0.30)) if "thermo_res" in locals() and isinstance(thermo_res, dict) else 0.30
+        t_vol = float(thermo_res.get("vol_21d", 0.15)) if "thermo_res" in locals() and isinstance(thermo_res, dict) else 0.15
+        is_w_alert = bool(watchdog_res.get("alert", False)) if "watchdog_res" in locals() and isinstance(watchdog_res, dict) else False
+
+        brief_md = get_cached_institutional_brief(
+            total_equity=float(portfolio.total_equity),
+            cash=float(portfolio.cash_available),
+            mode=t_mode,
+            attack_pct=t_atk,
+            defense_pct=t_def,
+            vix_val=float(vix),
+            vol_21d_val=t_vol,
+            top_signals_repr=json.dumps(raw_sigs),
+            is_watchdog_alert=is_w_alert,
+        )
+        st.markdown(brief_md)
 
     held_tickers = [p.ticker for p in positions]
     blue_chips = ["MC.PA", "OR.PA", "AI.PA", "RMS.PA", "SAN.PA",
                   "TTE.PA", "BNP.PA", "AIR.PA", _CORE_TICKER]
     watch = tuple(dict.fromkeys(held_tickers + blue_chips))[:14]
+
 
     pending_gen = load_signals(("PENDING",))
     suggestion = suggest_adaptive_portfolio(
