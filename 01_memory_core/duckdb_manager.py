@@ -79,17 +79,22 @@ class TimeSeriesDB:
                 conn.execute(
                     """
                     CREATE TABLE IF NOT EXISTS ohlcv_data (
-                        ticker  VARCHAR NOT NULL,
-                        date    DATE     NOT NULL,
-                        open    DOUBLE,
-                        high    DOUBLE,
-                        low     DOUBLE,
-                        close   DOUBLE,
-                        volume  BIGINT,
+                        ticker     VARCHAR NOT NULL,
+                        date       DATE     NOT NULL,
+                        open       DOUBLE,
+                        high       DOUBLE,
+                        low        DOUBLE,
+                        close      DOUBLE,
+                        volume     BIGINT,
+                        is_outlier BOOLEAN DEFAULT FALSE,
                         PRIMARY KEY (ticker, date)
                     );
                     """
                 )
+                try:
+                    conn.execute("ALTER TABLE ohlcv_data ADD COLUMN IF NOT EXISTS is_outlier BOOLEAN DEFAULT FALSE;")
+                except Exception:
+                    pass
             logger.info("DuckDB schema initialized at %s", self.db_path)
         except Exception:
             logger.exception("Failed to initialize DuckDB schema.")
@@ -97,7 +102,7 @@ class TimeSeriesDB:
 
 
     def upsert_ohlcv(self, df: pd.DataFrame) -> int:
-        """Insert or replace OHLCV rows from a DataFrame.
+        """Insert or replace OHLCV rows from a DataFrame through DataQualityGateway.
 
         Args:
             df: DataFrame with columns ``Ticker``, ``Date``, ``Open``, ``High``,
@@ -114,13 +119,23 @@ class TimeSeriesDB:
             logger.warning("upsert_ohlcv received an empty DataFrame; skipping.")
             return 0
 
-        missing = [c for c in _OHLCV_COLUMNS if c not in df.columns]
-        if missing:
-            raise ValueError(f"DataFrame missing required columns: {missing}")
+        # Pass through DataQualityGateway for institutional hygiene & outlier tagging
+        try:
+            from data_quality import DataQualityGateway
+            gateway = DataQualityGateway()
+            payload = gateway.validate_ohlcv_batch(df)
+        except Exception as exc:
+            logger.warning("DataQualityGateway validation failed (%s); falling back to direct schema.", exc)
+            missing = [c for c in _OHLCV_COLUMNS if c not in df.columns]
+            if missing:
+                raise ValueError(f"DataFrame missing required columns: {missing}")
+            payload = df[_OHLCV_COLUMNS].copy()
+            payload["Date"] = pd.to_datetime(payload["Date"]).dt.date
+            payload["is_outlier"] = False
 
-        # Work on a normalized copy in the canonical column order.
-        payload = df[_OHLCV_COLUMNS].copy()
-        payload["Date"] = pd.to_datetime(payload["Date"]).dt.date
+        if payload is None or payload.empty:
+            logger.warning("DataQualityGateway rejected entire batch; 0 rows upserted.")
+            return 0
 
         try:
             with self._connect() as conn:
@@ -129,15 +144,16 @@ class TimeSeriesDB:
                 conn.execute(
                     """
                     INSERT INTO ohlcv_data
-                        (ticker, date, open, high, low, close, volume)
-                    SELECT Ticker, Date, Open, High, Low, Close, Volume
+                        (ticker, date, open, high, low, close, volume, is_outlier)
+                    SELECT Ticker, Date, Open, High, Low, Close, Volume, is_outlier
                     FROM incoming_ohlcv
                     ON CONFLICT (ticker, date) DO UPDATE SET
-                        open   = excluded.open,
-                        high   = excluded.high,
-                        low    = excluded.low,
-                        close  = excluded.close,
-                        volume = excluded.volume;
+                        open       = excluded.open,
+                        high       = excluded.high,
+                        low        = excluded.low,
+                        close      = excluded.close,
+                        volume     = excluded.volume,
+                        is_outlier = excluded.is_outlier;
                     """
                 )
                 conn.unregister("incoming_ohlcv")
@@ -146,6 +162,7 @@ class TimeSeriesDB:
         except duckdb.Error:
             logger.exception("Failed to upsert OHLCV data.")
             raise
+
 
     def get_historical_prices(self, ticker: str, days: int = 252) -> pd.DataFrame:
         """Fetch the most recent ``days`` of OHLCV for a ticker, chronologically.

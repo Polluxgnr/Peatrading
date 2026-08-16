@@ -492,8 +492,9 @@ def get_hub_alternative_signals(
 def get_hub_ticks(
     ticker: str = Query(..., description="Target ticker symbol (e.g. MC.PA)"),
     days: int = Query(default=30, ge=1, le=500),
+    include_outliers: bool = Query(default=False, description="Whether to include tagged return outliers"),
 ) -> List[Dict[str, Any]]:
-    """Fetch recent MarketTick / OHLCV price history from DuckDB/SQLite."""
+    """Fetch recent MarketTick / OHLCV price history from DuckDB/SQLite, filtering outliers by default."""
     clean_ticker = ticker.strip().upper()
     try:
         from duckdb_manager import TimeSeriesDB
@@ -502,6 +503,9 @@ def get_hub_ticks(
         if df is not None and not df.empty:
             records = []
             for idx, row in df.iterrows():
+                is_outlier = bool(row.get("is_outlier") or False)
+                if not include_outliers and is_outlier:
+                    continue
                 d_str = idx.strftime("%Y-%m-%d") if hasattr(idx, "strftime") else str(idx)
                 records.append({
                     "ticker": clean_ticker,
@@ -511,6 +515,7 @@ def get_hub_ticks(
                     "low": float(row.get("Low") or row.get("low") or 0.0),
                     "close": float(row.get("Close") or row.get("close") or 0.0),
                     "volume": float(row.get("Volume") or row.get("volume") or 0.0),
+                    "is_outlier": is_outlier,
                     "source": "DuckDB",
                 })
             return records
@@ -534,6 +539,7 @@ def get_hub_ticks(
                     "low": float(row.get("Low") or 0.0),
                     "close": float(row.get("Close") or 0.0),
                     "volume": float(row.get("Volume") or 0.0),
+                    "is_outlier": False,
                     "source": "yfinance",
                 })
             return records
@@ -542,6 +548,7 @@ def get_hub_ticks(
         raise HTTPException(status_code=500, detail=str(exc))
 
     return []
+
 
 
 @app.get("/api/v1/system/health", response_model=Dict[str, Any])
