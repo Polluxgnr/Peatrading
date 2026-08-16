@@ -2983,6 +2983,32 @@ with st.sidebar:
 
     st.markdown("### ⚙️ Parametres")
     st.info("⚙️ Orchestré par Prefect (UI locale: port 4200)")
+
+    btn_force_sync = st.button("⚡ Actualiser le Marché (Force Refresh)", type="primary", use_container_width=True)
+    if btn_force_sync:
+        with st.spinner("Synchronisation des flux et calcul des signaux en cours..."):
+            try:
+                from hub import DataIngestionHub
+                from data_quality import DataQualityGateway
+                from market_data_adapter import YFinanceMarketDataAdapter
+                
+                hub = DataIngestionHub()
+                sig_list = asyncio.run(hub.fetch_all_alternative_signals())
+                hub.save_signals_to_sqlite(sig_list, PortfolioDB())
+
+                mkt_adapter = YFinanceMarketDataAdapter()
+                top_tickers = universe_df["ticker"].tolist() if "universe_df" in locals() and not universe_df.empty else ["MC.PA", "CW8.PA", "AI.PA"]
+                df_ohlcv = asyncio.run(mkt_adapter.fetch_ohlcv(top_tickers[:10], lookback_days=30))
+                if not df_ohlcv.empty:
+                    TimeSeriesDB().upsert_ohlcv(df_ohlcv)
+
+                st.session_state["last_sync_utc"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+                st.cache_data.clear()
+                st.success("Données actualisées et validées.")
+                st.rerun()
+            except Exception as exc:
+                st.error(f"Erreur lors de la synchronisation forcée : {exc}")
+
     auto_refresh = st.checkbox("Rafraichissement auto", value=False)
 
     refresh_secs = st.slider("Intervalle (s)", 30, 600, 120, 30,
@@ -3018,6 +3044,10 @@ with st.sidebar:
             unsafe_allow_html=True,
         )
 
+    sync_ts = st.session_state.get("last_sync_utc") or portfolio.last_updated.strftime("%Y-%m-%d %H:%M:%S UTC")
+    st.markdown("---")
+    st.caption(f"🕒 **Dernière Synchronisation BD** :\n`{sync_ts}`")
+
     st.caption(
         "Amorcer le capital :\n\n`python seed_account.py --cash 10000`\n\n"
         "Lancer une passe :\n\n`python main_scheduler.py --now`"
@@ -3026,6 +3056,7 @@ with st.sidebar:
         st.caption(f"⏱️ Auto-refresh dans {refresh_secs}s")
 
 st.write("---")
+
 
 # =============================================================================
 # Mission Control — état du monde en ~3 secondes
@@ -3137,7 +3168,24 @@ with tab_gen:
         unsafe_allow_html=True,
     )
 
+    # --- PEA Eligibility Warnings (Boursorama Registry Check) ---
+    _warn_file = _ROOT / "database" / "eligibility_warnings.json"
+    if _warn_file.exists():
+        try:
+            with open(_warn_file, "r", encoding="utf-8") as f:
+                _elig_warnings = json.load(f)
+            if _elig_warnings:
+                _warn_bullets = [f"• **{t}** : {msg}" for t, msg in _elig_warnings.items()]
+                st.error(
+                    "🚨 **ALERTE ÉLIGIBILITÉ PEA (Boursorama Registry)** :\n"
+                    "Certains actifs suivis dans votre univers ont perdu ou ne confirment plus leur éligibilité PEA :\n\n"
+                    + "\n".join(_warn_bullets)
+                )
+        except Exception as exc:
+            logger.debug("Error reading eligibility warnings: %s", exc)
+
     # --- Synthèse Institutionnelle IA (Aide à la Décision) ---
+
     pending_gen = load_signals(("PENDING",))
     with st.expander("📝 Synthèse Institutionnelle IA (Aide à la Décision & Stratégie)", expanded=True):
         raw_sigs = []

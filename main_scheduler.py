@@ -103,8 +103,10 @@ _CONFIG_DIR = _ROOT / "config"
 _UNIVERSE_PATH = _CONFIG_DIR / "pea_universe.yaml"
 _RISK_PATH = _CONFIG_DIR / "risk_params.yaml"
 _TIMEZONE = "Europe/Paris"
-_PASS_TIMES = ("09:00", "13:30", "17:10")
+# Run analysis pass every 30 minutes during Euronext market hours (09:00 to 17:30 Paris time)
+_PASS_TIMES = tuple(f"{h:02d}:{m:02d}" for h in range(9, 18) for m in (0, 30) if not (h == 17 and m > 30))
 _WEEKLY_REPORT_TIME = "18:00"     # Friday CIO digest.
+
 _MONTHLY_CHECK_TIME = "08:30"     # Daily probe; profit-shave acts only on the 1st.
 _ATR_STOP_CHECK_TIME = "08:35"    # Daily ATR stop evaluation (weekdays via loop).
 _LOOKBACK_DAYS = 400              # ~270 trading days -> enough for SMA-200.
