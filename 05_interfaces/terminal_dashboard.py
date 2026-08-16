@@ -3249,10 +3249,40 @@ with tab_gen:
         )
         st.markdown(brief_md)
 
+    # --- Macro Volatility Thermometer & Target Split Gauge ---
+    st.markdown("#### 🌡️ Thermomètre Macroéconomique & Répartition Cible")
+    try:
+        from charts import render_macro_thermometer_gauge
+        cur_mode = str(thermo_res.get("mode", "ATTACK")) if "thermo_res" in locals() and isinstance(thermo_res, dict) else "ATTACK"
+        cur_atk = float(thermo_res.get("attack_pct", 0.70)) if "thermo_res" in locals() and isinstance(thermo_res, dict) else 0.70
+        cur_def = float(thermo_res.get("defense_pct", 0.30)) if "thermo_res" in locals() and isinstance(thermo_res, dict) else 0.30
+
+        if cur_mode == "BUNKER":
+            st.error("🛑 **BUNKER MODE : Index sous SMA200. Allocation défensive maximale requise (Cash / CSH.PA).**")
+
+        c_th1, c_th2 = st.columns([1.4, 2.0])
+        with c_th1:
+            fig_gauge = render_macro_thermometer_gauge(cur_atk, cur_def, mode=cur_mode)
+            st.plotly_chart(fig_gauge, use_container_width=True)
+        with c_th2:
+            st.markdown(
+                f"<div style='background:#111;border:1px solid #222;padding:12px;border-radius:4px;margin-top:10px;font-size:12px;line-height:1.6;'>"
+                f"<b style='color:#FFF;'>Règle de Gestion Macro VIX & CAC40</b><br>"
+                f"• Volatilité 21j CAC40 : <b>{float(thermo_res.get('vol_21d', 0.15))*100:.1f}%</b> (VIX: <b>{vix:.1f}</b>)<br>"
+                f"• Allocation Moteur Attaque : <b style='color:#00FF66;'>{cur_atk*100:.0f}%</b> (Actions PEA éligibles, cap max 98%)<br>"
+                f"• Allocation Moteur Bouclier : <b style='color:#38BDF8;'>{cur_def*100:.0f}%</b> (Cash disponible + CSH.PA)<br>"
+                f"• Protection Bunker : Passage automatique à 100% Défense si Clôture CAC40 < SMA 200."
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+    except Exception as exc:
+        logger.debug("Macro thermometer gauge render error: %s", exc)
+
     held_tickers = [p.ticker for p in positions]
     blue_chips = ["MC.PA", "OR.PA", "AI.PA", "RMS.PA", "SAN.PA",
                   "TTE.PA", "BNP.PA", "AIR.PA", _CORE_TICKER]
     watch = tuple(dict.fromkeys(held_tickers + blue_chips))[:14]
+
 
 
     pending_gen = load_signals(("PENDING",))
@@ -4489,7 +4519,7 @@ with tab_mkt:
     # --- Glass-Box Interactive Plotly Charts (Candlesticks, SMAs, HMM Regimes, Dynamic RSI) ---
     st.markdown("#### 🔬 Graphique Interactif Haute Précision & Régimes HMM (Glass-Box)")
     try:
-        from charts import render_advanced_price_chart, render_rsi_chart
+        from charts import render_hmm_candlestick_chart, render_rsi_chart
         hist_raw = yf.download(selected, period="1y", interval="1d", progress=False, auto_adjust=True)
         if hist_raw is not None and not hist_raw.empty:
             if hasattr(hist_raw.columns, "get_level_values"):
@@ -4512,8 +4542,9 @@ with tab_mkt:
             # Build HMM regimes series
             reg_series = pd.Series(cur_reg, index=hist_raw.index)
 
-            fig_adv = render_advanced_price_chart(selected, hist_raw, hmm_regimes=reg_series, sma_50=sma50_s, sma_200=sma200_s)
+            fig_adv = render_hmm_candlestick_chart(selected, hist_raw, sma50=sma50_s, sma200=sma200_s, regime_series=reg_series)
             st.plotly_chart(fig_adv, width="stretch")
+
 
             fig_rsi = render_rsi_chart(rsi_s, dynamic_threshold=dyn_thresh)
             st.plotly_chart(fig_rsi, width="stretch")
