@@ -4530,54 +4530,76 @@ with tab_mkt:
         unsafe_allow_html=True,
     )
 
+    # Check 24-hour persistent SQLite cache first
+    cached_synth = None
+    try:
+        cached_synth = PortfolioDB().get_cached_synthesis(selected, max_age_hours=24)
+    except Exception:
+        pass
+
     c_llm1, c_llm2 = st.columns([1.8, 2.2])
     with c_llm1:
+        btn_label = "🧠 Générer la Synthèse IA (OpenRouter)" if not cached_synth else "🔄 Régénérer la Synthèse IA (OpenRouter)"
         btn_llm = st.button(
-            "🧠 Générer la Synthèse IA (Ollama Local)",
+            btn_label,
             type="secondary",
-            key=f"btn_llm_explore_{selected}",
+            key=f"btn_llm_{selected}",
             use_container_width=True,
         )
 
     resp_container = st.empty()
 
     if btn_llm:
-        try:
-            from analyst_agent import InstitutionalAnalyst
-            analyst = InstitutionalAnalyst()
-            p_stub = type("PortStub", (), {"total_equity": float(portfolio.total_equity), "cash_available": float(portfolio.cash_available)})()
-            t_stub = {
-                "mode": str(thermo_res.get("mode", "ATTACK")) if "thermo_res" in locals() and isinstance(thermo_res, dict) else "ATTACK",
-                "attack_pct": float(thermo_res.get("attack_pct", 0.70)) if "thermo_res" in locals() and isinstance(thermo_res, dict) else 0.70,
-                "defense_pct": float(thermo_res.get("defense_pct", 0.30)) if "thermo_res" in locals() and isinstance(thermo_res, dict) else 0.30,
-                "vix": float(vix),
-                "vol_21d": float(thermo_res.get("vol_21d", 0.15)) if "thermo_res" in locals() and isinstance(thermo_res, dict) else 0.15,
-            }
-            cand_sig = [{
-                "ticker": selected,
-                "score": float(ind.get("rsi", 50.0)) if ind else 50.0,
-                "reason": f"Dossier {dossier.get('name', selected)} - RSI {ind.get('rsi', 'N/A') if ind else 'N/A'}, Tendance {ind.get('trend', 'N/A') if ind else 'N/A'}",
-            }]
-            streamed_full = ""
-            for chunk in analyst.generate_daily_brief_stream_sync(p_stub, t_stub, cand_sig):
-                streamed_full += chunk
+        with st.spinner("Génération de la note d'analyse..."):
+            try:
+                from analyst_agent import InstitutionalAnalyst
+                analyst = InstitutionalAnalyst()
+                p_stub = type("PortStub", (), {"total_equity": float(portfolio.total_equity), "cash_available": float(portfolio.cash_available)})()
+                t_stub = {
+                    "mode": str(thermo_res.get("mode", "ATTACK")) if "thermo_res" in locals() and isinstance(thermo_res, dict) else "ATTACK",
+                    "attack_pct": float(thermo_res.get("attack_pct", 0.70)) if "thermo_res" in locals() and isinstance(thermo_res, dict) else 0.70,
+                    "defense_pct": float(thermo_res.get("defense_pct", 0.30)) if "thermo_res" in locals() and isinstance(thermo_res, dict) else 0.30,
+                    "vix": float(vix),
+                    "vol_21d": float(thermo_res.get("vol_21d", 0.15)) if "thermo_res" in locals() and isinstance(thermo_res, dict) else 0.15,
+                }
+                cand_sig = [{
+                    "ticker": selected,
+                    "score": float(ind.get("rsi", 50.0)) if ind else 50.0,
+                    "reason": f"Dossier {dossier.get('name', selected)} - RSI {ind.get('rsi', 'N/A') if ind else 'N/A'}, Tendance {ind.get('trend', 'N/A') if ind else 'N/A'}",
+                }]
+                streamed_full = ""
+                for chunk in analyst.generate_daily_brief_stream_sync(p_stub, t_stub, cand_sig):
+                    streamed_full += chunk
+                    resp_container.markdown(
+                        f"<div style='border:1px solid #333;background:#0A0A0A;padding:14px;margin-top:10px;border-left:4px solid {_CYAN};'>"
+                        f"<div style='color:{_CYAN};font-weight:700;font-size:13px;margin-bottom:8px;'>NOTE STRATÉGIQUE INSTITUTIONNELLE ({selected}) :</div>"
+                        f"{streamed_full}▌"
+                        f"</div>",
+                        unsafe_allow_html=True,
+                    )
                 resp_container.markdown(
                     f"<div style='border:1px solid #333;background:#0A0A0A;padding:14px;margin-top:10px;border-left:4px solid {_CYAN};'>"
                     f"<div style='color:{_CYAN};font-weight:700;font-size:13px;margin-bottom:8px;'>NOTE STRATÉGIQUE INSTITUTIONNELLE ({selected}) :</div>"
-                    f"{streamed_full}▌"
+                    f"{streamed_full}"
                     f"</div>",
                     unsafe_allow_html=True,
                 )
-            resp_container.markdown(
-                f"<div style='border:1px solid #333;background:#0A0A0A;padding:14px;margin-top:10px;border-left:4px solid {_CYAN};'>"
-                f"<div style='color:{_CYAN};font-weight:700;font-size:13px;margin-bottom:8px;'>NOTE STRATÉGIQUE INSTITUTIONNELLE ({selected}) :</div>"
-                f"{streamed_full}"
-                f"</div>",
-                unsafe_allow_html=True,
-            )
-            st.session_state[f"llm_brief_{selected}"] = streamed_full
-        except Exception as exc:
-            st.error(f"Erreur lors de la génération IA : {exc}")
+                st.session_state[f"llm_brief_{selected}"] = streamed_full
+                try:
+                    PortfolioDB().save_synthesis(selected, streamed_full)
+                except Exception as exc:
+                    logger.debug("Failed to cache synthesis for %s: %s", selected, exc)
+            except Exception as exc:
+                st.error(f"Erreur lors de la génération IA : {exc}")
+
+    elif cached_synth:
+        resp_container.markdown(
+            f"<div style='border:1px solid #333;background:#0A0A0A;padding:14px;margin-top:10px;border-left:4px solid {_CYAN};'>"
+            f"<div style='color:{_CYAN};font-weight:700;font-size:13px;margin-bottom:8px;'>NOTE STRATÉGIQUE INSTITUTIONNELLE ({selected}) &nbsp;&nbsp;<span style='color:{_MUTED};font-size:11px;font-weight:normal;'>ℹ️ Synthèse en cache (Valide 24h)</span></div>"
+            f"{cached_synth}"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
 
     elif st.session_state.get(f"llm_brief_{selected}"):
         resp_container.markdown(
@@ -4587,6 +4609,7 @@ with tab_mkt:
             f"</div>",
             unsafe_allow_html=True,
         )
+
 
 
     # TA widget + SMAs under chart

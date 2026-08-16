@@ -140,25 +140,25 @@ def ollama_chat_stream_sync(
 
 
 
+_OPENROUTER_DEFAULT_MODEL = os.getenv("OPENROUTER_MODEL", "google/gemini-flash-1.5")
+
+
 async def openrouter_chat(
     messages: list[dict],
     api_key: str | None,
-    model: str = _DEFAULT_MODEL,
-    max_tokens: int = 180,
-    temperature: float = 0.4,
+    model: str = _OPENROUTER_DEFAULT_MODEL,
+    max_tokens: int = 350,
+    temperature: float = 0.2,
     timeout_s: int = _REQUEST_TIMEOUT_S,
 ) -> str | None:
-    """Send a chat-completion request to OpenRouter and return the text.
-
-    Shared by every LLM consumer (trade explainer, news sentiment scorer, weekly
-    historian) so the HTTP/auth/error handling lives in exactly one place.
+    """Send a chat-completion request to OpenRouter with strict low-cost guardrails (<0.02€/day).
 
     Args:
         messages: OpenAI-style ``[{"role", "content"}, ...]`` message list.
         api_key: OpenRouter API key; ``None`` short-circuits to ``None``.
-        model: Model slug to query.
-        max_tokens: Upper bound on the completion length.
-        temperature: Sampling temperature.
+        model: Model slug (defaults to google/gemini-flash-1.5).
+        max_tokens: Upper bound on completion length (hard-capped at 350).
+        temperature: Sampling temperature (default 0.2).
         timeout_s: Total request timeout in seconds.
 
     Returns:
@@ -167,11 +167,32 @@ async def openrouter_chat(
     if not api_key:
         return None
 
+    # Hard guardrails on token budget and temperature
+    capped_tokens = min(350, max(50, int(max_tokens)))
+    capped_temp = min(0.5, max(0.0, float(temperature)))
+
+    # Ensure system prompt constraint: 3 concise bullet points in French
+    clean_messages = list(messages)
+    has_system = any(m.get("role") == "system" for m in clean_messages)
+    if not has_system:
+        clean_messages.insert(
+            0,
+            {
+                "role": "system",
+                "content": (
+                    "Tu es un analyste quantitatif institutionnel senior. "
+                    "Rédige strictement 3 phrases synthétiques sous forme de puces en français : "
+                    "1) Contexte macro & volatilité, 2) Déclencheur technique/quantitatif, 3) Risque majeur ou niveau d'invalidation. "
+                    "Aucune formule de politesse, pas de bavardage."
+                ),
+            },
+        )
+
     payload = {
         "model": model,
-        "messages": messages,
-        "temperature": temperature,
-        "max_tokens": max_tokens,
+        "messages": clean_messages,
+        "temperature": capped_temp,
+        "max_tokens": capped_tokens,
     }
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -206,11 +227,12 @@ class NarrativeExplainer:
     def __init__(self) -> None:
         """Read the OpenRouter API key and model slug from the environment."""
         self.api_key: str | None = os.getenv("OPENROUTER_API_KEY")
-        self.model: str = os.getenv("OPENROUTER_MODEL", _DEFAULT_MODEL)
+        self.model: str = os.getenv("OPENROUTER_MODEL", _OPENROUTER_DEFAULT_MODEL)
         if not self.api_key:
             logger.warning(
                 "OPENROUTER_API_KEY not set; explanations will use the fallback."
             )
+
 
     @staticmethod
     def _sector_breakdown(portfolio: PortfolioState) -> str:

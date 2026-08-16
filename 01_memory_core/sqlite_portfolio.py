@@ -178,15 +178,31 @@ class PortfolioDB:
                 conn.execute(
                     """
                     CREATE TABLE IF NOT EXISTS model_training_runs (
-                        id                      TEXT PRIMARY KEY,
-                        trained_at              TEXT NOT NULL,
-                        model_type              TEXT NOT NULL,
-                        accuracy                REAL,
-                        brier_score             REAL,
-                        feature_importance_json TEXT
+                        run_id              TEXT PRIMARY KEY,
+                        trained_at          TEXT NOT NULL,
+                        model_type          TEXT NOT NULL,
+                        n_samples           INTEGER NOT NULL,
+                        brier_score         REAL,
+                        auc_roc             REAL,
+                        log_loss            REAL,
+                        ece                 REAL,
+                        calibration_method  TEXT,
+                        hyperparameters_json TEXT,
+                        feature_names_json  TEXT,
+                        active              INTEGER DEFAULT 1
                     );
                     """
                 )
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS llm_synthesis_cache (
+                        ticker       TEXT PRIMARY KEY,
+                        synthesis    TEXT NOT NULL,
+                        generated_at TEXT NOT NULL
+                    );
+                    """
+                )
+
             logger.info("SQLite schema initialized at %s", self.db_path)
         except sqlite3.Error:
             logger.exception("Failed to initialize SQLite schema.")
@@ -751,8 +767,54 @@ class PortfolioDB:
             return run_id
         except sqlite3.Error:
             logger.exception("Failed to log model training run.")
-            return ""
+    def get_cached_synthesis(self, ticker: str, max_age_hours: int = 24) -> Optional[str]:
+        """Return cached LLM markdown synthesis if generated within max_age_hours, else None."""
+        if not ticker:
+            return None
+        t_clean = ticker.strip().upper()
+        try:
+            with self._connect() as conn:
+                row = conn.execute(
+                    "SELECT synthesis, generated_at FROM llm_synthesis_cache WHERE ticker = ?;",
+                    (t_clean,),
+                ).fetchone()
+                if not row:
+                    return None
+                gen_at_str = row["generated_at"]
+                gen_dt = datetime.fromisoformat(gen_at_str)
+                if gen_dt.tzinfo is None:
+                    gen_dt = gen_dt.replace(tzinfo=timezone.utc)
+                age_hours = (datetime.now(timezone.utc) - gen_dt).total_seconds() / 3600.0
+                if age_hours <= max_age_hours:
+                    return str(row["synthesis"])
+                return None
+        except Exception as exc:
+            logger.debug("Failed to retrieve cached synthesis for %s: %s", t_clean, exc)
+            return None
+
+    def save_synthesis(self, ticker: str, synthesis: str) -> None:
+        """Upsert LLM synthesis into llm_synthesis_cache with current UTC timestamp."""
+        if not ticker or not synthesis:
+            return
+        t_clean = ticker.strip().upper()
+        now_iso = datetime.now(timezone.utc).isoformat()
+        try:
+            with self._connect() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO llm_synthesis_cache (ticker, synthesis, generated_at)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(ticker) DO UPDATE SET
+                        synthesis=excluded.synthesis,
+                        generated_at=excluded.generated_at;
+                    """,
+                    (t_clean, str(synthesis), now_iso),
+                )
+            logger.debug("Saved LLM synthesis cache for %s.", t_clean)
+        except Exception as exc:
+            logger.warning("Failed to save LLM synthesis cache for %s: %s", t_clean, exc)
 
 
 # Backward-compatible alias
 SQLitePortfolioDB = PortfolioDB
+
