@@ -1482,7 +1482,52 @@ def get_vix() -> float:
         return 15.0
 
 
+@st.cache_data(ttl=600, show_spinner=False)
+def get_macro_regime_snapshot() -> dict:
+    """Fetch VIX, VIX 5-day ROC, percentile, and HMM regime probabilities."""
+    res = {
+        "vix": 16.0,
+        "vix_roc_5d": 0.0,
+        "percentile": 50.0,
+        "is_panic": False,
+        "regime": "NORMAL",
+        "hmm_probs": {"bull": 0.33, "bear": 0.33, "volatile": 0.34},
+    }
+    try:
+        from macro_alpha_api import MacroAlphaSensor
+        from market_regime import VolatilityRegimeSentinel
+        from hmm_regime import HMMRegimeClassifier
+
+        sensor = MacroAlphaSensor()
+        vix_cur = sensor.get_european_vix()
+        vix_df = sensor.get_historical_vix(days=252) if hasattr(sensor, "get_historical_vix") else None
+
+        sentinel = VolatilityRegimeSentinel()
+        reg_eval = sentinel.evaluate_vix_regime(vix_df, current_vix=vix_cur)
+
+        hmm_clf = HMMRegimeClassifier("^FCHI")
+        hmm_eval = hmm_clf.fit_and_predict()
+
+        res["vix"] = float(reg_eval.get("current_vix", vix_cur))
+        res["vix_roc_5d"] = float(reg_eval.get("vix_roc_5d", 0.0))
+        res["percentile"] = float(reg_eval.get("percentile", 50.0))
+        res["is_panic"] = bool(reg_eval.get("is_panic", False))
+        res["regime"] = str(reg_eval.get("regime", "NORMAL"))
+        if isinstance(hmm_eval, dict):
+            res["hmm_probs"] = {
+                "bull": float(hmm_eval.get("bull_prob", 0.33)),
+                "bear": float(hmm_eval.get("bear_prob", 0.33)),
+                "volatile": float(hmm_eval.get("volatile_prob", 0.34)),
+            }
+            res["hmm_regime"] = hmm_eval.get("regime", "VOLATILE")
+            res["hmm_confidence"] = float(hmm_eval.get("confidence", 0.50))
+    except Exception as exc:
+        logger.debug("get_macro_regime_snapshot fallback: %s", exc)
+    return res
+
+
 @st.cache_data(ttl=900, show_spinner=False)
+
 def get_core_regime() -> dict:
     """Return the Core ETF regime (price vs 200-day SMA)."""
     try:
@@ -2772,9 +2817,17 @@ with c4:
 # =============================================================================
 # Risk / Macro HUD (VIX, regime, satellite budget, sector concentration)
 # =============================================================================
-vix = get_vix()
-vix_panic = vix > _VIX_PANIC
+macro_snap = get_macro_regime_snapshot()
+vix = float(macro_snap.get("vix", get_vix()))
+vix_roc_5d = float(macro_snap.get("vix_roc_5d", 0.0))
+vix_panic = vix > _VIX_PANIC or vix_roc_5d > 0.25
 regime = get_core_regime()
+
+if vix_roc_5d > 0.25:
+    st.error(
+        f"🚨 **BLACK SWAN WARNING: Rapid Volatility Spike** (+{vix_roc_5d*100:.1f}% en 5j) — "
+        f"Régime forcé en PANIC. Achats satellites gelés immédiatement."
+    )
 
 satellite_value = sum(p.market_value for p in positions if p.ticker != _CORE_TICKER)
 sat_budget_eur = _SAT_BUDGET * portfolio.total_equity if portfolio.total_equity else 0.0
@@ -2790,14 +2843,14 @@ if sector_weights and portfolio.total_equity:
 
 r1, r2, r3, r4 = st.columns(4)
 with r1:
-    vsub = ("\U0001F6A8 PANIC - achats satellites geles" if vix_panic
-            else f"Calme (seuil {_VIX_PANIC:.0f})")
+    vsub = ("🚨 PANIC" if vix_panic else f"Calme (<{_VIX_PANIC:.0f})") + f" · ROC 5j: {vix_roc_5d*100:+.1f}%"
     st.markdown(metric_box(
         "Volatilite (VIX)", f"{vix:.1f}", sub=vsub,
         accent="red" if vix_panic else "", sub_cls="sub-red" if vix_panic else "sub-green",
-        help_text="L'indice de la peur. Au-dessus de 30, le marche panique et le "
+        help_text="L'indice de la peur. Au-dessus de 30 ou ROC 5j > 25%, le marche panique et le "
                   "bot bloque les nouveaux achats risques pour proteger le capital.",
     ), unsafe_allow_html=True)
+
 with r2:
     if regime:
         crash = regime["crash"]
@@ -3160,6 +3213,17 @@ with tab_gen:
             f"color:#E8E8E8;line-height:1.55;font-size:14px;'>{brief}</div>",
             unsafe_allow_html=True,
         )
+        hmm_p = macro_snap.get("hmm_probs", {"bull": 0.33, "bear": 0.33, "volatile": 0.34})
+        st.markdown(
+            f"<div style='margin-top:8px;background:#0A0A0A;padding:8px 12px;border:1px solid #222;font-size:12px;display:flex;justify-content:space-between;'>"
+            f"<span style='color:#FFF;'><b>Régime HMM</b> :</span>"
+            f"<span style='color:#22C55E;'>🐂 Bull: {hmm_p.get('bull', 0)*100:.0f}%</span>"
+            f"<span style='color:#EF4444;'>🐻 Bear: {hmm_p.get('bear', 0)*100:.0f}%</span>"
+            f"<span style='color:#EAB308;'>⚡ Volatile: {hmm_p.get('volatile', 0)*100:.0f}%</span>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
 
     # --- Phase 17: Decision funnel (audit-log analytics) --------------------
     st.markdown("---")

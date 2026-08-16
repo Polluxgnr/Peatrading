@@ -194,7 +194,30 @@ def render_signal_card(
 
 
 
+    adaptive_html = ""
+    dynamic_rsi = None
+    dyn_regime = None
+    rsi_val = None
+    if lineage and isinstance(lineage, dict):
+        dynamic_rsi = lineage.get("dynamic_rsi_threshold")
+        dyn_regime = lineage.get("current_regime")
+        rsi_val = lineage.get("rsi_14")
+    if dynamic_rsi is None and sizing and isinstance(sizing, dict):
+        dynamic_rsi = sizing.get("dynamic_rsi_threshold")
+        dyn_regime = sizing.get("current_regime")
+        rsi_val = sizing.get("rsi_14")
+
+    if dynamic_rsi is not None:
+        rsi_s = f"{rsi_val:.1f}" if rsi_val is not None else "actuel"
+        reg_s = f"{dyn_regime}" if dyn_regime else "actif"
+        adaptive_html = (
+            f"<div style='margin-top:6px;color:#FBBF24;font-size:12px;line-height:1.4;'>"
+            f"💡 <b>Rationale</b>: RSI ({rsi_s}) dropped below the adaptive threshold ({dynamic_rsi:.0f}) tailored for the {reg_s} regime."
+            f"</div>"
+        )
+
     extras = ""
+
     if impact_line:
         extras += (
             f"<div style='margin-top:6px;color:{_CYAN};font-size:12px;'>"
@@ -234,9 +257,11 @@ def render_signal_card(
   <div style="color:{_TEXT};font-size:13px;margin-top:8px;line-height:1.45;">
     {reason}
   </div>
+  {adaptive_html}
   {sizing_html}
   {ml_html}
   {extras}
   <div style="margin-top:8px;">{when}</div>
 </div>
+
 """

@@ -167,8 +167,13 @@ class TestInstitutionalSuite(unittest.TestCase):
         """Test HMM classifier failsafe to VOLATILE."""
         clf = HMMRegimeClassifier("^FCHI")
         # Empty df triggers fail-safe
-        state, prob = clf.fit_and_predict(pd.DataFrame())
-        self.assertEqual(state, MarketRegimeState.VOLATILE)
+        res = clf.fit_and_predict(pd.DataFrame())
+        self.assertIsInstance(res, dict)
+        self.assertEqual(res["regime"], MarketRegimeState.VOLATILE.value)
+        self.assertIn("bull_prob", res)
+        self.assertIn("bear_prob", res)
+        self.assertIn("volatile_prob", res)
+
 
     def test_10_openfigi_mapper(self):
         """Test offline FIGI / Ticker mapper."""

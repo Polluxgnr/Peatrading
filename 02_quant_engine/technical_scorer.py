@@ -103,18 +103,19 @@ class SignalGenerator:
         out["RSI_14"] = out.ta.rsi(close=close, length=14)
         return out
 
-    def score_rsi(self, rsi_value: float) -> float:
+    def score_rsi(self, rsi_value: float, dynamic_rsi_threshold: float | None = None) -> float:
         """Map an RSI value to a BUY conviction score.
 
-        Linear mapping in the oversold zone relative to ``rsi_oversold``.
+        Linear mapping in the oversold zone relative to ``dynamic_rsi_threshold``.
         """
-        thr = self.rsi_oversold
+        thr = float(dynamic_rsi_threshold if dynamic_rsi_threshold is not None else self.rsi_oversold)
         if rsi_value is None or pd.isna(rsi_value):
             return 0.0
         if rsi_value >= thr:
             return 0.0
         score = 60.0 + (thr - rsi_value) * 2.0
         return float(max(60.0, min(100.0, score)))
+
 
     @staticmethod
     @lru_cache(maxsize=512)
@@ -239,6 +240,20 @@ class SignalGenerator:
         mr_ens_w = float(ensemble_weights.get("heuristic_mr_weight", 0.25)) if ensemble_weights else 0.25
         trend_ens_w = float(ensemble_weights.get("heuristic_trend_weight", 0.30)) if ensemble_weights else 0.30
 
+        # Regime-Adaptive RSI Threshold:
+        # BULL: 38.0 (buy shallower dips in strong uptrends)
+        # VOLATILE: 30.0 (standard mean reversion)
+        # BEAR: 25.0 (demand extreme capitulation)
+        reg_upper = str(current_regime).upper()
+        if reg_upper == "BULL":
+            dynamic_rsi_threshold = 38.0
+        elif reg_upper == "BEAR":
+            dynamic_rsi_threshold = 25.0
+        elif reg_upper in ("VOLATILE", "PANIC", "ELEVATED_VOL"):
+            dynamic_rsi_threshold = 30.0
+        else:
+            dynamic_rsi_threshold = self.rsi_oversold
+
         for ticker in tickers:
             df = db_manager.get_historical_prices(ticker, days=252)
             if df is None or df.empty or len(df) < _MIN_ROWS:
@@ -262,7 +277,7 @@ class SignalGenerator:
                 continue
 
             uptrend = close > sma_200
-            oversold = rsi_14 < self.rsi_oversold
+            oversold = rsi_14 < dynamic_rsi_threshold
 
             # --- Momentum filter: reject falling knives (Close <= SMA_5) ------
             if apply_momentum_filter and (pd.isna(sma_5) or close <= sma_5):
@@ -283,7 +298,7 @@ class SignalGenerator:
                 continue
 
             if uptrend and oversold:
-                base_score = self.score_rsi(rsi_14)
+                base_score = self.score_rsi(rsi_14, dynamic_rsi_threshold=dynamic_rsi_threshold)
                 t_qual = self.calculate_trend_quality(df["Close"])
                 # Aegis Trend Quality boost: up to +15 pts for smooth linear uptrends
                 qual_bonus = min(15.0, max(0.0, t_qual * 30.0)) if t_qual > 0.05 else 0.0
@@ -309,6 +324,7 @@ class SignalGenerator:
                     "sma_50": float(last.get("SMA_50", 0.0)) if not pd.isna(last.get("SMA_50")) else 0.0,
                     "sma_200": float(sma_200),
                     "rsi_14": float(rsi_14),
+                    "dynamic_rsi_threshold": float(dynamic_rsi_threshold),
                     "trend_quality": float(t_qual),
                     "qual_bonus": float(qual_bonus),
                     "atr_14": atr_14,
@@ -332,20 +348,22 @@ class SignalGenerator:
                     target_qty=None,
                     created_at=datetime.now(timezone.utc),
                     reason=(
-                        f"RSI < {self.rsi_oversold:.0f} (Value: {rsi_14:.1f}) while Price > SMA200 "
-                        f"({close:.2f} > {sma_200:.2f}){qual_txt}. Mean-reversion setup."
+                        f"RSI < {dynamic_rsi_threshold:.0f} (Value: {rsi_14:.1f} vs adaptive {dynamic_rsi_threshold:.0f} in {current_regime}) "
+                        f"while Price > SMA200 ({close:.2f} > {sma_200:.2f}){qual_txt}. Mean-reversion setup."
                     ),
                     lineage=feature_snapshot,
                 )
                 signals.append(signal)
                 logger.info(
-                    "BUY signal %s for %s (RSI=%.1f, TQ=%.2f, score=%.1f).",
+                    "BUY signal %s for %s (RSI=%.1f, TQ=%.2f, score=%.1f, threshold=%.1f).",
                     signal.id[:8],
                     ticker,
                     rsi_14,
                     t_qual,
                     final_score,
+                    dynamic_rsi_threshold,
                 )
+
 
         return signals
 

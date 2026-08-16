@@ -100,13 +100,33 @@ class VolatilityRegimeSentinel:
                 "is_panic": bool
             }
         """
+        series = None
+        if isinstance(vix_history, pd.DataFrame):
+            col = "Close" if "Close" in vix_history.columns else vix_history.columns[0]
+            series = vix_history[col].dropna().astype(float)
+        elif isinstance(vix_history, pd.Series):
+            series = vix_history.dropna().astype(float)
+        elif isinstance(vix_history, (list, tuple)):
+            series = pd.Series(vix_history, dtype=float).dropna()
+
+        vix_roc_5d = 0.0
+        if series is not None and len(series) >= 5:
+            past_val = float(series.iloc[-5])
+            if past_val > 0:
+                vix_roc_5d = float((current_vix - past_val) / past_val)
+
         pct = self.calculate_percentile_rank(vix_history, current_vix)
         mod = self.get_conviction_floor_modifier(pct)
         eff_floor = base_floor + mod
 
-        if pct >= 95.0 or current_vix >= 32.0:
+        is_flash_spike = vix_roc_5d > 0.25
+
+        if pct >= 95.0 or current_vix >= 32.0 or is_flash_spike:
             regime = "PANIC"
             is_panic = True
+            if is_flash_spike and mod < 15:
+                mod = 15
+                eff_floor = base_floor + mod
         elif pct >= 80.0:
             regime = "ELEVATED_VOL"
             is_panic = False
@@ -118,9 +138,10 @@ class VolatilityRegimeSentinel:
             is_panic = False
 
         logger.info(
-            "VIX Regime: level=%.2f (pct=%.1f%%) -> regime=%s floor=%d (+%d)",
+            "VIX Regime: level=%.2f (pct=%.1f%%, roc_5d=%.1f%%) -> regime=%s floor=%d (+%d)",
             current_vix,
             pct,
+            vix_roc_5d * 100.0,
             regime,
             eff_floor,
             mod,
@@ -128,12 +149,14 @@ class VolatilityRegimeSentinel:
 
         return {
             "current_vix": float(current_vix),
+            "vix_roc_5d": float(vix_roc_5d),
             "percentile": float(pct),
             "floor_modifier": int(mod),
             "effective_floor": int(eff_floor),
             "regime": regime,
             "is_panic": is_panic,
         }
+
 
 
 if __name__ == "__main__":

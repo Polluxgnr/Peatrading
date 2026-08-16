@@ -203,7 +203,17 @@ def get_ticker_context(symbol: str = FastPath(..., description="Ticker symbol, e
 
         # Macro & HMM regime
         vix = _MACRO_SENSOR.get_european_vix()
-        regime, conf = _HMM_CLASSIFIER.fit_and_predict()
+        hmm_res = _HMM_CLASSIFIER.fit_and_predict()
+        if isinstance(hmm_res, dict):
+            regime_val = hmm_res.get("regime", "VOLATILE")
+            conf = float(hmm_res.get("confidence", 0.50))
+            bull_p = float(hmm_res.get("bull_prob", 0.33))
+            bear_p = float(hmm_res.get("bear_prob", 0.33))
+            vol_p = float(hmm_res.get("volatile_prob", 0.34))
+        else:
+            regime_val = getattr(hmm_res[0], "value", str(hmm_res[0]))
+            conf = float(hmm_res[1])
+            bull_p, bear_p, vol_p = 0.33, 0.33, 0.34
 
         return {
             "ticker": clean_sym,
@@ -214,13 +224,19 @@ def get_ticker_context(symbol: str = FastPath(..., description="Ticker symbol, e
             "rsi_14": round(rsi, 1),
             "sma_200": round(sma200, 2),
             "trend_vs_sma200": "UPTREND" if cur_px > sma200 else "DOWNTREND",
-            "market_regime": regime.value,
+            "market_regime": regime_val,
             "regime_confidence": round(conf, 2),
+            "regime_probabilities": {
+                "bull": round(bull_p, 3),
+                "bear": round(bear_p, 3),
+                "volatile": round(vol_p, 3),
+            },
             "vix_level": round(vix, 2),
             "sentiment_score_30d_avg": round(avg_sent, 1),
             "sentiment_recent_records": sent_history[-5:],
             "as_of_utc": datetime.now(timezone.utc).isoformat(),
         }
+
     except HTTPException:
         raise
     except Exception as exc:
