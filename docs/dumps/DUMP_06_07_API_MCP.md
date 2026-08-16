@@ -1,5 +1,5 @@
 # PEA Pollux — Internal FastAPI Gateway & Claude Desktop MCP Server
-Generated: `2026-08-16 13:03 UTC` | File Count: `4`
+Generated: `2026-08-16 16:42 UTC` | File Count: `4`
 Institutional Systematic Decision Support Architecture for French PEA.
 ---
 ## Included Files Index
@@ -221,7 +221,17 @@ def get_ticker_context(symbol: str = FastPath(..., description="Ticker symbol, e
 
         # Macro & HMM regime
         vix = _MACRO_SENSOR.get_european_vix()
-        regime, conf = _HMM_CLASSIFIER.fit_and_predict()
+        hmm_res = _HMM_CLASSIFIER.fit_and_predict()
+        if isinstance(hmm_res, dict):
+            regime_val = hmm_res.get("regime", "VOLATILE")
+            conf = float(hmm_res.get("confidence", 0.50))
+            bull_p = float(hmm_res.get("bull_prob", 0.33))
+            bear_p = float(hmm_res.get("bear_prob", 0.33))
+            vol_p = float(hmm_res.get("volatile_prob", 0.34))
+        else:
+            regime_val = getattr(hmm_res[0], "value", str(hmm_res[0]))
+            conf = float(hmm_res[1])
+            bull_p, bear_p, vol_p = 0.33, 0.33, 0.34
 
         return {
             "ticker": clean_sym,
@@ -232,13 +242,19 @@ def get_ticker_context(symbol: str = FastPath(..., description="Ticker symbol, e
             "rsi_14": round(rsi, 1),
             "sma_200": round(sma200, 2),
             "trend_vs_sma200": "UPTREND" if cur_px > sma200 else "DOWNTREND",
-            "market_regime": regime.value,
+            "market_regime": regime_val,
             "regime_confidence": round(conf, 2),
+            "regime_probabilities": {
+                "bull": round(bull_p, 3),
+                "bear": round(bear_p, 3),
+                "volatile": round(vol_p, 3),
+            },
             "vix_level": round(vix, 2),
             "sentiment_score_30d_avg": round(avg_sent, 1),
             "sentiment_recent_records": sent_history[-5:],
             "as_of_utc": datetime.now(timezone.utc).isoformat(),
         }
+
     except HTTPException:
         raise
     except Exception as exc:
@@ -435,7 +451,126 @@ def get_signals_by_status(
         raise HTTPException(status_code=500, detail=str(exc))
 
 
+@app.get("/api/v1/hub/signals", response_model=List[Dict[str, Any]])
+def get_hub_alternative_signals(
+    ticker: Optional[str] = Query(default=None),
+    signal_type: Optional[str] = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=500),
+) -> List[Dict[str, Any]]:
+    """Fetch recent AlternativeSignal records ingested by Layer 1 Data Ingestion Hub."""
+    try:
+        import json
+        import sqlite3
+        with sqlite3.connect(_PORTFOLIO_DB.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS alternative_signals (
+                    id TEXT PRIMARY KEY,
+                    ticker TEXT,
+                    ts TEXT NOT NULL,
+                    signal_type TEXT NOT NULL,
+                    value REAL NOT NULL,
+                    confidence REAL NOT NULL,
+                    source TEXT NOT NULL,
+                    metadata_json TEXT
+                )
+                """
+            )
+            query = "SELECT id, ticker, ts, signal_type, value, confidence, source, metadata_json FROM alternative_signals WHERE 1=1"
+            params: list[Any] = []
+            if ticker:
+                query += " AND (ticker = ? OR ticker IS NULL)"
+                params.append(ticker.strip().upper())
+            if signal_type:
+                query += " AND signal_type = ?"
+                params.append(signal_type.strip().upper())
+            query += " ORDER BY ts DESC LIMIT ?;"
+            params.append(limit)
+
+            rows = conn.execute(query, params).fetchall()
+            results = []
+            for r in rows:
+                d = dict(r)
+                if d.get("metadata_json"):
+                    try:
+                        d["metadata"] = json.loads(d["metadata_json"])
+                    except Exception:
+                        d["metadata"] = {}
+                else:
+                    d["metadata"] = {}
+                results.append(d)
+            return results
+    except Exception as exc:
+        logger.exception("Failed to query hub signals: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/api/v1/hub/ticks", response_model=List[Dict[str, Any]])
+def get_hub_ticks(
+    ticker: str = Query(..., description="Target ticker symbol (e.g. MC.PA)"),
+    days: int = Query(default=30, ge=1, le=500),
+    include_outliers: bool = Query(default=False, description="Whether to include tagged return outliers"),
+) -> List[Dict[str, Any]]:
+    """Fetch recent MarketTick / OHLCV price history from DuckDB/SQLite, filtering outliers by default."""
+    clean_ticker = ticker.strip().upper()
+    try:
+        from duckdb_manager import TimeSeriesDB
+        tsdb = TimeSeriesDB()
+        df = tsdb.get_historical_prices(clean_ticker, days=days)
+        if df is not None and not df.empty:
+            records = []
+            for idx, row in df.iterrows():
+                is_outlier = bool(row.get("is_outlier") or False)
+                if not include_outliers and is_outlier:
+                    continue
+                d_str = idx.strftime("%Y-%m-%d") if hasattr(idx, "strftime") else str(idx)
+                records.append({
+                    "ticker": clean_ticker,
+                    "date": d_str,
+                    "open": float(row.get("Open") or row.get("open") or 0.0),
+                    "high": float(row.get("High") or row.get("high") or 0.0),
+                    "low": float(row.get("Low") or row.get("low") or 0.0),
+                    "close": float(row.get("Close") or row.get("close") or 0.0),
+                    "volume": float(row.get("Volume") or row.get("volume") or 0.0),
+                    "is_outlier": is_outlier,
+                    "source": "DuckDB",
+                })
+            return records
+    except Exception as exc:
+        logger.debug("DuckDB lookup for %s failed: %s; trying yfinance fallback", clean_ticker, exc)
+
+    try:
+        import yfinance as yf
+        data = yf.download(clean_ticker, period=f"{min(days, 365)}d", interval="1d", progress=False, auto_adjust=True)
+        if data is not None and not data.empty:
+            if isinstance(data.columns, pd.MultiIndex):
+                data.columns = data.columns.get_level_values(0)
+            records = []
+            for idx, row in data.iterrows():
+                d_str = idx.strftime("%Y-%m-%d") if hasattr(idx, "strftime") else str(idx)
+                records.append({
+                    "ticker": clean_ticker,
+                    "date": d_str,
+                    "open": float(row.get("Open") or 0.0),
+                    "high": float(row.get("High") or 0.0),
+                    "low": float(row.get("Low") or 0.0),
+                    "close": float(row.get("Close") or 0.0),
+                    "volume": float(row.get("Volume") or 0.0),
+                    "is_outlier": False,
+                    "source": "yfinance",
+                })
+            return records
+    except Exception as exc:
+        logger.exception("Failed to query market ticks for %s: %s", clean_ticker, exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    return []
+
+
+
 @app.get("/api/v1/system/health", response_model=Dict[str, Any])
+
 def get_system_health() -> Dict[str, Any]:
     """Return operational health status and database integrity."""
     db_path = _PORTFOLIO_DB.db_path

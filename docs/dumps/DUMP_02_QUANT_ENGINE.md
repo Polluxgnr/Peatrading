@@ -1,5 +1,5 @@
 # PEA Pollux — Quantitative Strategy, Indicators, HMM Regimes & ML Feature Store
-Generated: `2026-08-16 13:03 UTC` | File Count: `16`
+Generated: `2026-08-16 16:42 UTC` | File Count: `16`
 Institutional Systematic Decision Support Architecture for French PEA.
 ---
 ## Included Files Index
@@ -295,7 +295,7 @@ from __future__ import annotations
 
 import logging
 from enum import Enum
-from typing import Optional, Tuple
+from typing import Any, Dict, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -318,15 +318,26 @@ class HMMRegimeClassifier:
         self.n_states = n_states
         self.model = None
 
-    def fit_and_predict(self, ohlcv_df: Optional[pd.DataFrame] = None) -> Tuple[MarketRegimeState, float]:
-        """Fit HMM on index returns and return the current regime state and posterior probability.
+    def fit_and_predict(self, ohlcv_df: Optional[pd.DataFrame] = None) -> Dict[str, Any]:
+        """Fit HMM on index returns and return the current regime state and posterior probabilities.
 
         Returns:
-            Tuple[MarketRegimeState, float]: (Current regime, Confidence probability).
+            Dict[str, Any]: {
+                "regime": "BULL" | "BEAR" | "VOLATILE",
+                "confidence": float,
+                "bull_prob": float,
+                "bear_prob": float,
+                "volatile_prob": float,
+            }
         """
         # Fail-safe default
-        default_state = MarketRegimeState.VOLATILE
-        default_prob = 0.50
+        default_res = {
+            "regime": MarketRegimeState.VOLATILE.value,
+            "confidence": 0.50,
+            "bull_prob": 0.25,
+            "bear_prob": 0.25,
+            "volatile_prob": 0.50,
+        }
 
         if ohlcv_df is None or ohlcv_df.empty:
             try:
@@ -335,12 +346,12 @@ class HMMRegimeClassifier:
                     c = ohlcv_df["Close"]
                     ohlcv_df = pd.DataFrame({"Close": c.iloc[:, 0] if isinstance(c, pd.DataFrame) else c})
             except Exception as exc:  # noqa: BLE001
-                logger.warning("HMM failed to fetch %s: %s; using fail-safe %s", self.index_ticker, exc, default_state)
-                return default_state, default_prob
+                logger.warning("HMM failed to fetch %s: %s; using fail-safe", self.index_ticker, exc)
+                return default_res
 
         if ohlcv_df is None or ohlcv_df.empty or len(ohlcv_df) < 100:
-            logger.warning("Insufficient history for HMM; using fail-safe %s", default_state)
-            return default_state, default_prob
+            logger.warning("Insufficient history for HMM; using fail-safe")
+            return default_res
 
         try:
             from hmmlearn.hmm import GaussianHMM
@@ -363,14 +374,17 @@ class HMMRegimeClassifier:
             means = self.model.means_[:, 0]
             bull_state_idx = int(np.argmax(means))
             bear_state_idx = int(np.argmin(means))
-            # The remaining is volatile
             all_indices = set(range(self.n_states))
             vol_state_idx = list(all_indices - {bull_state_idx, bear_state_idx})[0]
 
-            # Predict current state
-            posteriors = self.model.predict_proba(X[-1:])
-            cur_state_idx = int(np.argmax(posteriors[0]))
-            confidence = float(posteriors[0][cur_state_idx])
+            # Predict current state probabilities
+            posteriors = self.model.predict_proba(X[-1:])[0]
+            cur_state_idx = int(np.argmax(posteriors))
+            confidence = float(posteriors[cur_state_idx])
+
+            bull_p = float(posteriors[bull_state_idx])
+            bear_p = float(posteriors[bear_state_idx])
+            vol_p = float(posteriors[vol_state_idx])
 
             if cur_state_idx == bull_state_idx:
                 regime = MarketRegimeState.BULL
@@ -379,14 +393,23 @@ class HMMRegimeClassifier:
             else:
                 regime = MarketRegimeState.VOLATILE
 
-            logger.info("HMM Regime on %s: %s (Prob: %.2f)", self.index_ticker, regime.value, confidence)
-            return regime, confidence
+            logger.info(
+                "HMM Regime on %s: %s (Prob: %.2f | Bull: %.2f, Bear: %.2f, Vol: %.2f)",
+                self.index_ticker, regime.value, confidence, bull_p, bear_p, vol_p,
+            )
+            return {
+                "regime": regime.value,
+                "confidence": confidence,
+                "bull_prob": bull_p,
+                "bear_prob": bear_p,
+                "volatile_prob": vol_p,
+            }
 
         except Exception as exc:  # noqa: BLE001
-            logger.warning("HMM fitting failed: %s; using fail-safe %s", exc, default_state)
-            return default_state, default_prob
+            logger.warning("HMM fitting failed: %s; using fail-safe", exc)
+            return default_res
 
-    def _rule_based_fallback(self, ohlcv_df: pd.DataFrame) -> Tuple[MarketRegimeState, float]:
+    def _rule_based_fallback(self, ohlcv_df: pd.DataFrame) -> Dict[str, Any]:
         """Fallback regime detector when hmmlearn is offline."""
         close = ohlcv_df["Close"].dropna().astype(float)
         cur = float(close.iloc[-1])
@@ -394,18 +417,36 @@ class HMMRegimeClassifier:
         sma200 = float(close.tail(200).mean())
 
         if cur > sma50 > sma200:
-            return MarketRegimeState.BULL, 0.80
+            return {
+                "regime": MarketRegimeState.BULL.value,
+                "confidence": 0.80,
+                "bull_prob": 0.80,
+                "bear_prob": 0.10,
+                "volatile_prob": 0.10,
+            }
         elif cur < sma50 < sma200:
-            return MarketRegimeState.BEAR, 0.80
+            return {
+                "regime": MarketRegimeState.BEAR.value,
+                "confidence": 0.80,
+                "bull_prob": 0.10,
+                "bear_prob": 0.80,
+                "volatile_prob": 0.10,
+            }
         else:
-            return MarketRegimeState.VOLATILE, 0.65
+            return {
+                "regime": MarketRegimeState.VOLATILE.value,
+                "confidence": 0.65,
+                "bull_prob": 0.20,
+                "bear_prob": 0.20,
+                "volatile_prob": 0.60,
+            }
 
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     clf = HMMRegimeClassifier()
-    reg, conf = clf.fit_and_predict()
-    print(f"Market Regime: {reg.value} (Confidence: {conf:.2f})")
+    res = clf.fit_and_predict()
+    print(f"Market Regime: {res['regime']} (Confidence: {res['confidence']:.2f})", res)
 ```
 
 ## FILE: 02_quant_engine/market_regime.py
@@ -512,13 +553,33 @@ class VolatilityRegimeSentinel:
                 "is_panic": bool
             }
         """
+        series = None
+        if isinstance(vix_history, pd.DataFrame):
+            col = "Close" if "Close" in vix_history.columns else vix_history.columns[0]
+            series = vix_history[col].dropna().astype(float)
+        elif isinstance(vix_history, pd.Series):
+            series = vix_history.dropna().astype(float)
+        elif isinstance(vix_history, (list, tuple)):
+            series = pd.Series(vix_history, dtype=float).dropna()
+
+        vix_roc_5d = 0.0
+        if series is not None and len(series) >= 5:
+            past_val = float(series.iloc[-5])
+            if past_val > 0:
+                vix_roc_5d = float((current_vix - past_val) / past_val)
+
         pct = self.calculate_percentile_rank(vix_history, current_vix)
         mod = self.get_conviction_floor_modifier(pct)
         eff_floor = base_floor + mod
 
-        if pct >= 95.0 or current_vix >= 32.0:
+        is_flash_spike = vix_roc_5d > 0.25
+
+        if pct >= 95.0 or current_vix >= 32.0 or is_flash_spike:
             regime = "PANIC"
             is_panic = True
+            if is_flash_spike and mod < 15:
+                mod = 15
+                eff_floor = base_floor + mod
         elif pct >= 80.0:
             regime = "ELEVATED_VOL"
             is_panic = False
@@ -530,9 +591,10 @@ class VolatilityRegimeSentinel:
             is_panic = False
 
         logger.info(
-            "VIX Regime: level=%.2f (pct=%.1f%%) -> regime=%s floor=%d (+%d)",
+            "VIX Regime: level=%.2f (pct=%.1f%%, roc_5d=%.1f%%) -> regime=%s floor=%d (+%d)",
             current_vix,
             pct,
+            vix_roc_5d * 100.0,
             regime,
             eff_floor,
             mod,
@@ -540,12 +602,14 @@ class VolatilityRegimeSentinel:
 
         return {
             "current_vix": float(current_vix),
+            "vix_roc_5d": float(vix_roc_5d),
             "percentile": float(pct),
             "floor_modifier": int(mod),
             "effective_floor": int(eff_floor),
             "regime": regime,
             "is_panic": is_panic,
         }
+
 
 
 if __name__ == "__main__":
@@ -1982,18 +2046,19 @@ class SignalGenerator:
         out["RSI_14"] = out.ta.rsi(close=close, length=14)
         return out
 
-    def score_rsi(self, rsi_value: float) -> float:
+    def score_rsi(self, rsi_value: float, dynamic_rsi_threshold: float | None = None) -> float:
         """Map an RSI value to a BUY conviction score.
 
-        Linear mapping in the oversold zone relative to ``rsi_oversold``.
+        Linear mapping in the oversold zone relative to ``dynamic_rsi_threshold``.
         """
-        thr = self.rsi_oversold
+        thr = float(dynamic_rsi_threshold if dynamic_rsi_threshold is not None else self.rsi_oversold)
         if rsi_value is None or pd.isna(rsi_value):
             return 0.0
         if rsi_value >= thr:
             return 0.0
         score = 60.0 + (thr - rsi_value) * 2.0
         return float(max(60.0, min(100.0, score)))
+
 
     @staticmethod
     @lru_cache(maxsize=512)
@@ -2118,6 +2183,20 @@ class SignalGenerator:
         mr_ens_w = float(ensemble_weights.get("heuristic_mr_weight", 0.25)) if ensemble_weights else 0.25
         trend_ens_w = float(ensemble_weights.get("heuristic_trend_weight", 0.30)) if ensemble_weights else 0.30
 
+        # Regime-Adaptive RSI Threshold:
+        # BULL: 38.0 (buy shallower dips in strong uptrends)
+        # VOLATILE: 30.0 (standard mean reversion)
+        # BEAR: 25.0 (demand extreme capitulation)
+        reg_upper = str(current_regime).upper()
+        if reg_upper == "BULL":
+            dynamic_rsi_threshold = 38.0
+        elif reg_upper == "BEAR":
+            dynamic_rsi_threshold = 25.0
+        elif reg_upper in ("VOLATILE", "PANIC", "ELEVATED_VOL"):
+            dynamic_rsi_threshold = 30.0
+        else:
+            dynamic_rsi_threshold = self.rsi_oversold
+
         for ticker in tickers:
             df = db_manager.get_historical_prices(ticker, days=252)
             if df is None or df.empty or len(df) < _MIN_ROWS:
@@ -2141,7 +2220,7 @@ class SignalGenerator:
                 continue
 
             uptrend = close > sma_200
-            oversold = rsi_14 < self.rsi_oversold
+            oversold = rsi_14 < dynamic_rsi_threshold
 
             # --- Momentum filter: reject falling knives (Close <= SMA_5) ------
             if apply_momentum_filter and (pd.isna(sma_5) or close <= sma_5):
@@ -2162,7 +2241,7 @@ class SignalGenerator:
                 continue
 
             if uptrend and oversold:
-                base_score = self.score_rsi(rsi_14)
+                base_score = self.score_rsi(rsi_14, dynamic_rsi_threshold=dynamic_rsi_threshold)
                 t_qual = self.calculate_trend_quality(df["Close"])
                 # Aegis Trend Quality boost: up to +15 pts for smooth linear uptrends
                 qual_bonus = min(15.0, max(0.0, t_qual * 30.0)) if t_qual > 0.05 else 0.0
@@ -2188,6 +2267,7 @@ class SignalGenerator:
                     "sma_50": float(last.get("SMA_50", 0.0)) if not pd.isna(last.get("SMA_50")) else 0.0,
                     "sma_200": float(sma_200),
                     "rsi_14": float(rsi_14),
+                    "dynamic_rsi_threshold": float(dynamic_rsi_threshold),
                     "trend_quality": float(t_qual),
                     "qual_bonus": float(qual_bonus),
                     "atr_14": atr_14,
@@ -2211,20 +2291,22 @@ class SignalGenerator:
                     target_qty=None,
                     created_at=datetime.now(timezone.utc),
                     reason=(
-                        f"RSI < {self.rsi_oversold:.0f} (Value: {rsi_14:.1f}) while Price > SMA200 "
-                        f"({close:.2f} > {sma_200:.2f}){qual_txt}. Mean-reversion setup."
+                        f"RSI < {dynamic_rsi_threshold:.0f} (Value: {rsi_14:.1f} vs adaptive {dynamic_rsi_threshold:.0f} in {current_regime}) "
+                        f"while Price > SMA200 ({close:.2f} > {sma_200:.2f}){qual_txt}. Mean-reversion setup."
                     ),
                     lineage=feature_snapshot,
                 )
                 signals.append(signal)
                 logger.info(
-                    "BUY signal %s for %s (RSI=%.1f, TQ=%.2f, score=%.1f).",
+                    "BUY signal %s for %s (RSI=%.1f, TQ=%.2f, score=%.1f, threshold=%.1f).",
                     signal.id[:8],
                     ticker,
                     rsi_14,
                     t_qual,
                     final_score,
+                    dynamic_rsi_threshold,
                 )
+
 
         return signals
 

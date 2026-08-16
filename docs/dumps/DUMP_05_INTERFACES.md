@@ -1,10 +1,11 @@
 # PEA Pollux — Interfaces, Streamlit Bloomberg Terminal HUD & Discord Copilot
-Generated: `2026-08-16 13:03 UTC` | File Count: `8`
+Generated: `2026-08-16 16:42 UTC` | File Count: `9`
 Institutional Systematic Decision Support Architecture for French PEA.
 ---
 ## Included Files Index
 - [05_interfaces/__init__.py](#file-05_interfaces-__init__-py)
 - [05_interfaces/components/__init__.py](#file-05_interfaces-components-__init__-py)
+- [05_interfaces/components/charts.py](#file-05_interfaces-components-charts-py)
 - [05_interfaces/discord_copilot.py](#file-05_interfaces-discord_copilot-py)
 - [05_interfaces/llm_explainer.py](#file-05_interfaces-llm_explainer-py)
 - [05_interfaces/terminal_dashboard.py](#file-05_interfaces-terminal_dashboard-py)
@@ -21,6 +22,464 @@ Institutional Systematic Decision Support Architecture for French PEA.
 ## FILE: 05_interfaces/components/__init__.py
 ```python
 """Dashboard component modules — extracted from terminal_dashboard.py (Phase 42)."""
+```
+
+## FILE: 05_interfaces/components/charts.py
+```python
+"""Advanced Interactive Plotly Charts & Glass-Box Visual Explainability.
+
+Provides high-end interactive charts with:
+  - Candlestick price action overlaid with SMA 50, SMA 200, and HMM regime background shades.
+  - Statistical Arbitrage Cointegration Z-Score tracker with +/- 2.0 sigma entry boundaries.
+  - Half-circle Macro Volatility Thermometer Gauge indicator (0-100% Attack).
+  - Dynamic RSI oscillator with regime-adaptive oversold shading zones.
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Optional
+
+import numpy as np
+import pandas as pd
+import plotly.graph_objects as go
+
+logger = logging.getLogger("interactive_charts")
+
+
+def render_hmm_candlestick_chart(
+    ticker: str,
+    df: Optional[pd.DataFrame] = None,
+    sma50: Optional[pd.Series] = None,
+    sma200: Optional[pd.Series] = None,
+    regime_series: Optional[pd.Series] = None,
+    title: Optional[str] = None,
+    ohlcv_df: Optional[pd.DataFrame] = None,
+    sma_50: Optional[pd.Series] = None,
+    sma_200: Optional[pd.Series] = None,
+    hmm_regimes: Optional[pd.Series] = None,
+) -> go.Figure:
+    """Create a dark-themed interactive candlestick chart with SMA overlays and HMM regime bands.
+
+    Args:
+        ticker: Ticker symbol (e.g. "MC.PA").
+        df: DataFrame with DatetimeIndex and ['Open', 'High', 'Low', 'Close'] (or ohlcv_df).
+        sma50: Series of 50-day Simple Moving Average (or sma_50).
+        sma200: Series of 200-day Simple Moving Average (or sma_200).
+        regime_series: Series aligned with df index containing 'BULL', 'BEAR', 'VOLATILE' (or hmm_regimes).
+        title: Optional custom chart title.
+
+    Returns:
+        go.Figure: Interactive Plotly figure with range selector.
+    """
+    fig = go.Figure()
+
+    price_df = df if df is not None else ohlcv_df
+    s50 = sma50 if sma50 is not None else sma_50
+    s200 = sma200 if sma200 is not None else sma_200
+    regimes = regime_series if regime_series is not None else hmm_regimes
+
+    if price_df is None or price_df.empty:
+        fig.update_layout(
+            template="plotly_dark",
+            title=f"{ticker} — Données de prix indisponibles",
+            paper_bgcolor="#0A0A0A",
+            plot_bgcolor="#0A0A0A",
+        )
+        return fig
+
+    # Align columns
+    cols = {c.lower(): c for c in price_df.columns}
+    o_col = cols.get("open", "Open")
+    h_col = cols.get("high", "High")
+    l_col = cols.get("low", "Low")
+    c_col = cols.get("close", "Close")
+
+    # 1. Candlestick Price Trace
+    fig.add_trace(
+        go.Candlestick(
+            x=price_df.index,
+            open=price_df[o_col],
+            high=price_df[h_col],
+            low=price_df[l_col],
+            close=price_df[c_col],
+            name="Cours",
+            increasing_line_color="#00FF66",
+            decreasing_line_color="#FF3B30",
+            increasing_fillcolor="#00FF66",
+            decreasing_fillcolor="#FF3B30",
+        )
+    )
+
+    # 2. SMA 50 Overlay (Orange)
+    if s50 is not None and not s50.dropna().empty:
+        fig.add_trace(
+            go.Scatter(
+                x=s50.index,
+                y=s50,
+                mode="lines",
+                line=dict(color="#FF9500", width=1.5),
+                name="SMA 50",
+            )
+        )
+
+    # 3. SMA 200 Overlay (White / Light Gray)
+    if s200 is not None and not s200.dropna().empty:
+        fig.add_trace(
+            go.Scatter(
+                x=s200.index,
+                y=s200,
+                mode="lines",
+                line=dict(color="#FFFFFF", width=1.5, dash="dot"),
+                name="SMA 200",
+            )
+        )
+
+    # 4. HMM Regime Background Highlights
+    if regimes is not None and not regimes.dropna().empty:
+        regime_colors = {
+            "BULL": "rgba(0, 255, 102, 0.08)",
+            "BEAR": "rgba(255, 59, 48, 0.08)",
+            "VOLATILE": "rgba(156, 163, 175, 0.08)",
+            "PANIC": "rgba(239, 68, 68, 0.16)",
+        }
+        
+        reg_series = regimes.dropna()
+
+        if not reg_series.empty:
+            start_dt = reg_series.index[0]
+            cur_reg = str(reg_series.iloc[0]).upper()
+
+            for dt, val in reg_series.iloc[1:].items():
+                val_upper = str(val).upper()
+                if val_upper != cur_reg:
+                    color = regime_colors.get(cur_reg, "rgba(156, 163, 175, 0.05)")
+                    fig.add_vrect(
+                        x0=start_dt,
+                        x1=dt,
+                        fillcolor=color,
+                        opacity=1.0,
+                        layer="below",
+                        line_width=0,
+                    )
+                    start_dt = dt
+                    cur_reg = val_upper
+
+            # Add final interval
+            color = regime_colors.get(cur_reg, "rgba(156, 163, 175, 0.05)")
+            fig.add_vrect(
+                x0=start_dt,
+                x1=reg_series.index[-1],
+                fillcolor=color,
+                opacity=1.0,
+                layer="below",
+                line_width=0,
+            )
+
+    chart_title = title or f"<b>{ticker}</b> · Analyse Technique & Régimes HMM"
+    fig.update_layout(
+        template="plotly_dark",
+        title=dict(text=chart_title, font=dict(color="#E0E0E0", size=15)),
+        paper_bgcolor="#0A0A0A",
+        plot_bgcolor="#0A0A0A",
+        xaxis=dict(
+            rangeslider=dict(visible=False),
+            rangeselector=dict(
+                buttons=[
+                    dict(count=1, label="1M", step="month", stepmode="backward"),
+                    dict(count=3, label="3M", step="month", stepmode="backward"),
+                    dict(count=6, label="6M", step="month", stepmode="backward"),
+                    dict(count=1, label="1Y", step="year", stepmode="backward"),
+                    dict(step="all", label="MAX"),
+                ],
+                bgcolor="#1A1A1A",
+                activecolor="#2563EB",
+                font=dict(color="#E0E0E0", size=10),
+            ),
+            gridcolor="#1F2937",
+            showgrid=True,
+        ),
+        yaxis=dict(
+            gridcolor="#1F2937",
+            showgrid=True,
+            title="Cours (€)",
+        ),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1,
+            font=dict(size=11),
+        ),
+        margin=dict(l=40, r=40, t=50, b=40),
+        height=460,
+    )
+
+    return fig
+
+
+# Alias for backward compatibility
+render_advanced_price_chart = render_hmm_candlestick_chart
+
+
+def render_statarb_zscore_chart(
+    pair_label: Optional[str] = None,
+    z_score_series: Optional[pd.Series] = None,
+    dates: Optional[pd.DatetimeIndex] = None,
+    zscores: Optional[pd.Series] = None,
+    ticker_a: Optional[str] = None,
+    ticker_b: Optional[str] = None,
+    threshold: float = 2.0,
+) -> go.Figure:
+    """Create an interactive Statistical Arbitrage Z-Score chart with +/- 2.0 sigma boundaries.
+
+    Supports both (pair_label, z_score_series) and legacy (dates, zscores, ticker_a, ticker_b) arguments.
+    """
+    fig = go.Figure()
+
+    # Normalize arguments
+    series = z_score_series if z_score_series is not None else zscores
+    if series is None or (isinstance(series, (pd.Series, list)) and len(series) == 0):
+        fig.update_layout(template="plotly_dark", title="Z-Score StatArb indisponible")
+        return fig
+
+    if not isinstance(series, pd.Series):
+        x_axis = dates if dates is not None else list(range(len(series)))
+        series = pd.Series(series, index=x_axis)
+
+    x_vals = series.index
+    label = pair_label or (f"{ticker_a} vs {ticker_b}" if ticker_a and ticker_b else "Paire Cointégrée")
+
+    # Z-Score Line
+    fig.add_trace(
+        go.Scatter(
+            x=x_vals,
+            y=series,
+            mode="lines",
+            line=dict(color="#38BDF8", width=1.8),
+            name=f"Z-Score ({label})",
+        )
+    )
+
+    # Upper Entry (+2.0 Sigma)
+    fig.add_hline(
+        y=threshold,
+        line_dash="dash",
+        line_color="#FF3B30",
+        line_width=1.5,
+        annotation_text=f"+{threshold:.1f}σ (Surévaluation)",
+        annotation_position="top right",
+        annotation_font=dict(color="#FF3B30", size=10),
+    )
+
+    # Mean Reversion Target (0.0 Sigma)
+    fig.add_hline(
+        y=0.0,
+        line_dash="dot",
+        line_color="#E5E5EA",
+        line_width=1.0,
+        annotation_text="Moyenne (0σ)",
+        annotation_position="bottom right",
+        annotation_font=dict(color="#E5E5EA", size=10),
+    )
+
+    # Lower Entry (-2.0 Sigma)
+    fig.add_hline(
+        y=-threshold,
+        line_dash="dash",
+        line_color="#00FF66",
+        line_width=1.5,
+        annotation_text=f"-{threshold:.1f}σ (Achat Spread)",
+        annotation_position="bottom right",
+        annotation_font=dict(color="#00FF66", size=10),
+    )
+
+    # Anomaly shading regions
+    s_clean = series.dropna()
+    max_val = max(threshold + 2.0, float(s_clean.max() if not s_clean.empty else threshold + 2.0))
+    min_val = min(-threshold - 2.0, float(s_clean.min() if not s_clean.empty else -threshold - 2.0))
+
+    fig.add_hrect(
+        y0=threshold,
+        y1=max_val,
+        fillcolor="rgba(255, 59, 48, 0.12)",
+        layer="below",
+        line_width=0,
+    )
+    fig.add_hrect(
+        y0=min_val,
+        y1=-threshold,
+        fillcolor="rgba(0, 255, 102, 0.12)",
+        layer="below",
+        line_width=0,
+    )
+
+    fig.update_layout(
+        template="plotly_dark",
+        title=dict(
+            text=f"<b>StatArb Z-Score</b> · {label}",
+            font=dict(color="#E0E0E0", size=14),
+        ),
+        paper_bgcolor="#0A0A0A",
+        plot_bgcolor="#0A0A0A",
+        yaxis=dict(
+            title="Écart en Écarts-Types (σ)",
+            gridcolor="#1F2937",
+            showgrid=True,
+        ),
+        xaxis=dict(
+            gridcolor="#1F2937",
+            showgrid=True,
+        ),
+        margin=dict(l=40, r=40, t=45, b=30),
+        height=280,
+        showlegend=False,
+    )
+
+    return fig
+
+
+def render_macro_thermometer_gauge(
+    attack_pct: float,
+    defense_pct: float,
+    mode: str = "ATTACK",
+) -> go.Figure:
+    """Render an institutional half-circle macro thermometer gauge (0-100% Attack allocation).
+
+    Args:
+        attack_pct: Fraction or percentage allocated to Attack engine (e.g. 0.70 or 70.0).
+        defense_pct: Fraction or percentage allocated to Defense engine.
+        mode: Regime mode ('ATTACK', 'DEFENSE', 'BUNKER').
+
+    Returns:
+        go.Figure: Half-circle Plotly gauge indicator.
+    """
+    attack_val = max(0.0, min(100.0, float(attack_pct) * 100.0 if attack_pct <= 1.0 else float(attack_pct)))
+    mode_upper = str(mode).upper()
+    mode_color = "#FF3B30" if mode_upper == "BUNKER" else ("#FF9500" if mode_upper == "DEFENSE" else "#00FF66")
+
+    fig = go.Figure(
+        go.Indicator(
+            mode="gauge+number",
+            value=attack_val,
+            domain=dict(x=[0, 1], y=[0, 1]),
+            title=dict(
+                text=f"<b>Thermomètre Macro : Mode {mode_upper}</b><br><span style='font-size:12px;color:#9E9E9E;'>Allocation Action Cible (Max 98%)</span>",
+                font=dict(size=14, color="#E0E0E0"),
+            ),
+            number=dict(suffix=" %", font=dict(size=26, color=mode_color)),
+            gauge=dict(
+                axis=dict(range=[0, 100], tickwidth=1, tickcolor="#666", tickvals=[0, 30, 60, 98, 100]),
+                bar=dict(color=mode_color, thickness=0.25),
+                bgcolor="#111111",
+                borderwidth=1,
+                bordercolor="#333333",
+                steps=[
+                    dict(range=[0, 30], color="rgba(255, 59, 48, 0.25)"),   # Red / Defense / Bunker
+                    dict(range=[30, 60], color="rgba(255, 149, 0, 0.25)"), # Orange / Neutral
+                    dict(range=[60, 100], color="rgba(0, 255, 102, 0.25)"),# Green / Attack
+                ],
+                threshold=dict(
+                    line=dict(color="#FF3B30", width=3),
+                    thickness=0.8,
+                    value=98.0,
+                ),
+            ),
+
+        )
+    )
+
+    fig.update_layout(
+        template="plotly_dark",
+        paper_bgcolor="#0A0A0A",
+        plot_bgcolor="#0A0A0A",
+        height=230,
+        margin=dict(l=25, r=25, t=50, b=20),
+    )
+    return fig
+
+
+def render_rsi_chart(
+    rsi_series: pd.Series,
+    dynamic_threshold: float = 30.0,
+    title: Optional[str] = None,
+) -> go.Figure:
+    """Create an interactive RSI (14) chart with dynamic regime-adaptive oversold highlighting."""
+    fig = go.Figure()
+
+    if rsi_series is None or rsi_series.empty:
+        fig.update_layout(template="plotly_dark", title="RSI indisponible")
+        return fig
+
+    fig.add_trace(
+        go.Scatter(
+            x=rsi_series.index,
+            y=rsi_series,
+            mode="lines",
+            line=dict(color="#FBBF24", width=1.5),
+            name="RSI 14",
+        )
+    )
+
+    fig.add_hline(
+        y=70,
+        line_dash="dash",
+        line_color="#EF4444",
+        line_width=1,
+        annotation_text="Suracheté (70)",
+        annotation_position="top right",
+        annotation_font=dict(color="#EF4444", size=10),
+    )
+
+    fig.add_hline(
+        y=dynamic_threshold,
+        line_dash="dash",
+        line_color="#38BDF8",
+        line_width=1.5,
+        annotation_text=f"Seuil Adaptatif ({dynamic_threshold:.0f})",
+        annotation_position="bottom right",
+        annotation_font=dict(color="#38BDF8", size=10),
+    )
+
+    fig.add_hrect(
+        y0=0,
+        y1=dynamic_threshold,
+        fillcolor="rgba(56, 189, 248, 0.12)",
+        layer="below",
+        line_width=0,
+    )
+
+    fig.add_hrect(
+        y0=70,
+        y1=100,
+        fillcolor="rgba(239, 68, 68, 0.10)",
+        layer="below",
+        line_width=0,
+    )
+
+    chart_title = title or f"<b>RSI (14)</b> · Seuil de Survente Dynamique : <b>{dynamic_threshold:.0f}</b>"
+    fig.update_layout(
+        template="plotly_dark",
+        title=dict(text=chart_title, font=dict(color="#E0E0E0", size=13)),
+        paper_bgcolor="#0A0A0A",
+        plot_bgcolor="#0A0A0A",
+        yaxis=dict(
+            range=[0, 100],
+            gridcolor="#1F2937",
+            showgrid=True,
+            tickvals=[0, 20, dynamic_threshold, 50, 70, 100],
+        ),
+        xaxis=dict(
+            gridcolor="#1F2937",
+            showgrid=True,
+        ),
+        margin=dict(l=40, r=40, t=40, b=30),
+        height=220,
+        showlegend=False,
+    )
+
+    return fig
 ```
 
 ## FILE: 05_interfaces/discord_copilot.py
@@ -587,31 +1046,130 @@ from data_models import PortfolioState, Signal  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
+import json
+from typing import AsyncIterator, Iterator
+import requests
+
 _OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-_DEFAULT_MODEL = "mistralai/mistral-7b-instruct"
+_OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434/api/chat")
+_DEFAULT_MODEL = os.getenv("OLLAMA_MODEL", "mistral")
 _FALLBACK = "Technical signal approved. (AI explanation unavailable)"
 _REQUEST_TIMEOUT_S = 20
+
+
+async def ollama_chat_stream(
+    messages: list[dict],
+    model: str = _DEFAULT_MODEL,
+    timeout_s: int = 60,
+) -> AsyncIterator[str]:
+    """Stream chat completion tokens from a local Ollama instance asynchronously.
+
+    Args:
+        messages: List of [{"role": "user"|"system"|"assistant", "content": "..."}].
+        model: Local model tag (default: 'mistral').
+        timeout_s: Request timeout in seconds.
+
+    Yields:
+        str: Content delta chunk as received.
+    """
+    payload = {
+        "model": model,
+        "messages": messages,
+        "stream": True,
+    }
+    try:
+        timeout = aiohttp.ClientTimeout(total=timeout_s)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(_OLLAMA_URL, json=payload) as resp:
+                if resp.status != 200:
+                    err_text = await resp.text()
+                    logger.error("Ollama HTTP %s: %s", resp.status, err_text[:200])
+                    yield f"🔴 Erreur HTTP {resp.status} depuis l'IA locale (Ollama)."
+                    return
+
+                async for line in resp.content:
+                    if not line:
+                        continue
+                    try:
+                        line_str = line.decode("utf-8").strip()
+                        if not line_str:
+                            continue
+                        chunk_obj = json.loads(line_str)
+                        msg_chunk = chunk_obj.get("message", {}).get("content", "")
+                        if msg_chunk:
+                            yield msg_chunk
+                        if chunk_obj.get("done", False):
+                            break
+                    except Exception:
+                        continue
+
+    except (aiohttp.ClientConnectorError, aiohttp.ServerDisconnectedError):
+        logger.warning("Ollama connection refused at %s. Service offline.", _OLLAMA_URL)
+        yield "🔴 Erreur : Le moteur d'IA local (Ollama) est hors ligne ou injoignable."
+    except Exception as exc:
+        logger.exception("Ollama chat stream failed: %s", exc)
+        yield f"🔴 Erreur IA locale : {exc}"
+
+
+def ollama_chat_stream_sync(
+    messages: list[dict],
+    model: str = _DEFAULT_MODEL,
+    timeout_s: int = 60,
+) -> Iterator[str]:
+    """Synchronous generator yielding text chunks from local Ollama instance (for Streamlit)."""
+    payload = {
+        "model": model,
+        "messages": messages,
+        "stream": True,
+    }
+    try:
+        with requests.post(_OLLAMA_URL, json=payload, stream=True, timeout=timeout_s) as resp:
+            if resp.status_code != 200:
+                yield f"🔴 Erreur HTTP {resp.status_code} depuis l'IA locale (Ollama)."
+                return
+
+            for line in resp.iter_lines():
+                if line:
+                    try:
+                        line_str = line.decode("utf-8").strip()
+                        if not line_str:
+                            continue
+                        chunk_obj = json.loads(line_str)
+                        content = chunk_obj.get("message", {}).get("content", "")
+                        if content:
+                            yield content
+                        if chunk_obj.get("done", False):
+                            break
+                    except Exception:
+                        continue
+    except (requests.ConnectionError, requests.Timeout):
+        logger.warning("Ollama connection refused at %s.", _OLLAMA_URL)
+        yield "🔴 Erreur : Le moteur d'IA local (Ollama) est hors ligne ou injoignable."
+    except Exception as exc:
+        logger.exception("Ollama sync stream failed: %s", exc)
+        yield f"🔴 Erreur IA locale : {exc}"
+
+
+
+_OPENROUTER_DEFAULT_MODEL = os.getenv("OPENROUTER_MODEL", "google/gemini-flash-1.5")
 
 
 async def openrouter_chat(
     messages: list[dict],
     api_key: str | None,
-    model: str = _DEFAULT_MODEL,
-    max_tokens: int = 180,
-    temperature: float = 0.4,
+    model: str = _OPENROUTER_DEFAULT_MODEL,
+    max_tokens: int = 350,
+    temperature: float = 0.2,
     timeout_s: int = _REQUEST_TIMEOUT_S,
 ) -> str | None:
-    """Send a chat-completion request to OpenRouter and return the text.
-
-    Shared by every LLM consumer (trade explainer, news sentiment scorer, weekly
-    historian) so the HTTP/auth/error handling lives in exactly one place.
+    """Send a chat-completion request to OpenRouter with strict low-cost guardrails (<0.02€/day).
 
     Args:
         messages: OpenAI-style ``[{"role", "content"}, ...]`` message list.
         api_key: OpenRouter API key; ``None`` short-circuits to ``None``.
-        model: Model slug to query.
-        max_tokens: Upper bound on the completion length.
-        temperature: Sampling temperature.
+        model: Model slug (defaults to google/gemini-flash-1.5).
+        max_tokens: Upper bound on completion length (hard-capped at 350).
+        temperature: Sampling temperature (default 0.2).
         timeout_s: Total request timeout in seconds.
 
     Returns:
@@ -620,11 +1178,32 @@ async def openrouter_chat(
     if not api_key:
         return None
 
+    # Hard guardrails on token budget and temperature
+    capped_tokens = min(350, max(50, int(max_tokens)))
+    capped_temp = min(0.5, max(0.0, float(temperature)))
+
+    # Ensure system prompt constraint: 3 concise bullet points in French
+    clean_messages = list(messages)
+    has_system = any(m.get("role") == "system" for m in clean_messages)
+    if not has_system:
+        clean_messages.insert(
+            0,
+            {
+                "role": "system",
+                "content": (
+                    "Tu es un analyste quantitatif institutionnel senior. "
+                    "Rédige strictement 3 phrases synthétiques sous forme de puces en français : "
+                    "1) Contexte macro & volatilité, 2) Déclencheur technique/quantitatif, 3) Risque majeur ou niveau d'invalidation. "
+                    "Aucune formule de politesse, pas de bavardage."
+                ),
+            },
+        )
+
     payload = {
         "model": model,
-        "messages": messages,
-        "temperature": temperature,
-        "max_tokens": max_tokens,
+        "messages": clean_messages,
+        "temperature": capped_temp,
+        "max_tokens": capped_tokens,
     }
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -659,11 +1238,12 @@ class NarrativeExplainer:
     def __init__(self) -> None:
         """Read the OpenRouter API key and model slug from the environment."""
         self.api_key: str | None = os.getenv("OPENROUTER_API_KEY")
-        self.model: str = os.getenv("OPENROUTER_MODEL", _DEFAULT_MODEL)
+        self.model: str = os.getenv("OPENROUTER_MODEL", _OPENROUTER_DEFAULT_MODEL)
         if not self.api_key:
             logger.warning(
                 "OPENROUTER_API_KEY not set; explanations will use the fallback."
             )
+
 
     @staticmethod
     def _sector_breakdown(portfolio: PortfolioState) -> str:
@@ -830,8 +1410,9 @@ if _DASHBOARD_PASS:
 # --- Cross-package imports (dirs start with digits) --------------------------
 _ROOT = Path(__file__).resolve().parent.parent
 for _sub in ("00_data_sensors", "01_memory_core", "02_quant_engine",
-             "03_risk_portfolio", "04_orchestrator_ai", "05_interfaces"):
+             "03_risk_portfolio", "04_orchestrator_ai", "05_interfaces", "05_interfaces/components"):
     sys.path.insert(0, str(_ROOT / _sub))
+
 
 from sqlite_portfolio import PortfolioDB  # noqa: E402
 from data_models import Position, PortfolioState  # noqa: E402
@@ -2254,7 +2835,52 @@ def get_vix() -> float:
         return 15.0
 
 
+@st.cache_data(ttl=600, show_spinner=False)
+def get_macro_regime_snapshot() -> dict:
+    """Fetch VIX, VIX 5-day ROC, percentile, and HMM regime probabilities."""
+    res = {
+        "vix": 16.0,
+        "vix_roc_5d": 0.0,
+        "percentile": 50.0,
+        "is_panic": False,
+        "regime": "NORMAL",
+        "hmm_probs": {"bull": 0.33, "bear": 0.33, "volatile": 0.34},
+    }
+    try:
+        from macro_alpha_api import MacroAlphaSensor
+        from market_regime import VolatilityRegimeSentinel
+        from hmm_regime import HMMRegimeClassifier
+
+        sensor = MacroAlphaSensor()
+        vix_cur = sensor.get_european_vix()
+        vix_df = sensor.get_historical_vix(days=252) if hasattr(sensor, "get_historical_vix") else None
+
+        sentinel = VolatilityRegimeSentinel()
+        reg_eval = sentinel.evaluate_vix_regime(vix_df, current_vix=vix_cur)
+
+        hmm_clf = HMMRegimeClassifier("^FCHI")
+        hmm_eval = hmm_clf.fit_and_predict()
+
+        res["vix"] = float(reg_eval.get("current_vix", vix_cur))
+        res["vix_roc_5d"] = float(reg_eval.get("vix_roc_5d", 0.0))
+        res["percentile"] = float(reg_eval.get("percentile", 50.0))
+        res["is_panic"] = bool(reg_eval.get("is_panic", False))
+        res["regime"] = str(reg_eval.get("regime", "NORMAL"))
+        if isinstance(hmm_eval, dict):
+            res["hmm_probs"] = {
+                "bull": float(hmm_eval.get("bull_prob", 0.33)),
+                "bear": float(hmm_eval.get("bear_prob", 0.33)),
+                "volatile": float(hmm_eval.get("volatile_prob", 0.34)),
+            }
+            res["hmm_regime"] = hmm_eval.get("regime", "VOLATILE")
+            res["hmm_confidence"] = float(hmm_eval.get("confidence", 0.50))
+    except Exception as exc:
+        logger.debug("get_macro_regime_snapshot fallback: %s", exc)
+    return res
+
+
 @st.cache_data(ttl=900, show_spinner=False)
+
 def get_core_regime() -> dict:
     """Return the Core ETF regime (price vs 200-day SMA)."""
     try:
@@ -3375,8 +4001,41 @@ def get_sector_performance(
     return agg
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_cached_institutional_brief(
+    total_equity: float,
+    cash: float,
+    mode: str,
+    attack_pct: float,
+    defense_pct: float,
+    vix_val: float,
+    vol_21d_val: float,
+    top_signals_repr: str,
+    is_watchdog_alert: bool,
+) -> str:
+    """Generate or retrieve cached institutional LLM daily brief for portfolio management."""
+    try:
+        from analyst_agent import InstitutionalAnalyst
+        analyst = InstitutionalAnalyst()
+        port_stub = type("StubPort", (), {"total_equity": total_equity, "cash_available": cash})()
+        thermo_stub = {
+            "mode": mode,
+            "attack_pct": attack_pct,
+            "defense_pct": defense_pct,
+            "vix": vix_val,
+            "vol_21d": vol_21d_val,
+        }
+        import json
+        signals = json.loads(top_signals_repr) if top_signals_repr else []
+        w_alert = {"alert": is_watchdog_alert} if is_watchdog_alert else None
+        return analyst.generate_daily_brief_sync(port_stub, thermo_stub, signals, w_alert)
+    except Exception as exc:
+        return f"Note d'analyse institutionnelle indisponible : {exc}"
+
+
 @st.cache_data(ttl=1800, show_spinner=False)
 def get_polymarket_macro(limit: int = 8) -> list[dict]:
+
     """Fetch live macro-relevant Polymarket events (Gamma API, no auth)."""
     try:
         import json
@@ -3542,11 +4201,34 @@ with c4:
 
 
 # =============================================================================
-# Risk / Macro HUD (VIX, regime, satellite budget, sector concentration)
+# Risk / Macro HUD (VIX, regime, satellite budget, sector concentration, Watchdog)
 # =============================================================================
-vix = get_vix()
-vix_panic = vix > _VIX_PANIC
+watchdog_res = {"alert": False}
+try:
+    from watchdog import MarketWatchdog
+    watchdog = MarketWatchdog(default_threshold=-0.10)
+    watchdog_res = watchdog.check_intraday_crash("^FCHI")
+    if watchdog_res.get("alert"):
+        st.error(
+            f"🚨 **CRITICAL: Intraday Flash Crash Detected on {watchdog_res['ticker']}** "
+            f"(Chute: {watchdog_res['drop_pct']*100:.1f}% depuis le plus haut du jour : {watchdog_res['day_high']} € ➔ {watchdog_res['current_price']} €). "
+            f"Protocole de préservation du capital activé : suspension immédiate de tout nouvel engagement."
+        )
+except Exception as exc:
+    logger.debug("Watchdog check failed: %s", exc)
+
+macro_snap = get_macro_regime_snapshot()
+vix = float(macro_snap.get("vix", get_vix()))
+vix_roc_5d = float(macro_snap.get("vix_roc_5d", 0.0))
+
+vix_panic = vix > _VIX_PANIC or vix_roc_5d > 0.25
 regime = get_core_regime()
+
+if vix_roc_5d > 0.25:
+    st.error(
+        f"🚨 **BLACK SWAN WARNING: Rapid Volatility Spike** (+{vix_roc_5d*100:.1f}% en 5j) — "
+        f"Régime forcé en PANIC. Achats satellites gelés immédiatement."
+    )
 
 satellite_value = sum(p.market_value for p in positions if p.ticker != _CORE_TICKER)
 sat_budget_eur = _SAT_BUDGET * portfolio.total_equity if portfolio.total_equity else 0.0
@@ -3562,14 +4244,14 @@ if sector_weights and portfolio.total_equity:
 
 r1, r2, r3, r4 = st.columns(4)
 with r1:
-    vsub = ("\U0001F6A8 PANIC - achats satellites geles" if vix_panic
-            else f"Calme (seuil {_VIX_PANIC:.0f})")
+    vsub = ("🚨 PANIC" if vix_panic else f"Calme (<{_VIX_PANIC:.0f})") + f" · ROC 5j: {vix_roc_5d*100:+.1f}%"
     st.markdown(metric_box(
         "Volatilite (VIX)", f"{vix:.1f}", sub=vsub,
         accent="red" if vix_panic else "", sub_cls="sub-red" if vix_panic else "sub-green",
-        help_text="L'indice de la peur. Au-dessus de 30, le marche panique et le "
+        help_text="L'indice de la peur. Au-dessus de 30 ou ROC 5j > 25%, le marche panique et le "
                   "bot bloque les nouveaux achats risques pour proteger le capital.",
     ), unsafe_allow_html=True)
+
 with r2:
     if regime:
         crash = regime["crash"]
@@ -3610,10 +4292,77 @@ with r4:
                   "seul theme (diversification imposee).",
     ), unsafe_allow_html=True)
 
-# --- Sidebar: settings & controls -------------------------------------------
+# --- Volatility Thermometer & Attack/Shield Allocation ---
+try:
+    from allocation_thermometer import VolatilityThermometer
+    fchi_df = yf.download("^FCHI", period="1y", interval="1d", progress=False, auto_adjust=True)
+    if fchi_df is not None and not fchi_df.empty:
+        if isinstance(fchi_df.columns, pd.MultiIndex):
+            fchi_df.columns = fchi_df.columns.get_level_values(0)
+    thermo = VolatilityThermometer()
+    thermo_res = thermo.calculate_attack_defense_split(fchi_df, current_vix=vix)
+
+    if thermo_res.get("mode") == "BUNKER":
+        st.error(
+            f"🛑 **BUNKER MODE ACTIVATED: Index < 200 SMA (CAC40: {thermo_res.get('close'):.2f} < SMA200 {thermo_res.get('sma_200'):.2f}).** "
+            f"100% Defense allocation required (Cash / CSH.PA). Zero equity buys."
+        )
+    else:
+        atk = float(thermo_res.get("attack_pct", 0.70)) * 100.0
+        defs = float(thermo_res.get("defense_pct", 0.30)) * 100.0
+        mode_label = "⚔️ MODE ATTAQUE" if atk >= 50.0 else "🛡️ MODE DÉFENSE LEANING"
+        st.markdown(
+            f"<div style='background:#0A0A0A;border:1px solid #222;padding:10px 14px;margin-top:10px;margin-bottom:10px;'>"
+            f"<div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;'>"
+            f"<span style='font-size:13px;font-weight:700;color:#FFF;'>🌡️ Thermomètre de Volatilité : <span style='color:{_NEON if atk>=50 else _AMBER};'>{mode_label}</span></span>"
+            f"<span style='font-size:12px;color:#9BA3AF;'>Vol 21j: {float(thermo_res.get('vol_21d', 0))*100:.1f}% · VIX: {vix:.1f} · Cap Exposition: 98%</span>"
+            f"</div>"
+            f"<div style='height:12px;background:#1F2937;border-radius:6px;overflow:hidden;display:flex;'>"
+            f"<div style='width:{atk:.1f}%;background:linear-gradient(90deg,#00FF00,#10B981);height:100%;' title='Attack: {atk:.1f}%'></div>"
+            f"<div style='width:{defs:.1f}%;background:linear-gradient(90deg,#3B82F6,#6366F1);height:100%;' title='Shield: {defs:.1f}%'></div>"
+            f"</div>"
+            f"<div style='display:flex;justify-content:space-between;font-size:11px;color:#9BA3AF;margin-top:4px;'>"
+            f"<span style='color:#34D399;'>⚔️ Moteur Attaque (Actions Cibles) : <b>{atk:.0f}%</b></span>"
+            f"<span style='color:#818CF8;'>🛡️ Moteur Bouclier (Cash & Monétaire CSH.PA) : <b>{defs:.0f}%</b></span>"
+            f"</div>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+except Exception as exc:
+    logger.debug("Thermometer display error: %s", exc)
+
 with st.sidebar:
+
     st.markdown("### ⚙️ Parametres")
+    st.info("⚙️ Orchestré par Prefect (UI locale: port 4200)")
+
+    btn_force_sync = st.button("⚡ Actualiser le Marché (Force Refresh)", type="primary", use_container_width=True)
+    if btn_force_sync:
+        with st.spinner("Synchronisation des flux et calcul des signaux en cours..."):
+            try:
+                from hub import DataIngestionHub
+                from data_quality import DataQualityGateway
+                from market_data_adapter import YFinanceMarketDataAdapter
+                
+                hub = DataIngestionHub()
+                sig_list = asyncio.run(hub.fetch_all_alternative_signals())
+                hub.save_signals_to_sqlite(sig_list, PortfolioDB())
+
+                mkt_adapter = YFinanceMarketDataAdapter()
+                top_tickers = universe_df["ticker"].tolist() if "universe_df" in locals() and not universe_df.empty else ["MC.PA", "CW8.PA", "AI.PA"]
+                df_ohlcv = asyncio.run(mkt_adapter.fetch_ohlcv(top_tickers[:10], lookback_days=30))
+                if not df_ohlcv.empty:
+                    TimeSeriesDB().upsert_ohlcv(df_ohlcv)
+
+                st.session_state["last_sync_utc"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+                st.cache_data.clear()
+                st.success("Données actualisées et validées.")
+                st.rerun()
+            except Exception as exc:
+                st.error(f"Erreur lors de la synchronisation forcée : {exc}")
+
     auto_refresh = st.checkbox("Rafraichissement auto", value=False)
+
     refresh_secs = st.slider("Intervalle (s)", 30, 600, 120, 30,
                              disabled=not auto_refresh)
     if st.button("🔄 Vider le cache & recharger", width="stretch"):
@@ -3647,6 +4396,42 @@ with st.sidebar:
             unsafe_allow_html=True,
         )
 
+    # Local Sovereign AI (Ollama) Health Monitor
+    st.markdown("---")
+    st.markdown("### 🧠 Moteur d'IA Souverain")
+    try:
+        import requests
+        r_ai = requests.get("http://localhost:11434/api/tags", timeout=0.3)
+        if r_ai.status_code == 200:
+            st.markdown(
+                f"<div style='background:rgba(0,255,0,0.08);border-left:3px solid {_NEON};padding:8px 10px;font-size:12px;color:{_NEON};'>"
+                f"🟢 <b>IA Locale : En ligne (Mistral)</b><br>"
+                f"<span style='color:{_MUTED};font-size:11px;'>Ollama souverain · Coût API : 0,00 €</span>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown(
+                f"<div style='background:rgba(255,59,48,0.12);border-left:3px solid {_RED};padding:8px 10px;font-size:12px;color:{_RED};'>"
+                f"🔴 <b>IA Locale : Hors ligne</b><br>"
+                f"<span style='color:{_MUTED};font-size:11px;'>Synthèse déterministe active</span>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+    except Exception:
+        st.markdown(
+            f"<div style='background:rgba(255,59,48,0.12);border-left:3px solid {_RED};padding:8px 10px;font-size:12px;color:{_RED};'>"
+            f"🔴 <b>IA Locale : Hors ligne</b><br>"
+            f"<span style='color:{_MUTED};font-size:11px;'>Ollama non détecté (port 11434)</span>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
+    sync_ts = st.session_state.get("last_sync_utc") or portfolio.last_updated.strftime("%Y-%m-%d %H:%M:%S UTC")
+    st.markdown("---")
+    st.caption(f"🕒 **Dernière Synchronisation BD** :\n`{sync_ts}`")
+
+
     st.caption(
         "Amorcer le capital :\n\n`python seed_account.py --cash 10000`\n\n"
         "Lancer une passe :\n\n`python main_scheduler.py --now`"
@@ -3655,6 +4440,7 @@ with st.sidebar:
         st.caption(f"⏱️ Auto-refresh dans {refresh_secs}s")
 
 st.write("---")
+
 
 # =============================================================================
 # Mission Control — état du monde en ~3 secondes
@@ -3762,14 +4548,94 @@ with tab_gen:
     st.markdown(
         "<div class='info-text'>Briefing + registre des signaux + "
         "<b>suggestion de portefeuille adaptative</b> selon ton capital. "
-        "Aucun ordre n'est envoye depuis ici — Discord reste le copilot.</div>",
+        "Outil d'aide à la décision : les recommandations analytiques sont soumises à validation discrétionnaire.</div>",
         unsafe_allow_html=True,
     )
+
+    # --- PEA Eligibility Warnings (Boursorama Registry Check) ---
+    _warn_file = _ROOT / "database" / "eligibility_warnings.json"
+    if _warn_file.exists():
+        try:
+            with open(_warn_file, "r", encoding="utf-8") as f:
+                _elig_warnings = json.load(f)
+            if _elig_warnings:
+                _warn_bullets = [f"• **{t}** : {msg}" for t, msg in _elig_warnings.items()]
+                st.error(
+                    "🚨 **ALERTE ÉLIGIBILITÉ PEA (Boursorama Registry)** :\n"
+                    "Certains actifs suivis dans votre univers ont perdu ou ne confirment plus leur éligibilité PEA :\n\n"
+                    + "\n".join(_warn_bullets)
+                )
+        except Exception as exc:
+            logger.debug("Error reading eligibility warnings: %s", exc)
+
+    # --- Synthèse Institutionnelle IA (Aide à la Décision) ---
+
+    pending_gen = load_signals(("PENDING",))
+    with st.expander("📝 Synthèse Institutionnelle IA (Aide à la Décision & Stratégie)", expanded=True):
+        raw_sigs = []
+        if pending_gen is not None and not pending_gen.empty:
+            for _, r in pending_gen.head(3).iterrows():
+                raw_sigs.append({
+                    "ticker": str(r.get("ticker", "")),
+                    "score": float(r.get("score", 0)),
+                    "reason": str(r.get("reason", "")),
+                    "ml_probability": float(r.get("ml_probability", 0.0)) if "ml_probability" in r else None,
+                })
+        import json
+        t_mode = str(thermo_res.get("mode", "ATTACK")) if "thermo_res" in locals() and isinstance(thermo_res, dict) else "ATTACK"
+        t_atk = float(thermo_res.get("attack_pct", 0.70)) if "thermo_res" in locals() and isinstance(thermo_res, dict) else 0.70
+        t_def = float(thermo_res.get("defense_pct", 0.30)) if "thermo_res" in locals() and isinstance(thermo_res, dict) else 0.30
+        t_vol = float(thermo_res.get("vol_21d", 0.15)) if "thermo_res" in locals() and isinstance(thermo_res, dict) else 0.15
+        is_w_alert = bool(watchdog_res.get("alert", False)) if "watchdog_res" in locals() and isinstance(watchdog_res, dict) else False
+
+        brief_md = get_cached_institutional_brief(
+            total_equity=float(portfolio.total_equity),
+            cash=float(portfolio.cash_available),
+            mode=t_mode,
+            attack_pct=t_atk,
+            defense_pct=t_def,
+            vix_val=float(vix),
+            vol_21d_val=t_vol,
+            top_signals_repr=json.dumps(raw_sigs),
+            is_watchdog_alert=is_w_alert,
+        )
+        st.markdown(brief_md)
+
+    # --- Macro Volatility Thermometer & Target Split Gauge ---
+    st.markdown("#### 🌡️ Thermomètre Macroéconomique & Répartition Cible")
+    try:
+        from charts import render_macro_thermometer_gauge
+        cur_mode = str(thermo_res.get("mode", "ATTACK")) if "thermo_res" in locals() and isinstance(thermo_res, dict) else "ATTACK"
+        cur_atk = float(thermo_res.get("attack_pct", 0.70)) if "thermo_res" in locals() and isinstance(thermo_res, dict) else 0.70
+        cur_def = float(thermo_res.get("defense_pct", 0.30)) if "thermo_res" in locals() and isinstance(thermo_res, dict) else 0.30
+
+        if cur_mode == "BUNKER":
+            st.error("🛑 **BUNKER MODE : Index sous SMA200. Allocation défensive maximale requise (Cash / CSH.PA).**")
+
+        c_th1, c_th2 = st.columns([1.4, 2.0])
+        with c_th1:
+            fig_gauge = render_macro_thermometer_gauge(cur_atk, cur_def, mode=cur_mode)
+            st.plotly_chart(fig_gauge, use_container_width=True)
+        with c_th2:
+            st.markdown(
+                f"<div style='background:#111;border:1px solid #222;padding:12px;border-radius:4px;margin-top:10px;font-size:12px;line-height:1.6;'>"
+                f"<b style='color:#FFF;'>Règle de Gestion Macro VIX & CAC40</b><br>"
+                f"• Volatilité 21j CAC40 : <b>{float(thermo_res.get('vol_21d', 0.15))*100:.1f}%</b> (VIX: <b>{vix:.1f}</b>)<br>"
+                f"• Allocation Moteur Attaque : <b style='color:#00FF66;'>{cur_atk*100:.0f}%</b> (Actions PEA éligibles, cap max 98%)<br>"
+                f"• Allocation Moteur Bouclier : <b style='color:#38BDF8;'>{cur_def*100:.0f}%</b> (Cash disponible + CSH.PA)<br>"
+                f"• Protection Bunker : Passage automatique à 100% Défense si Clôture CAC40 < SMA 200."
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+    except Exception as exc:
+        logger.debug("Macro thermometer gauge render error: %s", exc)
 
     held_tickers = [p.ticker for p in positions]
     blue_chips = ["MC.PA", "OR.PA", "AI.PA", "RMS.PA", "SAN.PA",
                   "TTE.PA", "BNP.PA", "AIR.PA", _CORE_TICKER]
     watch = tuple(dict.fromkeys(held_tickers + blue_chips))[:14]
+
+
 
     pending_gen = load_signals(("PENDING",))
     suggestion = suggest_adaptive_portfolio(
@@ -3931,6 +4797,17 @@ with tab_gen:
             f"color:#E8E8E8;line-height:1.55;font-size:14px;'>{brief}</div>",
             unsafe_allow_html=True,
         )
+        hmm_p = macro_snap.get("hmm_probs", {"bull": 0.33, "bear": 0.33, "volatile": 0.34})
+        st.markdown(
+            f"<div style='margin-top:8px;background:#0A0A0A;padding:8px 12px;border:1px solid #222;font-size:12px;display:flex;justify-content:space-between;'>"
+            f"<span style='color:#FFF;'><b>Régime HMM</b> :</span>"
+            f"<span style='color:#22C55E;'>🐂 Bull: {hmm_p.get('bull', 0)*100:.0f}%</span>"
+            f"<span style='color:#EF4444;'>🐻 Bear: {hmm_p.get('bear', 0)*100:.0f}%</span>"
+            f"<span style='color:#EAB308;'>⚡ Volatile: {hmm_p.get('volatile', 0)*100:.0f}%</span>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
 
     # --- Phase 17: Decision funnel (audit-log analytics) --------------------
     st.markdown("---")
@@ -4020,8 +4897,9 @@ with tab_gen:
 
     # --- Phase 7: AI Transparency & Strategy Weight Radar ---
     st.markdown("---")
-    st.markdown("### \U0001F9E0 R\u00e9partition des Strat\u00e9gies (IA & Bandit Contextuel)")
+    st.markdown("### 🧠 Pondération de l'IA (Bandit Contextuel)")
     st.markdown(
+
         "<div class='info-text'>Pond\u00e9rations dynamiques allou\u00e9es aux sous-mod\u00e8les par le "
         "<b>Bandit Contextuel UCB</b> et le <b>Dynamic Ensemble ML</b> selon le r\u00e9gime actif.</div>",
         unsafe_allow_html=True,
@@ -4990,8 +5868,136 @@ with tab_mkt:
     """
     components.html(chart_html, height=640)
 
+    # --- Glass-Box Interactive Plotly Charts (Candlesticks, SMAs, HMM Regimes, Dynamic RSI) ---
+    st.markdown("#### 🔬 Graphique Interactif Haute Précision & Régimes HMM (Glass-Box)")
+    try:
+        from charts import render_hmm_candlestick_chart, render_rsi_chart
+        hist_raw = yf.download(selected, period="1y", interval="1d", progress=False, auto_adjust=True)
+        if hist_raw is not None and not hist_raw.empty:
+            if hasattr(hist_raw.columns, "get_level_values"):
+                hist_raw.columns = hist_raw.columns.get_level_values(0)
+            
+            c_series = hist_raw["Close"].dropna().astype(float)
+            sma50_s = c_series.rolling(50).mean()
+            sma200_s = c_series.rolling(200).mean()
+
+            # 14-day RSI
+            delta = c_series.diff()
+            gain = (delta.where(delta > 0, 0)).rolling(14).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+            rs = gain / loss.replace(0, np.nan)
+            rsi_s = 100 - (100 / (1 + rs))
+
+            cur_reg = str(thermo_res.get("mode", "BULL")).upper() if "thermo_res" in locals() and isinstance(thermo_res, dict) else "BULL"
+            dyn_thresh = 38.0 if cur_reg == "BULL" else (25.0 if cur_reg == "BEAR" else 30.0)
+
+            # Build HMM regimes series
+            reg_series = pd.Series(cur_reg, index=hist_raw.index)
+
+            fig_adv = render_hmm_candlestick_chart(selected, hist_raw, sma50=sma50_s, sma200=sma200_s, regime_series=reg_series)
+            st.plotly_chart(fig_adv, width="stretch")
+
+
+            fig_rsi = render_rsi_chart(rsi_s, dynamic_threshold=dyn_thresh)
+            st.plotly_chart(fig_rsi, width="stretch")
+    except Exception as exc:
+        logger.debug("Advanced chart error for %s: %s", selected, exc)
+
+    # --- On-Demand LLM Synthesis (Cost-Optimized Button) ---
+    st.markdown("---")
+    st.markdown(f"#### 🧠 Synthèse Institutionnelle IA — {format_name(selected)}")
+    st.markdown(
+        "<div class='info-text'>Génération à la demande d'une note d'analyse institutionnelle complète "
+        "(moteurs quantitatifs, valorisation fondamentale, sentiment de marché et actualités). "
+        "<b>Contrôle des coûts API OpenRouter : aucun appel automatique en arrière-plan.</b></div>",
+        unsafe_allow_html=True,
+    )
+
+    # Check 24-hour persistent SQLite cache first
+    cached_synth = None
+    try:
+        cached_synth = PortfolioDB().get_cached_synthesis(selected, max_age_hours=24)
+    except Exception:
+        pass
+
+    c_llm1, c_llm2 = st.columns([1.8, 2.2])
+    with c_llm1:
+        btn_label = "🧠 Générer la Synthèse IA (OpenRouter)" if not cached_synth else "🔄 Régénérer la Synthèse IA (OpenRouter)"
+        btn_llm = st.button(
+            btn_label,
+            type="secondary",
+            key=f"btn_llm_{selected}",
+            use_container_width=True,
+        )
+
+    resp_container = st.empty()
+
+    if btn_llm:
+        with st.spinner("Génération de la note d'analyse..."):
+            try:
+                from analyst_agent import InstitutionalAnalyst
+                analyst = InstitutionalAnalyst()
+                p_stub = type("PortStub", (), {"total_equity": float(portfolio.total_equity), "cash_available": float(portfolio.cash_available)})()
+                t_stub = {
+                    "mode": str(thermo_res.get("mode", "ATTACK")) if "thermo_res" in locals() and isinstance(thermo_res, dict) else "ATTACK",
+                    "attack_pct": float(thermo_res.get("attack_pct", 0.70)) if "thermo_res" in locals() and isinstance(thermo_res, dict) else 0.70,
+                    "defense_pct": float(thermo_res.get("defense_pct", 0.30)) if "thermo_res" in locals() and isinstance(thermo_res, dict) else 0.30,
+                    "vix": float(vix),
+                    "vol_21d": float(thermo_res.get("vol_21d", 0.15)) if "thermo_res" in locals() and isinstance(thermo_res, dict) else 0.15,
+                }
+                cand_sig = [{
+                    "ticker": selected,
+                    "score": float(ind.get("rsi", 50.0)) if ind else 50.0,
+                    "reason": f"Dossier {dossier.get('name', selected)} - RSI {ind.get('rsi', 'N/A') if ind else 'N/A'}, Tendance {ind.get('trend', 'N/A') if ind else 'N/A'}",
+                }]
+                streamed_full = ""
+                for chunk in analyst.generate_daily_brief_stream_sync(p_stub, t_stub, cand_sig):
+                    streamed_full += chunk
+                    resp_container.markdown(
+                        f"<div style='border:1px solid #333;background:#0A0A0A;padding:14px;margin-top:10px;border-left:4px solid {_CYAN};'>"
+                        f"<div style='color:{_CYAN};font-weight:700;font-size:13px;margin-bottom:8px;'>NOTE STRATÉGIQUE INSTITUTIONNELLE ({selected}) :</div>"
+                        f"{streamed_full}▌"
+                        f"</div>",
+                        unsafe_allow_html=True,
+                    )
+                resp_container.markdown(
+                    f"<div style='border:1px solid #333;background:#0A0A0A;padding:14px;margin-top:10px;border-left:4px solid {_CYAN};'>"
+                    f"<div style='color:{_CYAN};font-weight:700;font-size:13px;margin-bottom:8px;'>NOTE STRATÉGIQUE INSTITUTIONNELLE ({selected}) :</div>"
+                    f"{streamed_full}"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+                st.session_state[f"llm_brief_{selected}"] = streamed_full
+                try:
+                    PortfolioDB().save_synthesis(selected, streamed_full)
+                except Exception as exc:
+                    logger.debug("Failed to cache synthesis for %s: %s", selected, exc)
+            except Exception as exc:
+                st.error(f"Erreur lors de la génération IA : {exc}")
+
+    elif cached_synth:
+        resp_container.markdown(
+            f"<div style='border:1px solid #333;background:#0A0A0A;padding:14px;margin-top:10px;border-left:4px solid {_CYAN};'>"
+            f"<div style='color:{_CYAN};font-weight:700;font-size:13px;margin-bottom:8px;'>NOTE STRATÉGIQUE INSTITUTIONNELLE ({selected}) &nbsp;&nbsp;<span style='color:{_MUTED};font-size:11px;font-weight:normal;'>ℹ️ Synthèse en cache (Valide 24h)</span></div>"
+            f"{cached_synth}"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
+    elif st.session_state.get(f"llm_brief_{selected}"):
+        resp_container.markdown(
+            f"<div style='border:1px solid #333;background:#0A0A0A;padding:14px;margin-top:10px;border-left:4px solid {_CYAN};'>"
+            f"<div style='color:{_CYAN};font-weight:700;font-size:13px;margin-bottom:8px;'>NOTE STRATÉGIQUE INSTITUTIONNELLE ({selected}) :</div>"
+            f"{st.session_state[f'llm_brief_{selected}']}"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
+
+
     # TA widget + SMAs under chart
     tw1, tw2 = st.columns([1, 1])
+
     with tw1:
         ta_html = f"""
         <div class="tradingview-widget-container">
@@ -5334,8 +6340,51 @@ with tab_mkt:
             )
         st.markdown("\n".join(lines))
 
+    # --- Statistical Arbitrage / Pairs Trading Visualizer ---
+    st.markdown("---")
+    st.markdown("#### ⚖️ Arbitrage Statistique & Paires Cointégrées (Z-Score)")
+    st.markdown(
+        "<div class='info-text'>Modèle de cointégration (Engle-Granger) et suivi en temps réel du Z-Score du spread. "
+        "Une anomalie $|Z| \ge 2.0\sigma$ signale une divergence statistique temporaire propice au retour à la moyenne.</div>",
+        unsafe_allow_html=True,
+    )
+    try:
+        from stat_arb_pairs import StatArbEngine
+        from charts import render_statarb_zscore_chart
+        
+        c_p1, c_p2 = st.columns([1, 2])
+        with c_p1:
+            pair_choice = st.selectbox(
+                "Paire Sectorielle Cointégrée",
+                ["MC.PA / OR.PA (Luxe & Conso)", "BNP.PA / GLE.PA (Banques)", "AIR.PA / SAF.PA (Aéronautique)"],
+                key="statarb_pair_choice",
+            )
+        leg_a, leg_b = ("MC.PA", "OR.PA")
+        if "BNP" in pair_choice:
+            leg_a, leg_b = "BNP.PA", "GLE.PA"
+        elif "AIR" in pair_choice:
+            leg_a, leg_b = "AIR.PA", "SAF.PA"
+
+        df_pair = yf.download([leg_a, leg_b], period="1y", interval="1d", progress=False, auto_adjust=True)
+        if df_pair is not None and not df_pair.empty:
+            c_pair = df_pair["Close"] if "Close" in df_pair else df_pair
+            if leg_a in c_pair.columns and leg_b in c_pair.columns:
+                engine = StatArbEngine()
+                p_val, beta, z_series, cur_z = engine.compute_pair_spread(c_pair[leg_a], c_pair[leg_b])
+                
+                z_tail = z_series.tail(120).dropna()
+                if not z_tail.empty:
+                    fig_z = render_statarb_zscore_chart(z_tail.index, z_tail, leg_a, leg_b, threshold=2.0)
+                    st.plotly_chart(fig_z, width="stretch")
+                    
+                    z_status = "🔴 SURÉVALUATION (+2σ)" if cur_z >= 2.0 else ("🟢 SOUS-ÉVALUATION (-2σ)" if cur_z <= -2.0 else "⚪ ZONE NEUTRE")
+                    st.caption(f"Paire: **{leg_a} / {leg_b}** · Z-Score Actuel: **{cur_z:+.2f}σ** ({z_status}) · Ratio Hedge (β): **{beta:.3f}** · Cointégration p-value: **{p_val:.4f}**")
+    except Exception as exc:
+        logger.debug("StatArb visualizer error: %s", exc)
+
 # --- Tab: Ledger & Post-Mortems -------------------------------------------
 with tab_postmortem:
+
     st.markdown(
         "<div class='info-text'><b>Auditeur Algorithmique & Post-Mortems de Trading</b> : "
         "Analyse rétrospective systématique de chaque position débouclée "
@@ -6012,13 +7061,31 @@ def render_signal_card(
                     key=lambda x: abs(x[1]),
                     reverse=True,
                 )[:2]
-                if top_shaps:
-                    shap_items = [f"{k} ({'+' if v > 0 else ''}{v:.2f})" for k, v in top_shaps]
-                    shap_txt = f" | Top Drivers: {', '.join(shap_items)}"
+            shap_bars_html = ""
+            if shap_vals and isinstance(shap_vals, dict):
+                pos_shaps = sorted([(k, float(v)) for k, v in shap_vals.items() if float(v) > 0], key=lambda x: x[1], reverse=True)[:2]
+                neg_shaps = sorted([(k, float(v)) for k, v in shap_vals.items() if float(v) < 0], key=lambda x: x[1])[:1]
+                bar_items = []
+                for k, v in pos_shaps:
+                    pct_str = f"{v*100:+.1f}%" if abs(v) <= 1.0 else f"{v:+.2f}"
+                    bar_items.append(
+                        f"<span style='background:rgba(34,197,94,0.15);border:1px solid #22C55E;color:#4ADE80;padding:2px 6px;border-radius:3px;font-size:11px;'>"
+                        f"🟢 ▲ {k} (+{v:.2f}) · {pct_str}</span>"
+                    )
+                for k, v in neg_shaps:
+                    pct_str = f"{v*100:+.1f}%" if abs(v) <= 1.0 else f"{v:+.2f}"
+                    bar_items.append(
+                        f"<span style='background:rgba(239,68,68,0.15);border:1px solid #EF4444;color:#F87171;padding:2px 6px;border-radius:3px;font-size:11px;'>"
+                        f"🔴 ▼ {k} ({v:.2f}) · {pct_str}</span>"
+                    )
+                if bar_items:
+                    shap_bars_html = f"<div style='margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;'>{' '.join(bar_items)}</div>"
+
 
             ml_html = (
                 f"<div style='margin-top:6px;color:#38BDF8;font-size:12px;line-height:1.45;'>"
-                f"🧠 <b>ML Probability</b>: <b style='color:#7DD3FC;'>{prob_pct:.1f}%</b>{int_txt}{shap_txt}"
+                f"🧠 <b>ML Probability</b>: <b style='color:#7DD3FC;'>{prob_pct:.1f}%</b>{int_txt}"
+                f"{shap_bars_html}"
                 f"</div>"
             )
         except Exception:
@@ -6026,7 +7093,32 @@ def render_signal_card(
 
 
 
+
+
+    adaptive_html = ""
+    dynamic_rsi = None
+    dyn_regime = None
+    rsi_val = None
+    if lineage and isinstance(lineage, dict):
+        dynamic_rsi = lineage.get("dynamic_rsi_threshold")
+        dyn_regime = lineage.get("current_regime")
+        rsi_val = lineage.get("rsi_14")
+    if dynamic_rsi is None and sizing and isinstance(sizing, dict):
+        dynamic_rsi = sizing.get("dynamic_rsi_threshold")
+        dyn_regime = sizing.get("current_regime")
+        rsi_val = sizing.get("rsi_14")
+
+    if dynamic_rsi is not None:
+        rsi_s = f"{rsi_val:.1f}" if rsi_val is not None else "actuel"
+        reg_s = f"{dyn_regime}" if dyn_regime else "actif"
+        adaptive_html = (
+            f"<div style='margin-top:6px;color:#FBBF24;font-size:12px;line-height:1.4;'>"
+            f"💡 <b>Rationale</b>: RSI ({rsi_s}) dropped below the adaptive threshold ({dynamic_rsi:.0f}) tailored for the {reg_s} regime."
+            f"</div>"
+        )
+
     extras = ""
+
     if impact_line:
         extras += (
             f"<div style='margin-top:6px;color:{_CYAN};font-size:12px;'>"
@@ -6066,11 +7158,13 @@ def render_signal_card(
   <div style="color:{_TEXT};font-size:13px;margin-top:8px;line-height:1.45;">
     {reason}
   </div>
+  {adaptive_html}
   {sizing_html}
   {ml_html}
   {extras}
   <div style="margin-top:8px;">{when}</div>
 </div>
+
 """
 ```
 

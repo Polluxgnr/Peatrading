@@ -1,9 +1,10 @@
 # PEA Pollux — Risk Sentinel, Pydantic Config, Drawdown Breakers & HRP Sizer
-Generated: `2026-08-16 13:03 UTC` | File Count: `12`
+Generated: `2026-08-16 16:42 UTC` | File Count: `14`
 Institutional Systematic Decision Support Architecture for French PEA.
 ---
 ## Included Files Index
 - [03_risk_portfolio/__init__.py](#file-03_risk_portfolio-__init__-py)
+- [03_risk_portfolio/allocation_thermometer.py](#file-03_risk_portfolio-allocation_thermometer-py)
 - [03_risk_portfolio/alpha_tracker.py](#file-03_risk_portfolio-alpha_tracker-py)
 - [03_risk_portfolio/broker_reconciliation.py](#file-03_risk_portfolio-broker_reconciliation-py)
 - [03_risk_portfolio/correlation_firewall.py](#file-03_risk_portfolio-correlation_firewall-py)
@@ -15,6 +16,7 @@ Institutional Systematic Decision Support Architecture for French PEA.
 - [03_risk_portfolio/pea_position_sizer.py](#file-03_risk_portfolio-pea_position_sizer-py)
 - [03_risk_portfolio/risk_config.py](#file-03_risk_portfolio-risk_config-py)
 - [03_risk_portfolio/stress_tester.py](#file-03_risk_portfolio-stress_tester-py)
+- [03_risk_portfolio/watchdog.py](#file-03_risk_portfolio-watchdog-py)
 
 ---
 ## FILE: 03_risk_portfolio/__init__.py
@@ -43,6 +45,130 @@ __all__ = [
     "max_drawdown",
     "sharpe_ratio",
 ]
+```
+
+## FILE: 03_risk_portfolio/allocation_thermometer.py
+```python
+"""Attack / Shield Allocation & Volatility Thermometer for PEA Pollux.
+
+Implements a Global Macro allocation mechanism:
+  - Dynamically splits portfolio capital between the Attack Engine (directional equities/ETFs)
+    and Shield Engine (uncapped cash or PEA Money Market funds like CSH.PA).
+  - Calculates 21-day rolling annualized volatility of the market benchmark.
+  - Enforces "Bunker Mode": 100% Defense (0% Attack) whenever benchmark close < SMA_200.
+  - Dynamically scales Attack allocation inversely to VIX and 21-day realized volatility when above SMA_200.
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Any, Dict, Optional, Union
+
+import numpy as np
+import pandas as pd
+
+logger = logging.getLogger("allocation_thermometer")
+
+
+class VolatilityThermometer:
+    """Computes dynamic Attack vs Shield allocation splits and manages Bunker Mode."""
+
+    def __init__(self, permanent_cash_buffer: float = 0.02) -> None:
+        self.permanent_cash_buffer = permanent_cash_buffer
+        self.max_exposure = 1.0 - permanent_cash_buffer  # 0.98
+
+    def calculate_attack_defense_split(
+        self,
+        index_history: Optional[Union[pd.DataFrame, pd.Series]] = None,
+        current_vix: float = 16.0,
+    ) -> Dict[str, Any]:
+        """Calculate the Attack vs Defense allocation split based on 200 SMA and volatility.
+
+        Args:
+            index_history: Benchmark OHLCV or Close price series (^FCHI, CW8.PA, SPY).
+            current_vix: Current spot VIX / V2TX level.
+
+        Returns:
+            Dict[str, Any]: {
+                "attack_pct": float (0.0 to 0.98),
+                "defense_pct": float (0.02 to 1.0),
+                "mode": "BUNKER" | "ATTACK" | "DEFENSE_LEANING",
+                "vol_21d": float,
+                "vix": float,
+                "sma_200": float,
+                "close": float,
+                "is_bunker": bool,
+            }
+        """
+        # Default baseline
+        cur_close = 100.0
+        sma_200 = 90.0
+        vol_21d = 0.15
+
+        if index_history is not None and not index_history.empty:
+            if isinstance(index_history, pd.DataFrame):
+                col = "Close" if "Close" in index_history.columns else index_history.columns[0]
+                close = index_history[col].dropna().astype(float)
+            else:
+                close = index_history.dropna().astype(float)
+
+            if len(close) >= 21:
+                rets = close.pct_change().dropna()
+                vol_21d = float(rets.tail(21).std() * np.sqrt(252))
+
+            if len(close) >= 200:
+                sma_200 = float(close.tail(200).mean())
+            elif len(close) > 0:
+                sma_200 = float(close.mean())
+
+            if len(close) > 0:
+                cur_close = float(close.iloc[-1])
+
+        # Check Bunker Mode Trigger: Close < SMA_200
+        if cur_close < sma_200:
+            logger.warning(
+                "BUNKER MODE TRIGGERED: Index Close (%.2f) < SMA_200 (%.2f). 100%% Defense split.",
+                cur_close, sma_200,
+            )
+            return {
+                "attack_pct": 0.0,
+                "defense_pct": 1.0,
+                "mode": "BUNKER",
+                "vol_21d": round(vol_21d, 4),
+                "vix": round(float(current_vix), 2),
+                "sma_200": round(sma_200, 2),
+                "close": round(cur_close, 2),
+                "is_bunker": True,
+            }
+
+        # Above SMA_200: Scale Attack ratio inversely to VIX and 21d volatility
+        # VIX < 15 & Vol < 0.14 -> 90-98% Attack
+        # VIX > 25 or Vol > 0.25 -> 20-35% Attack
+        vix_penalty = max(0.0, (current_vix - 12.0) / 18.0) * 0.65  # up to -0.65
+        vol_penalty = max(0.0, (vol_21d - 0.10) / 0.20) * 0.35      # up to -0.35
+
+        raw_attack = 0.98 - vix_penalty - vol_penalty
+        attack_pct = float(np.clip(raw_attack, 0.15, self.max_exposure))
+        defense_pct = round(1.0 - attack_pct, 4)
+        attack_pct = round(attack_pct, 4)
+
+        mode = "ATTACK" if attack_pct >= 0.50 else "DEFENSE_LEANING"
+
+        logger.info(
+            "Volatility Thermometer: Attack=%.1f%%, Defense=%.1f%% (Mode=%s, VIX=%.1f, Vol21d=%.1f%%)",
+            attack_pct * 100.0, defense_pct * 100.0, mode, current_vix, vol_21d * 100.0,
+        )
+
+        return {
+            "attack_pct": attack_pct,
+            "defense_pct": defense_pct,
+            "mode": mode,
+            "vol_21d": round(vol_21d, 4),
+            "vix": round(float(current_vix), 2),
+            "sma_200": round(sma_200, 2),
+            "close": round(cur_close, 2),
+            "is_bunker": False,
+        }
 ```
 
 ## FILE: 03_risk_portfolio/alpha_tracker.py
@@ -1496,14 +1622,17 @@ class PeaSizer:
         self.max_sector_weight: float = float(risk.get("MAX_SECTOR_WEIGHT_PCT", 0.25))
         self.vol_reference: float = float(risk.get("VOLATILITY_REFERENCE", 0.20))
         self.vol_max_factor: float = float(risk.get("VOLATILITY_MAX_FACTOR", 1.5))
+        self.permanent_cash_buffer: float = float(risk.get("PERMANENT_CASH_BUFFER_PCT", 0.02))
         logger.debug(
-            "Sizer loaded: kelly=%.2f max_single=%.2f sat_budget=%.2f vol_ref=%.2f max_sector=%.2f",
+            "Sizer loaded: kelly=%.2f max_single=%.2f sat_budget=%.2f vol_ref=%.2f max_sector=%.2f cash_buffer=%.2f",
             self.kelly_fraction,
             self.max_single_position,
             self.satellite_max_budget,
             self.vol_reference,
             self.max_sector_weight,
+            self.permanent_cash_buffer,
         )
+
 
     @staticmethod
     def _load_risk_params(config_path: str | Path | None) -> dict:
@@ -1596,12 +1725,13 @@ class PeaSizer:
         historical_volatility: float | None = None,
         ticker_sector: str = "UNKNOWN",
         kinetic_multiplier: float = 1.0,
+        attack_budget_pct: float | None = None,
     ) -> tuple[int, dict]:
         """Return ``(qty, meta)`` so UIs can show the sizing reasoning.
 
         Meta keys: kelly_fraction, score, historical_volatility, vol_factor,
         max_alloc, target_cash_pre_cap, target_cash, notional, weight_pct,
-        satellite_room, cash_capped, sector_scale, kinetic_multiplier.
+        satellite_room, cash_capped, sector_scale, kinetic_multiplier, max_exposure_room.
         """
         meta: dict = {
             "kelly_fraction": self.kelly_fraction,
@@ -1617,6 +1747,7 @@ class PeaSizer:
             "cash_capped": False,
             "sector_scale": 1.0,
             "kinetic_multiplier": kinetic_multiplier,
+            "max_exposure_room": 0.0,
         }
         if current_price <= 0 or portfolio.total_equity <= 0 or kinetic_multiplier <= 0.0:
             logger.warning(
@@ -1644,26 +1775,43 @@ class PeaSizer:
             "sector_scale": sec_scale,
         })
 
+        # Strict 98% Max Exposure Limit (2% Permanent Cash Buffer)
+        invested_equity = sum(p.market_value for p in portfolio.positions)
+        max_exposure_cap = portfolio.total_equity * (1.0 - self.permanent_cash_buffer)
+        max_exposure_room = max(0.0, max_exposure_cap - invested_equity)
+
         satellite_room = max(
             0.0,
             self.satellite_budget_room(portfolio),
         )
+
+        # Dynamic Attack Budget cap from Volatility Thermometer
+        if attack_budget_pct is not None:
+            max_attack_equity = portfolio.total_equity * min(1.0 - self.permanent_cash_buffer, max(0.0, float(attack_budget_pct)))
+            current_sat = self._satellite_value(portfolio)
+            attack_room = max(0.0, max_attack_equity - current_sat)
+            satellite_room = min(satellite_room, attack_room)
+
+        satellite_room = min(satellite_room, max_exposure_room)
         meta["satellite_room"] = satellite_room
+        meta["max_exposure_room"] = max_exposure_room
+
         if target_cash > satellite_room:
             logger.info(
-                "%s sizing capped by satellite budget: %.2f -> %.2f EUR.",
+                "%s sizing capped by satellite/exposure budget: %.2f -> %.2f EUR.",
                 signal.ticker, target_cash, satellite_room,
             )
             target_cash = satellite_room
 
+        max_usable_cash = max(0.0, min(portfolio.cash_available, max_exposure_room))
         qty_shares = math.floor(target_cash / current_price)
         notional = qty_shares * current_price
-        if notional > portfolio.cash_available:
-            qty_shares = math.floor(portfolio.cash_available / current_price)
+        if notional > max_usable_cash:
+            qty_shares = math.floor(max_usable_cash / current_price)
             notional = qty_shares * current_price
             meta["cash_capped"] = True
             logger.info(
-                "%s sizing capped by cash -> %d shares.",
+                "%s sizing capped by usable cash (under 98%% exposure limit) -> %d shares.",
                 signal.ticker, qty_shares,
             )
         else:
@@ -1672,6 +1820,7 @@ class PeaSizer:
                 signal.ticker, qty_shares, target_cash, current_price,
                 signal.score, vol_factor, sec_scale,
             )
+
 
         qty_shares = max(0, qty_shares)
         notional = qty_shares * current_price
@@ -2016,4 +2165,123 @@ if __name__ == "__main__":
     print("\n--- Crisis Stress Testing Results ---")
     for crisis, stats in res.items():
         print(f"[{crisis}] Max DD: {stats['max_drawdown']*100:+.2f}% | Return: {stats['total_return']*100:+.2f}% | Trough: {stats['trough_date']}")
+```
+
+## FILE: 03_risk_portfolio/watchdog.py
+```python
+"""Intraday Market Watchdog for PEA Pollux Decision Support Terminal.
+
+Monitors real-time intraday price action of European and global indices (^FCHI, ^STOXX50E, CW8.PA)
+to detect flash crashes or intraday drawdowns exceeding risk thresholds.
+"""
+
+from __future__ import annotations
+
+import logging
+import sys
+from pathlib import Path
+from typing import Any, Dict, Optional
+
+_ROOT = Path(__file__).resolve().parent.parent
+for sub in ("00_data_sensors", "01_memory_core", "02_quant_engine"):
+    sys.path.insert(0, str(_ROOT / sub))
+
+try:
+    import yfinance as yf
+except ImportError:
+    yf = None
+
+logger = logging.getLogger("market_watchdog")
+
+
+class MarketWatchdog:
+    """Monitors real-time intraday market movements for anomaly and crash detection."""
+
+    def __init__(self, default_threshold: float = -0.10) -> None:
+        """Initialize watchdog with an intraday crash threshold (default -10%)."""
+        self.default_threshold = default_threshold
+
+    def check_intraday_crash(
+        self,
+        index_ticker: str = "^FCHI",
+        threshold: Optional[float] = None,
+        mock_data: Optional[Dict[str, float]] = None,
+    ) -> Dict[str, Any]:
+        """Evaluate intraday high vs current price for flash crash conditions.
+
+        Args:
+            index_ticker: Benchmark index symbol (^FCHI, ^GSPC, CW8.PA).
+            threshold: Custom percentage drop threshold (e.g. -0.10 for -10%).
+            mock_data: Optional dict with 'high' and 'current' for unit testing.
+
+        Returns:
+            Dict[str, Any]: {
+                "alert": bool,
+                "drop_pct": float,
+                "day_high": float,
+                "current_price": float,
+                "ticker": str,
+                "message": str,
+            }
+        """
+        thresh = threshold if threshold is not None else self.default_threshold
+        clean_ticker = index_ticker.strip().upper()
+
+        day_high: float = 0.0
+        cur_price: float = 0.0
+
+        if mock_data is not None:
+            day_high = float(mock_data.get("high", 0.0))
+            cur_price = float(mock_data.get("current", 0.0))
+        elif yf is not None:
+            try:
+                # Fetch 1-day intraday or daily quote
+                data = yf.download(clean_ticker, period="1d", interval="1m", progress=False, auto_adjust=True)
+                if data is not None and not data.empty:
+                    if hasattr(data.columns, "get_level_values"):
+                        data.columns = data.columns.get_level_values(0)
+                    day_high = float(data["High"].max())
+                    cur_price = float(data["Close"].iloc[-1])
+                else:
+                    # Fallback to daily bars
+                    df_daily = yf.download(clean_ticker, period="5d", interval="1d", progress=False, auto_adjust=True)
+                    if df_daily is not None and not df_daily.empty:
+                        if hasattr(df_daily.columns, "get_level_values"):
+                            df_daily.columns = df_daily.columns.get_level_values(0)
+                        day_high = float(df_daily["High"].iloc[-1])
+                        cur_price = float(df_daily["Close"].iloc[-1])
+            except Exception as exc:
+                logger.debug("Failed to fetch intraday data for %s via yfinance: %s", clean_ticker, exc)
+
+        # Fallback if price could not be retrieved
+        if day_high <= 0 or cur_price <= 0:
+            return {
+                "alert": False,
+                "drop_pct": 0.0,
+                "day_high": 0.0,
+                "current_price": 0.0,
+                "ticker": clean_ticker,
+                "message": "Data unavailable / Market closed",
+            }
+
+        drop_pct = (cur_price - day_high) / day_high
+        is_crash = drop_pct <= thresh
+
+        if is_crash:
+            logger.critical(
+                "WATCHDOG FLASH CRASH ALERT on %s: Intraday Drop %.2f%% <= Threshold %.2f%% (High: %.2f, Current: %.2f)",
+                clean_ticker, drop_pct * 100.0, thresh * 100.0, day_high, cur_price,
+            )
+            message = f"CRITICAL: Intraday Flash Crash Detected ({drop_pct*100:.1f}%)"
+        else:
+            message = "Normal market conditions"
+
+        return {
+            "alert": is_crash,
+            "drop_pct": round(float(drop_pct), 4),
+            "day_high": round(float(day_high), 2),
+            "current_price": round(float(cur_price), 2),
+            "ticker": clean_ticker,
+            "message": message,
+        }
 ```

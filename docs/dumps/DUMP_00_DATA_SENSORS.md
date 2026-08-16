@@ -1,12 +1,22 @@
 # PEA Pollux — Data Sensors, Scrapers & External Ingestion Layer
-Generated: `2026-08-16 13:03 UTC` | File Count: `35`
+Generated: `2026-08-16 16:42 UTC` | File Count: `46`
 Institutional Systematic Decision Support Architecture for French PEA.
 ---
 ## Included Files Index
 - [00_data_sensors/__init__.py](#file-00_data_sensors-__init__-py)
+- [00_data_sensors/adapters/__init__.py](#file-00_data_sensors-adapters-__init__-py)
+- [00_data_sensors/adapters/amf_adapter.py](#file-00_data_sensors-adapters-amf_adapter-py)
+- [00_data_sensors/adapters/base_adapters.py](#file-00_data_sensors-adapters-base_adapters-py)
+- [00_data_sensors/adapters/bourso_adapter.py](#file-00_data_sensors-adapters-bourso_adapter-py)
+- [00_data_sensors/adapters/fundamentals_adapter.py](#file-00_data_sensors-adapters-fundamentals_adapter-py)
+- [00_data_sensors/adapters/macro_adapter.py](#file-00_data_sensors-adapters-macro_adapter-py)
+- [00_data_sensors/adapters/market_adapter.py](#file-00_data_sensors-adapters-market_adapter-py)
+- [00_data_sensors/adapters/market_data_adapter.py](#file-00_data_sensors-adapters-market_data_adapter-py)
+- [00_data_sensors/adapters/news_adapter.py](#file-00_data_sensors-adapters-news_adapter-py)
 - [00_data_sensors/deep_news_scraper.py](#file-00_data_sensors-deep_news_scraper-py)
 - [00_data_sensors/earnings_updater.py](#file-00_data_sensors-earnings_updater-py)
 - [00_data_sensors/fundamentals_api.py](#file-00_data_sensors-fundamentals_api-py)
+- [00_data_sensors/hub.py](#file-00_data_sensors-hub-py)
 - [00_data_sensors/imap_ingest/__init__.py](#file-00_data_sensors-imap_ingest-__init__-py)
 - [00_data_sensors/imap_ingest/dedupe.py](#file-00_data_sensors-imap_ingest-dedupe-py)
 - [00_data_sensors/imap_ingest/html_parser.py](#file-00_data_sensors-imap_ingest-html_parser-py)
@@ -38,6 +48,7 @@ Institutional Systematic Decision Support Architecture for French PEA.
 - [00_data_sensors/scrapers/openinsider_eu_scraper.py](#file-00_data_sensors-scrapers-openinsider_eu_scraper-py)
 - [00_data_sensors/symbol_mapper.py](#file-00_data_sensors-symbol_mapper-py)
 - [00_data_sensors/text_cleaner.py](#file-00_data_sensors-text_cleaner-py)
+- [00_data_sensors/universe_manager.py](#file-00_data_sensors-universe_manager-py)
 
 ---
 ## FILE: 00_data_sensors/__init__.py
@@ -60,6 +71,910 @@ __all__ = [
     "dump_bronze_json",
     "save_raw_response",
 ]
+```
+
+## FILE: 00_data_sensors/adapters/__init__.py
+```python
+from .amf_adapter import AmfAdapter, AmfInsiderAdapter, AmfShortAdapter
+from .base_adapters import AbstractMarketDataAdapter, AbstractPollAdapter
+from .bourso_adapter import BoursoUniverseAdapter
+from .fundamentals_adapter import FmpFundamentalsAdapter
+from .macro_adapter import MacroAdapter, MacroAlphaAdapter
+from .market_adapter import YFinanceMarketAdapter, YFinanceMarketDataAdapter
+from .news_adapter import ConsolidatedNewsAdapter
+
+__all__ = [
+    "AbstractPollAdapter",
+    "AbstractMarketDataAdapter",
+    "AmfAdapter",
+    "AmfShortAdapter",
+    "AmfInsiderAdapter",
+    "ConsolidatedNewsAdapter",
+    "BoursoUniverseAdapter",
+    "FmpFundamentalsAdapter",
+    "MacroAdapter",
+    "MacroAlphaAdapter",
+    "YFinanceMarketAdapter",
+    "YFinanceMarketDataAdapter",
+]
+```
+
+## FILE: 00_data_sensors/adapters/amf_adapter.py
+```python
+"""AMF Regulatory Ingestion Adapters for Layer 1.
+
+Polls the Autorité des Marchés Financiers (AMF) BDIF portal for Net Short Positions
+and Dirigeants / Insider Transactions, converting raw records into strict Pydantic AlternativeSignals.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import sys
+from pathlib import Path
+from typing import List, Optional
+
+_ROOT = Path(__file__).resolve().parent.parent.parent
+for sub in ("00_data_sensors", "00_data_sensors/scrapers", "01_memory_core"):
+    sys.path.insert(0, str(_ROOT / sub))
+
+try:
+    from adapters.base_adapters import AbstractPollAdapter
+except ImportError:
+    try:
+        from .base_adapters import AbstractPollAdapter
+    except ImportError:
+        from base_adapters import AbstractPollAdapter
+
+from data_contracts import AlternativeSignal
+
+
+try:
+    from amf_short_scraper import AmfShortScraper
+except ImportError:
+    from scrapers.amf_short_scraper import AmfShortScraper
+
+try:
+    from amf_scraper import AmfInsiderScraper
+except ImportError:
+    from scrapers.amf_scraper import AmfInsiderScraper
+
+try:
+    from figi_mapper import FigiMapper
+except ImportError:
+    FigiMapper = None
+
+logger = logging.getLogger("amf_adapter")
+
+_DEFAULT_PEA_TICKERS = ["MC.PA", "OR.PA", "TTE.PA", "SAN.PA", "AIR.PA", "AI.PA", "BNP.PA", "KER.PA"]
+
+
+class AmfShortAdapter(AbstractPollAdapter):
+    """Adapter polling AMF net short positions."""
+
+    interval_seconds: int = 3600
+
+    def __init__(
+        self,
+        isins: Optional[List[str]] = None,
+        tickers: Optional[List[str]] = None,
+        interval_seconds: int = 3600,
+    ) -> None:
+        self.interval_seconds = interval_seconds
+        self.scraper = AmfShortScraper()
+        self.figi = FigiMapper() if FigiMapper is not None else None
+        self.isins = isins or []
+        self.tickers = tickers or []
+
+        if not self.isins and not self.tickers:
+            self.tickers = list(_DEFAULT_PEA_TICKERS)
+
+    def _resolve_isin(self, ticker_or_isin: str) -> str:
+        if ticker_or_isin.startswith("FR") and len(ticker_or_isin) == 12:
+            return ticker_or_isin
+        if self.figi is not None:
+            try:
+                isin = self.figi.ticker_to_isin(ticker_or_isin)
+                if isin:
+                    return isin
+            except Exception as exc:
+                logger.debug("FIGI resolution failed for %s: %s", ticker_or_isin, exc)
+        return ticker_or_isin
+
+    async def fetch(self) -> List[AlternativeSignal]:
+        """Poll short interest for configured assets and return normalized AlternativeSignals."""
+        loop = asyncio.get_event_loop()
+        signals: List[AlternativeSignal] = []
+
+        targets = list(self.isins)
+        for t in self.tickers:
+            isin = self._resolve_isin(t)
+            if isin not in targets:
+                targets.append((t, isin) if t != isin else isin)
+
+        for item in targets:
+            if isinstance(item, tuple):
+                ticker, isin = item
+            else:
+                ticker, isin = item, item
+
+            try:
+                short_pct = await loop.run_in_executor(None, self.scraper.get_short_interest, isin)
+                signals.append(
+                    AlternativeSignal(
+                        ticker=ticker,
+                        signal_type="SHORT_INTEREST",
+                        value=float(short_pct),
+                        confidence=1.0,
+                        source="AMF_BDIF",
+                        metadata={"isin": isin, "threshold_breach": short_pct > 3.0},
+                    )
+                )
+            except Exception as exc:
+                logger.warning("Failed to fetch AMF short interest for %s (%s): %s", ticker, isin, exc)
+
+        logger.info("AmfShortAdapter emitted %d AlternativeSignal(s).", len(signals))
+        return signals
+
+
+class AmfInsiderAdapter(AbstractPollAdapter):
+    """Adapter polling AMF official declarations of directors and executives."""
+
+    interval_seconds: int = 7200
+
+    def __init__(
+        self,
+        tickers: Optional[List[str]] = None,
+        interval_seconds: int = 7200,
+    ) -> None:
+        self.interval_seconds = interval_seconds
+        self.scraper = AmfInsiderScraper() if AmfInsiderScraper is not None else None
+        self.tickers = tickers or list(_DEFAULT_PEA_TICKERS)
+
+    async def fetch(self) -> List[AlternativeSignal]:
+        """Poll insider filings and compute direction scores."""
+        if self.scraper is None:
+            return []
+
+        loop = asyncio.get_event_loop()
+        signals: List[AlternativeSignal] = []
+
+        for ticker in self.tickers:
+            try:
+                df = await loop.run_in_executor(None, self.scraper.get_recent_declarations, ticker)
+                if df is not None and not df.empty:
+                    tx_col = next((c for c in ("Transaction", "Title", "type") if c in df.columns), None)
+                    buys, sells = 0, 0
+                    if tx_col:
+                        tx_series = df[tx_col].astype(str).str.lower()
+                        buys = int(tx_series.str.contains("acqui|achat|buy|souscription").sum())
+                        sells = int(tx_series.str.contains("cess|vente|sell|dispos").sum())
+
+                    direction = 1.0 if buys > sells else (-1.0 if sells > buys else 0.0)
+                    signals.append(
+                        AlternativeSignal(
+                            ticker=ticker,
+                            signal_type="INSIDER_TX",
+                            value=direction,
+                            confidence=1.0,
+                            source="AMF_BDIF",
+                            metadata={
+                                "declarations_count": len(df),
+                                "buys_count": buys,
+                                "sells_count": sells,
+                                "latest_date": str(df["Date"].iloc[0]) if "Date" in df.columns else "",
+                            },
+                        )
+                    )
+            except Exception as exc:
+                logger.warning("AmfInsiderAdapter failed for %s: %s", ticker, exc)
+
+        logger.info("AmfInsiderAdapter emitted %d AlternativeSignal(s).", len(signals))
+        return signals
+
+
+class AmfAdapter(AbstractPollAdapter):
+    """Unified AMF regulatory data adapter polling both short interest and insider filings."""
+
+    interval_seconds: int = 3600
+
+    def __init__(
+        self,
+        isins: Optional[List[str]] = None,
+        tickers: Optional[List[str]] = None,
+        interval_seconds: int = 3600,
+    ) -> None:
+        self.interval_seconds = interval_seconds
+        self.short_adapter = AmfShortAdapter(isins=isins, tickers=tickers, interval_seconds=interval_seconds)
+        self.insider_adapter = AmfInsiderAdapter(tickers=tickers, interval_seconds=interval_seconds)
+
+    async def fetch(self) -> List[AlternativeSignal]:
+        """Fetch both short interest and insider filings from AMF BDIF."""
+        short_sigs = await self.short_adapter.fetch()
+        insider_sigs = await self.insider_adapter.fetch()
+        return short_sigs + insider_sigs
+```
+
+## FILE: 00_data_sensors/adapters/base_adapters.py
+```python
+"""Base Abstract Ingestion Adapters for Layer 1.
+
+All future scrapers, polling connectors, and data feeds implement these
+interfaces to enforce decoupling between external sources and core quant engines.
+"""
+
+from __future__ import annotations
+
+import sys
+from abc import ABC, abstractmethod
+from pathlib import Path
+from typing import List
+
+import pandas as pd
+
+_ROOT = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(_ROOT / "01_memory_core"))
+
+from data_contracts import AlternativeSignal
+
+
+class AbstractPollAdapter(ABC):
+    """Abstract polling adapter for recurring ingestion of alternative data streams.
+
+    Attributes:
+        interval_seconds (int): Minimum interval between polling runs in seconds (default: 900s / 15m).
+    """
+
+    interval_seconds: int = 900
+
+    @abstractmethod
+    async def fetch(self) -> List[AlternativeSignal]:
+        """Poll the remote data provider and return normalized AlternativeSignal objects.
+
+        Returns:
+            List[AlternativeSignal]: Standardized signals emitted by this sensor.
+        """
+        raise NotImplementedError("Subclasses must implement fetch().")
+
+
+class AbstractMarketDataAdapter(ABC):
+    """Abstract market data adapter for price quotes, historical bars, and order book states."""
+
+    @abstractmethod
+    async def fetch_ohlcv(self, tickers: List[str], lookback_days: int = 252) -> pd.DataFrame:
+        """Fetch daily or intraday OHLCV bars for candidate tickers.
+
+        Args:
+            tickers: List of standardized ticker symbols (e.g. ['MC.PA', 'CW8.PA']).
+            lookback_days: Number of historical calendar days to request.
+
+        Returns:
+            pd.DataFrame: Cleaned dataframe with Open, High, Low, Close, Volume columns.
+        """
+        raise NotImplementedError("Subclasses must implement fetch_ohlcv().")
+```
+
+## FILE: 00_data_sensors/adapters/bourso_adapter.py
+```python
+"""Boursorama PEA Universe & Instrument Metadata Adapter for Layer 1.
+
+Polls French PEA constituent lists and instrument profiles from Boursorama with
+anti-bot resilience, emitting standardized AlternativeSignal updates.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import sys
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+_ROOT = Path(__file__).resolve().parent.parent.parent
+for sub in ("00_data_sensors", "00_data_sensors/scrapers", "01_memory_core"):
+    sys.path.insert(0, str(_ROOT / sub))
+
+from base_adapters import AbstractPollAdapter
+from data_contracts import AlternativeSignal
+
+try:
+    from bourso_scraper import BoursoramaScraper
+except ImportError:
+    from scrapers.bourso_scraper import BoursoramaScraper
+
+logger = logging.getLogger("bourso_adapter")
+
+
+class BoursoUniverseAdapter(AbstractPollAdapter):
+    """Adapter polling Boursorama for PEA eligibility and universe updates."""
+
+    interval_seconds: int = 86400  # daily check
+
+    def __init__(self, interval_seconds: int = 86400) -> None:
+        self.interval_seconds = interval_seconds
+        self.scraper = BoursoramaScraper() if BoursoramaScraper is not None else None
+
+    async def fetch(self) -> List[AlternativeSignal]:
+        """Harvest active PEA universe and emit an UNIVERSE_UPDATE signal."""
+        if self.scraper is None:
+            return []
+
+        loop = asyncio.get_event_loop()
+        try:
+            items = await loop.run_in_executor(None, self.scraper.get_pea_universe)
+            if not items:
+                logger.info("BoursoUniverseAdapter: No items returned (or blocked).")
+                return []
+
+            tickers = [str(it.get("ticker")) for it in items if it.get("ticker")]
+            sectors = list({str(it.get("sector")) for it in items if it.get("sector")})
+
+            sig = AlternativeSignal(
+                ticker="PARIS",
+                signal_type="UNIVERSE_UPDATE",
+                value=float(len(tickers)),
+                confidence=1.0,
+                source="BOURSORAMA",
+                metadata={
+                    "total_constituents": len(tickers),
+                    "sample_tickers": tickers[:20],
+                    "sectors": sectors,
+                },
+            )
+            logger.info("BoursoUniverseAdapter emitted UNIVERSE_UPDATE for %d constituents.", len(tickers))
+            return [sig]
+        except Exception as exc:
+            logger.warning("BoursoUniverseAdapter encountered an issue: %s", exc)
+            return []
+```
+
+## FILE: 00_data_sensors/adapters/fundamentals_adapter.py
+```python
+"""Fundamentals Ingestion Adapter for PEA Pollux.
+
+Polls financial statements via FMP and yfinance to calculate 9-point Piotroski F-Scores,
+emitting strictly typed AlternativeSignals into the Data Ingestion Hub.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import sys
+from pathlib import Path
+from typing import List, Optional
+
+_ROOT = Path(__file__).resolve().parent.parent.parent
+for d in ("00_data_sensors", "00_data_sensors/adapters", "01_memory_core"):
+    sys.path.insert(0, str(_ROOT / d))
+
+try:
+    from adapters.base_adapters import AbstractPollAdapter
+except ImportError:
+    try:
+        from .base_adapters import AbstractPollAdapter
+    except ImportError:
+        from base_adapters import AbstractPollAdapter
+
+from data_contracts import AlternativeSignal
+from fundamentals_api import FundamentalsSensor
+
+logger = logging.getLogger("fundamentals_adapter")
+
+_DEFAULT_PEA_UNIVERSE = ["MC.PA", "OR.PA", "TTE.PA", "SAN.PA", "AIR.PA", "AI.PA", "BNP.PA", "KER.PA"]
+
+
+class FmpFundamentalsAdapter(AbstractPollAdapter):
+    """Adapter polling financial statements to compute Piotroski F-Scores."""
+
+    interval_seconds: int = 86400  # Daily / fundamental refresh
+
+    def __init__(
+        self,
+        tickers: Optional[List[str]] = None,
+        interval_seconds: int = 86400,
+    ) -> None:
+        self.interval_seconds = interval_seconds
+        self.tickers = tickers or list(_DEFAULT_PEA_UNIVERSE)
+        self.sensor = FundamentalsSensor()
+
+    async def fetch(self) -> List[AlternativeSignal]:
+        """Fetch fundamental data and compute Piotroski F-Score signals for configured tickers."""
+        loop = asyncio.get_event_loop()
+        signals: List[AlternativeSignal] = []
+
+        for ticker in self.tickers:
+            try:
+                score, breakdown = await loop.run_in_executor(
+                    None, self.sensor.calculate_piotroski_score, ticker
+                )
+                signals.append(
+                    AlternativeSignal(
+                        ticker=ticker,
+                        signal_type="FUNDAMENTAL_PIOTROSKI",
+                        value=float(score),
+                        confidence=1.0,
+                        source="FMP/YF",
+                        metadata={
+                            "piotroski_score": int(score),
+                            "is_pass": score >= 4,
+                            "breakdown": breakdown,
+                        },
+                    )
+                )
+            except Exception as exc:
+                logger.warning("FmpFundamentalsAdapter failed for %s: %s", ticker, exc)
+
+        logger.info("FmpFundamentalsAdapter emitted %d AlternativeSignal(s).", len(signals))
+        return signals
+```
+
+## FILE: 00_data_sensors/adapters/macro_adapter.py
+```python
+"""Macro Alpha Adapter for Layer 1 Ingestion.
+
+Polls European volatility (VSTOXX / V2TX / VIX) and ECB 10Y OAT-Bund sovereign spreads,
+emitting normalized AlternativeSignal objects.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import sys
+from pathlib import Path
+from typing import List
+
+_ROOT = Path(__file__).resolve().parent.parent.parent
+for sub in ("00_data_sensors", "01_memory_core"):
+    sys.path.insert(0, str(_ROOT / sub))
+
+try:
+    from adapters.base_adapters import AbstractPollAdapter
+except ImportError:
+    try:
+        from .base_adapters import AbstractPollAdapter
+    except ImportError:
+        from base_adapters import AbstractPollAdapter
+
+from data_contracts import AlternativeSignal
+from macro_alpha_api import MacroAlphaSensor
+
+
+logger = logging.getLogger("macro_adapter")
+
+
+class MacroAlphaAdapter(AbstractPollAdapter):
+    """Adapter polling European VIX and ECB sovereign spreads."""
+
+    interval_seconds: int = 900  # 15-minute polling
+
+    def __init__(self, interval_seconds: int = 900) -> None:
+        self.interval_seconds = interval_seconds
+        self.sensor = MacroAlphaSensor()
+
+    async def fetch(self) -> List[AlternativeSignal]:
+        """Fetch live European VIX and 10Y OAT-Bund yield spread concurrently."""
+        loop = asyncio.get_event_loop()
+        signals: List[AlternativeSignal] = []
+
+        try:
+            vix_val = await loop.run_in_executor(None, self.sensor.get_european_vix)
+            signals.append(
+                AlternativeSignal(
+                    ticker="MARCHE",
+                    signal_type="MACRO_VIX",
+                    value=float(vix_val),
+                    confidence=1.0,
+                    source="Yahoo/ECB",
+                    metadata={"index": "^V2TX", "description": "European Volatility Index"},
+                )
+            )
+        except Exception as exc:
+            logger.warning("MacroAlphaAdapter failed to fetch European VIX: %s", exc)
+
+        try:
+            spread_val = await loop.run_in_executor(None, self.sensor.get_oat_bund_spread)
+            signals.append(
+                AlternativeSignal(
+                    ticker="MARCHE",
+                    signal_type="MACRO_SPREAD",
+                    value=float(spread_val),
+                    confidence=1.0,
+                    source="Yahoo/ECB",
+                    metadata={"unit": "bps", "benchmark": "10Y_OAT_BUND", "description": "10Y OAT vs Bund Spread"},
+                )
+            )
+        except Exception as exc:
+            logger.warning("MacroAlphaAdapter failed to fetch OAT-Bund spread: %s", exc)
+
+        logger.info("MacroAlphaAdapter emitted %d AlternativeSignal(s).", len(signals))
+        return signals
+
+
+class MacroAdapter(MacroAlphaAdapter):
+    """Alias for MacroAlphaAdapter supporting standard naming convention."""
+    pass
+```
+
+## FILE: 00_data_sensors/adapters/market_adapter.py
+```python
+"""Market Prices Ingestion Adapter for PEA Pollux.
+
+Implements AbstractMarketDataAdapter using yfinance with anti-ban chunking,
+NaN handling, and DataQualityGateway validation before DuckDB persistence.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import sys
+import time
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import List, Optional
+
+import pandas as pd
+import yfinance as yf
+
+_ROOT = Path(__file__).resolve().parent.parent.parent
+for d in ("00_data_sensors", "00_data_sensors/adapters", "01_memory_core"):
+    sys.path.insert(0, str(_ROOT / d))
+
+try:
+    from adapters.base_adapters import AbstractMarketDataAdapter
+except ImportError:
+    try:
+        from .base_adapters import AbstractMarketDataAdapter
+    except ImportError:
+        from base_adapters import AbstractMarketDataAdapter
+
+try:
+    from data_quality import DataQualityGateway
+except ImportError:
+    DataQualityGateway = None
+
+logger = logging.getLogger("market_adapter")
+
+_FLAT_COLUMNS = ["Ticker", "Date", "Open", "High", "Low", "Close", "Volume"]
+
+
+class YFinanceMarketAdapter(AbstractMarketDataAdapter):
+    """Standardized Market Data Adapter backed by Yahoo Finance with chunking and quality control."""
+
+    def __init__(
+        self,
+        chunk_size: int = 20,
+        pause_sec: float = 0.3,
+        quality_gateway: Optional[Any] = None,
+    ) -> None:
+        self.chunk_size = max(1, int(chunk_size))
+        self.pause_sec = max(0.0, float(pause_sec))
+        self.quality_gateway = quality_gateway or (DataQualityGateway() if DataQualityGateway is not None else None)
+
+    async def fetch_ohlcv(self, tickers: List[str], lookback_days: int = 252) -> pd.DataFrame:
+        """Fetch daily OHLCV bars in chunks, clean NaNs, and validate schema for DuckDB storage.
+
+        Args:
+            tickers: List of standardized ticker symbols.
+            lookback_days: Number of calendar days to retrieve.
+
+        Returns:
+            pd.DataFrame: Cleaned DataFrame matching DuckDB schema ['Ticker', 'Date', 'Open', 'High', 'Low', 'Close', 'Volume'].
+        """
+        if not tickers:
+            return pd.DataFrame(columns=_FLAT_COLUMNS)
+
+        clean_tickers = [t.strip().upper() for t in tickers if t.strip()]
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self._sync_fetch_ohlcv, clean_tickers, lookback_days)
+
+    def _sync_fetch_ohlcv(self, tickers: List[str], lookback_days: int = 252) -> pd.DataFrame:
+        start_date = (datetime.now(timezone.utc) - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
+        all_frames: List[pd.DataFrame] = []
+
+        for i in range(0, len(tickers), self.chunk_size):
+            chunk = tickers[i : i + self.chunk_size]
+            if i > 0 and self.pause_sec > 0:
+                time.sleep(self.pause_sec)
+
+            try:
+                raw = yf.download(
+                    chunk,
+                    start=start_date,
+                    progress=False,
+                    auto_adjust=True,
+                    group_by="ticker",
+                    threads=False,
+                )
+            except Exception as exc:
+                logger.warning("yf.download failed for chunk %s: %s", chunk, exc)
+                continue
+
+            if raw is None or raw.empty:
+                continue
+
+            rows = []
+            if isinstance(raw.columns, pd.MultiIndex):
+                if chunk[0] in raw.columns.get_level_values(0):
+                    by_ticker = {t: raw[t] for t in chunk if t in raw}
+                elif chunk[0] in raw.columns.get_level_values(1):
+                    by_ticker = {t: raw.xs(t, axis=1, level=1) for t in chunk if t in raw.columns.get_level_values(1)}
+                else:
+                    by_ticker = {chunk[0]: raw}
+            else:
+                by_ticker = {chunk[0]: raw}
+
+            for t, df_t in by_ticker.items():
+                if df_t is None or df_t.empty:
+                    continue
+                if hasattr(df_t.columns, "get_level_values"):
+                    df_t.columns = df_t.columns.get_level_values(0)
+                if "Close" in df_t.columns:
+                    df_t = df_t.dropna(subset=["Close"])
+                for dt, r in df_t.iterrows():
+                    rows.append({
+                        "Ticker": t,
+                        "Date": pd.to_datetime(dt),
+                        "Open": float(r.get("Open", 0.0)),
+                        "High": float(r.get("High", 0.0)),
+                        "Low": float(r.get("Low", 0.0)),
+                        "Close": float(r.get("Close", 0.0)),
+                        "Volume": float(r.get("Volume", 0.0)),
+                    })
+
+            if rows:
+                chunk_df = pd.DataFrame(rows)
+                all_frames.append(chunk_df)
+
+
+        if not all_frames:
+            return pd.DataFrame(columns=_FLAT_COLUMNS)
+
+        combined = pd.concat(all_frames, ignore_index=True)
+        # Clean nulls / invalid values
+        combined = combined.dropna(subset=["Ticker", "Date", "Close"])
+        combined["Date"] = pd.to_datetime(combined["Date"])
+        combined = combined.sort_values(by=["Ticker", "Date"]).reset_index(drop=True)
+
+        if self.quality_gateway is not None:
+            try:
+                combined = self.quality_gateway.validate_ohlcv_batch(combined)
+            except Exception as exc:
+                logger.warning("DataQualityGateway validation failed: %s", exc)
+
+        return combined
+
+
+# Alias for backward compatibility
+YFinanceMarketDataAdapter = YFinanceMarketAdapter
+```
+
+## FILE: 00_data_sensors/adapters/market_data_adapter.py
+```python
+"""Market Data Ingestion Adapter for PEA Pollux.
+
+Implements AbstractMarketDataAdapter using yfinance with strict Pydantic contract validation
+(MarketTick) and DataQualityGateway validation before storage.
+"""
+
+from __future__ import annotations
+
+import logging
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import List, Optional
+
+import pandas as pd
+import yfinance as yf
+
+_ROOT = Path(__file__).resolve().parent.parent.parent
+for d in ("00_data_sensors", "00_data_sensors/adapters", "01_memory_core"):
+    sys.path.insert(0, str(_ROOT / d))
+
+from base_adapters import AbstractMarketDataAdapter
+from data_contracts import MarketTick
+from data_quality import DataQualityGateway
+
+logger = logging.getLogger("market_data_adapter")
+
+
+class YFinanceMarketDataAdapter(AbstractMarketDataAdapter):
+    """Standardized Market Data Adapter backed by Yahoo Finance."""
+
+    def __init__(self, quality_gateway: Optional[DataQualityGateway] = None) -> None:
+        self.quality_gateway = quality_gateway or DataQualityGateway()
+
+    async def fetch_ohlcv(self, tickers: List[str], lookback_days: int = 252) -> pd.DataFrame:
+        """Fetch daily OHLCV bars for candidate tickers and validate through DataQualityGateway.
+
+        Args:
+            tickers: List of standardized ticker symbols.
+            lookback_days: Calendar days to fetch.
+
+        Returns:
+            pd.DataFrame: Cleaned, quality-checked DataFrame with ['Ticker', 'Date', 'Open', 'High', 'Low', 'Close', 'Volume', 'is_outlier'].
+        """
+        if not tickers:
+            return pd.DataFrame()
+
+        clean_tickers = [t.strip().upper() for t in tickers if t.strip()]
+        logger.info("YFinanceMarketDataAdapter: Fetching %d days for %d ticker(s)...", lookback_days, len(clean_tickers))
+
+        try:
+            raw = yf.download(
+                clean_tickers,
+                period=f"{lookback_days}d",
+                interval="1d",
+                progress=False,
+                auto_adjust=True,
+                group_by="ticker",
+            )
+            if raw is None or raw.empty:
+                return pd.DataFrame()
+
+            rows = []
+            if len(clean_tickers) == 1:
+                t = clean_tickers[0]
+                df_t = raw.copy()
+                if hasattr(df_t.columns, "get_level_values"):
+                    df_t.columns = df_t.columns.get_level_values(0)
+                for dt, r in df_t.iterrows():
+                    rows.append({
+                        "Ticker": t,
+                        "Date": dt,
+                        "Open": float(r.get("Open", 0.0)),
+                        "High": float(r.get("High", 0.0)),
+                        "Low": float(r.get("Low", 0.0)),
+                        "Close": float(r.get("Close", 0.0)),
+                        "Volume": float(r.get("Volume", 0.0)),
+                    })
+            else:
+                for t in clean_tickers:
+                    if t in raw:
+                        df_t = raw[t].dropna(subset=["Close"])
+                        for dt, r in df_t.iterrows():
+                            rows.append({
+                                "Ticker": t,
+                                "Date": dt,
+                                "Open": float(r.get("Open", 0.0)),
+                                "High": float(r.get("High", 0.0)),
+                                "Low": float(r.get("Low", 0.0)),
+                                "Close": float(r.get("Close", 0.0)),
+                                "Volume": float(r.get("Volume", 0.0)),
+                            })
+
+            df_all = pd.DataFrame(rows)
+            # Run through DataQualityGateway
+            return self.quality_gateway.validate_ohlcv_batch(df_all)
+
+        except Exception as exc:
+            logger.exception("Failed to fetch OHLCV batch via YFinanceMarketDataAdapter: %s", exc)
+            return pd.DataFrame()
+
+    def fetch_latest_tick(self, ticker: str) -> Optional[MarketTick]:
+        """Fetch the latest spot quote and return validated MarketTick contract."""
+        clean_t = ticker.strip().upper()
+        try:
+            t_obj = yf.Ticker(clean_t)
+            hist = t_obj.history(period="1d", interval="1m")
+            if hist is not None and not hist.empty:
+                last_row = hist.iloc[-1]
+                return MarketTick(
+                    ticker=clean_t,
+                    ts=datetime.now(timezone.utc),
+                    price=float(last_row["Close"]),
+                    volume=float(last_row.get("Volume", 0.0)),
+                    source="yfinance_intraday",
+                )
+        except Exception as exc:
+            logger.debug("Failed to fetch latest tick for %s: %s", clean_t, exc)
+        return None
+```
+
+## FILE: 00_data_sensors/adapters/news_adapter.py
+```python
+"""Consolidated Financial News & Sentiment Adapter for Layer 1.
+
+Polls financial RSS feeds (Boursorama, Les Echos, ZoneBourse, Yahoo Finance)
+and news APIs, mapping incoming streams into standardized AlternativeSignal contracts.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+_ROOT = Path(__file__).resolve().parent.parent.parent
+for sub in ("00_data_sensors", "01_memory_core"):
+    sys.path.insert(0, str(_ROOT / sub))
+
+from base_adapters import AbstractPollAdapter
+from data_contracts import AlternativeSignal
+
+try:
+    from news_rss_scraper import _RSS_FEEDS, parse_rss_feed
+except ImportError:
+    _RSS_FEEDS = []
+    def parse_rss_feed(feed_info: dict) -> List[dict]:
+        return []
+
+try:
+    from news_api_client import fetch_yfinance_news
+except ImportError:
+    fetch_yfinance_news = None
+
+logger = logging.getLogger("news_adapter")
+
+
+class ConsolidatedNewsAdapter(AbstractPollAdapter):
+    """Adapter aggregating multi-source financial news and raw sentiment signals."""
+
+    interval_seconds: int = 600  # 10 minutes
+
+    def __init__(self, tickers: Optional[List[str]] = None, interval_seconds: int = 600) -> None:
+        self.interval_seconds = interval_seconds
+        self.tickers = tickers or ["MC.PA", "OR.PA", "TTE.PA", "SAN.PA", "AIR.PA", "AI.PA"]
+
+    async def fetch(self) -> List[AlternativeSignal]:
+        """Fetch all RSS feeds and company news items concurrently."""
+        loop = asyncio.get_event_loop()
+        signals: List[AlternativeSignal] = []
+
+        # 1. Fetch General Financial RSS Feeds
+        for feed in _RSS_FEEDS:
+            try:
+                items = await loop.run_in_executor(None, parse_rss_feed, feed)
+                for item in items:
+                    signals.append(
+                        AlternativeSignal(
+                            ticker=item.get("ticker"),
+                            signal_type="NEWS_SENTIMENT",
+                            value=float(item.get("sentiment_score") or 0.0),
+                            confidence=1.0,
+                            source=f"RSS_{item.get('source', 'FINANCE')}",
+                            metadata={
+                                "headline": item.get("title", ""),
+                                "url": item.get("url", ""),
+                                "published_at": item.get("published_at", ""),
+                            },
+                        )
+                    )
+            except Exception as exc:
+                logger.warning("ConsolidatedNewsAdapter RSS error for %s: %s", feed.get("source"), exc)
+
+        # 2. Fetch Ticker-Specific News from API Scrapers if available
+        if fetch_yfinance_news is not None:
+            for ticker in self.tickers[:8]:
+                try:
+                    t_items = await loop.run_in_executor(None, fetch_yfinance_news, ticker)
+                    for item in t_items:
+                        signals.append(
+                            AlternativeSignal(
+                                ticker=ticker,
+                                signal_type="NEWS_SENTIMENT",
+                                value=float(item.get("sentiment_score") or 0.0),
+                                confidence=1.0,
+                                source="YFINANCE_NEWS",
+                                metadata={
+                                    "headline": item.get("title", ""),
+                                    "url": item.get("url", ""),
+                                    "published_at": item.get("published_at", ""),
+                                },
+                            )
+                        )
+                except Exception as exc:
+                    logger.debug("ConsolidatedNewsAdapter API error for %s: %s", ticker, exc)
+
+        logger.info("ConsolidatedNewsAdapter emitted %d AlternativeSignal(s).", len(signals))
+        return signals
 ```
 
 ## FILE: 00_data_sensors/deep_news_scraper.py
@@ -753,6 +1668,179 @@ if __name__ == "__main__":
     sensor = FundamentalsSensor()
     sc, bd = sensor.calculate_piotroski_score("MC.PA")
     print(f"MC.PA Piotroski Score: {sc}/9 | Breakdown: {bd}")
+```
+
+## FILE: 00_data_sensors/hub.py
+```python
+"""Central Data Ingestion Hub for Layer 1.
+
+Orchestrates all asynchronous polling and streaming data adapters, aggregates
+strongly-typed AlternativeSignals concurrently, and persists them into SQLite.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import json
+import logging
+import sqlite3
+import sys
+from pathlib import Path
+from typing import Any, List, Optional
+
+_ROOT = Path(__file__).resolve().parent.parent
+for sub in ("00_data_sensors", "00_data_sensors/adapters", "01_memory_core"):
+    sys.path.insert(0, str(_ROOT / sub))
+
+from adapters.amf_adapter import AmfInsiderAdapter, AmfShortAdapter
+from adapters.base_adapters import AbstractPollAdapter
+from adapters.bourso_adapter import BoursoUniverseAdapter
+from adapters.fundamentals_adapter import FmpFundamentalsAdapter
+from adapters.macro_adapter import MacroAlphaAdapter
+from adapters.market_adapter import YFinanceMarketAdapter
+from adapters.news_adapter import ConsolidatedNewsAdapter
+from data_contracts import AlternativeSignal
+
+logger = logging.getLogger("data_hub")
+
+
+class DataIngestionHub:
+    """Central orchestrator for all Layer 1 ingestion adapters."""
+
+    def __init__(self, adapters: Optional[List[AbstractPollAdapter]] = None) -> None:
+        if adapters is not None:
+            self.adapters: List[AbstractPollAdapter] = list(adapters)
+        else:
+            self.adapters = []
+            self.register_default_adapters()
+
+    def register_adapter(self, adapter: AbstractPollAdapter) -> None:
+        """Register a new poll adapter into the hub."""
+        if adapter not in self.adapters:
+            self.adapters.append(adapter)
+            logger.info("Registered adapter: %s (interval=%ds)", type(adapter).__name__, adapter.interval_seconds)
+
+    def register_default_adapters(self) -> None:
+        """Register the standard concrete adapters (AMF Short, AMF Insider, News, Boursorama, Macro, Fundamentals)."""
+        self.register_adapter(AmfShortAdapter())
+        self.register_adapter(AmfInsiderAdapter())
+        self.register_adapter(ConsolidatedNewsAdapter())
+        self.register_adapter(BoursoUniverseAdapter())
+        self.register_adapter(MacroAlphaAdapter())
+        self.register_adapter(FmpFundamentalsAdapter())
+
+
+    async def fetch_all_alternative_signals(self) -> List[AlternativeSignal]:
+        """Fetch all alternative signals concurrently across registered adapters."""
+        if not self.adapters:
+            logger.warning("No adapters registered in DataIngestionHub.")
+            return []
+
+        tasks = [adapter.fetch() for adapter in self.adapters]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        all_signals: List[AlternativeSignal] = []
+        for i, res in enumerate(results):
+            adapter_name = type(self.adapters[i]).__name__
+            if isinstance(res, Exception):
+                logger.error("Adapter %s raised an unhandled exception: %s", adapter_name, res, exc_info=True)
+            elif isinstance(res, list):
+                all_signals.extend(res)
+                logger.debug("Adapter %s returned %d signal(s).", adapter_name, len(res))
+
+        logger.info("DataIngestionHub aggregated a total of %d AlternativeSignal(s).", len(all_signals))
+        return all_signals
+
+    def save_signals_to_sqlite(self, signals: List[AlternativeSignal], portfolio_db: Any) -> int:
+        """Persist or upsert AlternativeSignal records into SQLite alternative_signals table."""
+        if not signals:
+            return 0
+
+        # Resolve SQLite connection
+        conn = None
+        should_close = False
+        if hasattr(portfolio_db, "_connect"):
+            conn = portfolio_db._connect()
+        elif hasattr(portfolio_db, "db_path"):
+            conn = sqlite3.connect(str(portfolio_db.db_path))
+            should_close = True
+        elif isinstance(portfolio_db, (str, Path)):
+            conn = sqlite3.connect(str(portfolio_db))
+            should_close = True
+        elif isinstance(portfolio_db, sqlite3.Connection):
+            conn = portfolio_db
+
+        if conn is None:
+            raise ValueError("Unable to obtain SQLite connection from provided portfolio_db parameter.")
+
+        try:
+            with conn:
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS alternative_signals (
+                        id TEXT PRIMARY KEY,
+                        ticker TEXT,
+                        ts TEXT NOT NULL,
+                        signal_type TEXT NOT NULL,
+                        value REAL NOT NULL,
+                        confidence REAL NOT NULL,
+                        source TEXT NOT NULL,
+                        metadata_json TEXT
+                    )
+                    """
+                )
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_alt_sig_ticker ON alternative_signals(ticker)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_alt_sig_type ON alternative_signals(signal_type)")
+
+                saved_count = 0
+                for s in signals:
+                    ts_str = s.ts.isoformat()
+                    tick_str = s.ticker or "ALL"
+                    sig_id = hashlib.sha256(f"{tick_str}_{ts_str[:13]}_{s.signal_type}_{s.source}".encode()).hexdigest()[:24]
+                    meta_str = json.dumps(s.metadata)
+
+                    conn.execute(
+                        """
+                        INSERT INTO alternative_signals (id, ticker, ts, signal_type, value, confidence, source, metadata_json)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(id) DO UPDATE SET
+                            value=excluded.value,
+                            confidence=excluded.confidence,
+                            metadata_json=excluded.metadata_json
+                        """,
+                        (sig_id, s.ticker, ts_str, s.signal_type, float(s.value), float(s.confidence), s.source, meta_str),
+                    )
+                    saved_count += 1
+
+            logger.info("Saved %d AlternativeSignal(s) to SQLite alternative_signals table.", saved_count)
+            return saved_count
+        finally:
+            if should_close and conn is not None:
+                conn.close()
+
+    async def fetch_and_store_market_data(
+        self,
+        tickers: List[str],
+        db_manager: Any,
+        lookback_days: int = 252,
+    ) -> int:
+        """Fetch daily OHLCV via YFinanceMarketAdapter and persist/upsert directly into DuckDB."""
+        market_adapter = YFinanceMarketAdapter()
+        df = await market_adapter.fetch_ohlcv(tickers=tickers, lookback_days=lookback_days)
+        if df is None or df.empty:
+            logger.warning("No market data fetched by YFinanceMarketAdapter.")
+            return 0
+
+        # Upsert into DuckDB manager
+        if hasattr(db_manager, "upsert_daily_ohlcv"):
+            inserted = db_manager.upsert_daily_ohlcv(df)
+            logger.info("Upserted %d OHLCV rows into DuckDB.", inserted if isinstance(inserted, int) else len(df))
+            return inserted if isinstance(inserted, int) else len(df)
+        elif hasattr(db_manager, "append_ohlcv"):
+            db_manager.append_ohlcv(df)
+            return len(df)
+        return len(df)
 ```
 
 ## FILE: 00_data_sensors/imap_ingest/__init__.py
@@ -5054,4 +6142,139 @@ if __name__ == "__main__":
     print("---")
     print(cleaned)
     print("---")
+```
+
+## FILE: 00_data_sensors/universe_manager.py
+```python
+"""Dynamic PEA Universe & Eligibility Manager for PEA Pollux.
+
+Cross-references statically tracked universe configurations with live Boursorama
+PEA / PEA-PME eligibility lists, logging audit warnings if an asset loses tax-wrapped status.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import sys
+from datetime import date, datetime
+from pathlib import Path
+from typing import Dict, List, Optional, Set
+
+import yaml
+
+_ROOT = Path(__file__).resolve().parent.parent
+for d in ("00_data_sensors", "00_data_sensors/adapters", "00_data_sensors/scrapers", "01_memory_core"):
+    sys.path.insert(0, str(_ROOT / d))
+
+from adapters.bourso_adapter import BoursoUniverseAdapter
+try:
+    from bourso_scraper import BoursoramaScraper
+except ImportError:
+    from scrapers.bourso_scraper import BoursoramaScraper
+
+logger = logging.getLogger("universe_manager")
+
+_DEFAULT_UNIVERSE_PATH = _ROOT / "config" / "pea_universe.yaml"
+_DEFAULT_WARNINGS_PATH = _ROOT / "database" / "eligibility_warnings.json"
+
+
+class UniverseManager:
+    """Orchestrates PEA universe synchronization and regulatory eligibility monitoring."""
+
+    def __init__(
+        self,
+        universe_path: Optional[Path | str] = None,
+        warnings_path: Optional[Path | str] = None,
+    ) -> None:
+        self.universe_path = Path(universe_path) if universe_path else _DEFAULT_UNIVERSE_PATH
+        self.warnings_path = Path(warnings_path) if warnings_path else _DEFAULT_WARNINGS_PATH
+        self.warnings_path.parent.mkdir(parents=True, exist_ok=True)
+
+    def load_tracked_tickers(self) -> List[str]:
+        """Load all tickers tracked in the universe yaml."""
+        if not self.universe_path.exists():
+            logger.warning("Universe file not found at %s", self.universe_path)
+            return []
+
+        try:
+            with open(self.universe_path, "r", encoding="utf-8") as f:
+                data = yaml.safe_load(f) or {}
+
+            tickers: Set[str] = set()
+            core = data.get("core", {})
+            if isinstance(core, dict):
+                for t in core.keys():
+                    tickers.add(str(t).strip().upper())
+            elif isinstance(core, list):
+                for t in core:
+                    tickers.add(str(t).strip().upper())
+
+            satellites = data.get("satellites", {})
+            if isinstance(satellites, dict):
+                for sec, sec_tickers in satellites.items():
+                    if isinstance(sec_tickers, list):
+                        for t in sec_tickers:
+                            tickers.add(str(t).strip().upper())
+                    elif isinstance(sec_tickers, dict):
+                        for t in sec_tickers.keys():
+                            tickers.add(str(t).strip().upper())
+
+            return sorted(list(tickers))
+        except Exception as exc:
+            logger.exception("Failed to parse tracked tickers from YAML: %s", exc)
+            return []
+
+    def sync_eligibility(self) -> Dict[str, str]:
+        """Scrape latest PEA constituents and verify status for all tracked tickers.
+
+        Returns:
+            Dict[str, str]: Map of {ticker: warning_message} for tickers that lost PEA status.
+        """
+        tracked = self.load_tracked_tickers()
+        if not tracked:
+            return {}
+
+        logger.info("Syncing PEA eligibility for %d tracked asset(s)...", len(tracked))
+
+        scraped_tickers: Set[str] = set()
+        try:
+            scraper = BoursoramaScraper()
+            items = scraper.get_pea_universe()
+            if items:
+                for it in items:
+                    t = str(it.get("ticker", "")).strip().upper()
+                    if t:
+                        scraped_tickers.add(t)
+                        # Also handle suffix variations e.g. MC vs MC.PA
+                        if "." in t:
+                            scraped_tickers.add(t.split(".")[0])
+        except Exception as exc:
+            logger.warning("Live Boursorama scraping failed or blocked: %s", exc)
+
+        warnings: Dict[str, str] = {}
+        today_str = date.today().isoformat()
+
+        # If live scraping succeeded, detect any discrepancies
+        if scraped_tickers:
+            for t in tracked:
+                # Exclude synthetic indices / macro benchmarks (starts with ^ or =)
+                if t.startswith("^") or "=" in t:
+                    continue
+                # Normalize base ticker
+                base_t = t.split(".")[0] if "." in t else t
+                if t not in scraped_tickers and base_t not in scraped_tickers:
+                    msg = f"Lost or unconfirmed PEA eligibility on {today_str} (Boursorama registry check)"
+                    warnings[t] = msg
+                    logger.warning("ELIGIBILITY WARNING: Tracked asset %s %s", t, msg)
+
+        # Persist warnings to disk
+        try:
+            with open(self.warnings_path, "w", encoding="utf-8") as f:
+                json.dump(warnings, f, indent=2, ensure_ascii=False)
+            logger.info("Saved eligibility warnings to %s (%d warnings).", self.warnings_path, len(warnings))
+        except Exception as exc:
+            logger.error("Failed to persist eligibility warnings to %s: %s", self.warnings_path, exc)
+
+        return warnings
 ```

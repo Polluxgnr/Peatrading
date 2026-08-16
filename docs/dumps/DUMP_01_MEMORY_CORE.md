@@ -1,11 +1,14 @@
 # PEA Pollux — Memory Core, State Persistence & Data Contracts
-Generated: `2026-08-16 13:03 UTC` | File Count: `8`
+Generated: `2026-08-16 16:42 UTC` | File Count: `11`
 Institutional Systematic Decision Support Architecture for French PEA.
 ---
 ## Included Files Index
 - [01_memory_core/__init__.py](#file-01_memory_core-__init__-py)
 - [01_memory_core/config_validator.py](#file-01_memory_core-config_validator-py)
+- [01_memory_core/corporate_actions.py](#file-01_memory_core-corporate_actions-py)
+- [01_memory_core/data_contracts.py](#file-01_memory_core-data_contracts-py)
 - [01_memory_core/data_models.py](#file-01_memory_core-data_models-py)
+- [01_memory_core/data_quality.py](#file-01_memory_core-data_quality-py)
 - [01_memory_core/duckdb_manager.py](#file-01_memory_core-duckdb_manager-py)
 - [01_memory_core/env_loader.py](#file-01_memory_core-env_loader-py)
 - [01_memory_core/logging_setup.py](#file-01_memory_core-logging_setup-py)
@@ -17,6 +20,7 @@ Institutional Systematic Decision Support Architecture for French PEA.
 ```python
 """Memory Core & State Persistence package for PEA Pollux."""
 
+from .data_contracts import AlternativeSignal, MarketTick
 from .data_models import PortfolioState, Position, Signal, SignalStatus, SignalType
 from .duckdb_manager import TimeSeriesDB
 from .sqlite_portfolio import PortfolioDB
@@ -29,6 +33,8 @@ __all__ = [
     "Signal",
     "SignalStatus",
     "SignalType",
+    "MarketTick",
+    "AlternativeSignal",
 ]
 ```
 
@@ -130,6 +136,192 @@ try:
     RISK: RiskParamsConfig = load_risk_config()
 except (FileNotFoundError, ValueError):
     RISK = None  # type: ignore[assignment]
+```
+
+## FILE: 01_memory_core/corporate_actions.py
+```python
+"""Corporate Actions & Self-Healing Data Engine for PEA Pollux.
+
+Detects corporate actions (stock splits, consolidations, special distributions)
+that distort historical price continuity, and automatically triggers retroactive
+self-healing of DuckDB time-series records.
+"""
+
+from __future__ import annotations
+
+import logging
+import sys
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Optional
+
+import pandas as pd
+import yfinance as yf
+
+_ROOT = Path(__file__).resolve().parent.parent
+for d in ("00_data_sensors", "00_data_sensors/adapters", "01_memory_core"):
+    sys.path.insert(0, str(_ROOT / d))
+
+from duckdb_manager import TimeSeriesDB
+from market_data_adapter import YFinanceMarketDataAdapter
+
+logger = logging.getLogger("corporate_actions")
+
+
+class DataHealer:
+    """Automated self-healing engine for corporate actions and split adjustments."""
+
+    def __init__(self, market_adapter: Optional[YFinanceMarketDataAdapter] = None) -> None:
+        self.market_adapter = market_adapter or YFinanceMarketDataAdapter()
+
+    def detect_and_heal_splits(self, ticker: str, ts_db: TimeSeriesDB) -> bool:
+        """Check for recent stock splits in the last 5 days and heal DuckDB history.
+
+        Args:
+            ticker: Standardized Yahoo/Euronext ticker symbol (e.g., 'MC.PA').
+            ts_db: TimeSeriesDB persistence gateway instance.
+
+        Returns:
+            bool: True if a split was detected and history was healed, False otherwise.
+        """
+        clean_ticker = ticker.strip().upper()
+        logger.debug("Checking corporate action splits for %s...", clean_ticker)
+
+        try:
+            t_obj = yf.Ticker(clean_ticker)
+            splits_series = t_obj.splits
+
+            has_recent_split = False
+            if splits_series is not None and not splits_series.empty:
+                # Filter splits in the last 5 days
+                cutoff_dt = pd.Timestamp.now(tz=splits_series.index.tz if hasattr(splits_series.index, "tz") else None) - pd.Timedelta(days=5)
+                # Convert timezone if needed
+                if hasattr(splits_series.index, "tz") and splits_series.index.tz is not None:
+                    recent_splits = splits_series[splits_series.index >= cutoff_dt]
+                else:
+                    cutoff_naive = pd.Timestamp.now() - pd.Timedelta(days=5)
+                    recent_splits = splits_series[splits_series.index >= cutoff_naive]
+
+                if not recent_splits.empty and (recent_splits > 0).any():
+                    has_recent_split = True
+
+            # Also check actions table if available
+            if not has_recent_split and hasattr(t_obj, "actions") and t_obj.actions is not None and not t_obj.actions.empty:
+                actions_df = t_obj.actions
+                if "Stock Splits" in actions_df.columns:
+                    cutoff_naive = pd.Timestamp.now() - pd.Timedelta(days=5)
+                    if hasattr(actions_df.index, "tz") and actions_df.index.tz is not None:
+                        actions_df_recent = actions_df[actions_df.index >= pd.Timestamp.now(tz=actions_df.index.tz) - pd.Timedelta(days=5)]
+                    else:
+                        actions_df_recent = actions_df[actions_df.index >= cutoff_naive]
+
+                    if not actions_df_recent.empty and (actions_df_recent["Stock Splits"] > 0).any():
+                        has_recent_split = True
+
+            if not has_recent_split:
+                return False
+
+            logger.critical("CORPORATE ACTION: Split detected for %s. Initiating self-healing.", clean_ticker)
+
+            # 1. Wipe existing history for this ticker in DuckDB
+            try:
+                with ts_db._connect() as conn:
+                    conn.execute("DELETE FROM ohlcv_data WHERE ticker = ?;", [clean_ticker])
+                logger.info("Wiped unadjusted historical OHLCV data for %s from DuckDB.", clean_ticker)
+            except Exception as exc:
+                logger.warning("Could not execute DELETE on DuckDB for %s: %s", clean_ticker, exc)
+
+            # 2. Re-download full 252-day auto-adjusted history
+            raw_hist = yf.download(clean_ticker, period="252d", interval="1d", progress=False, auto_adjust=True)
+            if raw_hist is not None and not raw_hist.empty:
+                if hasattr(raw_hist.columns, "get_level_values"):
+                    raw_hist.columns = raw_hist.columns.get_level_values(0)
+
+                rows = []
+                for dt, r in raw_hist.iterrows():
+                    rows.append({
+                        "Ticker": clean_ticker,
+                        "Date": dt,
+                        "Open": float(r.get("Open", 0.0)),
+                        "High": float(r.get("High", 0.0)),
+                        "Low": float(r.get("Low", 0.0)),
+                        "Close": float(r.get("Close", 0.0)),
+                        "Volume": float(r.get("Volume", 0.0)),
+                    })
+                df_healed = pd.DataFrame(rows)
+                upserted = ts_db.upsert_ohlcv(df_healed)
+                logger.info("Self-healing complete for %s: %d auto-adjusted rows inserted.", clean_ticker, upserted)
+                return True
+
+        except Exception as exc:
+            logger.exception("Failed during detect_and_heal_splits for %s: %s", clean_ticker, exc)
+
+        return False
+```
+
+## FILE: 01_memory_core/data_contracts.py
+```python
+"""Layer 1 Standard Data Ingestion Contracts for PEA Pollux.
+
+Provides strict Pydantic V2 data contracts that all data sensors, pollers,
+scrapers, and market adapters must emit before persistence or downstream scoring.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from typing import Any, Dict, Optional
+
+from pydantic import BaseModel, ConfigDict, Field
+
+
+def _utcnow() -> datetime:
+    """Return the current UTC timestamp."""
+    return datetime.now(timezone.utc)
+
+
+class MarketTick(BaseModel):
+    """Normalized tick / price update contract across all data sources.
+
+    Attributes:
+        ticker: Standardized Euronext / Yahoo symbol (e.g. 'MC.PA').
+        ts: UTC timestamp of the quote.
+        price: Last traded or closing price (EUR).
+        volume: Volume traded on the period / tick.
+        source: Data provider identifier (e.g. 'yfinance', 'boursorama').
+    """
+
+    model_config = ConfigDict(validate_assignment=True, str_strip_whitespace=True)
+
+    ticker: str = Field(..., min_length=1, description="Standardized Yahoo / Euronext ticker symbol.")
+    ts: datetime = Field(default_factory=_utcnow, description="Timestamp of the market tick (UTC).")
+    price: float = Field(..., gt=0, description="Last traded or closing price (EUR).")
+    volume: float = Field(default=0.0, ge=0, description="Volume traded.")
+    source: str = Field(..., min_length=1, description="Data source identifier (e.g., 'yfinance', 'boursorama').")
+
+
+class AlternativeSignal(BaseModel):
+    """Normalized alternative data event contract (sentiment, insiders, short interest, macro).
+
+    Attributes:
+        ticker: Associated ticker symbol if company-specific (or None for market-wide).
+        ts: UTC timestamp of signal emission or capture.
+        signal_type: Category of the signal (e.g. 'sentiment', 'insider_buy', 'short_interest', 'macro').
+        value: Numeric value of the metric or indicator score.
+        confidence: Confidence score from 0.0 to 1.0.
+        source: Adapter or source name (e.g. 'finbert', 'amf_bdif', 'openinsider', 'ecb_sdw').
+        metadata: Unstructured payload or auxiliary dictionary.
+    """
+
+    model_config = ConfigDict(validate_assignment=True, str_strip_whitespace=True)
+
+    ticker: Optional[str] = Field(default=None, description="Associated ticker symbol if company-specific.")
+    ts: datetime = Field(default_factory=_utcnow, description="Timestamp of the signal emission or capture (UTC).")
+    signal_type: str = Field(..., min_length=1, description="Category of the signal (e.g., 'sentiment', 'insider_buy', 'short_interest').")
+    value: float = Field(..., description="Numeric value of the signal or metric.")
+    confidence: float = Field(default=1.0, ge=0.0, le=1.0, description="Confidence score from 0.0 to 1.0.")
+    source: str = Field(..., min_length=1, description="Adapter or source name (e.g., 'finbert', 'amf_bdif', 'openinsider').")
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional unstructured payload or metadata dictionary.")
 ```
 
 ## FILE: 01_memory_core/data_models.py
@@ -298,6 +490,165 @@ class Signal(BaseModel):
     lineage: dict = Field(default_factory=dict, description="Feature snapshot dump for ML training replay.")
 ```
 
+## FILE: 01_memory_core/data_quality.py
+```python
+"""Data Quality Gateway & Pipeline Hardening for PEA Pollux.
+
+Enforces institutional data quality standards before any market tick or OHLCV bar
+is committed to DuckDB or processed by quantitative models:
+  - Missing value forward-filling (capped at strict maximum 3 consecutive sessions).
+  - Stale data detection and eviction.
+  - Outlier detection (daily returns > +/- 40% or rolling return Z-score >= 4.0 sigma).
+  - Schema normalization and contract validation.
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import List, Optional
+
+import numpy as np
+import pandas as pd
+
+logger = logging.getLogger("data_quality")
+
+_REQUIRED_COLS = ["Ticker", "Date", "Open", "High", "Low", "Close", "Volume"]
+
+
+class DataQualityGateway:
+    """Quality gate validating and cleaning OHLCV batches before persistence."""
+
+    def __init__(
+        self,
+        max_ffill_limit: int = 3,
+        outlier_return_threshold: float = 0.40,
+        outlier_zscore_threshold: float = 4.0,
+    ) -> None:
+        self.max_ffill_limit = max_ffill_limit
+        self.outlier_return_threshold = outlier_return_threshold
+        self.outlier_zscore_threshold = outlier_zscore_threshold
+
+    def validate_ohlcv_batch(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Validate, clean, forward-fill, and tag outliers on incoming OHLCV bars.
+
+        Args:
+            df: Input DataFrame containing OHLCV columns.
+
+        Returns:
+            pd.DataFrame: Cleaned DataFrame with ['Ticker', 'Date', 'Open', 'High', 'Low', 'Close', 'Volume', 'is_outlier'].
+                          Returns empty DataFrame if data is completely invalid.
+        """
+        if df is None or df.empty:
+            logger.warning("DataQualityGateway received empty or None DataFrame.")
+            return pd.DataFrame(columns=_REQUIRED_COLS + ["is_outlier"])
+
+        clean = df.copy()
+
+        # Map lowercase or alternate column names to Canonical PascalCase
+        col_map = {}
+        for c in clean.columns:
+            cl = str(c).strip().lower()
+            if cl == "ticker":
+                col_map[c] = "Ticker"
+            elif cl in ("date", "timestamp", "datetime", "ts"):
+                col_map[c] = "Date"
+            elif cl == "open":
+                col_map[c] = "Open"
+            elif cl == "high":
+                col_map[c] = "High"
+            elif cl == "low":
+                col_map[c] = "Low"
+            elif cl == "close":
+                col_map[c] = "Close"
+            elif cl in ("volume", "vol"):
+                col_map[c] = "Volume"
+
+        clean = clean.rename(columns=col_map)
+
+        # Ensure index date is preserved if Date was index
+        if "Date" not in clean.columns and isinstance(clean.index, (pd.DatetimeIndex, pd.PeriodIndex)):
+            clean["Date"] = clean.index
+
+        # Check for missing required columns
+        missing = [c for c in _REQUIRED_COLS if c not in clean.columns]
+        if missing:
+            logger.error("DataQualityGateway: Batch missing mandatory columns: %s", missing)
+            raise ValueError(f"Batch missing mandatory columns: {missing}")
+
+        clean = clean[_REQUIRED_COLS].copy()
+
+        # Ensure Date is normalized date objects or strings
+        clean["Date"] = pd.to_datetime(clean["Date"]).dt.date
+
+        # Sort chronologically by ticker and date
+        clean = clean.sort_values(by=["Ticker", "Date"]).reset_index(drop=True)
+
+        # 1. Forward-fill missing values with strict limit=3
+        grouped = clean.groupby("Ticker", group_keys=False)
+        
+        numeric_cols = ["Open", "High", "Low", "Close", "Volume"]
+        for col in numeric_cols:
+            clean[col] = pd.to_numeric(clean[col], errors="coerce")
+
+        # Forward fill up to max_ffill_limit
+        clean[["Open", "High", "Low", "Close", "Volume"]] = grouped[numeric_cols].apply(
+            lambda g: g.ffill(limit=self.max_ffill_limit)
+        )
+
+        # Drop rows where Close is still null (e.g. missing for > 3 days or initial bars)
+        initial_len = len(clean)
+        clean = clean.dropna(subset=["Close"]).reset_index(drop=True)
+        dropped_count = initial_len - len(clean)
+        if dropped_count > 0:
+            logger.warning(
+                "DataQualityGateway: Dropped %d stale/unfillable rows with missing Close prices.",
+                dropped_count,
+            )
+
+        if clean.empty:
+            return pd.DataFrame(columns=_REQUIRED_COLS + ["is_outlier"])
+
+        # Fill any remaining Open/High/Low with Close price, and Volume with 0
+        clean["Open"] = clean["Open"].fillna(clean["Close"])
+        clean["High"] = clean["High"].fillna(clean["Close"])
+        clean["Low"] = clean["Low"].fillna(clean["Close"])
+        clean["Volume"] = clean["Volume"].fillna(0.0).astype(int)
+
+        # 2. Outlier Detection
+        # Calculate daily return per ticker
+        clean["is_outlier"] = False
+
+        for ticker, grp in clean.groupby("Ticker"):
+            if len(grp) < 2:
+                continue
+            
+            c_prices = grp["Close"]
+            rets = c_prices.pct_change()
+
+            # Extreme percentage jump/drop > 40%
+            is_extreme = rets.abs() > self.outlier_return_threshold
+
+            # Rolling return Z-score
+            if len(grp) >= 20:
+                roll_mean = rets.rolling(20, min_periods=5).mean()
+                roll_std = rets.rolling(20, min_periods=5).std().replace(0, np.nan)
+                zscores = (rets - roll_mean).abs() / roll_std
+                is_z_outlier = zscores >= self.outlier_zscore_threshold
+                is_flagged = is_extreme | is_z_outlier.fillna(False)
+            else:
+                is_flagged = is_extreme
+
+            if is_flagged.any():
+                flagged_idx = grp[is_flagged].index
+                clean.loc[flagged_idx, "is_outlier"] = True
+                logger.warning(
+                    "DataQualityGateway: Flagged %d price return outlier(s) for ticker %s.",
+                    len(flagged_idx), ticker,
+                )
+
+        return clean[_REQUIRED_COLS + ["is_outlier"]]
+```
+
 ## FILE: 01_memory_core/duckdb_manager.py
 ```python
 """DuckDB time-series engine for PEA Sniper Terminal V-Prime.
@@ -381,24 +732,30 @@ class TimeSeriesDB:
                 conn.execute(
                     """
                     CREATE TABLE IF NOT EXISTS ohlcv_data (
-                        ticker  VARCHAR NOT NULL,
-                        date    DATE     NOT NULL,
-                        open    DOUBLE,
-                        high    DOUBLE,
-                        low     DOUBLE,
-                        close   DOUBLE,
-                        volume  BIGINT,
+                        ticker     VARCHAR NOT NULL,
+                        date       DATE     NOT NULL,
+                        open       DOUBLE,
+                        high       DOUBLE,
+                        low        DOUBLE,
+                        close      DOUBLE,
+                        volume     BIGINT,
+                        is_outlier BOOLEAN DEFAULT FALSE,
                         PRIMARY KEY (ticker, date)
                     );
                     """
                 )
+                try:
+                    conn.execute("ALTER TABLE ohlcv_data ADD COLUMN IF NOT EXISTS is_outlier BOOLEAN DEFAULT FALSE;")
+                except Exception:
+                    pass
             logger.info("DuckDB schema initialized at %s", self.db_path)
-        except duckdb.Error:
+        except Exception:
             logger.exception("Failed to initialize DuckDB schema.")
             raise
 
+
     def upsert_ohlcv(self, df: pd.DataFrame) -> int:
-        """Insert or replace OHLCV rows from a DataFrame.
+        """Insert or replace OHLCV rows from a DataFrame through DataQualityGateway.
 
         Args:
             df: DataFrame with columns ``Ticker``, ``Date``, ``Open``, ``High``,
@@ -415,13 +772,23 @@ class TimeSeriesDB:
             logger.warning("upsert_ohlcv received an empty DataFrame; skipping.")
             return 0
 
-        missing = [c for c in _OHLCV_COLUMNS if c not in df.columns]
-        if missing:
-            raise ValueError(f"DataFrame missing required columns: {missing}")
+        # Pass through DataQualityGateway for institutional hygiene & outlier tagging
+        try:
+            from data_quality import DataQualityGateway
+            gateway = DataQualityGateway()
+            payload = gateway.validate_ohlcv_batch(df)
+        except Exception as exc:
+            logger.warning("DataQualityGateway validation failed (%s); falling back to direct schema.", exc)
+            missing = [c for c in _OHLCV_COLUMNS if c not in df.columns]
+            if missing:
+                raise ValueError(f"DataFrame missing required columns: {missing}")
+            payload = df[_OHLCV_COLUMNS].copy()
+            payload["Date"] = pd.to_datetime(payload["Date"]).dt.date
+            payload["is_outlier"] = False
 
-        # Work on a normalized copy in the canonical column order.
-        payload = df[_OHLCV_COLUMNS].copy()
-        payload["Date"] = pd.to_datetime(payload["Date"]).dt.date
+        if payload is None or payload.empty:
+            logger.warning("DataQualityGateway rejected entire batch; 0 rows upserted.")
+            return 0
 
         try:
             with self._connect() as conn:
@@ -430,15 +797,16 @@ class TimeSeriesDB:
                 conn.execute(
                     """
                     INSERT INTO ohlcv_data
-                        (ticker, date, open, high, low, close, volume)
-                    SELECT Ticker, Date, Open, High, Low, Close, Volume
+                        (ticker, date, open, high, low, close, volume, is_outlier)
+                    SELECT Ticker, Date, Open, High, Low, Close, Volume, is_outlier
                     FROM incoming_ohlcv
                     ON CONFLICT (ticker, date) DO UPDATE SET
-                        open   = excluded.open,
-                        high   = excluded.high,
-                        low    = excluded.low,
-                        close  = excluded.close,
-                        volume = excluded.volume;
+                        open       = excluded.open,
+                        high       = excluded.high,
+                        low        = excluded.low,
+                        close      = excluded.close,
+                        volume     = excluded.volume,
+                        is_outlier = excluded.is_outlier;
                     """
                 )
                 conn.unregister("incoming_ohlcv")
@@ -447,6 +815,7 @@ class TimeSeriesDB:
         except duckdb.Error:
             logger.exception("Failed to upsert OHLCV data.")
             raise
+
 
     def get_historical_prices(self, ticker: str, days: int = 252) -> pd.DataFrame:
         """Fetch the most recent ``days`` of OHLCV for a ticker, chronologically.
@@ -493,6 +862,14 @@ class TimeSeriesDB:
         except duckdb.Error:
             logger.exception("Failed to fetch historical prices for %s.", ticker)
             raise
+
+    def close(self) -> None:
+        """No-op for connection-managed TimeSeriesDB instances."""
+        pass
+
+    # Aliases for flexibility
+    init_schema = init_db
+    upsert_daily_ohlcv = upsert_ohlcv
 ```
 
 ## FILE: 01_memory_core/env_loader.py
@@ -1212,15 +1589,31 @@ class PortfolioDB:
                 conn.execute(
                     """
                     CREATE TABLE IF NOT EXISTS model_training_runs (
-                        id                      TEXT PRIMARY KEY,
-                        trained_at              TEXT NOT NULL,
-                        model_type              TEXT NOT NULL,
-                        accuracy                REAL,
-                        brier_score             REAL,
-                        feature_importance_json TEXT
+                        run_id              TEXT PRIMARY KEY,
+                        trained_at          TEXT NOT NULL,
+                        model_type          TEXT NOT NULL,
+                        n_samples           INTEGER NOT NULL,
+                        brier_score         REAL,
+                        auc_roc             REAL,
+                        log_loss            REAL,
+                        ece                 REAL,
+                        calibration_method  TEXT,
+                        hyperparameters_json TEXT,
+                        feature_names_json  TEXT,
+                        active              INTEGER DEFAULT 1
                     );
                     """
                 )
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS llm_synthesis_cache (
+                        ticker       TEXT PRIMARY KEY,
+                        synthesis    TEXT NOT NULL,
+                        generated_at TEXT NOT NULL
+                    );
+                    """
+                )
+
             logger.info("SQLite schema initialized at %s", self.db_path)
         except sqlite3.Error:
             logger.exception("Failed to initialize SQLite schema.")
@@ -1785,7 +2178,52 @@ class PortfolioDB:
             return run_id
         except sqlite3.Error:
             logger.exception("Failed to log model training run.")
-            return ""
+    def get_cached_synthesis(self, ticker: str, max_age_hours: int = 24) -> Optional[str]:
+        """Return cached LLM markdown synthesis if generated within max_age_hours, else None."""
+        if not ticker:
+            return None
+        t_clean = ticker.strip().upper()
+        try:
+            with self._connect() as conn:
+                row = conn.execute(
+                    "SELECT synthesis, generated_at FROM llm_synthesis_cache WHERE ticker = ?;",
+                    (t_clean,),
+                ).fetchone()
+                if not row:
+                    return None
+                gen_at_str = row["generated_at"]
+                gen_dt = datetime.fromisoformat(gen_at_str)
+                if gen_dt.tzinfo is None:
+                    gen_dt = gen_dt.replace(tzinfo=timezone.utc)
+                age_hours = (datetime.now(timezone.utc) - gen_dt).total_seconds() / 3600.0
+                if age_hours <= max_age_hours:
+                    return str(row["synthesis"])
+                return None
+        except Exception as exc:
+            logger.debug("Failed to retrieve cached synthesis for %s: %s", t_clean, exc)
+            return None
+
+    def save_synthesis(self, ticker: str, synthesis: str) -> None:
+        """Upsert LLM synthesis into llm_synthesis_cache with current UTC timestamp."""
+        if not ticker or not synthesis:
+            return
+        t_clean = ticker.strip().upper()
+        now_iso = datetime.now(timezone.utc).isoformat()
+        try:
+            with self._connect() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO llm_synthesis_cache (ticker, synthesis, generated_at)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(ticker) DO UPDATE SET
+                        synthesis=excluded.synthesis,
+                        generated_at=excluded.generated_at;
+                    """,
+                    (t_clean, str(synthesis), now_iso),
+                )
+            logger.debug("Saved LLM synthesis cache for %s.", t_clean)
+        except Exception as exc:
+            logger.warning("Failed to save LLM synthesis cache for %s: %s", t_clean, exc)
 
 
 # Backward-compatible alias

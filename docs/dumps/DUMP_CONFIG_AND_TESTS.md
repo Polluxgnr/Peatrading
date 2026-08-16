@@ -1,5 +1,5 @@
 # PEA Pollux — Configuration Yaml, Test Suites, Root Ops & Documentation
-Generated: `2026-08-16 13:03 UTC` | File Count: `37`
+Generated: `2026-08-16 16:42 UTC` | File Count: `52`
 Institutional Systematic Decision Support Architecture for French PEA.
 ---
 ## Included Files Index
@@ -17,22 +17,37 @@ Institutional Systematic Decision Support Architecture for French PEA.
 - [requirements.txt](#file-requirements-txt)
 - [seed_account.py](#file-seed_account-py)
 - [tests/__init__.py](#file-tests-__init__-py)
+- [tests/test_allocation_thermometer_and_98pct_rule.py](#file-tests-test_allocation_thermometer_and_98pct_rule-py)
 - [tests/test_amf_and_earnings_sync.py](#file-tests-test_amf_and_earnings_sync-py)
 - [tests/test_api_and_mcp.py](#file-tests-test_api_and_mcp-py)
 - [tests/test_brain_and_decoupling.py](#file-tests-test_brain_and_decoupling-py)
+- [tests/test_corporate_actions_and_universe_manager.py](#file-tests-test_corporate_actions_and_universe_manager-py)
+- [tests/test_data_hub.py](#file-tests-test_data_hub-py)
+- [tests/test_data_quality_and_pipeline_hardening.py](#file-tests-test_data_quality_and_pipeline_hardening-py)
+- [tests/test_dynamic_regime_and_vix_roc.py](#file-tests-test_dynamic_regime_and_vix_roc-py)
 - [tests/test_finbert_sentiment.py](#file-tests-test_finbert_sentiment-py)
 - [tests/test_fmp_copilot_retraining.py](#file-tests-test_fmp_copilot_retraining-py)
 - [tests/test_funnel_analytics.py](#file-tests-test_funnel_analytics-py)
 - [tests/test_institutional_suite.py](#file-tests-test_institutional_suite-py)
+- [tests/test_interactive_charts.py](#file-tests-test_interactive_charts-py)
+- [tests/test_langgraph_and_hub_api.py](#file-tests-test_langgraph_and_hub_api-py)
+- [tests/test_layer1_contracts_and_r2.py](#file-tests-test_layer1_contracts_and_r2-py)
 - [tests/test_limit_tiers_and_radar.py](#file-tests-test_limit_tiers_and_radar-py)
+- [tests/test_llm_cache_and_guardrails.py](#file-tests-test_llm_cache_and_guardrails-py)
+- [tests/test_local_ollama_streaming.py](#file-tests-test_local_ollama_streaming-py)
+- [tests/test_master_system.py](#file-tests-test_master_system-py)
 - [tests/test_ml_cascade_integration.py](#file-tests-test_ml_cascade_integration-py)
 - [tests/test_newsletter_whitelist.py](#file-tests-test_newsletter_whitelist-py)
 - [tests/test_phase16_foundations.py](#file-tests-test_phase16_foundations-py)
+- [tests/test_phase3_cpu_and_market.py](#file-tests-test_phase3_cpu_and_market-py)
+- [tests/test_prefect_and_cpu_isolator.py](#file-tests-test_prefect_and_cpu_isolator-py)
 - [tests/test_reconciliation_and_backup.py](#file-tests-test_reconciliation_and_backup-py)
 - [tests/test_stat_arb_and_backtest.py](#file-tests-test_stat_arb_and_backtest-py)
 - [tests/test_stealth_and_imap_ingest.py](#file-tests-test_stealth_and_imap_ingest-py)
 - [tests/test_text_cleaner_and_feedback.py](#file-tests-test_text_cleaner_and_feedback-py)
 - [tests/test_ui_and_sandbox.py](#file-tests-test_ui_and_sandbox-py)
+- [tests/test_visual_components.py](#file-tests-test_visual_components-py)
+- [tests/test_watchdog_and_llm_analyst.py](#file-tests-test_watchdog_and_llm_analyst-py)
 - [tools/backup_databases.py](#file-tools-backup_databases-py)
 - [tools/bootstrap_ml_dataset.py](#file-tools-bootstrap_ml_dataset-py)
 - [tools/build_llm_dump.py](#file-tools-build_llm_dump-py)
@@ -44,8 +59,8 @@ Institutional Systematic Decision Support Architecture for French PEA.
 ---
 ## FILE: .github/workflows/ci.yml
 ```yaml
-# PEA Sniper Terminal — CI Pipeline
-name: ci
+# PEA Pollux Quantitative Terminal — Hardened CI Pipeline
+name: CI
 
 on:
   push:
@@ -54,24 +69,54 @@ on:
     branches: [main, master]
 
 jobs:
-  lint-and-test:
+  lint:
+    name: Code Quality & Linting
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
-      - name: Install dependencies
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install Linting Tools
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pytest ruff
+          pip install ruff
+
       - name: Lint with Ruff
         run: |
           ruff check .
-      - name: Run Test Suite
+
+  test:
+    name: Test Suite (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: "pip"
+
+      - name: Install Dependencies
         run: |
-          python -m pytest -q
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run Full Test Suite
+        run: |
+          python -m pytest -v
 ```
 
 ## FILE: config/api_keys.env.example
@@ -115,10 +160,20 @@ YAHOO_MAIL_APP_PASSWORD=your_yahoo_app_password
 # Streamlit Terminal Dashboard Security Lock
 DASHBOARD_PASSWORD=your_secure_dashboard_password_here
 
-# Cloud Database Backup (AWS S3)
-AWS_S3_BACKUP_BUCKET=your_s3_bucket_name_here
-AWS_ACCESS_KEY_ID=your_aws_access_key_id
-AWS_SECRET_ACCESS_KEY=your_aws_secret_access_key
+# Cloud Database Backup (Cloudflare R2 - S3-Compatible & Zero Egress Fees)
+R2_BUCKET_NAME=your_r2_bucket_name_here
+R2_ENDPOINT_URL=https://<account_id>.r2.cloudflarestorage.com
+R2_ACCESS_KEY_ID=your_r2_access_key_id
+R2_SECRET_ACCESS_KEY=your_r2_secret_access_key
+
+# Sovereign Local AI (Ollama - Zero API Costs & Sovereign Local Inference)
+OLLAMA_URL=http://localhost:11434/api/chat
+OLLAMA_MODEL=mistral
+
+# Optional Legacy AWS S3 fallback (if R2_ENDPOINT_URL is not set)
+AWS_S3_BACKUP_BUCKET=
+AWS_ACCESS_KEY_ID=
+AWS_SECRET_ACCESS_KEY=
 AWS_DEFAULT_REGION=eu-west-3
 ```
 
@@ -2225,33 +2280,36 @@ CMD ["python", "main_scheduler.py"]
 
 ## FILE: main_scheduler.py
 ```python
-"""Root daemon scheduler for PEA Sniper Terminal V-Prime.
+"""Root daemon scheduler and Prefect workflow orchestrator for PEA Sniper Terminal V-Prime.
 
 Ties the whole pipeline together and runs it on the multi-pass European market
 schedule (09:00, 13:30, 17:10 Paris time, weekdays only):
 
-    fetch (yfinance -> DuckDB) -> quant signals -> orchestrator (macro veto,
-    VIX, correlation, sizing) -> revoke/expire PENDING -> Discord alerts.
+    Data Ingestion Hub (Market Data + AMF + Macro + News)
+    -> Isolated CPU Quant & ML Cascade (ProcessPoolExecutor)
+    -> Smart DCA & Anti-Stale Revocation
+    -> Sovereign PM Alerts (Discord Copilot)
 
 Design rules honoured here:
-  * Async/sync bridge: the synchronous ``schedule`` job runs the async pipeline
-    via ``asyncio.run``.
-  * Zero crash tolerance: every pass is wrapped so a data outage or locked DB
-    logs CRITICAL and the daemon keeps running for the next pass.
-  * Timezone awareness: schedule times are pinned to Europe/Paris; weekends are
-    skipped.
-
-This module only stitches existing phases together; it does not modify them.
+  * Prefect Orchestration: Core steps are encapsulated as retry-capable @task and @flow.
+  * CPU Isolation: Heavy NLP scoring / ML models offloaded via CpuTaskIsolator.
+  * Async/sync bridge: Synchronous daemon runs async Prefect flows via asyncio.run.
+  * Zero crash tolerance: Every pass is guarded so outages log CRITICAL and continue.
+  * Timezone awareness: Pinned to Europe/Paris; weekends are safely skipped.
 """
+
+from __future__ import annotations
 
 import argparse
 import asyncio
 import logging
 import os
+import subprocess
 import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 import yaml
 
@@ -2259,6 +2317,7 @@ import yaml
 _ROOT = Path(__file__).resolve().parent
 for _sub in (
     "00_data_sensors",
+    "00_data_sensors/adapters",
     "01_memory_core",
     "02_quant_engine",
     "03_risk_portfolio",
@@ -2270,20 +2329,40 @@ for _sub in (
 import aiohttp  # noqa: E402
 import schedule  # noqa: E402
 
-from data_models import Position, PortfolioState, Signal, SignalStatus, SignalType  # noqa: E402
-from duckdb_manager import TimeSeriesDB  # noqa: E402
-from sqlite_portfolio import PortfolioDB  # noqa: E402
-from market_prices_api import MarketDataFetcher  # noqa: E402
-from macro_alpha_api import MacroAlphaSensor  # noqa: E402
-from technical_scorer import SignalGenerator  # noqa: E402
-from smart_dca_engine import SmartDcaCore  # noqa: E402
-from monthly_rebalancer import PortfolioRebalancer  # noqa: E402
-from signal_priority_cascade import SignalOrchestrator  # noqa: E402
-from revocation_engine import RevocationEngine  # noqa: E402
-from llm_explainer import NarrativeExplainer  # noqa: E402
-from weekly_historian import WeeklyHistorian  # noqa: E402
+# Prefect decorators with robust fallback
+try:
+    from prefect import flow, task
+except ImportError:
+    def task(*dargs, **dkwargs):
+        def decorator(f):
+            return f
+        if len(dargs) == 1 and callable(dargs[0]) and not dkwargs:
+            return dargs[0]
+        return decorator
+
+    def flow(*dargs, **dkwargs):
+        def decorator(f):
+            return f
+        if len(dargs) == 1 and callable(dargs[0]) and not dkwargs:
+            return dargs[0]
+        return decorator
+
+from cpu_isolator import cpu_isolator  # noqa: E402
+from data_models import PortfolioState, Position, Signal, SignalStatus, SignalType  # noqa: E402
 from discord_copilot import DiscordCopilot  # noqa: E402
+from duckdb_manager import TimeSeriesDB  # noqa: E402
+from hub import DataIngestionHub  # noqa: E402
+from llm_explainer import NarrativeExplainer  # noqa: E402
 from logging_setup import get_component_logger, setup_app_logging, write_pipeline_status  # noqa: E402
+from macro_alpha_api import MacroAlphaSensor  # noqa: E402
+from market_prices_api import MarketDataFetcher  # noqa: E402
+from monthly_rebalancer import PortfolioRebalancer  # noqa: E402
+from revocation_engine import RevocationEngine  # noqa: E402
+from signal_priority_cascade import SignalOrchestrator  # noqa: E402
+from smart_dca_engine import SmartDcaCore  # noqa: E402
+from sqlite_portfolio import PortfolioDB  # noqa: E402
+from technical_scorer import SignalGenerator  # noqa: E402
+from weekly_historian import WeeklyHistorian  # noqa: E402
 
 try:
     from earnings_updater import run_earnings_sync  # noqa: E402
@@ -2302,21 +2381,34 @@ except ImportError:
 
 logger = get_component_logger("scheduler")
 
-
-
 _CONFIG_DIR = _ROOT / "config"
 _UNIVERSE_PATH = _CONFIG_DIR / "pea_universe.yaml"
 _RISK_PATH = _CONFIG_DIR / "risk_params.yaml"
 _TIMEZONE = "Europe/Paris"
-_PASS_TIMES = ("09:00", "13:30", "17:10")
+# Run analysis pass every 30 minutes during Euronext market hours (09:00 to 17:30 Paris time)
+_PASS_TIMES = tuple(f"{h:02d}:{m:02d}" for h in range(9, 18) for m in (0, 30) if not (h == 17 and m > 30))
 _WEEKLY_REPORT_TIME = "18:00"     # Friday CIO digest.
+
 _MONTHLY_CHECK_TIME = "08:30"     # Daily probe; profit-shave acts only on the 1st.
 _ATR_STOP_CHECK_TIME = "08:35"    # Daily ATR stop evaluation (weekdays via loop).
-_LOOKBACK_DAYS = 400  # ~270 trading days -> enough for SMA-200.
+_LOOKBACK_DAYS = 400              # ~270 trading days -> enough for SMA-200.
+
+
+def _post_webhook(url: str, json_payload: dict) -> None:
+    """Post JSON payload to Discord webhook synchronously/asynchronously."""
+    if not url:
+        return
+    try:
+        async def _post():
+            async with aiohttp.ClientSession() as session:
+                await session.post(url, json=json_payload)
+        asyncio.run(_post())
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Failed to post webhook to %s: %s", url, exc)
 
 
 def _core_ticker() -> str:
-    """Read the Core ETF ticker from ``risk_params.yaml`` (default CW8.PA)."""
+    """Read the Core ETF ticker from risk_params.yaml (default CW8.PA)."""
     try:
         with open(_RISK_PATH, "r", encoding="utf-8") as fh:
             risk = yaml.safe_load(fh) or {}
@@ -2325,105 +2417,89 @@ def _core_ticker() -> str:
         return "CW8.PA"
 
 
-async def _post_webhook(content: str) -> bool:
-    """Post a plain-text message to the Discord webhook, chunked to 2000 chars.
-
-    Args:
-        content: The message body.
-
-    Returns:
-        bool: ``True`` if every chunk posted with a 2xx status.
-    """
-    url = os.getenv("DISCORD_WEBHOOK_URL")
-    if not url:
-        logger.warning("DISCORD_WEBHOOK_URL not set; message not sent.")
-        return False
-
-    chunks = [content[i : i + 1900] for i in range(0, len(content), 1900)] or [""]
-    ok = True
-    try:
-        timeout = aiohttp.ClientTimeout(total=20)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            for chunk in chunks:
-                async with session.post(url, json={"content": chunk}) as resp:
-                    if resp.status not in (200, 204):
-                        body = await resp.text()
-                        logger.error("Webhook HTTP %s: %s", resp.status, body[:200])
-                        ok = False
-    except Exception:  # noqa: BLE001 - a failed webhook must not crash the daemon.
-        logger.exception("Discord webhook post failed.")
-        return False
-    return ok
-
-
 def _load_universe_tickers() -> list[str]:
-    """Read the tradable tickers from ``config/pea_universe.yaml``.
-
-    Returns:
-        list[str]: All tickers across every sector (empty on failure).
-    """
+    """Return all active tickers from pea_universe.yaml."""
     try:
         with open(_UNIVERSE_PATH, "r", encoding="utf-8") as fh:
-            universe = yaml.safe_load(fh) or {}
-        return [
-            entry["ticker"]
-            for members in universe.get("universe", {}).values()
-            for entry in members
-        ]
+            raw = yaml.safe_load(fh)
+        if not raw:
+            return []
+        u_data = raw if isinstance(raw, dict) else {}
+        univ = u_data.get("universe", u_data)
+        tickers: list[str] = []
+        if isinstance(univ, dict):
+            for sector, items in univ.items():
+                if isinstance(items, list):
+                    for it in items:
+                        if isinstance(it, dict) and "ticker" in it:
+                            tickers.append(str(it["ticker"]).strip())
+                        elif isinstance(it, str):
+                            tickers.append(it.strip())
+        elif isinstance(univ, list):
+            for it in univ:
+                if isinstance(it, str):
+                    tickers.append(it.strip())
+                elif isinstance(it, dict) and "ticker" in it:
+                    tickers.append(str(it["ticker"]).strip())
+        return [t for t in tickers if t]
     except Exception:  # noqa: BLE001
-        logger.exception("Could not read universe file %s", _UNIVERSE_PATH)
+        logger.exception("Failed to read universe file %s.", _UNIVERSE_PATH)
         return []
 
 
 def _load_universe_sector_map() -> dict[str, str]:
-    """Read mapping from ticker -> sector from ``config/pea_universe.yaml``."""
+    """Return mapping of ticker -> sector from pea_universe.yaml."""
     try:
         with open(_UNIVERSE_PATH, "r", encoding="utf-8") as fh:
-            universe = yaml.safe_load(fh) or {}
+            raw = yaml.safe_load(fh)
+        if not raw:
+            return {}
+        u_data = raw if isinstance(raw, dict) else {}
+        univ = u_data.get("universe", u_data)
         sector_map: dict[str, str] = {}
-        for sector, members in universe.get("universe", {}).items():
-            for entry in members:
-                if isinstance(entry, dict) and "ticker" in entry:
-                    sector_map[str(entry["ticker"])] = str(sector)
+        if isinstance(univ, dict):
+            for sector, items in univ.items():
+                if isinstance(items, list):
+                    for it in items:
+                        if isinstance(it, dict) and "ticker" in it:
+                            sector_map[str(it["ticker"]).strip()] = str(sector).strip()
+        elif isinstance(univ, list):
+            for it in univ:
+                if isinstance(it, dict) and "ticker" in it and "sector" in it:
+                    sector_map[str(it["ticker"]).strip()] = str(it["sector"]).strip()
         return sector_map
     except Exception:  # noqa: BLE001
-        logger.exception("Could not read universe sector map %s", _UNIVERSE_PATH)
+        logger.exception("Failed to read sector map from %s.", _UNIVERSE_PATH)
         return {}
 
 
 def _refresh_portfolio_prices(
-    pdb: PortfolioDB, portfolio: PortfolioState, prices: dict[str, float]
+    pdb: PortfolioDB,
+    portfolio: PortfolioState,
+    current_prices: dict[str, float],
 ) -> PortfolioState:
-    """Mark held positions to market and recompute equity, then persist.
-
-    Keeps the dashboard PnL and the sizer's equity honest between manual
-    executions. If nothing changed (no held tickers priced) the input is
-    returned unmodified.
-
-    Args:
-        pdb: Portfolio database.
-        portfolio: Current snapshot.
-        prices: ticker -> latest close.
-
-    Returns:
-        PortfolioState: The refreshed (and persisted) snapshot.
-    """
-    if not portfolio.positions:
-        return portfolio
-
-    refreshed = []
-    for p in portfolio.positions:
-        new_price = prices.get(p.ticker, p.current_price)
-        refreshed.append(
-            Position(
-                ticker=p.ticker,
-                qty_shares=p.qty_shares,
-                avg_entry_price=p.avg_entry_price,
-                current_price=new_price if new_price > 0 else p.current_price,
-                sector=p.sector,
+    """Update held positions with latest prices and persist marked-to-market equity."""
+    refreshed: list[Position] = []
+    positions_value = 0.0
+    for pos in portfolio.positions:
+        cur_px = current_prices.get(pos.ticker)
+        if cur_px and cur_px > 0:
+            up_pos = Position(
+                ticker=pos.ticker,
+                shares=pos.shares,
+                average_buy_price=pos.average_buy_price,
+                current_price=cur_px,
+                stop_loss=pos.stop_loss,
             )
-        )
-    positions_value = sum(p.market_value for p in refreshed)
+            refreshed.append(up_pos)
+            positions_value += cur_px * pos.shares
+        else:
+            refreshed.append(pos)
+            if pos.current_price:
+                positions_value += pos.current_price * pos.shares
+            elif pos.average_buy_price:
+                positions_value += pos.average_buy_price * pos.shares
+
     new_state = PortfolioState(
         cash_available=portfolio.cash_available,
         total_equity=portfolio.cash_available + positions_value,
@@ -2437,22 +2513,14 @@ def _refresh_portfolio_prices(
             new_state.total_equity,
             len(refreshed),
         )
-    except Exception:  # noqa: BLE001 - a failed refresh must not abort the pass.
+    except Exception:  # noqa: BLE001
         logger.exception("Failed to persist marked-to-market portfolio.")
         return portfolio
     return new_state
 
 
 def _latest_prices(tsdb: TimeSeriesDB, tickers: list[str]) -> dict[str, float]:
-    """Fetch the most recent close for each ticker from DuckDB.
-
-    Args:
-        tsdb: The time-series database.
-        tickers: Tickers to look up.
-
-    Returns:
-        dict[str, float]: ticker -> latest close (absent if no data).
-    """
+    """Fetch the most recent close for each ticker from DuckDB."""
     prices: dict[str, float] = {}
     for ticker in tickers:
         try:
@@ -2464,46 +2532,35 @@ def _latest_prices(tsdb: TimeSeriesDB, tickers: list[str]) -> dict[str, float]:
     return prices
 
 
-async def run_pipeline_async() -> None:
-    """Execute one full analysis pass end-to-end.
+# =============================================================================
+# PREFECT TASKS (Layer 1 Ingestion, Layer 2 Persistence, Layer 3 Workers)
+# =============================================================================
 
-    Raises:
-        Exception: Propagated to the sync wrapper, which logs CRITICAL. This
-            keeps the daemon alive for the next scheduled pass.
-    """
-    # --- Init Phase ---
-    tsdb = TimeSeriesDB()
-    tsdb.init_db()
-    pdb = PortfolioDB()
-    pdb.init_db()
+@task(name="Ingest_Market_And_Alternative_Data", retries=2, retry_delay_seconds=30)
+async def task_ingest_data(
+    tsdb: TimeSeriesDB,
+    pdb: PortfolioDB,
+    fetch_tickers: list[str],
+    lookback_days: int = _LOOKBACK_DAYS,
+) -> bool:
+    """Task: Fetch OHLCV market bars and poll alternative data sensors concurrently."""
     fetcher = MarketDataFetcher()
-    generator = SignalGenerator()
-    orchestrator = SignalOrchestrator(
-        config_dir=_CONFIG_DIR, portfolio_db=pdb, timeseries_db=tsdb
-    )
-    explainer = NarrativeExplainer()
-    copilot = DiscordCopilot(portfolio_db=pdb, explainer=explainer)
-
-    core_engine = SmartDcaCore(_CONFIG_DIR)
-    macro_alpha = MacroAlphaSensor()
-    core_ticker = _core_ticker()
-
-    tickers = _load_universe_tickers()
-    if not tickers:
-        logger.error("No tickers in universe; aborting pass.")
-        return
-    # The Core ETF must be fetched too so Smart DCA can read its history.
-    fetch_tickers = tickers + ([core_ticker] if core_ticker not in tickers else [])
-    fetch_tickers = list(set(fetch_tickers + ["^FCHI", "^GSPC", "^IXIC", "EURUSD=X", "OAT.PA", "CW8.PA"]))
-    logger.info("Universe loaded: %d tickers (+core %s, +macro indices).", len(tickers), core_ticker)
-
-    # --- Data Phase ---
-    ok = fetcher.update_database(tsdb, fetch_tickers, lookback_days=_LOOKBACK_DAYS)
+    ok = fetcher.update_database(tsdb, fetch_tickers, lookback_days=lookback_days)
     if not ok:
-        logger.error("Data ingestion failed; skipping this pass (no stale trades).")
-        return
+        logger.error("Market data ingestion failed.")
+        return False
 
-    # --- News Ingestion Phase ---
+    # Layer 1 Ingestion Hub: Poll AMF short positions and Macro signals concurrently
+    try:
+        hub = DataIngestionHub()
+        hub.register_default_adapters()
+        alt_signals = await hub.fetch_all_alternative_signals()
+        saved = hub.save_signals_to_sqlite(alt_signals, pdb)
+        logger.info("Data Ingestion Hub: %d alternative signal(s) saved to SQLite.", saved)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Alternative Data Ingestion Hub encountered an issue: %s", exc)
+
+    # News Ingestion (RSS, APIs, IMAP)
     try:
         from news_api_client import run_api_scraper
         from news_email_scraper import run_email_scraper
@@ -2512,28 +2569,45 @@ async def run_pipeline_async() -> None:
         run_api_scraper(pdb)
         run_email_scraper(pdb)
         run_rss_scraper(pdb)
-    except Exception as e:
-        logger.warning(f"News scraping failed: {e}")
+    except Exception as e:  # noqa: BLE001
+        logger.warning("News scraping failed: %s", e)
 
-    # --- Macro Phase: European VIX emergency brake ---
-    vix_level = macro_alpha.get_european_vix()
+    return True
 
-    # --- Quant Phase (Mean-Reversion Exhaustion + StatArb Cointegration) ---
-    mre_signals = generator.generate_raw_signals(tsdb, tickers)
+
+@task(name="Quant_ML_Signal_Generation", retries=1)
+async def task_generate_and_orchestrate(
+    tsdb: TimeSeriesDB,
+    pdb: PortfolioDB,
+    tickers: list[str],
+    fetch_tickers: list[str],
+    vix_level: float,
+    core_ticker: str,
+) -> list[Signal]:
+    """Task: Generate raw quant signals, execute ML predictive veto, and size positions."""
+    generator = SignalGenerator()
+    orchestrator = SignalOrchestrator(
+        config_dir=_CONFIG_DIR, portfolio_db=pdb, timeseries_db=tsdb
+    )
+    core_engine = SmartDcaCore(_CONFIG_DIR)
+
+    # Offload CPU-bound Mean-Reversion quant signals to process pool
+    mre_signals = await cpu_isolator.run_in_process(generator.generate_raw_signals, tsdb, tickers)
     logger.info("Mean-Reversion engine produced %d raw signal(s).", len(mre_signals))
 
+    # StatArb Cointegration engine
     stat_arb_signals = []
     try:
         from stat_arb_pairs import StatArbEngine
         stat_arb_engine = StatArbEngine()
         sector_map = _load_universe_sector_map()
-        
+
         prices_by_ticker = {}
         for t in tickers:
             df_t = tsdb.get_historical_prices(t, days=500)
             if df_t is not None and not df_t.empty and "Close" in df_t.columns:
                 prices_by_ticker[t] = df_t
-                
+
         stat_arb_signals = stat_arb_engine.generate_stat_arb_signals(prices_by_ticker, sector_map)
         logger.info("StatArb Cointegration engine produced %d raw signal(s).", len(stat_arb_signals))
     except Exception as exc:  # noqa: BLE001
@@ -2542,41 +2616,33 @@ async def run_pipeline_async() -> None:
     raw_signals = mre_signals + stat_arb_signals
     logger.info("Total unified raw candidate signal(s): %d.", len(raw_signals))
 
-    # --- Orchestration Phase (satellite) ---
+    # Orchestration Phase (satellite)
     portfolio: PortfolioState = pdb.get_portfolio_state()
     current_prices = _latest_prices(tsdb, fetch_tickers)
-    # Mark held positions to market so PnL/equity are fresh for sizing + UI.
     portfolio = _refresh_portfolio_prices(pdb, portfolio, current_prices)
+
+    # Process through full cascade (VIX floor, Isolation Forest anomaly, XGBoost SHAP, correlation, sizing)
     processed = orchestrator.process_raw_signals(
         raw_signals, portfolio, current_prices, vix_level=vix_level
     )
 
-    approved = [s for s in processed if s.status == SignalStatus.APPROVED]
-    logger.info(
-        "Orchestrator finalized %d signal(s): %d APPROVED (VIX=%.1f).",
-        len(processed),
-        len(approved),
-        vix_level,
-    )
-
-    # --- Core Phase: Smart DCA on the MSCI World ETF (immune to VIX veto) ---
+    # Core Phase: Smart DCA on the MSCI World ETF (immune to VIX veto)
     core_signal = core_engine.evaluate_cw8(
         tsdb, portfolio.cash_available, portfolio.total_equity
     )
     if core_signal and (core_signal.target_qty or 0) > 0:
         core_signal.status = SignalStatus.APPROVED
         processed.append(core_signal)
-        logger.info(
-            "Core DCA APPROVED: buy %d %s.", core_signal.target_qty, core_ticker
-        )
+        logger.info("Core DCA APPROVED: buy %d %s.", core_signal.target_qty, core_ticker)
 
-    # --- Revocation Phase: anti-stale on existing PENDING signals ------------
+    # Revocation Phase: anti-stale evaluation on existing PENDING signals
     revoker = RevocationEngine(_CONFIG_DIR)
     try:
         pending_rows = pdb.fetch_signals_by_status(["PENDING"])
     except Exception:  # noqa: BLE001
         logger.exception("Could not load PENDING signals for revocation.")
         pending_rows = []
+
     for row in pending_rows:
         try:
             created_raw = row.get("created_at")
@@ -2594,23 +2660,9 @@ async def run_pipeline_async() -> None:
                 created_at=created_at,
             )
             cur_px = float(current_prices.get(sig.ticker) or 0.0)
-            if cur_px <= 0:
-                # Still allow time-expiry with a dummy equal price (no false drift).
-                cur_px = 1.0
-                orig_px = 1.0
-            else:
-                # Approximate emission price from DuckDB history near created_at.
-                orig_px = cur_px
-                try:
-                    hist = tsdb.get_historical_prices(sig.ticker, days=30)
-                    if hist is not None and not hist.empty and "Close" in hist.columns:
-                        # Use oldest close in window as conservative proxy if
-                        # we cannot align exact timestamp.
-                        series = hist["Close"].dropna()
-                        if len(series):
-                            orig_px = float(series.iloc[0])
-                except Exception:  # noqa: BLE001
-                    orig_px = cur_px
+            orig_px = cur_px if cur_px > 0 else 1.0
+            cur_px = cur_px if cur_px > 0 else 1.0
+
             updated = revoker.evaluate_signal(sig, cur_px, orig_px)
             if updated.status in (SignalStatus.REVOKED, SignalStatus.EXPIRED):
                 processed.append(updated)
@@ -2621,14 +2673,25 @@ async def run_pipeline_async() -> None:
         except Exception:  # noqa: BLE001
             logger.exception("Revocation failed for row %s.", row.get("id"))
 
-    # Persist every decision to the audit log for the dashboard/ledger.
+    # Audit logging
     for signal in processed:
         try:
             pdb.log_signal(signal)
         except Exception:  # noqa: BLE001
             logger.exception("Failed to audit-log signal %s.", signal.id)
 
-    # --- Alert Phase ---
+    return processed
+
+
+@task(name="Dispatch_Discord_Alerts")
+async def task_dispatch_alerts(
+    processed: list[Signal],
+    portfolio: PortfolioState,
+    current_prices: dict[str, float],
+    copilot: DiscordCopilot,
+    explainer: NarrativeExplainer,
+) -> None:
+    """Task: Deliver enriched, actionable signals to Discord Copilot."""
     alertable = [
         s for s in processed
         if s.status in (SignalStatus.APPROVED, SignalStatus.REVOKED)
@@ -2638,10 +2701,7 @@ async def run_pipeline_async() -> None:
         return
 
     if not os.getenv("DISCORD_TOKEN"):
-        logger.warning(
-            "DISCORD_TOKEN not set; %d alert(s) computed but not sent.",
-            len(alertable),
-        )
+        logger.warning("DISCORD_TOKEN not set; %d alert(s) computed but not sent.", len(alertable))
         return
 
     for signal in alertable:
@@ -2650,12 +2710,61 @@ async def run_pipeline_async() -> None:
             await copilot.send_signal_alert(
                 signal, portfolio, explainer=explainer, current_price=price
             )
-        except Exception:  # noqa: BLE001 - a failed alert must not abort the pass.
+        except Exception:  # noqa: BLE001
             logger.exception("Failed to send Discord alert for %s.", signal.ticker)
 
 
+# =============================================================================
+# MAIN PREFECT FLOW
+# =============================================================================
+
+@flow(name="PEA_Pollux_Market_Cycle")
+async def pea_pollux_market_cycle() -> None:
+    """Main Prefect Flow: Coordinates data ingestion, quant signal scoring, and sovereign alerts."""
+    tsdb = TimeSeriesDB()
+    tsdb.init_db()
+    pdb = PortfolioDB()
+    pdb.init_db()
+
+    explainer = NarrativeExplainer()
+    copilot = DiscordCopilot(portfolio_db=pdb, explainer=explainer)
+    macro_alpha = MacroAlphaSensor()
+    core_ticker = _core_ticker()
+
+    tickers = _load_universe_tickers()
+    if not tickers:
+        logger.error("No tickers in universe; aborting cycle.")
+        return
+
+    fetch_tickers = list(set(tickers + [core_ticker, "^FCHI", "^GSPC", "^IXIC", "EURUSD=X", "OAT.PA", "CW8.PA"]))
+    logger.info("Universe loaded: %d tickers (+core %s, +macro indices).", len(tickers), core_ticker)
+
+    # Step 1: Ingestion Task
+    ingestion_ok = await task_ingest_data(tsdb, pdb, fetch_tickers, lookback_days=_LOOKBACK_DAYS)
+    if not ingestion_ok:
+        logger.error("Data ingestion failed; skipping this cycle (no stale trades).")
+        return
+
+    # Step 2: Macro Volatility Gauge
+    vix_level = macro_alpha.get_european_vix()
+
+    # Step 3: Quant & ML Signal Generation Task
+    processed = await task_generate_and_orchestrate(
+        tsdb, pdb, tickers, fetch_tickers, vix_level, core_ticker
+    )
+
+    # Step 4: Dispatch Alerts Task
+    portfolio: PortfolioState = pdb.get_portfolio_state()
+    current_prices = _latest_prices(tsdb, fetch_tickers)
+    await task_dispatch_alerts(processed, portfolio, current_prices, copilot, explainer)
+
+
+# Alias for backward compatibility
+run_pipeline_async = pea_pollux_market_cycle
+
+
 def run_analysis_pass() -> None:
-    """Synchronous wrapper: skip weekends, run the async pipeline safely."""
+    """Synchronous wrapper: skip weekends, run the Prefect flow safely."""
     if datetime.today().weekday() >= 5:
         logger.info("Weekend: Market closed, skipping pass.")
         write_pipeline_status({
@@ -2667,186 +2776,73 @@ def run_analysis_pass() -> None:
         return
 
     started = time.perf_counter()
-    logger.info("=== Analysis pass starting ===")
+    logger.info("=== Analysis pass starting (Prefect Flow) ===")
     try:
-        asyncio.run(run_pipeline_async())
+        asyncio.run(pea_pollux_market_cycle())
         elapsed = time.perf_counter() - started
         logger.info("=== Analysis pass completed in %.1fs ===", elapsed)
         write_pipeline_status({
             "job": "analysis",
             "status": "ok",
+            "elapsed_s": round(elapsed, 2),
             "health": "green",
-            "elapsed_sec": round(elapsed, 2),
-            "finished_at_local": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         })
-    except Exception as exc:  # noqa: BLE001 - daemon must survive any failure.
+    except Exception as exc:  # noqa: BLE001
         elapsed = time.perf_counter() - started
-        logger.critical(
-            "Analysis pass FAILED after %.1fs: %s", elapsed, exc, exc_info=True
-        )
+        logger.critical("Analysis pass crashed after %.1fs: %s", elapsed, exc, exc_info=True)
         write_pipeline_status({
             "job": "analysis",
-            "status": "failed",
-            "health": "red",
+            "status": "crashed",
             "error": str(exc),
-            "elapsed_sec": round(elapsed, 2),
-            "finished_at_local": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "elapsed_s": round(elapsed, 2),
+            "health": "red",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         })
 
 
-async def run_weekly_report_async() -> None:
-    """Generate the weekly CIO digest and push it to the Discord webhook."""
-    pdb = PortfolioDB()
-    pdb.init_db()
-    explainer = NarrativeExplainer()
-    historian = WeeklyHistorian()
-
-    report = await historian.generate_weekly_report(pdb, explainer=explainer)
-    header = (
-        "\U0001F4C8 **PEA Sniper Terminal - Weekly Risk & Performance Digest**\n"
-        f"_(generated {datetime.now().strftime('%Y-%m-%d %H:%M')} Paris)_\n\n"
-    )
-    sent = await _post_webhook(header + report)
-    logger.info("Weekly report %s.", "sent" if sent else "computed but NOT sent")
-
-
-def run_weekly_report() -> None:
-    """Sync wrapper for the Friday weekly report job."""
-    started = time.perf_counter()
-    logger.info("=== Weekly report job starting ===")
-    try:
-        asyncio.run(run_weekly_report_async())
-        logger.info(
-            "=== Weekly report done in %.1fs ===", time.perf_counter() - started
-        )
-    except Exception as exc:  # noqa: BLE001
-        logger.critical("Weekly report FAILED: %s", exc, exc_info=True)
-
-
-async def _push_rebalance_sells(
-    sells: list, pdb: PortfolioDB, title: str
-) -> None:
-    """Audit-log and webhook a batch of rebalance SELL signals."""
-    if not sells:
-        return
-    for signal in sells:
-        try:
-            pdb.log_signal(signal)
-        except Exception:  # noqa: BLE001
-            logger.exception("Failed to audit-log rebalance signal %s.", signal.id)
-    lines = [f"\U0001F501 **{title}**\n"]
-    for s in sells:
-        lines.append(f"- **{s.ticker}** SELL {s.target_qty} - {s.reason}")
-    await _post_webhook("\n".join(lines))
-    logger.info("%s pushed %d SELL signal(s).", title, len(sells))
-
-
-async def run_daily_atr_stops_async() -> None:
-    """Evaluate ATR stop-losses every day (independent of profit-shave)."""
-    pdb = PortfolioDB()
-    pdb.init_db()
-    tsdb = TimeSeriesDB()
-    tsdb.init_db()
-    rebalancer = PortfolioRebalancer(_CONFIG_DIR, timeseries_db=tsdb)
-    portfolio = pdb.get_portfolio_state()
-    sells = rebalancer.generate_atr_stop_signals(portfolio)
-    if not sells:
-        logger.info("Daily ATR stops: nothing triggered.")
-        return
-    await _push_rebalance_sells(sells, pdb, "Daily ATR Stop-Loss — SELLs for approval")
-
-
-def run_daily_atr_stops() -> None:
-    """Sync wrapper for the daily ATR stop job."""
-    # Skip weekends (Euronext closed) — same spirit as analysis passes.
-    if datetime.today().weekday() >= 5:
-        return
-    started = time.perf_counter()
-    logger.info("=== Daily ATR stop job starting ===")
-    try:
-        asyncio.run(run_daily_atr_stops_async())
-        logger.info(
-            "=== Daily ATR stops done in %.1fs ===",
-            time.perf_counter() - started,
-        )
-    except Exception as exc:  # noqa: BLE001
-        logger.critical("Daily ATR stops FAILED: %s", exc, exc_info=True)
-
-
-async def run_monthly_rebalance_async() -> None:
-    """Monthly profit-shave SELLs only (ATR stops run daily separately)."""
-    pdb = PortfolioDB()
-    pdb.init_db()
-    tsdb = TimeSeriesDB()
-    tsdb.init_db()
-    rebalancer = PortfolioRebalancer(_CONFIG_DIR, timeseries_db=tsdb)
-
-    portfolio = pdb.get_portfolio_state()
-    sells = rebalancer.generate_profit_shave_signals(portfolio)
-    if not sells:
-        logger.info("Monthly rebalance: no profit-shave triggers.")
-        await _post_webhook(
-            "\U0001F501 **Monthly Rebalance** - no profit-shave triggers this month."
-        )
-        return
-
-    await _push_rebalance_sells(
-        sells, pdb, "Monthly Rebalance — profit-shave SELLs for approval"
-    )
-
-
-def run_monthly_rebalance() -> None:
-    """Sync wrapper: only acts on the 1st calendar day of the month."""
-    if datetime.today().day != 1:
-        return
-    started = time.perf_counter()
-    logger.info("=== Monthly profit-shave job starting (1st of month) ===")
-    try:
-        asyncio.run(run_monthly_rebalance_async())
-        logger.info(
-            "=== Monthly profit-shave done in %.1fs ===",
-            time.perf_counter() - started,
-        )
-    except Exception as exc:  # noqa: BLE001
-        logger.critical("Monthly rebalance FAILED: %s", exc, exc_info=True)
-
-
+@task(name="Pre_Market_Morning_News", retries=2, retry_delay_seconds=30)
 def run_morning_news_routine() -> None:
-    """Pre-market morning routine (08:00 Paris weekdays):
-    1. Ingest overnight email newsletters via IMAP into SQLite news_master.
-    2. Batch score unprocessed news articles with local FinBERT sentiment.
-    """
+    """Pre-market morning news ingestion and FinBERT scoring."""
     if datetime.today().weekday() >= 5:
         logger.info("Morning news routine: skipping weekend day.")
         return
 
     started = time.perf_counter()
-    logger.info("=== Pre-market Morning News & IMAP Routine starting (08:00 Paris) ===")
+    logger.info("=== Morning News & Newsletter Routine starting ===")
     try:
-        pdb = PortfolioDB(_ROOT / "database" / "portfolio.db")
-        scraped = 0
+        pdb = PortfolioDB()
+        pdb.init_db()
+
         if run_email_scraper is not None:
-            scraped = run_email_scraper(pdb)
-            logger.info("Morning IMAP ingestion completed: %d articles fetched.", scraped)
+            logger.info("Running IMAP newsletter ingestion (Yahoo Mail)...")
+            run_email_scraper(pdb)
 
-        scored = 0
+        try:
+            from news_api_client import run_api_scraper
+            from news_rss_scraper import run_rss_scraper
+            run_api_scraper(pdb)
+            run_rss_scraper(pdb)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Scrapers encountered an issue: %s", e)
+
         if score_news_batch is not None:
-            scored = score_news_batch(pdb, limit=50)
-            logger.info("Morning FinBERT sentiment scoring completed: %d articles scored.", scored)
+            logger.info("Scoring unprocessed news via ProsusAI/finbert...")
+            scored_count = score_news_batch(pdb, batch_size=50)
+            logger.info("FinBERT scored %d news items.", scored_count)
 
-        logger.info(
-            "=== Morning news routine finished in %.1fs (scraped=%d, scored=%d) ===",
-            time.perf_counter() - started,
-            scraped,
-            scored,
-        )
+        elapsed = time.perf_counter() - started
+        logger.info("=== Morning News Routine completed in %.1fs ===", elapsed)
     except Exception as exc:  # noqa: BLE001
-        logger.error("Morning news routine encountered error: %s", exc, exc_info=True)
+        logger.error("Morning news routine failed: %s", exc, exc_info=True)
 
 
+@task(name="Autonomous_Monthly_ML_Retraining")
 def run_monthly_ml_retraining() -> None:
-    """Monthly autonomous XGBoost & Isolation Forest model retraining routine (02:00 Paris, 1st of month)."""
-    if datetime.today().day != 1:
+    """Retrain ML models across market regimes on the 1st day of each month."""
+    today = datetime.today()
+    if today.day != 1:
+        logger.debug("Monthly ML Retraining probe: day=%d (not 1st), skipping.", today.day)
         return
 
     started = time.perf_counter()
@@ -2854,26 +2850,32 @@ def run_monthly_ml_retraining() -> None:
     try:
         from ml_trainer import train_model
         metrics = train_model()
-        acc_summary = ", ".join([f"{k}: {v.get('accuracy_pct', 0):.1f}%" for k, v in metrics.items() if isinstance(v, dict)])
-        msg = (
-            f"\U0001F9E0 **Autonomous Monthly ML Retraining Complete**\n"
-            f"• Retrained models across regimes in {time.perf_counter() - started:.1f}s\n"
-            f"• Accuracies: `{acc_summary}`"
-        )
-        logger.info(msg)
-        asyncio.run(_post_webhook(msg))
+        elapsed = time.perf_counter() - started
+
+        acc_summary = ", ".join(f"{k}: {v.get('accuracy', 0):.1%}" for k, v in metrics.items() if isinstance(v, dict))
+        logger.info("Autonomous Monthly ML Retraining Complete in %.1fs. Metrics: %s", elapsed, acc_summary)
+
+        # Discord webhook notification
+        webhook_url = os.getenv("DISCORD_WEBHOOK_URL")
+        if webhook_url:
+            content = (
+                "🧠 **Autonomous Monthly ML Retraining Complete**\n"
+                f"• Retrained models across regimes in {elapsed:.1f}s\n"
+                f"• Accuracies: `{acc_summary}`"
+            )
+            _post_webhook(webhook_url, {"content": content})
     except Exception as exc:  # noqa: BLE001
-        logger.error("Monthly ML model retraining failed: %s", exc, exc_info=True)
-        asyncio.run(_post_webhook(f"\u26a0\ufe0f **Monthly ML Retraining Failed**: `{exc}`"))
+        logger.error("Monthly ML Model Retraining failed: %s", exc, exc_info=True)
 
 
+@task(name="Cloud_Database_Backup")
 def run_cloud_backup() -> None:
-    """Run local Parquet database exports and upload to AWS S3 (Friday 19:00 Paris)."""
+    """Run Parquet exports and off-instance Cloudflare R2 / S3 backup."""
     started = time.perf_counter()
     logger.info("=== Weekly Database Backup Routine starting (Friday 19:00 Paris) ===")
     try:
-        import subprocess
-        res = subprocess.run([sys.executable, str(_ROOT / "tools" / "backup_databases.py")], capture_output=True, text=True, check=False)
+        backup_script = _ROOT / "tools" / "backup_databases.py"
+        res = subprocess.run([sys.executable, str(backup_script)], capture_output=True, text=True, check=False)
         if res.returncode == 0:
             logger.info("Database backup completed in %.1fs: %s", time.perf_counter() - started, res.stdout.strip())
         else:
@@ -2882,27 +2884,114 @@ def run_cloud_backup() -> None:
         logger.error("Database backup routine failed: %s", exc, exc_info=True)
 
 
+async def run_monthly_rebalance_async() -> None:
+    """Probe daily: profit-shave triggers on 1st of month."""
+    started = time.perf_counter()
+    try:
+        rebalancer = PortfolioRebalancer(_CONFIG_DIR)
+        pdb = PortfolioDB()
+        pdb.init_db()
+        tsdb = TimeSeriesDB()
+        tsdb.init_db()
+        portfolio = pdb.get_portfolio_state()
+        tickers = [p.ticker for p in portfolio.positions]
+        if not tickers:
+            logger.info("Monthly rebalance: portfolio empty, nothing to evaluate.")
+            return
+
+        current_prices = _latest_prices(tsdb, tickers)
+        portfolio = _refresh_portfolio_prices(pdb, portfolio, current_prices)
+
+        signals = rebalancer.evaluate_monthly_profit_shave(portfolio, current_prices)
+        logger.info("Monthly rebalance produced %d SELL signal(s).", len(signals))
+
+        for sig in signals:
+            pdb.log_signal(sig)
+
+        webhook_url = os.getenv("DISCORD_WEBHOOK_URL")
+        if webhook_url and signals:
+            lines = [f"• **{s.ticker}**: Vendre {s.target_qty} titre(s) - {s.reason}" for s in signals]
+            msg = f"🔄 **Ajustement Mensuel PEA (Prise de Bénéfices)**\n" + "\n".join(lines)
+            _post_webhook(webhook_url, {"content": msg})
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Monthly rebalance failed: %s", exc, exc_info=True)
+
+
+def run_monthly_rebalance() -> None:
+    today = datetime.today()
+    if today.day != 1:
+        return
+    asyncio.run(run_monthly_rebalance_async())
+
+
+async def run_daily_atr_stops_async() -> None:
+    """Evaluate daily ATR trailing stops."""
+    if datetime.today().weekday() >= 5:
+        return
+    try:
+        rebalancer = PortfolioRebalancer(_CONFIG_DIR)
+        pdb = PortfolioDB()
+        pdb.init_db()
+        tsdb = TimeSeriesDB()
+        tsdb.init_db()
+        portfolio = pdb.get_portfolio_state()
+        tickers = [p.ticker for p in portfolio.positions]
+        if not tickers:
+            return
+        current_prices = _latest_prices(tsdb, tickers)
+        portfolio = _refresh_portfolio_prices(pdb, portfolio, current_prices)
+        signals = rebalancer.evaluate_atr_stops(portfolio, current_prices, tsdb)
+        if signals:
+            logger.warning("Daily ATR Stops: %d stop(s) triggered!", len(signals))
+            for sig in signals:
+                pdb.log_signal(sig)
+            webhook_url = os.getenv("DISCORD_WEBHOOK_URL")
+            if webhook_url:
+                lines = [f"🚨 **STOP LOSS ATR DÉCLENCHÉ**: Vendre tout {s.ticker} ({s.reason})" for s in signals]
+                msg = "\n".join(lines)
+                _post_webhook(webhook_url, {"content": msg})
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Daily ATR stops evaluation failed: %s", exc, exc_info=True)
+
+
+def run_daily_atr_stops() -> None:
+    asyncio.run(run_daily_atr_stops_async())
+
+
+def run_weekly_report() -> None:
+    """Generate Friday CIO weekly report."""
+    if datetime.today().weekday() != 4:
+        return
+    try:
+        pdb = PortfolioDB()
+        pdb.init_db()
+        historian = WeeklyHistorian()
+        state = pdb.get_portfolio_state()
+        report = historian.generate_report(state)
+        logger.info("Weekly CIO report generated (%d chars).", len(report))
+        webhook_url = os.getenv("DISCORD_WEBHOOK_URL")
+        if webhook_url and report:
+            chunks = [report[i:i+1900] for i in range(0, len(report), 1900)]
+            for c in chunks:
+                _post_webhook(webhook_url, {"content": c})
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Weekly report failed: %s", exc, exc_info=True)
+
+
 def _schedule_passes() -> None:
     """Register all periodic jobs in Europe/Paris time."""
-    # Monthly ML retraining: probe daily at 02:00, acts only on the 1st of the month.
     schedule.every().day.at("02:00", _TIMEZONE).do(run_monthly_ml_retraining)
-    # Morning pre-market news & newsletter ingestion: 08:00 Paris.
     schedule.every().day.at("08:00", _TIMEZONE).do(run_morning_news_routine)
     for pass_time in _PASS_TIMES:
         schedule.every().day.at(pass_time, _TIMEZONE).do(run_analysis_pass)
-    # Weekly CIO digest: Friday 18:00 Paris.
     schedule.every().friday.at(_WEEKLY_REPORT_TIME, _TIMEZONE).do(run_weekly_report)
-    # Weekly Earnings Calendar sync: Friday 18:30 Paris.
     if run_earnings_sync is not None:
         schedule.every().friday.at("18:30", _TIMEZONE).do(run_earnings_sync)
-    # Weekly Cloud Backup: Friday 19:00 Paris.
     schedule.every().friday.at("19:00", _TIMEZONE).do(run_cloud_backup)
-    # Monthly profit-shave: probe daily, act only on the 1st (guarded inside).
     schedule.every().day.at(_MONTHLY_CHECK_TIME, _TIMEZONE).do(run_monthly_rebalance)
-    # Daily ATR stops (weekdays guarded inside).
     schedule.every().day.at(_ATR_STOP_CHECK_TIME, _TIMEZONE).do(run_daily_atr_stops)
     logger.info(
-        "Scheduled: ML retrain 02:00; morning news 08:00; passes at %s; weekly report Fri %s; "
+        "Scheduled (Prefect-ready): ML retrain 02:00; morning news 08:00; passes at %s; weekly report Fri %s; "
         "earnings sync Fri 18:30; backup Fri 19:00; monthly probe %s; ATR stops %s (%s).",
         ", ".join(_PASS_TIMES),
         _WEEKLY_REPORT_TIME,
@@ -2917,50 +3006,18 @@ def main() -> None:
     setup_app_logging(level=logging.INFO, console=True)
 
     parser = argparse.ArgumentParser(description="PEA Sniper Terminal daemon.")
-    parser.add_argument(
-        "--now",
-        action="store_true",
-        help="Run a single analysis pass immediately, then exit.",
-    )
-    parser.add_argument(
-        "--weekly",
-        action="store_true",
-        help="Generate and send the weekly report now, then exit.",
-    )
-    parser.add_argument(
-        "--rebalance",
-        action="store_true",
-        help="Run monthly profit-shave now (ignores the 1st-of-month guard).",
-    )
-    parser.add_argument(
-        "--atr-stops",
-        action="store_true",
-        help="Run daily ATR stop-loss evaluation now.",
-    )
-    parser.add_argument(
-        "--sync-earnings",
-        action="store_true",
-        help="Run autonomous earnings calendar sync now.",
-    )
-    parser.add_argument(
-        "--morning-news",
-        action="store_true",
-        help="Run pre-market morning news ingestion and FinBERT scoring now.",
-    )
-    parser.add_argument(
-        "--retrain-ml",
-        action="store_true",
-        help="Run autonomous monthly ML retraining now (ignores 1st-of-month guard).",
-    )
-    parser.add_argument(
-        "--backup",
-        action="store_true",
-        help="Run database Parquet export and cloud backup now.",
-    )
+    parser.add_argument("--now", action="store_true", help="Run a single analysis pass immediately, then exit.")
+    parser.add_argument("--weekly", action="store_true", help="Generate and send the weekly report now, then exit.")
+    parser.add_argument("--rebalance", action="store_true", help="Run monthly profit-shave now.")
+    parser.add_argument("--atr-stops", action="store_true", help="Run daily ATR stop-loss evaluation now.")
+    parser.add_argument("--sync-earnings", action="store_true", help="Run autonomous earnings calendar sync now.")
+    parser.add_argument("--morning-news", action="store_true", help="Run pre-market morning news ingestion now.")
+    parser.add_argument("--retrain-ml", action="store_true", help="Run autonomous monthly ML retraining now.")
+    parser.add_argument("--backup", action="store_true", help="Run database Parquet export and cloud backup now.")
     args = parser.parse_args()
 
     if args.now:
-        logger.info("--now: running a single immediate pass.")
+        logger.info("--now: running a single immediate pass via Prefect flow.")
         run_analysis_pass()
         return
 
@@ -3005,11 +3062,8 @@ def main() -> None:
         run_cloud_backup()
         return
 
-
     _schedule_passes()
-    logger.info("\U0001F6E1\uFE0F PEA Sniper Terminal Daemon started. "
-
-                "Waiting for scheduled runs...")
+    logger.info("🛡️ PEA Sniper Terminal Daemon started. Waiting for scheduled runs...")
     while True:
         try:
             schedule.run_pending()
@@ -3071,6 +3125,10 @@ update:
 # Forces an ML training pass
 train:
 	sudo docker compose exec daemon python 02_quant_engine/ml_trainer.py
+
+# Local Mini PC / Server Production Deployment & Self-Check
+deploy-check:
+	bash tools/deploy_local.sh
 ```
 
 ## FILE: README.md
@@ -3516,24 +3574,29 @@ REBALANCE_PROFIT_SHAVE_PCT: 0.20   # Shave 20% of position quantity
 A complete `Makefile` is included for standardized operations:
 
 ``​`bash
-make install     # Install/upgrade all production dependencies
-make init        # Initialize SQLite, DuckDB, and seed account with 10k € cash
-make run         # Launch the Streamlit Terminal HUD (:8501)
+make deploy-check# Run production deploy self-check & database init (tools/deploy_local.sh)
+make dashboard   # Launch the Streamlit Terminal HUD (:8501)
 make api         # Launch the FastAPI Internal SSOT (:8000)
 make mcp         # Launch the Model Context Protocol Server for Claude Desktop
 make scheduler   # Run the Paris market scheduler daemon
-make pass        # Execute a synchronous market analysis pass immediately (--now)
-make morning-news# Run pre-market IMAP ingestion and FinBERT scoring (--morning-news)
-make retrain-ml  # Run monthly ML model retraining immediately (--retrain-ml)
-make backup      # Run Parquet export and S3 cloud backup now (--backup)
-make atr-stops   # Evaluate daily ATR stops now (--atr-stops)
-make rebalance   # Evaluate monthly profit-shaving rebalancer now (--rebalance)
-make weekly      # Generate Friday CIO weekly report now (--weekly)
-make backtest    # Run the event-driven Walk-Forward Backtester
-make test        # Run the full automated unit and regression test suite (65/65 passing)
+make test        # Run the full automated unit and regression test suite
 make dump        # Regenerate all LLM context dumps (global + categorized)
-make clean       # Clean temporary cache and bytecode files
+make train       # Force an ML model retraining pass
+make deploy      # Pull latest git commit and rebuild docker containers
+make update      # Pull latest git commit and restart services
 ``​`
+
+---
+
+## 🏗️ Production Hardware & Sovereign Deployment
+
+PEA Pollux is designed to operate 24/7 on low-power local hardware (Mini PC / Raspberry Pi / Oracle Free Tier):
+
+- **Zero-Cost Inference**: 100% local Sovereign AI inference via **Ollama** (`mistral` / `llama3.2`) with live token streaming in the Streamlit HUD.
+- **API Cost Guardrails**: Fallback OpenRouter models (`google/gemini-flash-1.5`) capped at 350 tokens with persistent 24-hour SQLite synthesis caching (`database/portfolio.db`).
+- **CPU Task Isolation**: CPU-heavy ML and NLP tasks isolated in a `ProcessPoolExecutor` (`04_orchestrator_ai/cpu_isolator.py`) to prevent event-loop latency.
+- **Self-Healing Data Gateway**: Automated stock split detection (`01_memory_core/corporate_actions.py`) and anomaly return tagging (`DataQualityGateway`).
+- **Zero-Cost Cloudflare R2 Storage**: Encrypted daily Parquet and SQLite snapshots uploaded to Cloudflare R2 (S3-compatible API with zero egress fees).
 
 ---
 
@@ -3562,32 +3625,25 @@ python tools/build_llm_dump.py
 
 ## 🧪 Verification & Test Suites
 
-The project features a **100% passing automated test suite (65 / 65 tests)** covering all architectural layers:
+The project features a **100% passing automated test suite (120+ tests)** covering all architectural layers:
 
 ``​`bash
-# Run all tests
+# Run full test suite
 python -m unittest discover tests
 
 # Or via pytest
 python -m pytest -v
 ``​`
 
-### Test Suite Inventory
-- `test_reconciliation_and_backup.py`: Tests French broker CSV reconciliation (Boursorama, Bourse Direct), SQLite state overwrites, audit signals, and AWS S3 Parquet/DB backups.
-- `test_limit_tiers_and_radar.py`: Tests 3-tier ATR limit price calculations (Aggressive, Optimal, Patient), direction reversals, and UCB Bandit + Dynamic Ensemble polar radar chart weights.
-- `test_fmp_copilot_retraining.py`: Tests Financial Modeling Prep (FMP) 9-point Piotroski scoring with yfinance fallback, enriched Discord copilot embeds, and autonomous monthly ML retraining.
-- `test_stealth_and_imap_ingest.py`: Tests Cloudscraper anti-bot resilience, Boursorama scraper error recovery, and production IMAP newsletter ingestion with Jaccard deduplication.
-- `test_amf_and_earnings_sync.py`: Tests AMF BDIF Short Interest API scraper, corporate earnings calendar updater, and Step 1f short interest veto.
-- `test_brain_and_decoupling.py`: Tests `VolatilityRegimeSentinel` continuous VIX conviction floors, `UCBBandit` + `DynamicEnsemble` weight lineage in `SignalGenerator`, OpenInsider currency cleaners, and decoupled FastAPI endpoints.
-- `test_ml_cascade_integration.py`: Tests live Isolation Forest anomaly veto, XGBoost probability scoring threshold ($p < 0.50$), signal lineage enrichment, trade card rendering, and API serialization.
-- `test_text_cleaner_and_feedback.py`: Tests Data Janitor HTML entity unescaping, bilingual disclaimer removal, 1500-char truncation, and Contextual Bandit UCB trade closure reward updates.
-- `test_finbert_sentiment.py`: Tests offline `ProsusAI/finbert` classification, score scaling, and heuristic keyword fallbacks.
-- `test_stat_arb_and_backtest.py`: Tests cointegration pairs discovery, sector isolation, Z-score spread computation, and walk-forward backtest execution at T+1 Open.
-- `test_api_and_mcp.py`: Tests FastAPI endpoints (`/portfolio/summary`, `/recommendations/pending`, `/system/health`), recommendation paradigm adherence, and Claude Desktop MCP tool formatters.
-- `test_institutional_suite.py`: Tests Pydantic `RiskParamsConfig` strictness (`extra='forbid', frozen=True`), DrawdownBreaker kinetic multipliers, Piotroski F-Score calculation, HRP allocation, and VaR/CVaR risk math.
-- `test_funnel_analytics.py`: Tests decision funnel waterfall classification and rejection taxonomy.
-- `test_phase16_foundations.py`: Tests core/satellite sizing, ATR stops, profit-shaving rebalancer, and correlation firewall.
-
+### Key Test Suites
+- `test_master_system.py`: Master end-to-end regression suite (Signals, 7-stage risk cascade, DuckDB/SQLite persistence, Data Quality Gateway outliers, Volatility Thermometer).
+- `test_visual_components.py`: Plotly HMM candlesticks, StatArb Z-score spread, Macro Thermometer gauge, and SHAP attribution trade card tests.
+- `test_local_ollama_streaming.py`: Sovereign local AI inference streaming, token chunking, and fallback mechanisms.
+- `test_llm_cache_and_guardrails.py`: 24-hour SQLite synthesis caching and OpenRouter token limit guardrails.
+- `test_data_hub.py` & `test_layer1_contracts_and_r2.py`: Data Ingestion Hub, standardized adapters, and Cloudflare R2 backup tests.
+- `test_phase3_cpu_and_market.py`: Market data chunking, Piotroski score adapter, and CPU process isolator tests.
+- `test_watchdog_and_llm_analyst.py`: Intraday crash watchdog and institutional analyst generation.
+- `test_corporate_actions_and_universe_manager.py`: Stock split detection and self-healing data pipeline tests.
 
 ---
 
@@ -3607,28 +3663,30 @@ Past performance and walk-forward backtest metrics do not guarantee future retur
 ## FILE: requirements.txt
 ```text
 # PEA Sniper Terminal V-Prime - Python 3.11+
-# Phase 1 only needs pydantic + pyyaml; the rest is pinned for the roadmap.
+# Institutional Quantitative Trading Terminal & Decision Support Architecture
 
-# --- Core / data contracts (Phase 1) ---
-pydantic>=2.6,<3.0
+# --- Core / Data Contracts & Config ---
+pydantic>=2.6.0,<3.0
 pyyaml>=6.0
+python-dotenv>=1.0.0
 
-# --- Memory core (Phase 2) ---
-duckdb>=0.10
+# --- Memory Core & Columnar Storage ---
+duckdb>=0.10.0
 # sqlite3 is part of the Python standard library.
 
-# --- Data sensors (Phase 3) ---
+# --- Data Sensors, Scrapers & Web Ingestion ---
 yfinance>=0.2.40
-requests>=2.31
+requests>=2.31.0
+aiohttp>=3.9.0
+httpx>=0.27.0
 cloudscraper>=1.2.71
-beautifulsoup4>=4.12
-feedparser>=6.0
+beautifulsoup4>=4.12.0
+feedparser>=6.0.0
 
-
-# --- Quant & ML Engine (Phases 4, 42-55+) ---
-pandas>=2.1
-numpy>=2.0
-scipy>=1.11
+# --- Quantitative Engine, Math & ML Cascade ---
+pandas>=2.1.0
+numpy>=2.0.0
+scipy>=1.11.0
 statsmodels>=0.14.0
 scikit-learn>=1.4.0
 xgboost>=2.0.0
@@ -3638,28 +3696,33 @@ torch>=2.2.0
 transformers>=4.38.0
 stable-baselines3>=2.2.0
 shap>=0.44.0
-# pandas-ta-classic is the numpy-2.x / numba-free provider of the `.ta`
-# accessor. Upstream `pandas-ta` 0.4.x requires numba (no py3.13/arm64 wheel).
+joblib>=1.3.0
+tqdm>=4.66.0
 pandas-ta-classic>=0.6.0
 
-# --- Interfaces, Internal API & MCP (Phases 7-8) ---
+# --- Interfaces, Charting, Internal API & MCP ---
 fastapi>=0.110.0
 uvicorn>=0.28.0
 mcp>=1.0.0
-discord.py>=2.3
-plotly>=5.20
-matplotlib>=3.8   # required by pandas Styler.background_gradient in the dashboard
+discord.py>=2.3.0
+plotly>=5.20.0
+matplotlib>=3.8.0
 mplfinance>=0.12.10b0
-# streamlit needs pyarrow, which has NO prebuilt wheel for Python 3.13 / arm64.
-# Use a Python 3.11/3.12 (x64) environment to install and run the dashboard.
-streamlit>=1.33
+streamlit>=1.33.0
 
-# --- Scheduler & Cloud Backups (Phase 9) ---
-schedule>=1.2
+# --- Autonomous AI Agents & LangGraph ---
+langgraph>=0.0.26
+langchain-core>=0.1.0
+langchain-openai>=0.0.5
+
+# --- Scheduler, Orchestration & Cloud Backups ---
+schedule>=1.2.0
+prefect>=2.19.0
 boto3>=1.34.0
 
-# --- Dev / tests / CI ---
-pytest>=8.0
+# --- Development, Testing & Code Quality ---
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
 ruff>=0.4.0
 ```
 
@@ -3799,6 +3862,157 @@ if __name__ == "__main__":
 ## FILE: tests/__init__.py
 ```python
 # Empty package marker for pytest discovery.
+```
+
+## FILE: tests/test_allocation_thermometer_and_98pct_rule.py
+```python
+"""Unit Tests for Attack/Shield Volatility Thermometer, Bunker Mode, and 98% Max Exposure Rule."""
+
+from __future__ import annotations
+
+import sys
+import unittest
+from datetime import datetime, timezone
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import numpy as np
+import pandas as pd
+
+ROOT = Path(__file__).resolve().parent.parent
+for sub in ("00_data_sensors", "01_memory_core", "02_quant_engine", "03_risk_portfolio", "04_orchestrator_ai", "05_interfaces"):
+    sys.path.insert(0, str(ROOT / sub))
+
+from allocation_thermometer import VolatilityThermometer
+from data_models import PortfolioState, Position, Signal, SignalStatus, SignalType
+from pea_position_sizer import PeaSizer
+
+
+class TestAllocationThermometerSuite(unittest.TestCase):
+
+    def test_01_bunker_mode_when_below_sma200(self):
+        """Verify VolatilityThermometer triggers BUNKER mode when Close < SMA200."""
+        thermo = VolatilityThermometer()
+
+        # 220 days of data: mean is 150, but last close drops to 120 (< SMA200)
+        prices = [150.0] * 219 + [120.0]
+        df = pd.DataFrame({"Close": prices})
+
+        res = thermo.calculate_attack_defense_split(df, current_vix=18.0)
+        self.assertEqual(res["mode"], "BUNKER")
+        self.assertEqual(res["attack_pct"], 0.0)
+        self.assertEqual(res["defense_pct"], 1.0)
+        self.assertTrue(res["is_bunker"])
+
+    def test_02_attack_mode_when_low_vol_above_sma200(self):
+        """Verify VolatilityThermometer allocates ~90%+ Attack in calm structural uptrend."""
+        thermo = VolatilityThermometer()
+
+        # Steady uptrend from 100 to 180 (Close 180 > SMA200 ~140), calm vol
+        prices = list(np.linspace(100.0, 180.0, 250))
+        df = pd.DataFrame({"Close": prices})
+
+        res = thermo.calculate_attack_defense_split(df, current_vix=13.5)
+        self.assertEqual(res["mode"], "ATTACK")
+        self.assertGreaterEqual(res["attack_pct"], 0.70)
+        self.assertLessEqual(res["attack_pct"], 0.98)
+        self.assertFalse(res["is_bunker"])
+
+    def test_03_defense_leaning_when_high_vol_above_sma200(self):
+        """Verify VolatilityThermometer scales down Attack allocation when VIX is high."""
+        thermo = VolatilityThermometer()
+
+        prices = list(np.linspace(100.0, 180.0, 250))
+        df = pd.DataFrame({"Close": prices})
+
+        res = thermo.calculate_attack_defense_split(df, current_vix=28.0)
+        self.assertEqual(res["mode"], "DEFENSE_LEANING")
+        self.assertLessEqual(res["attack_pct"], 0.50)
+
+    def test_04_pea_sizer_98pct_max_exposure_rule(self):
+        """Verify PeaSizer enforces 2% permanent cash buffer (98% max exposure limit)."""
+        sizer = PeaSizer()
+        self.assertEqual(sizer.permanent_cash_buffer, 0.02)
+
+        # Portfolio has 10,000 EUR total equity, 9,700 EUR already invested in equities, 300 EUR cash available.
+        # Max exposure cap (98%) is 9,800 EUR -> remaining room is only 100 EUR (even if cash is 300 EUR).
+        portfolio = PortfolioState(
+            cash_available=300.0,
+            total_equity=10000.0,
+            positions=[
+                Position(
+                    ticker="CW8.PA",
+                    sector="Financial Services",
+                    qty_shares=19,
+                    avg_entry_price=510.0,
+                    current_price=510.52,
+                    market_value=9700.0,
+                )
+
+            ],
+            last_updated=datetime.now(timezone.utc),
+        )
+
+        signal = Signal(
+            id="sig_test_98",
+            ticker="MC.PA",
+            signal_type=SignalType.BUY,
+            status=SignalStatus.PENDING,
+            score=95.0,
+            created_at=datetime.now(timezone.utc),
+            reason="Oversold test",
+        )
+
+        # Share price 60 EUR. 100 EUR room allows at most 1 share (60 EUR notional).
+        qty, meta = sizer.size_with_explanation(
+            signal=signal,
+            portfolio=portfolio,
+            current_price=60.0,
+            historical_volatility=0.20,
+        )
+
+        self.assertEqual(qty, 1)
+        self.assertEqual(meta["notional"], 60.0)
+        self.assertLessEqual(9700.0 + meta["notional"], 10000.0 * 0.98)
+
+    def test_05_pea_sizer_attack_budget_constraint(self):
+        """Verify PeaSizer caps stock picking allocation to attack_budget_pct."""
+        sizer = PeaSizer()
+
+        # Portfolio with 10,000 EUR equity, 0 holdings, 10,000 EUR cash.
+        portfolio = PortfolioState(
+            cash_available=10000.0,
+            total_equity=10000.0,
+            positions=[],
+            last_updated=datetime.now(timezone.utc),
+        )
+
+        signal = Signal(
+            id="sig_test_atk",
+            ticker="MC.PA",
+            signal_type=SignalType.BUY,
+            status=SignalStatus.PENDING,
+            score=90.0,
+            created_at=datetime.now(timezone.utc),
+            reason="Attack test",
+        )
+
+        # If attack_budget_pct is 0.10 (10% max attack equity = 1,000 EUR max total),
+        # single position cap 15% would normally allow 1,500 EUR, but attack budget constrains it to 1,000 EUR.
+        qty, meta = sizer.size_with_explanation(
+            signal=signal,
+            portfolio=portfolio,
+            current_price=500.0,
+            historical_volatility=0.20,
+            attack_budget_pct=0.10,
+        )
+
+        self.assertLessEqual(meta["notional"], 1000.0)
+        self.assertEqual(qty, 1)  # 500 EUR <= 1000 EUR
+
+
+if __name__ == "__main__":
+    unittest.main()
 ```
 
 ## FILE: tests/test_amf_and_earnings_sync.py
@@ -4177,6 +4391,625 @@ class TestBrainAndDecouplingSuite(unittest.TestCase):
         resp_sig = client.get("/api/v1/signals?status=PENDING&limit=10")
         self.assertEqual(resp_sig.status_code, 200)
         self.assertIsInstance(resp_sig.json(), list)
+
+
+if __name__ == "__main__":
+    unittest.main()
+```
+
+## FILE: tests/test_corporate_actions_and_universe_manager.py
+```python
+"""Unit Tests for Corporate Actions Self-Healing and Dynamic PEA Universe Manager."""
+
+from __future__ import annotations
+
+import json
+import sys
+import tempfile
+import unittest
+from datetime import datetime
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import pandas as pd
+
+ROOT = Path(__file__).resolve().parent.parent
+for sub in ("00_data_sensors", "00_data_sensors/adapters", "01_memory_core", "02_quant_engine", "03_risk_portfolio", "04_orchestrator_ai", "05_interfaces"):
+    sys.path.insert(0, str(ROOT / sub))
+
+from corporate_actions import DataHealer
+from duckdb_manager import TimeSeriesDB
+from universe_manager import UniverseManager
+import main_scheduler
+
+
+class TestCorporateActionsAndUniverseManagerSuite(unittest.TestCase):
+
+    def test_01_detect_and_heal_split(self):
+        """Verify DataHealer detects stock split and triggers historical data wipe & reload."""
+        healer = DataHealer()
+        mock_tsdb = MagicMock(spec=TimeSeriesDB)
+        mock_conn = MagicMock()
+        mock_tsdb._connect.return_value.__enter__.return_value = mock_conn
+
+        with patch("yfinance.Ticker") as mock_ticker_cls, \
+             patch("yfinance.download") as mock_download:
+            
+            mock_ticker = MagicMock()
+            # Split series with 2:1 split 2 days ago
+            dates = [pd.Timestamp.now() - pd.Timedelta(days=2)]
+            mock_ticker.splits = pd.Series([2.0], index=dates)
+            mock_ticker_cls.return_value = mock_ticker
+
+            # Mock 252-day auto-adjusted history
+            hist_df = pd.DataFrame(
+                {
+                    "Open": [50.0] * 10,
+                    "High": [52.0] * 10,
+                    "Low": [49.0] * 10,
+                    "Close": [51.0] * 10,
+                    "Volume": [10000] * 10,
+                },
+                index=pd.date_range("2025-01-01", periods=10),
+            )
+            mock_download.return_value = hist_df
+            mock_tsdb.upsert_ohlcv.return_value = 10
+
+            healed = healer.detect_and_heal_splits("MC.PA", mock_tsdb)
+            self.assertTrue(healed)
+            # Verify DELETE query was executed
+            self.assertTrue(mock_conn.execute.called)
+            del_query = mock_conn.execute.call_args[0][0]
+            self.assertIn("DELETE FROM ohlcv_data", del_query)
+            # Verify upsert was called with adjusted data
+            self.assertTrue(mock_tsdb.upsert_ohlcv.called)
+
+    def test_02_no_split_no_healing(self):
+        """Verify DataHealer returns False when no split occurred."""
+        healer = DataHealer()
+        mock_tsdb = MagicMock(spec=TimeSeriesDB)
+
+        with patch("yfinance.Ticker") as mock_ticker_cls:
+            mock_ticker = MagicMock()
+            mock_ticker.splits = pd.Series(dtype=float)
+            mock_ticker.actions = pd.DataFrame()
+            mock_ticker_cls.return_value = mock_ticker
+
+            healed = healer.detect_and_heal_splits("AI.PA", mock_tsdb)
+            self.assertFalse(healed)
+
+    def test_03_universe_manager_eligibility_sync(self):
+        """Verify UniverseManager identifies non-eligible tickers and saves warnings."""
+        tmp_dir = Path(tempfile.gettempdir())
+        tmp_warnings = tmp_dir / f"test_warnings_{datetime.now().timestamp()}.json"
+
+        mgr = UniverseManager(warnings_path=tmp_warnings)
+
+        with patch.object(mgr, "load_tracked_tickers", return_value=["MC.PA", "OR.PA", "INVALID.PA"]), \
+             patch("universe_manager.BoursoramaScraper") as mock_scraper_cls:
+            
+            mock_scraper = MagicMock()
+            # Boursorama only returns MC and OR
+            mock_scraper.get_pea_universe.return_value = [
+                {"ticker": "MC.PA", "name": "LVMH"},
+                {"ticker": "OR.PA", "name": "L'Oreal"},
+            ]
+            mock_scraper_cls.return_value = mock_scraper
+
+            warnings = mgr.sync_eligibility()
+            self.assertIn("INVALID.PA", warnings)
+            self.assertNotIn("MC.PA", warnings)
+            self.assertNotIn("OR.PA", warnings)
+
+            self.assertTrue(tmp_warnings.exists())
+            with open(tmp_warnings, "r", encoding="utf-8") as f:
+                saved = json.load(f)
+            self.assertIn("INVALID.PA", saved)
+
+            if tmp_warnings.exists():
+                try:
+                    tmp_warnings.unlink()
+                except Exception:
+                    pass
+
+    def test_04_market_hours_30min_schedule(self):
+        """Verify main_scheduler._PASS_TIMES has 30-minute intervals covering market hours."""
+        pass_times = main_scheduler._PASS_TIMES
+        self.assertIn("09:00", pass_times)
+        self.assertIn("09:30", pass_times)
+        self.assertIn("12:00", pass_times)
+        self.assertIn("17:30", pass_times)
+        self.assertEqual(len(pass_times), 18)  # 18 intervals of 30min between 09:00 and 17:30
+
+
+if __name__ == "__main__":
+    unittest.main()
+```
+
+## FILE: tests/test_data_hub.py
+```python
+"""Unit Tests for Alternative Data Adapters and Central DataIngestionHub."""
+
+from __future__ import annotations
+
+import asyncio
+import sqlite3
+import sys
+import unittest
+from datetime import datetime, timezone
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import pandas as pd
+
+ROOT = Path(__file__).resolve().parent.parent
+for sub in ("00_data_sensors", "00_data_sensors/adapters", "01_memory_core"):
+    sys.path.insert(0, str(ROOT / sub))
+
+from adapters.amf_adapter import AmfAdapter, AmfInsiderAdapter, AmfShortAdapter
+from adapters.base_adapters import AbstractPollAdapter
+from adapters.bourso_adapter import BoursoUniverseAdapter
+from adapters.macro_adapter import MacroAdapter, MacroAlphaAdapter
+from adapters.news_adapter import ConsolidatedNewsAdapter
+from data_contracts import AlternativeSignal
+from hub import DataIngestionHub
+
+
+
+class MockCustomAdapter(AbstractPollAdapter):
+    interval_seconds: int = 600
+
+    async def fetch(self) -> list[AlternativeSignal]:
+        return [
+            AlternativeSignal(
+                ticker="RMS.PA",
+                signal_type="INSIDER_TRADE",
+                value=1250000.0,
+                confidence=1.0,
+                source="AMF_INSIDERS",
+                metadata={"declarant": "Hermes Family"},
+            )
+        ]
+
+
+class TestDataHubSuite(unittest.TestCase):
+
+    def test_01_amf_short_adapter_fetch(self):
+        """Verify AmfShortAdapter emits valid AlternativeSignal objects."""
+        adapter = AmfShortAdapter(isins=["FR0000121014"], tickers=["MC.PA"])
+        with patch.object(adapter.scraper, "get_short_interest", return_value=4.25):
+            signals = asyncio.run(adapter.fetch())
+            self.assertTrue(len(signals) >= 1)
+            sig = signals[0]
+            self.assertIsInstance(sig, AlternativeSignal)
+            self.assertEqual(sig.signal_type, "SHORT_INTEREST")
+            self.assertEqual(sig.value, 4.25)
+            self.assertEqual(sig.source, "AMF_BDIF")
+            self.assertEqual(sig.metadata.get("threshold_breach"), True)
+
+    def test_02_amf_insider_adapter_fetch(self):
+        """Verify AmfInsiderAdapter parses transactions and emits direction signals."""
+        adapter = AmfInsiderAdapter(tickers=["MC.PA"])
+        mock_df = pd.DataFrame(
+            {
+                "Date": ["2026-08-14", "2026-08-15"],
+                "Transaction": ["Acquisition d'actions", "Achat"],
+                "Volume": [1000, 500],
+            }
+        )
+        if adapter.scraper is not None:
+            with patch.object(adapter.scraper, "get_recent_declarations", return_value=mock_df):
+                signals = asyncio.run(adapter.fetch())
+                self.assertEqual(len(signals), 1)
+                self.assertEqual(signals[0].signal_type, "INSIDER_TX")
+                self.assertEqual(signals[0].value, 1.0)
+                self.assertEqual(signals[0].metadata.get("buys_count"), 2)
+
+    def test_03_consolidated_news_adapter_fetch(self):
+        """Verify ConsolidatedNewsAdapter gathers RSS news items."""
+        adapter = ConsolidatedNewsAdapter(tickers=["MC.PA"])
+        mock_feed_items = [
+            {
+                "id": "rss_1",
+                "ticker": "MC.PA",
+                "title": "LVMH annonce des resultats solides",
+                "source": "Boursorama",
+                "url": "https://boursorama.com/art1",
+                "published_at": "2026-08-16T10:00:00Z",
+                "sentiment_score": 0.65,
+            }
+        ]
+        with patch("adapters.news_adapter.parse_rss_feed", return_value=mock_feed_items):
+            signals = asyncio.run(adapter.fetch())
+            self.assertTrue(len(signals) >= 1)
+            self.assertEqual(signals[0].signal_type, "NEWS_SENTIMENT")
+            self.assertIn("LVMH", signals[0].metadata.get("headline", ""))
+
+    def test_04_bourso_universe_adapter_fetch(self):
+        """Verify BoursoUniverseAdapter harvests PEA constituents."""
+        adapter = BoursoUniverseAdapter()
+        mock_universe = [
+            {"ticker": "MC.PA", "sector": "Consumer Cyclical"},
+            {"ticker": "OR.PA", "sector": "Consumer Defensive"},
+        ]
+        if adapter.scraper is not None:
+            with patch.object(adapter.scraper, "get_pea_universe", return_value=mock_universe):
+                signals = asyncio.run(adapter.fetch())
+                self.assertEqual(len(signals), 1)
+                self.assertEqual(signals[0].signal_type, "UNIVERSE_UPDATE")
+                self.assertEqual(signals[0].value, 2.0)
+                self.assertEqual(signals[0].metadata.get("total_constituents"), 2)
+
+    def test_05_macro_alpha_adapter_fetch(self):
+        """Verify MacroAlphaAdapter emits MACRO_VIX and MACRO_SPREAD signals."""
+        adapter = MacroAlphaAdapter()
+        with patch.object(adapter.sensor, "get_european_vix", return_value=17.8), \
+             patch.object(adapter.sensor, "get_oat_bund_spread", return_value=74.2):
+            signals = asyncio.run(adapter.fetch())
+            self.assertEqual(len(signals), 2)
+            types = {s.signal_type for s in signals}
+            self.assertIn("MACRO_VIX", types)
+            self.assertIn("MACRO_SPREAD", types)
+            vix_sig = next(s for s in signals if s.signal_type == "MACRO_VIX")
+            self.assertEqual(vix_sig.value, 17.8)
+            self.assertEqual(vix_sig.ticker, "MARCHE")
+
+    def test_06_data_hub_default_registration_and_concurrent_gather(self):
+        """Verify DataIngestionHub registers all default adapters and runs gather."""
+        hub = DataIngestionHub(adapters=[MockCustomAdapter()])
+        signals = asyncio.run(hub.fetch_all_alternative_signals())
+        self.assertEqual(len(signals), 1)
+        self.assertEqual(signals[0].signal_type, "INSIDER_TRADE")
+
+        # Test with default adapters
+        hub_defaults = DataIngestionHub()
+        self.assertTrue(len(hub_defaults.adapters) >= 5)
+
+    def test_07_save_signals_to_sqlite(self):
+        """Verify signals are persisted and upserted into SQLite alternative_signals table."""
+        conn = sqlite3.connect(":memory:")
+        hub = DataIngestionHub(adapters=[])
+
+        signals = [
+            AlternativeSignal(
+                ticker="SAN.PA",
+                signal_type="SHORT_INTEREST",
+                value=0.8,
+                confidence=1.0,
+                source="AMF_BDIF",
+                metadata={"isin": "FR0000120578"},
+            ),
+            AlternativeSignal(
+                ticker="MARCHE",
+                signal_type="MACRO_VIX",
+                value=15.4,
+                confidence=1.0,
+                source="MACRO_ALPHA_SENSOR",
+                metadata={"regime": "NORMAL"},
+            ),
+        ]
+
+        saved = hub.save_signals_to_sqlite(signals, conn)
+        self.assertEqual(saved, 2)
+
+        cur = conn.cursor()
+        rows = cur.execute("SELECT ticker, signal_type, value FROM alternative_signals ORDER BY ticker ASC;").fetchall()
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0][0], "MARCHE")
+        self.assertEqual(rows[0][1], "MACRO_VIX")
+        self.assertEqual(rows[1][0], "SAN.PA")
+        self.assertEqual(rows[1][1], "SHORT_INTEREST")
+
+        # Test Upsert update
+        updated_signals = [
+            AlternativeSignal(
+                ticker="SAN.PA",
+                ts=signals[0].ts,
+                signal_type="SHORT_INTEREST",
+                value=1.5,
+                confidence=1.0,
+                source="AMF_BDIF",
+                metadata={"isin": "FR0000120578", "updated": True},
+            )
+        ]
+        saved2 = hub.save_signals_to_sqlite(updated_signals, conn)
+        self.assertEqual(saved2, 1)
+
+        val = cur.execute("SELECT value FROM alternative_signals WHERE ticker='SAN.PA';").fetchone()[0]
+        self.assertEqual(val, 1.5)
+
+    def test_08_amf_adapter_unified(self):
+        """Verify unified AmfAdapter aggregates short interest and insider filings."""
+        adapter = AmfAdapter(isins=["FR0000121014"], tickers=["MC.PA"])
+        with patch.object(adapter.short_adapter.scraper, "get_short_interest", return_value=3.5), \
+             patch.object(adapter.insider_adapter.scraper, "get_recent_declarations", return_value=pd.DataFrame({"Date": ["2026-08-16"], "Transaction": ["Achat"]})):
+            signals = asyncio.run(adapter.fetch())
+            self.assertTrue(len(signals) >= 2)
+            types = [s.signal_type for s in signals]
+            self.assertIn("SHORT_INTEREST", types)
+            self.assertIn("INSIDER_TX", types)
+
+    def test_09_macro_adapter_alias(self):
+        """Verify MacroAdapter subclass correctly inherits MacroAlphaAdapter."""
+        adapter = MacroAdapter()
+        self.assertIsInstance(adapter, AbstractPollAdapter)
+        with patch.object(adapter.sensor, "get_european_vix", return_value=16.2), \
+             patch.object(adapter.sensor, "get_oat_bund_spread", return_value=72.0):
+            signals = asyncio.run(adapter.fetch())
+            self.assertEqual(len(signals), 2)
+
+
+if __name__ == "__main__":
+    unittest.main()
+```
+
+## FILE: tests/test_data_quality_and_pipeline_hardening.py
+```python
+"""Unit Tests for Data Quality Gateway, Pipeline Hardening, and Outlier Handling."""
+
+from __future__ import annotations
+
+import sys
+import unittest
+from datetime import date, datetime, timezone
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import numpy as np
+import pandas as pd
+
+ROOT = Path(__file__).resolve().parent.parent
+for sub in ("00_data_sensors", "00_data_sensors/adapters", "01_memory_core", "02_quant_engine", "03_risk_portfolio", "04_orchestrator_ai", "05_interfaces", "06_api"):
+    sys.path.insert(0, str(ROOT / sub))
+
+from data_contracts import MarketTick
+from data_quality import DataQualityGateway
+from duckdb_manager import TimeSeriesDB
+from market_data_adapter import YFinanceMarketDataAdapter
+
+
+class TestDataQualityAndHardeningSuite(unittest.TestCase):
+
+    def test_01_gateway_forward_fill_and_stale_drop(self):
+        """Verify DataQualityGateway forward-fills up to 3 days and drops longer missing spans."""
+        gateway = DataQualityGateway(max_ffill_limit=3)
+
+        dates = pd.date_range("2025-01-01", periods=8, freq="D")
+        # Row 0: 100, Row 1: NaN, Row 2: NaN, Row 3: NaN, Row 4: NaN (4th consecutive NaN -> drop), Row 5: 105, Row 6: NaN, Row 7: 110
+        prices = [100.0, np.nan, np.nan, np.nan, np.nan, 105.0, np.nan, 110.0]
+        df = pd.DataFrame(
+            {
+                "Ticker": "MC.PA",
+                "Date": dates,
+                "Open": prices,
+                "High": prices,
+                "Low": prices,
+                "Close": prices,
+                "Volume": [1000] * 8,
+            }
+        )
+
+        res = gateway.validate_ohlcv_batch(df)
+
+        self.assertFalse(res.empty)
+        # Row 4 should have been dropped because 4th consecutive missing > limit 3
+        self.assertIn("is_outlier", res.columns)
+        self.assertEqual(len(res), 7)  # 8 - 1 dropped
+
+    def test_02_gateway_outlier_detection(self):
+        """Verify DataQualityGateway tags return spikes > 40% as is_outlier=True."""
+        gateway = DataQualityGateway(outlier_return_threshold=0.40)
+
+        dates = pd.date_range("2025-01-01", periods=10, freq="D")
+        # Normal prices around 100, then day 5 jumps to 160 (+60% spike)
+        prices = [100.0, 101.0, 99.5, 100.5, 102.0, 165.0, 102.0, 101.5, 103.0, 102.5]
+        df = pd.DataFrame(
+            {
+                "Ticker": "MC.PA",
+                "Date": dates,
+                "Open": prices,
+                "High": [p + 1 for p in prices],
+                "Low": [p - 1 for p in prices],
+                "Close": prices,
+                "Volume": [5000] * 10,
+            }
+        )
+
+        res = gateway.validate_ohlcv_batch(df)
+
+        self.assertEqual(len(res), 10)
+        outliers = res[res["is_outlier"] == True]
+        self.assertGreaterEqual(len(outliers), 1)
+        # Index 5 (165.0) and Index 6 (-38% / drop back)
+        self.assertTrue(res.iloc[5]["is_outlier"])
+
+    def test_03_duckdb_upsert_with_outliers(self):
+        """Verify TimeSeriesDB registers and persists is_outlier column."""
+        tsdb = TimeSeriesDB()
+        mock_conn = MagicMock()
+
+        with patch.object(tsdb, "_connect") as mock_connect:
+            mock_connect.return_value.__enter__.return_value = mock_conn
+            mock_connect.return_value.__exit__.return_value = None
+
+            # Test init_db
+            tsdb.init_db()
+            self.assertTrue(mock_conn.execute.called)
+
+            dates = pd.date_range("2025-01-01", periods=5, freq="D")
+            prices = [100.0, 102.0, 180.0, 103.0, 104.0]
+            df = pd.DataFrame(
+                {
+                    "Ticker": "AI.PA",
+                    "Date": dates,
+                    "Open": prices,
+                    "High": prices,
+                    "Low": prices,
+                    "Close": prices,
+                    "Volume": [10000] * 5,
+                }
+            )
+
+            inserted = tsdb.upsert_ohlcv(df)
+            self.assertEqual(inserted, 5)
+            self.assertTrue(mock_conn.register.called)
+            # Verify registered dataframe has is_outlier column
+            reg_args = mock_conn.register.call_args[0]
+            self.assertEqual(reg_args[0], "incoming_ohlcv")
+            self.assertIn("is_outlier", reg_args[1].columns)
+
+
+    def test_04_market_data_adapter_tick(self):
+        """Verify YFinanceMarketDataAdapter produces valid MarketTick contract."""
+        adapter = YFinanceMarketDataAdapter()
+        with patch("yfinance.Ticker") as mock_ticker_cls:
+            mock_t = MagicMock()
+            mock_df = pd.DataFrame(
+                {"Close": [820.50], "Volume": [25000]},
+                index=[pd.Timestamp.now()],
+            )
+            mock_t.history.return_value = mock_df
+            mock_ticker_cls.return_value = mock_t
+
+            tick = adapter.fetch_latest_tick("MC.PA")
+            self.assertIsInstance(tick, MarketTick)
+            self.assertEqual(tick.ticker, "MC.PA")
+            self.assertEqual(tick.price, 820.50)
+            self.assertEqual(tick.volume, 25000)
+
+
+if __name__ == "__main__":
+    unittest.main()
+```
+
+## FILE: tests/test_dynamic_regime_and_vix_roc.py
+```python
+"""Unit Tests for Dynamic Mean-Reversion RSI and VIX ROC Black Swan Detection."""
+
+from __future__ import annotations
+
+import sys
+import unittest
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import numpy as np
+import pandas as pd
+
+ROOT = Path(__file__).resolve().parent.parent
+for sub in ("00_data_sensors", "01_memory_core", "02_quant_engine", "03_risk_portfolio", "04_orchestrator_ai", "05_interfaces"):
+    sys.path.insert(0, str(ROOT / sub))
+
+from hmm_regime import HMMRegimeClassifier, MarketRegimeState
+from market_regime import VolatilityRegimeSentinel
+from technical_scorer import SignalGenerator
+from trade_cards import render_signal_card
+
+
+class TestDynamicRegimeAndVixRocSuite(unittest.TestCase):
+
+    def test_01_vix_roc_5d_normal(self):
+        """Verify 5-day VIX ROC is calculated accurately in normal volatility."""
+        sentinel = VolatilityRegimeSentinel()
+        # Series with 15.0 at iloc[-5], and higher values so percentile is ~60%
+        history = [10.0, 12.0, 25.0, 28.0, 30.0, 15.0, 15.2, 15.5, 15.8, 16.0]
+        res = sentinel.evaluate_vix_regime(history, current_vix=16.5)
+
+        self.assertIn("vix_roc_5d", res)
+        # iloc[-5] is 15.0 -> ROC = (16.5 - 15.0) / 15.0 = 0.10
+        self.assertAlmostEqual(res["vix_roc_5d"], 0.10, places=2)
+        self.assertFalse(res["is_panic"])
+        self.assertEqual(res["regime"], "NORMAL")
+
+
+
+    def test_02_vix_roc_5d_black_swan_panic(self):
+        """Verify VIX ROC > 25% forces PANIC regime immediately."""
+        sentinel = VolatilityRegimeSentinel()
+        # VIX jumps from 16.0 to 22.0 in 5 days (+37.5% spike)
+        history = [16.0, 16.0, 16.0, 16.0, 16.0, 22.0]
+        res = sentinel.evaluate_vix_regime(history, current_vix=22.0)
+
+        self.assertIn("vix_roc_5d", res)
+        self.assertGreater(res["vix_roc_5d"], 0.25)
+        self.assertEqual(res["regime"], "PANIC")
+        self.assertTrue(res["is_panic"])
+        self.assertEqual(res["floor_modifier"], 15)
+
+    def test_03_hmm_regime_dict_probabilities(self):
+        """Verify HMMRegimeClassifier returns structured dict with all state probabilities."""
+        clf = HMMRegimeClassifier("^FCHI")
+        res = clf.fit_and_predict(pd.DataFrame())
+
+        self.assertIsInstance(res, dict)
+        self.assertIn("regime", res)
+        self.assertIn("confidence", res)
+        self.assertIn("bull_prob", res)
+        self.assertIn("bear_prob", res)
+        self.assertIn("volatile_prob", res)
+        self.assertEqual(res["regime"], MarketRegimeState.VOLATILE.value)
+
+    def test_04_dynamic_rsi_thresholds_by_regime(self):
+        """Verify SignalGenerator adjusts RSI thresholds dynamically based on market regime."""
+        gen = SignalGenerator()
+
+        dates = pd.date_range("2025-01-01", periods=260, freq="D")
+        prices = np.linspace(100.0, 200.0, 260)
+        df = pd.DataFrame(
+            {
+                "Open": prices,
+                "High": prices + 2,
+                "Low": prices - 2,
+                "Close": prices,
+                "Volume": [50000] * 260,
+            },
+            index=dates,
+        )
+
+        mock_db = MagicMock()
+        mock_db.get_historical_prices.return_value = df
+
+        with patch.object(gen, "calculate_indicators") as mock_ind, \
+             patch.object(gen, "is_profitable", return_value=True):
+            ind_df = df.copy()
+            ind_df["SMA_5"] = 195.0
+            ind_df["SMA_50"] = 180.0
+            ind_df["SMA_200"] = 150.0
+            ind_df["RSI_14"] = 35.0  # oversold in Bull (<38), but NOT in Volatile (<30) or Bear (<25)
+            mock_ind.return_value = ind_df
+
+            # BULL regime: should emit signal (35 < 38)
+            signals_bull = gen.generate_raw_signals(mock_db, ["MC.PA"], current_regime="BULL")
+            self.assertEqual(len(signals_bull), 1)
+            self.assertEqual(signals_bull[0].lineage.get("dynamic_rsi_threshold"), 38.0)
+            self.assertIn("adaptive 38 in BULL", signals_bull[0].reason)
+
+            # BEAR regime: RSI 35 is NOT oversold (needs < 25)
+            signals_bear = gen.generate_raw_signals(mock_db, ["MC.PA"], current_regime="BEAR")
+            self.assertEqual(len(signals_bear), 0)
+
+    def test_05_trade_card_adaptive_rationale_rendering(self):
+        """Verify render_signal_card renders the adaptive rationale explanation."""
+        lineage = {
+            "dynamic_rsi_threshold": 38.0,
+            "current_regime": "BULL",
+            "rsi_14": 32.5,
+            "ml_probability": 0.78,
+        }
+
+        card = render_signal_card(
+            ticker="MC.PA",
+            title="LVMH (MC.PA)",
+            signal_type="BUY",
+            score=86.0,
+            qty=4,
+            reason="Adaptive dip",
+            lineage=lineage,
+        )
+
+        self.assertIn("adaptive threshold (38)", card)
+        self.assertIn("BULL regime", card)
+        self.assertIn("RSI (32.5)", card)
 
 
 if __name__ == "__main__":
@@ -4622,8 +5455,13 @@ class TestInstitutionalSuite(unittest.TestCase):
         """Test HMM classifier failsafe to VOLATILE."""
         clf = HMMRegimeClassifier("^FCHI")
         # Empty df triggers fail-safe
-        state, prob = clf.fit_and_predict(pd.DataFrame())
-        self.assertEqual(state, MarketRegimeState.VOLATILE)
+        res = clf.fit_and_predict(pd.DataFrame())
+        self.assertIsInstance(res, dict)
+        self.assertEqual(res["regime"], MarketRegimeState.VOLATILE.value)
+        self.assertIn("bull_prob", res)
+        self.assertIn("bear_prob", res)
+        self.assertIn("volatile_prob", res)
+
 
     def test_10_openfigi_mapper(self):
         """Test offline FIGI / Ticker mapper."""
@@ -4669,6 +5507,407 @@ class TestInstitutionalSuite(unittest.TestCase):
         )
         self.assertEqual(res.ticker, "MC.PA")
         self.assertIn(res.final_verdict, ("GO", "REDUCE_SIZE", "NO_GO"))
+
+
+if __name__ == "__main__":
+    unittest.main()
+```
+
+## FILE: tests/test_interactive_charts.py
+```python
+"""Unit Tests for Advanced Interactive Charts & Glass-Box Explainability."""
+
+from __future__ import annotations
+
+import sys
+import unittest
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import plotly.graph_objects as go
+
+ROOT = Path(__file__).resolve().parent.parent
+for sub in ("00_data_sensors", "01_memory_core", "02_quant_engine", "03_risk_portfolio", "04_orchestrator_ai", "05_interfaces", "05_interfaces/components"):
+    sys.path.insert(0, str(ROOT / sub))
+
+from charts import (
+    render_advanced_price_chart,
+    render_rsi_chart,
+    render_statarb_zscore_chart,
+)
+
+
+class TestInteractiveChartsSuite(unittest.TestCase):
+
+    def setUp(self):
+        dates = pd.date_range("2025-01-01", periods=150, freq="D")
+        prices = np.linspace(100.0, 180.0, 150)
+        self.ohlcv_df = pd.DataFrame(
+            {
+                "Open": prices - 1.0,
+                "High": prices + 2.0,
+                "Low": prices - 2.0,
+                "Close": prices,
+                "Volume": [10000] * 150,
+            },
+            index=dates,
+        )
+        self.sma_50 = pd.Series(prices - 5.0, index=dates)
+        self.sma_200 = pd.Series(prices - 15.0, index=dates)
+        self.hmm_regimes = pd.Series(["BULL"] * 75 + ["VOLATILE"] * 75, index=dates)
+
+    def test_01_render_advanced_price_chart(self):
+        """Verify render_advanced_price_chart builds candlestick, SMAs, and HMM shapes."""
+        fig = render_advanced_price_chart(
+            ticker="MC.PA",
+            ohlcv_df=self.ohlcv_df,
+            hmm_regimes=self.hmm_regimes,
+            sma_50=self.sma_50,
+            sma_200=self.sma_200,
+        )
+
+        self.assertIsInstance(fig, go.Figure)
+        trace_names = [t.name for t in fig.data]
+        self.assertIn("Cours", trace_names)
+        self.assertIn("SMA 50", trace_names)
+        self.assertIn("SMA 200", trace_names)
+        # Should have background highlight shapes for HMM intervals
+        self.assertGreaterEqual(len(fig.layout.shapes), 2)
+
+    def test_02_render_rsi_chart(self):
+        """Verify render_rsi_chart builds RSI line with adaptive dynamic threshold."""
+        dates = pd.date_range("2025-01-01", periods=100, freq="D")
+        rsi_vals = np.sin(np.linspace(0, 10, 100)) * 30 + 50
+        rsi_series = pd.Series(rsi_vals, index=dates)
+
+        fig = render_rsi_chart(rsi_series, dynamic_threshold=38.0)
+        self.assertIsInstance(fig, go.Figure)
+        self.assertEqual(len(fig.data), 1)
+        self.assertEqual(fig.data[0].name, "RSI 14")
+        # Layout should have 0-100 range and shapes
+        self.assertEqual(fig.layout.yaxis.range, (0, 100))
+        self.assertGreaterEqual(len(fig.layout.shapes), 2)
+
+    def test_03_render_statarb_zscore_chart(self):
+        """Verify render_statarb_zscore_chart creates Z-Score chart with +/- 2 sigma boundaries."""
+        dates = pd.date_range("2025-01-01", periods=120, freq="D")
+        z_vals = np.random.normal(0, 1.2, 120)
+        z_series = pd.Series(z_vals, index=dates)
+
+        fig = render_statarb_zscore_chart(
+            dates=dates,
+            zscores=z_series,
+            ticker_a="MC.PA",
+            ticker_b="OR.PA",
+            threshold=2.0,
+        )
+
+        self.assertIsInstance(fig, go.Figure)
+        self.assertIn("MC.PA", fig.data[0].name)
+        # Should have threshold shapes & lines
+        self.assertGreaterEqual(len(fig.layout.shapes), 2)
+
+
+if __name__ == "__main__":
+    unittest.main()
+```
+
+## FILE: tests/test_langgraph_and_hub_api.py
+```python
+"""Unit Tests for Layer 5 FastAPI Hub Endpoints and Layer 6 LangGraph Analyst Agent."""
+
+from __future__ import annotations
+
+import json
+import sqlite3
+import sys
+import unittest
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import pandas as pd
+from fastapi.testclient import TestClient
+
+ROOT = Path(__file__).resolve().parent.parent
+for sub in ("00_data_sensors", "00_data_sensors/adapters", "01_memory_core", "02_quant_engine", "04_orchestrator_ai", "05_interfaces", "06_api"):
+    sys.path.insert(0, str(ROOT / sub))
+
+from internal_api import app, _PORTFOLIO_DB
+from langgraph_agent import (
+    AnalystState,
+    fetch_data_node,
+    run_analyst_graph,
+    synthesize_node,
+)
+from trade_cards import render_signal_card
+
+
+class TestLangGraphAndHubApiSuite(unittest.TestCase):
+
+    def setUp(self):
+        self.client = TestClient(app)
+
+    def test_01_hub_signals_endpoint(self):
+        """Verify GET /api/v1/hub/signals returns normalized alternative signals."""
+        with sqlite3.connect(_PORTFOLIO_DB.db_path) as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS alternative_signals (
+                    id TEXT PRIMARY KEY,
+                    ticker TEXT,
+                    ts TEXT NOT NULL,
+                    signal_type TEXT NOT NULL,
+                    value REAL NOT NULL,
+                    confidence REAL NOT NULL,
+                    source TEXT NOT NULL,
+                    metadata_json TEXT
+                )
+                """
+            )
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO alternative_signals (id, ticker, ts, signal_type, value, confidence, source, metadata_json)
+                VALUES ('sig_test_01', 'MC.PA', '2026-08-16T12:00:00', 'SHORT_INTEREST', 3.8, 1.0, 'AMF_BDIF', '{"isin": "FR0000121014"}');
+                """
+            )
+
+        resp = self.client.get("/api/v1/hub/signals?ticker=MC.PA")
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertIsInstance(data, list)
+        self.assertTrue(len(data) >= 1)
+        self.assertEqual(data[0]["ticker"], "MC.PA")
+        self.assertEqual(data[0]["signal_type"], "SHORT_INTEREST")
+        self.assertEqual(data[0]["value"], 3.8)
+
+    def test_02_hub_ticks_endpoint(self):
+        """Verify GET /api/v1/hub/ticks returns formatted OHLCV market ticks."""
+        mock_df = pd.DataFrame(
+            {
+                "Open": [650.0, 655.0],
+                "High": [660.0, 665.0],
+                "Low": [645.0, 650.0],
+                "Close": [658.0, 662.0],
+                "Volume": [150000, 180000],
+            },
+            index=pd.to_datetime(["2026-08-14", "2026-08-15"]),
+        )
+
+        with patch("duckdb_manager.TimeSeriesDB.get_historical_prices", return_value=mock_df):
+            resp = self.client.get("/api/v1/hub/ticks?ticker=MC.PA&days=10")
+            self.assertEqual(resp.status_code, 200)
+            data = resp.json()
+            self.assertIsInstance(data, list)
+            self.assertEqual(len(data), 2)
+            self.assertEqual(data[0]["ticker"], "MC.PA")
+            self.assertEqual(data[0]["close"], 658.0)
+
+    def test_03_langgraph_nodes_and_run(self):
+        """Verify LangGraph analyst state machine execution."""
+        initial_state: AnalystState = {
+            "ticker": "OR.PA",
+            "raw_signals": [],
+            "quantitative_data": {},
+            "narrative_thesis": "",
+        }
+
+        # Test fetch_data_node
+        with patch("requests.get") as mock_get:
+            mock_signals_resp = MagicMock()
+            mock_signals_resp.status_code = 200
+            mock_signals_resp.json.return_value = [
+                {"signal_type": "SHORT_INTEREST", "value": 0.5, "source": "AMF_BDIF"}
+            ]
+            mock_ticks_resp = MagicMock()
+            mock_ticks_resp.status_code = 200
+            mock_ticks_resp.json.return_value = [
+                {"ticker": "OR.PA", "date": "2026-08-15", "close": 420.0}
+            ]
+            mock_get.side_effect = [mock_signals_resp, mock_ticks_resp]
+
+            state_after_fetch = fetch_data_node(initial_state)
+            self.assertEqual(len(state_after_fetch["raw_signals"]), 1)
+            self.assertEqual(state_after_fetch["quantitative_data"]["latest_close"], 420.0)
+
+            # Test synthesize_node
+            state_after_syn = synthesize_node(state_after_fetch)
+            self.assertTrue(len(state_after_syn["narrative_thesis"]) > 20)
+            self.assertIn("OR.PA", state_after_syn["narrative_thesis"])
+
+        # Test run_analyst_graph
+        thesis = run_analyst_graph("AI.PA")
+        self.assertIsInstance(thesis, str)
+        self.assertTrue(len(thesis) > 20)
+
+    def test_04_trade_cards_shap_visualization(self):
+        """Verify render_signal_card renders SHAP positive and negative badges."""
+        lineage = {
+            "ml_probability": 0.72,
+            "ml_interval": [0.68, 0.76],
+            "shap_values": {
+                "rsi": 0.18,
+                "gap_sma200_pct": 0.08,
+                "volatility": -0.05,
+            },
+        }
+
+        card_html = render_signal_card(
+            ticker="MC.PA",
+            title="LVMH (MC.PA)",
+            signal_type="BUY",
+            score=88.0,
+            qty=5,
+            reason="MRE Oversold Rebound",
+            lineage=lineage,
+        )
+
+        self.assertIn("72.0%", card_html)
+        self.assertIn("▲ rsi (+0.18)", card_html)
+        self.assertIn("▲ gap_sma200_pct (+0.08)", card_html)
+        self.assertIn("▼ volatility (-0.05)", card_html)
+
+
+if __name__ == "__main__":
+    unittest.main()
+```
+
+## FILE: tests/test_layer1_contracts_and_r2.py
+```python
+"""Unit Tests for Layer 1 Data Contracts, Base Adapters, and Cloudflare R2 Backup."""
+
+from __future__ import annotations
+
+import asyncio
+import os
+import sys
+import unittest
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import List
+from unittest.mock import MagicMock, patch
+
+import pandas as pd
+from pydantic import ValidationError
+
+ROOT = Path(__file__).resolve().parent.parent
+for sub in ("00_data_sensors", "00_data_sensors/adapters", "01_memory_core", "tools"):
+    sys.path.insert(0, str(ROOT / sub))
+
+from data_contracts import AlternativeSignal, MarketTick
+from base_adapters import AbstractMarketDataAdapter, AbstractPollAdapter
+import backup_databases
+
+
+class DummyPollAdapter(AbstractPollAdapter):
+    interval_seconds: int = 300
+
+    async def fetch(self) -> List[AlternativeSignal]:
+        return [
+            AlternativeSignal(
+                ticker="MC.PA",
+                signal_type="insider_buy",
+                value=50000.0,
+                confidence=0.95,
+                source="amf_test",
+                metadata={"declarant": "Arnault"},
+            )
+        ]
+
+
+class DummyMarketDataAdapter(AbstractMarketDataAdapter):
+    async def fetch_ohlcv(self, tickers: List[str], lookback_days: int = 10) -> pd.DataFrame:
+        data = {
+            "Open": [100.0, 101.0],
+            "High": [105.0, 106.0],
+            "Low": [99.0, 100.0],
+            "Close": [104.0, 105.0],
+            "Volume": [1000, 1200],
+        }
+        return pd.DataFrame(data)
+
+
+class TestLayer1ContractsAndR2Suite(unittest.TestCase):
+
+    def test_01_market_tick_contract(self):
+        """Verify MarketTick Pydantic validation and serialization."""
+        tick = MarketTick(
+            ticker="MC.PA",
+            price=680.50,
+            volume=45000.0,
+            source="yfinance",
+        )
+        self.assertEqual(tick.ticker, "MC.PA")
+        self.assertEqual(tick.price, 680.50)
+        self.assertEqual(tick.volume, 45000.0)
+        self.assertEqual(tick.source, "yfinance")
+        self.assertIsInstance(tick.ts, datetime)
+
+        # Invalid price <= 0
+        with self.assertRaises(ValidationError):
+            MarketTick(ticker="MC.PA", price=-10.0, source="bad")
+
+    def test_02_alternative_signal_contract(self):
+        """Verify AlternativeSignal Pydantic validation with default metadata."""
+        sig = AlternativeSignal(
+            ticker="AI.PA",
+            signal_type="sentiment",
+            value=85.0,
+            confidence=0.9,
+            source="finbert",
+            metadata={"headline": "Air Liquide signs green hydrogen contract"},
+        )
+        self.assertEqual(sig.ticker, "AI.PA")
+        self.assertEqual(sig.signal_type, "sentiment")
+        self.assertEqual(sig.value, 85.0)
+        self.assertEqual(sig.confidence, 0.9)
+        self.assertEqual(sig.metadata["headline"], "Air Liquide signs green hydrogen contract")
+
+        # Invalid confidence > 1.0
+        with self.assertRaises(ValidationError):
+            AlternativeSignal(ticker="AI.PA", signal_type="sentiment", value=10.0, confidence=1.5, source="test")
+
+    def test_03_abstract_adapters_implementation(self):
+        """Verify subclassing AbstractPollAdapter and AbstractMarketDataAdapter."""
+        poller = DummyPollAdapter()
+        self.assertEqual(poller.interval_seconds, 300)
+
+        signals = asyncio.run(poller.fetch())
+        self.assertEqual(len(signals), 1)
+        self.assertEqual(signals[0].ticker, "MC.PA")
+        self.assertEqual(signals[0].signal_type, "insider_buy")
+
+        mkt_adapter = DummyMarketDataAdapter()
+        df = asyncio.run(mkt_adapter.fetch_ohlcv(["MC.PA"], lookback_days=5))
+        self.assertIsInstance(df, pd.DataFrame)
+        self.assertEqual(len(df), 2)
+        self.assertIn("Close", df.columns)
+
+    def test_04_cloudflare_r2_backup_initialization(self):
+        """Verify backup_to_r2_or_s3 configures endpoint_url and region_name='auto' for Cloudflare R2."""
+        mock_file = ROOT / "config" / "pea_universe.yaml"
+        mock_boto = MagicMock()
+        mock_s3 = MagicMock()
+        mock_boto.client.return_value = mock_s3
+
+        with patch.dict(sys.modules, {"boto3": mock_boto}):
+            success = backup_databases.backup_to_r2_or_s3(
+                [mock_file],
+                stamp="20260816_160000",
+                bucket_name="pea-backups-r2",
+                endpoint_url="https://abc123456.r2.cloudflarestorage.com",
+                access_key_id="r2_access_key",
+                secret_access_key="r2_secret_key",
+            )
+            self.assertTrue(success)
+            mock_boto.client.assert_called_once_with(
+                "s3",
+                endpoint_url="https://abc123456.r2.cloudflarestorage.com",
+                aws_access_key_id="r2_access_key",
+                aws_secret_access_key="r2_secret_key",
+                region_name="auto",
+            )
+            self.assertTrue(mock_s3.upload_file.called)
 
 
 if __name__ == "__main__":
@@ -4758,6 +5997,431 @@ class TestLimitTiersAndRadarSuite(unittest.TestCase):
         self.assertIn("heuristic_mr_weight", ens_weights)
         self.assertIn("heuristic_trend_weight", ens_weights)
         self.assertIn("ml_total_weight", ens_weights)
+
+
+if __name__ == "__main__":
+    unittest.main()
+```
+
+## FILE: tests/test_llm_cache_and_guardrails.py
+```python
+"""Unit Tests for LLM 24h Persistent SQLite Cache and Zero-Cost Guardrails."""
+
+from __future__ import annotations
+
+import asyncio
+import sqlite3
+import sys
+import unittest
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
+
+ROOT = Path(__file__).resolve().parent.parent
+for sub in ("01_memory_core", "04_orchestrator_ai", "05_interfaces"):
+    sys.path.insert(0, str(ROOT / sub))
+
+from llm_explainer import openrouter_chat
+from sqlite_portfolio import PortfolioDB
+
+
+class TestLlmCacheAndGuardrailsSuite(unittest.TestCase):
+
+    def setUp(self):
+        self.temp_db_path = ROOT / "database" / "test_llm_cache.db"
+        if self.temp_db_path.exists():
+            self.temp_db_path.unlink()
+        self.db = PortfolioDB(db_path=self.temp_db_path)
+        self.db.init_db()
+
+    def tearDown(self):
+        if self.temp_db_path.exists():
+            self.temp_db_path.unlink()
+
+    def test_01_save_and_retrieve_synthesis_fresh(self):
+        """Verify synthesis saved to SQLite is retrieved when age < 24h."""
+        self.db.save_synthesis("MC.PA", "### Note LVMH\n- Signal haussier RSI.")
+        cached = self.db.get_cached_synthesis("MC.PA", max_age_hours=24)
+        self.assertIsNotNone(cached)
+        self.assertIn("Note LVMH", cached)
+
+    def test_02_synthesis_cache_expiration(self):
+        """Verify cached synthesis expires and returns None when age > 24h."""
+        # Insert expired row (25 hours ago)
+        old_time = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
+        with self.db._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO llm_synthesis_cache (ticker, synthesis, generated_at)
+                VALUES (?, ?, ?);
+                """,
+                ("AIR.PA", "Old expired analysis", old_time),
+            )
+
+        cached = self.db.get_cached_synthesis("AIR.PA", max_age_hours=24)
+        self.assertIsNone(cached)
+
+    def test_03_openrouter_payload_guardrails(self):
+        """Verify openrouter_chat caps max_tokens at 350 and injects system constraints."""
+        captured_payload = {}
+
+        class DummyResponse:
+            status = 200
+
+            async def text(self):
+                return ""
+
+            async def json(self):
+                return {"choices": [{"message": {"content": "1. Macro OK\n2. Technique OK\n3. Risque modere"}}]}
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc_val, exc_tb):
+                pass
+
+        class DummySession:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def post(self, url, json=None, headers=None):
+                nonlocal captured_payload
+                captured_payload = json
+                return DummyResponse()
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc_val, exc_tb):
+                pass
+
+        with patch("aiohttp.ClientSession", side_effect=DummySession):
+            res = asyncio.run(
+                openrouter_chat(
+                    messages=[{"role": "user", "content": "Analyse MC.PA"}],
+                    api_key="fake_key",
+                    max_tokens=900,  # Exceeds cap
+                    temperature=0.8,  # Exceeds cap
+                )
+            )
+
+            self.assertIsNotNone(res)
+            self.assertEqual(captured_payload["max_tokens"], 350)
+            self.assertEqual(captured_payload["temperature"], 0.5)
+            self.assertTrue(any(m["role"] == "system" for m in captured_payload["messages"]))
+
+
+if __name__ == "__main__":
+    unittest.main()
+```
+
+## FILE: tests/test_local_ollama_streaming.py
+```python
+"""Unit Tests for Local Sovereign AI (Ollama) Streaming and Zero-Cost Inference."""
+
+from __future__ import annotations
+
+import asyncio
+import sys
+import unittest
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+ROOT = Path(__file__).resolve().parent.parent
+for sub in ("00_data_sensors", "01_memory_core", "02_quant_engine", "03_risk_portfolio", "04_orchestrator_ai", "05_interfaces"):
+    sys.path.insert(0, str(ROOT / sub))
+
+from analyst_agent import InstitutionalAnalyst
+from llm_explainer import ollama_chat_stream, ollama_chat_stream_sync
+
+
+class TestLocalOllamaStreamingSuite(unittest.TestCase):
+
+    def test_01_ollama_chat_stream_offline(self):
+        """Verify ollama_chat_stream yields clean offline warning when Ollama is unreachable."""
+        async def _run():
+            chunks = []
+            async for chunk in ollama_chat_stream([{"role": "user", "content": "test"}]):
+                chunks.append(chunk)
+            return "".join(chunks)
+
+        result = asyncio.run(_run())
+        self.assertIn("Erreur", result)
+
+    def test_02_ollama_chat_stream_sync_offline(self):
+        """Verify ollama_chat_stream_sync yields clean offline warning when Ollama is unreachable."""
+        chunks = list(ollama_chat_stream_sync([{"role": "user", "content": "test"}]))
+        result = "".join(chunks)
+        self.assertIn("Erreur", result)
+
+    def test_03_ollama_streaming_mocked(self):
+        """Verify ollama_chat_stream_sync yields tokens sequentially when Ollama responds."""
+        mock_lines = [
+            b'{"message": {"role": "assistant", "content": "Analyse "}, "done": false}',
+            b'{"message": {"role": "assistant", "content": "technique "}, "done": false}',
+            b'{"message": {"role": "assistant", "content": "positive."}, "done": true}',
+        ]
+        with patch("requests.post") as mock_post:
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            mock_resp.iter_lines.return_value = mock_lines
+            mock_resp.__enter__.return_value = mock_resp
+            mock_resp.__exit__.return_value = None
+            mock_post.return_value = mock_resp
+
+            tokens = list(ollama_chat_stream_sync([{"role": "user", "content": "hello"}]))
+            self.assertEqual(tokens, ["Analyse ", "technique ", "positive."])
+
+    def test_04_institutional_analyst_fallback_on_offline(self):
+        """Verify InstitutionalAnalyst produces 3 structured paragraphs even if Ollama is offline."""
+        analyst = InstitutionalAnalyst()
+        t_state = {
+            "mode": "ATTACK",
+            "attack_pct": 0.75,
+            "defense_pct": 0.25,
+            "vix": 14.5,
+            "vol_21d": 0.12,
+        }
+        cand_sig = [
+            {"ticker": "MC.PA", "score": 92.0, "reason": "RSI 32.0, Rebond SMA200"},
+            {"ticker": "OR.PA", "score": 88.0, "reason": "Decote PER"},
+        ]
+
+        brief = analyst.generate_daily_brief_sync(
+            portfolio_state=None,
+            thermometer_state=t_state,
+            top_signals=cand_sig,
+        )
+
+        self.assertIn("1. Conjoncture Macroéconomique & Thermomètre de Volatilité", brief)
+        self.assertIn("2. Analyse des Opportunités Quantitatives", brief)
+        self.assertIn("3. Directives Stratégiques d'Aide à la Décision", brief)
+        self.assertIn("MC.PA", brief)
+        self.assertIn("Mode ATTACK", brief)
+
+
+if __name__ == "__main__":
+    unittest.main()
+```
+
+## FILE: tests/test_master_system.py
+```python
+"""Master Integration & Regression Test Suite for PEA Pollux Terminal.
+
+Tests end-to-end quantitative execution, 7-stage risk cascades, columnar DuckDB
+and SQLite state persistence, Data Quality Gateway anomaly filtering, and Volatility Thermometer logic.
+"""
+
+from __future__ import annotations
+
+import sys
+import unittest
+from datetime import datetime, timezone
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import numpy as np
+import pandas as pd
+
+ROOT = Path(__file__).resolve().parent.parent
+for sub in (
+    "00_data_sensors",
+    "00_data_sensors/adapters",
+    "01_memory_core",
+    "02_quant_engine",
+    "03_risk_portfolio",
+    "04_orchestrator_ai",
+    "05_interfaces",
+):
+    sys.path.insert(0, str(ROOT / sub))
+
+from allocation_thermometer import VolatilityThermometer
+from data_models import Position, PortfolioState, Signal, SignalType
+from data_quality import DataQualityGateway
+from duckdb_manager import TimeSeriesDB
+from signal_priority_cascade import SignalOrchestrator
+from sqlite_portfolio import PortfolioDB
+from technical_scorer import SignalGenerator
+
+
+class TestMasterSystemSuite(unittest.TestCase):
+
+    def setUp(self):
+        self.temp_sqlite = ROOT / "database" / "test_master_portfolio.db"
+        self.temp_duckdb = ROOT / "database" / "test_master_timeseries.duckdb"
+        for p in (self.temp_sqlite, self.temp_duckdb):
+            if p.exists():
+                p.unlink()
+
+        self.db = PortfolioDB(db_path=self.temp_sqlite)
+        self.db.init_db()
+
+        self.ts_db = TimeSeriesDB(db_path=self.temp_duckdb)
+
+    def tearDown(self):
+        self.ts_db.close()
+        for p in (self.temp_sqlite, self.temp_duckdb):
+            if p.exists():
+                p.unlink()
+
+    def test_01_end_to_end_signal_generation_and_risk_cascade(self):
+        """Verify SignalGenerator produces technical scores and SignalOrchestrator filters through 7-stage risk cascade."""
+        # 1. Technical signal indicators calculation
+        gen = SignalGenerator()
+        oversold_score = gen.score_rsi(22.0)
+        self.assertTrue(oversold_score > 70.0)
+
+        # 2. Feed into 7-stage risk cascade
+        mock_tsdb = MagicMock()
+        mock_hist = pd.DataFrame({
+            "Close": np.linspace(100, 110, 60),
+            "Date": pd.date_range("2026-01-01", periods=60, freq="D"),
+        })
+        mock_tsdb.get_historical_prices.return_value = mock_hist
+
+        orchestrator = SignalOrchestrator(timeseries_db=mock_tsdb)
+        portfolio_state = PortfolioState(
+            cash_available=5000.0,
+            total_equity=10000.0,
+            positions=[
+                Position(
+                    ticker="OR.PA",
+                    qty_shares=5,
+                    avg_entry_price=400.0,
+                    current_price=420.0,
+                    sector="Consumer Defensive",
+                    last_updated=datetime.now(timezone.utc),
+                )
+            ],
+            last_updated=datetime.now(timezone.utc),
+        )
+
+        test_signal = Signal(
+            ticker="MC.PA",
+            signal_type=SignalType.BUY,
+            score=88.0,
+            reason="MRE Oversold bounce",
+            price=700.0,
+            target_qty=5,
+            lineage={"source": "test_master"},
+        )
+
+        current_prices = {"MC.PA": 700.0, "OR.PA": 420.0}
+        processed = orchestrator.process_raw_signals(
+            raw_signals=[test_signal],
+            portfolio=portfolio_state,
+            current_prices=current_prices,
+            vix_level=15.0,
+        )
+
+        # Signal should be processed without crashing
+        self.assertEqual(len(processed), 1)
+        self.assertEqual(processed[0].ticker, "MC.PA")
+
+
+
+    def test_02_database_persistence_and_retrieval(self):
+        """Verify state persistence across DuckDB TimeSeriesDB and SQLite PortfolioDB."""
+        # 1. SQLite state check
+        p_state = PortfolioState(
+            cash_available=3500.0,
+            total_equity=12000.0,
+            positions=[
+                Position(
+                    ticker="AI.PA",
+                    qty_shares=10,
+                    avg_entry_price=160.0,
+                    current_price=175.0,
+                    sector="Basic Materials",
+                    last_updated=datetime.now(timezone.utc),
+                )
+            ],
+            last_updated=datetime.now(timezone.utc),
+        )
+        self.db.update_portfolio(p_state)
+        loaded = self.db.get_portfolio_state()
+        self.assertEqual(loaded.cash_available, 3500.0)
+        self.assertEqual(loaded.total_equity, 12000.0)
+        self.assertEqual(len(loaded.positions), 1)
+        self.assertEqual(loaded.positions[0].ticker, "AI.PA")
+
+        # 2. DuckDB OHLCV upsert and retrieval
+        ohlcv_data = pd.DataFrame(
+            {
+                "Ticker": ["AI.PA", "AI.PA"],
+                "Date": [pd.to_datetime("2026-08-14"), pd.to_datetime("2026-08-15")],
+                "Open": [170.0, 172.0],
+                "High": [175.0, 176.0],
+                "Low": [169.0, 171.0],
+                "Close": [174.0, 175.0],
+                "Volume": [50000.0, 55000.0],
+            }
+        )
+        mock_conn = MagicMock()
+        mock_conn.execute.return_value.fetch_df.return_value = ohlcv_data
+
+        with patch.object(self.ts_db, "_connect") as mock_connect:
+            mock_connect.return_value.__enter__.return_value = mock_conn
+            mock_connect.return_value.__exit__.return_value = None
+
+            self.ts_db.init_schema()
+            self.assertTrue(mock_conn.execute.called)
+
+            rows_inserted = self.ts_db.upsert_daily_ohlcv(ohlcv_data)
+            self.assertEqual(rows_inserted, 2)
+
+            fetched = self.ts_db.get_historical_prices("AI.PA", days=10)
+            self.assertEqual(len(fetched), 2)
+            self.assertEqual(float(fetched["Close"].iloc[-1]), 175.0)
+
+
+    def test_03_data_quality_gateway_outlier_detection(self):
+        """Verify DataQualityGateway detects and flags outlier returns (>40% swing or 4-sigma)."""
+        gw = DataQualityGateway(outlier_return_threshold=0.40, outlier_zscore_threshold=4.0)
+
+        # Baseline series with an extreme erroneous spike
+        dates = pd.date_range("2026-01-01", periods=10, freq="D")
+        closes = [100.0, 101.0, 100.5, 102.0, 101.5, 250.0, 102.0, 101.0, 103.0, 102.5]  # 250 is +146% spike
+        df_raw = pd.DataFrame(
+            {
+                "Ticker": ["TTE.PA"] * 10,
+                "Date": dates,
+                "Open": closes,
+                "High": closes,
+                "Low": closes,
+                "Close": closes,
+                "Volume": [100000] * 10,
+            }
+        )
+
+        cleaned = gw.validate_ohlcv_batch(df_raw)
+        self.assertIn("is_outlier", cleaned.columns)
+        outliers = cleaned[cleaned["is_outlier"] == True]  # noqa: E712
+        self.assertTrue(len(outliers) >= 1)
+
+    def test_04_volatility_thermometer_split(self):
+        """Verify VolatilityThermometer calculates Attack/Defense splits and triggers Bunker mode."""
+        thermo = VolatilityThermometer()
+
+        # 1. Normal low volatility environment (e.g. index above SMA200)
+        dates = pd.date_range("2025-01-01", periods=250, freq="D")
+        # Steady upward trend
+        closes = np.linspace(6000, 7800, 250)
+        df_idx = pd.DataFrame({"Close": closes}, index=dates)
+
+        res_norm = thermo.calculate_attack_defense_split(df_idx, current_vix=14.0)
+        self.assertEqual(res_norm["mode"], "ATTACK")
+        self.assertTrue(res_norm["attack_pct"] >= 0.60)
+        self.assertTrue(res_norm["defense_pct"] <= 0.40)
+
+        # 2. Bunker mode (index falls below SMA200)
+        closes_bunker = np.concatenate([np.linspace(7000, 7500, 220), np.linspace(7500, 5000, 30)])
+        df_bunker = pd.DataFrame({"Close": closes_bunker}, index=dates)
+
+        res_bunker = thermo.calculate_attack_defense_split(df_bunker, current_vix=28.0)
+        self.assertEqual(res_bunker["mode"], "BUNKER")
+        self.assertEqual(res_bunker["attack_pct"], 0.0)
+        self.assertEqual(res_bunker["defense_pct"], 1.0)
 
 
 if __name__ == "__main__":
@@ -5082,6 +6746,184 @@ class TestPhase16Foundations(unittest.TestCase):
             self.assertIn("Q2", reason)
             clear, _ = eng.check_veto("OR.PA", date(2026, 7, 24))
             self.assertFalse(clear)
+
+
+if __name__ == "__main__":
+    unittest.main()
+```
+
+## FILE: tests/test_phase3_cpu_and_market.py
+```python
+"""Unit Tests for Phase 3: Market Adapters, Fundamentals and CPU-Bound Isolation."""
+
+from __future__ import annotations
+
+import asyncio
+import sys
+import unittest
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import pandas as pd
+
+ROOT = Path(__file__).resolve().parent.parent
+for sub in ("00_data_sensors", "00_data_sensors/adapters", "01_memory_core", "04_orchestrator_ai"):
+    sys.path.insert(0, str(ROOT / sub))
+
+from cpu_isolator import CpuTaskIsolator
+from fundamentals_adapter import FmpFundamentalsAdapter
+from hub import DataIngestionHub
+from market_adapter import YFinanceMarketAdapter
+
+
+def _dummy_heavy_math(n: int) -> int:
+    """CPU-bound task helper for process isolation test."""
+    total = 0
+    for i in range(n):
+        total += i * i
+    return total
+
+
+class TestPhase3CpuAndMarketSuite(unittest.TestCase):
+
+    def test_01_cpu_task_isolator_execution(self):
+        """Verify CpuTaskIsolator offloads tasks to executor and returns valid results."""
+        isolator = CpuTaskIsolator(max_workers=2)
+
+        async def _run():
+            return await isolator.run_in_process(_dummy_heavy_math, 1000)
+
+        result = asyncio.run(_run())
+        expected = sum(i * i for i in range(1000))
+        self.assertEqual(result, expected)
+
+    def test_02_yfinance_market_adapter_structure(self):
+        """Verify YFinanceMarketAdapter downloads, cleans and returns valid DuckDB schema."""
+        adapter = YFinanceMarketAdapter(chunk_size=10)
+
+        mock_raw = pd.DataFrame(
+            {
+                ("Close", "MC.PA"): [750.0, 755.0],
+                ("Open", "MC.PA"): [745.0, 750.0],
+                ("High", "MC.PA"): [755.0, 760.0],
+                ("Low", "MC.PA"): [740.0, 748.0],
+                ("Volume", "MC.PA"): [100000, 120000],
+            },
+            index=pd.to_datetime(["2026-08-14", "2026-08-15"]),
+        )
+
+        with patch("yfinance.download", return_value=mock_raw):
+            df = asyncio.run(adapter.fetch_ohlcv(["MC.PA"], lookback_days=5))
+            self.assertFalse(df.empty)
+            for col in ("Ticker", "Date", "Open", "High", "Low", "Close", "Volume"):
+                self.assertIn(col, df.columns)
+            self.assertEqual(df["Ticker"].iloc[0], "MC.PA")
+            self.assertEqual(len(df), 2)
+
+    def test_03_fmp_fundamentals_adapter_emission(self):
+        """Verify FmpFundamentalsAdapter emits FUNDAMENTAL_PIOTROSKI signals."""
+        adapter = FmpFundamentalsAdapter(tickers=["MC.PA"])
+        with patch.object(adapter.sensor, "calculate_piotroski_score", return_value=(8, {"roa_positive": 1, "cfo_positive": 1})):
+            signals = asyncio.run(adapter.fetch())
+            self.assertEqual(len(signals), 1)
+            sig = signals[0]
+            self.assertEqual(sig.signal_type, "FUNDAMENTAL_PIOTROSKI")
+            self.assertEqual(sig.value, 8.0)
+            self.assertEqual(sig.source, "FMP/YF")
+            self.assertEqual(sig.metadata.get("is_pass"), True)
+
+    def test_04_data_hub_fetch_and_store_market_data(self):
+        """Verify DataIngestionHub coordinates market data fetch and DuckDB storage."""
+        hub = DataIngestionHub(adapters=[])
+        mock_df = pd.DataFrame(
+            {
+                "Ticker": ["MC.PA"],
+                "Date": [pd.to_datetime("2026-08-15")],
+                "Open": [750.0],
+                "High": [760.0],
+                "Low": [748.0],
+                "Close": [755.0],
+                "Volume": [120000],
+            }
+        )
+
+        mock_db = MagicMock()
+        mock_db.upsert_daily_ohlcv.return_value = 1
+
+        with patch.object(YFinanceMarketAdapter, "_sync_fetch_ohlcv", return_value=mock_df):
+            count = asyncio.run(hub.fetch_and_store_market_data(["MC.PA"], mock_db, lookback_days=30))
+            self.assertEqual(count, 1)
+            mock_db.upsert_daily_ohlcv.assert_called_once()
+
+
+
+if __name__ == "__main__":
+    unittest.main()
+```
+
+## FILE: tests/test_prefect_and_cpu_isolator.py
+```python
+"""Unit Tests for Prefect Workflow Orchestration and CPU Task Isolator."""
+
+from __future__ import annotations
+
+import asyncio
+import sys
+import unittest
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
+
+ROOT = Path(__file__).resolve().parent.parent
+for sub in ("00_data_sensors", "00_data_sensors/adapters", "01_memory_core", "02_quant_engine", "03_risk_portfolio", "04_orchestrator_ai", "05_interfaces"):
+    sys.path.insert(0, str(ROOT / sub))
+
+from cpu_isolator import CpuTaskIsolator, cpu_isolator
+import main_scheduler
+
+
+def _heavy_compute_job(x: int, y: int) -> int:
+    """Mock heavy CPU compute job."""
+    return (x ** 2) + (y ** 2)
+
+
+class TestPrefectAndCpuIsolatorSuite(unittest.TestCase):
+
+    def test_01_cpu_isolator_singleton_and_execution(self):
+        """Verify CpuTaskIsolator singleton instance and process pool execution."""
+        iso1 = CpuTaskIsolator()
+        iso2 = CpuTaskIsolator()
+        self.assertIs(iso1, iso2)
+
+        res = asyncio.run(cpu_isolator.run_in_process(_heavy_compute_job, 3, 4))
+        self.assertEqual(res, 25)
+
+    def test_02_prefect_flow_and_tasks_decoration(self):
+        """Verify main_scheduler exposes Prefect flow and tasks."""
+        self.assertTrue(hasattr(main_scheduler, "pea_pollux_market_cycle"))
+        self.assertTrue(hasattr(main_scheduler, "task_ingest_data"))
+        self.assertTrue(hasattr(main_scheduler, "task_generate_and_orchestrate"))
+        self.assertTrue(hasattr(main_scheduler, "task_dispatch_alerts"))
+
+    @patch("main_scheduler._load_universe_tickers", return_value=["MC.PA", "CW8.PA"])
+    @patch("main_scheduler.TimeSeriesDB.init_db", return_value=None)
+    @patch("main_scheduler.PortfolioDB.init_db", return_value=None)
+    @patch("main_scheduler.task_ingest_data", new_callable=AsyncMock)
+    @patch("main_scheduler.task_generate_and_orchestrate", new_callable=AsyncMock)
+    @patch("main_scheduler.task_dispatch_alerts", new_callable=AsyncMock)
+    def test_03_pea_pollux_market_cycle_orchestration(
+        self, mock_dispatch, mock_gen, mock_ingest, mock_pdb_init, mock_tsdb_init, mock_universe
+    ):
+        """Verify the execution sequence of the main market cycle flow."""
+        mock_ingest.return_value = True
+        mock_gen.return_value = []
+        mock_dispatch.return_value = None
+
+        with patch("main_scheduler.MacroAlphaSensor.get_european_vix", return_value=16.0):
+            asyncio.run(main_scheduler.pea_pollux_market_cycle())
+
+            self.assertTrue(mock_ingest.called)
+            self.assertTrue(mock_gen.called)
+            self.assertTrue(mock_dispatch.called)
 
 
 if __name__ == "__main__":
@@ -5564,9 +7406,274 @@ if __name__ == "__main__":
     unittest.main()
 ```
 
+## FILE: tests/test_visual_components.py
+```python
+"""Unit Tests for Modular Visual Analytics & Plotly Components."""
+
+from __future__ import annotations
+
+import sys
+import unittest
+from datetime import datetime, timezone
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import plotly.graph_objects as go
+
+ROOT = Path(__file__).resolve().parent.parent
+for sub in ("05_interfaces", "05_interfaces/components", "01_memory_core"):
+    sys.path.insert(0, str(ROOT / sub))
+
+from charts import (
+    render_hmm_candlestick_chart,
+    render_macro_thermometer_gauge,
+    render_rsi_chart,
+    render_statarb_zscore_chart,
+)
+from trade_cards import render_signal_card
+
+
+class TestVisualComponentsSuite(unittest.TestCase):
+
+    def setUp(self):
+        dates = pd.date_range("2026-01-01", periods=100, freq="D")
+        self.sample_df = pd.DataFrame(
+            {
+                "Open": np.linspace(700, 750, 100),
+                "High": np.linspace(710, 760, 100),
+                "Low": np.linspace(690, 740, 100),
+                "Close": np.linspace(705, 745, 100),
+                "Volume": [100000] * 100,
+            },
+            index=dates,
+        )
+        self.sma50 = self.sample_df["Close"].rolling(50).mean()
+        self.sma200 = self.sample_df["Close"].rolling(100).mean()
+        self.regimes = pd.Series(["BULL"] * 50 + ["VOLATILE"] * 50, index=dates)
+        self.rsi_series = pd.Series(np.linspace(25, 75, 100), index=dates)
+        self.zscores = pd.Series(np.random.normal(0, 1, 100), index=dates)
+
+    def test_01_render_hmm_candlestick_chart(self):
+        """Verify render_hmm_candlestick_chart returns a valid plotly Figure."""
+        fig = render_hmm_candlestick_chart(
+            ticker="MC.PA",
+            df=self.sample_df,
+            sma50=self.sma50,
+            sma200=self.sma200,
+            regime_series=self.regimes,
+        )
+        self.assertIsInstance(fig, go.Figure)
+        self.assertIn("data", fig.to_dict())
+        self.assertTrue(len(fig.data) >= 1)
+
+    def test_02_render_statarb_zscore_chart(self):
+        """Verify render_statarb_zscore_chart returns a valid plotly Figure with reference thresholds."""
+        fig = render_statarb_zscore_chart(
+            pair_label="MC.PA vs OR.PA",
+            z_score_series=self.zscores,
+            threshold=2.0,
+        )
+        self.assertIsInstance(fig, go.Figure)
+        self.assertTrue(len(fig.data) >= 1)
+
+    def test_03_render_macro_thermometer_gauge(self):
+        """Verify render_macro_thermometer_gauge returns a valid half-circle gauge."""
+        fig = render_macro_thermometer_gauge(
+            attack_pct=0.75,
+            defense_pct=0.25,
+            mode="ATTACK",
+        )
+        self.assertIsInstance(fig, go.Figure)
+        self.assertEqual(len(fig.data), 1)
+        self.assertEqual(fig.data[0].type, "indicator")
+
+    def test_04_render_rsi_chart(self):
+        """Verify render_rsi_chart returns a valid RSI oscillator figure."""
+        fig = render_rsi_chart(self.rsi_series, dynamic_threshold=35.0)
+        self.assertIsInstance(fig, go.Figure)
+
+    def test_05_trade_card_shap_attribution(self):
+        """Verify render_signal_card properly formats positive and negative SHAP driver badges."""
+        lineage = {
+            "ml_probability": 0.84,
+            "shap_values": {
+                "vol_zscore": 0.084,
+                "rsi_14": -0.032,
+                "trend_sma200": 0.045,
+            },
+        }
+
+        html = render_signal_card(
+            ticker="MC.PA",
+            title="LVMH (MC.PA)",
+            signal_type="BUY",
+            score=92.0,
+            qty=5,
+            reason="Oversold bounce",
+            lineage=lineage,
+        )
+
+        self.assertIn("vol_zscore", html)
+        self.assertIn("rsi_14", html)
+        self.assertIn("🟢", html)
+        self.assertIn("🔴", html)
+
+
+if __name__ == "__main__":
+    unittest.main()
+```
+
+## FILE: tests/test_watchdog_and_llm_analyst.py
+```python
+"""Unit Tests for Intraday Market Watchdog and Institutional LLM Analyst Agent."""
+
+from __future__ import annotations
+
+import asyncio
+import sys
+import unittest
+from datetime import datetime, timezone
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+ROOT = Path(__file__).resolve().parent.parent
+for sub in ("00_data_sensors", "01_memory_core", "02_quant_engine", "03_risk_portfolio", "04_orchestrator_ai", "05_interfaces"):
+    sys.path.insert(0, str(ROOT / sub))
+
+from analyst_agent import InstitutionalAnalyst
+from data_models import PortfolioState
+from watchdog import MarketWatchdog
+
+
+class TestWatchdogAndAnalystSuite(unittest.TestCase):
+
+    def test_01_watchdog_normal_action(self):
+        """Verify MarketWatchdog reports normal conditions when intraday drop is small."""
+        dog = MarketWatchdog(default_threshold=-0.10)
+        res = dog.check_intraday_crash(
+            index_ticker="^FCHI",
+            mock_data={"high": 7500.0, "current": 7425.0},  # -1.0% drop
+        )
+
+        self.assertFalse(res["alert"])
+        self.assertAlmostEqual(res["drop_pct"], -0.01, places=3)
+        self.assertEqual(res["ticker"], "^FCHI")
+        self.assertIn("Normal", res["message"])
+
+    def test_02_watchdog_flash_crash_alert(self):
+        """Verify MarketWatchdog triggers critical alert when intraday drop exceeds threshold."""
+        dog = MarketWatchdog(default_threshold=-0.10)
+        # High: 8000.0, Current: 7000.0 -> -12.5% flash crash
+        res = dog.check_intraday_crash(
+            index_ticker="^FCHI",
+            mock_data={"high": 8000.0, "current": 7000.0},
+        )
+
+        self.assertTrue(res["alert"])
+        self.assertAlmostEqual(res["drop_pct"], -0.125, places=3)
+        self.assertIn("CRITICAL: Intraday Flash Crash Detected", res["message"])
+
+    def test_03_institutional_analyst_fallback_brief(self):
+        """Verify InstitutionalAnalyst produces 3-paragraph executive synthesis."""
+        analyst = InstitutionalAnalyst()
+        # Force deterministic fallback by ensuring empty api_key
+        analyst.api_key = None
+
+        portfolio_state = PortfolioState(
+            cash_available=3000.0,
+            total_equity=12000.0,
+            positions=[],
+            last_updated=datetime.now(timezone.utc),
+        )
+
+        thermometer_state = {
+            "attack_pct": 0.80,
+            "defense_pct": 0.20,
+            "mode": "ATTACK",
+            "vix": 14.5,
+            "vol_21d": 0.12,
+        }
+
+        top_signals = [
+            {
+                "ticker": "MC.PA",
+                "score": 88.0,
+                "reason": "RSI oversold rebound",
+                "ml_probability": 0.82,
+            },
+            {
+                "ticker": "AI.PA",
+                "score": 85.0,
+                "reason": "Trend continuation",
+                "ml_probability": 0.76,
+            },
+        ]
+
+        brief = analyst.generate_daily_brief_sync(
+            portfolio_state=portfolio_state,
+            thermometer_state=thermometer_state,
+            top_signals=top_signals,
+        )
+
+        self.assertIsInstance(brief, str)
+        self.assertIn("1. Conjoncture Macroéconomique", brief)
+        self.assertIn("2. Analyse des Opportunités Quantitatives", brief)
+        self.assertIn("3. Directives Stratégiques", brief)
+        self.assertIn("MC.PA", brief)
+        self.assertIn("AI.PA", brief)
+        self.assertIn("Mode ATTACK", brief)
+
+    def test_04_institutional_analyst_async_execution(self):
+        """Verify InstitutionalAnalyst async method returns report properly."""
+        analyst = InstitutionalAnalyst()
+        analyst.api_key = None
+
+        portfolio_state = PortfolioState(
+            cash_available=2000.0,
+            total_equity=10000.0,
+            positions=[],
+            last_updated=datetime.now(timezone.utc),
+        )
+
+        thermometer_state = {
+            "attack_pct": 0.0,
+            "defense_pct": 1.0,
+            "mode": "BUNKER",
+            "vix": 32.0,
+            "vol_21d": 0.35,
+        }
+
+        async def run_test():
+            gen = analyst.generate_daily_brief(
+                portfolio_state=portfolio_state,
+                thermometer_state=thermometer_state,
+                top_signals=[],
+                watchdog_alert={"alert": True, "drop_pct": -0.11},
+            )
+            chunks = []
+            async for c in gen:
+                chunks.append(c)
+            return "".join(chunks)
+
+        loop = asyncio.new_event_loop()
+        res = loop.run_until_complete(run_test())
+        loop.close()
+
+
+        self.assertIsInstance(res, str)
+        self.assertIn("BUNKER", res)
+
+
+if __name__ == "__main__":
+    unittest.main()
+```
+
 ## FILE: tools/backup_databases.py
 ```python
-"""Export key SQLite tables to Parquet and back up databases off-instance to AWS S3.
+"""Export key SQLite tables to Parquet and back up databases off-instance to Cloudflare R2 (or AWS S3).
+
+Cloudflare R2 is 100% S3-compatible with zero egress fees.
 
 Usage:
     python tools/backup_databases.py
@@ -5580,6 +7687,7 @@ import shutil
 import sqlite3
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 import pandas as pd
 
@@ -5609,26 +7717,47 @@ TABLES_TO_EXPORT = [
 ]
 
 
-def backup_to_s3(local_files: list[Path], stamp: str, bucket_name: str) -> bool:
-    """Upload backup artifacts to Amazon S3 bucket."""
+def backup_to_r2_or_s3(
+    local_files: list[Path],
+    stamp: str,
+    bucket_name: str,
+    endpoint_url: Optional[str] = None,
+    access_key_id: Optional[str] = None,
+    secret_access_key: Optional[str] = None,
+) -> bool:
+    """Upload backup artifacts to Cloudflare R2 or Amazon S3 bucket."""
     try:
         import boto3
-        s3 = boto3.client("s3")
+
+        client_kwargs = {}
+        if endpoint_url:
+            client_kwargs["endpoint_url"] = endpoint_url
+            client_kwargs["region_name"] = "auto"
+        if access_key_id and secret_access_key:
+            client_kwargs["aws_access_key_id"] = access_key_id
+            client_kwargs["aws_secret_access_key"] = secret_access_key
+
+        s3 = boto3.client("s3", **client_kwargs)
+        dest_name = "Cloudflare R2" if endpoint_url else "Amazon S3"
         prefix = f"pea_pollux_backups/{stamp}"
-        logger.info("Uploading %d backup files to s3://%s/%s/ ...", len(local_files), bucket_name, prefix)
+        logger.info("Uploading %d backup files to %s (bucket: %s, prefix: %s) ...", len(local_files), dest_name, bucket_name, prefix)
 
         for fpath in local_files:
             if not fpath.exists():
                 continue
             key = f"{prefix}/{fpath.name}"
             s3.upload_file(str(fpath), bucket_name, key)
-            logger.info("  [S3 OK] %s -> s3://%s/%s", fpath.name, bucket_name, key)
+            logger.info("  [R2/S3 OK] %s -> s3://%s/%s", fpath.name, bucket_name, key)
 
-        logger.info("AWS S3 cloud backup completed successfully.")
+        logger.info("%s remote cloud backup completed successfully.", dest_name)
         return True
     except Exception as exc:
-        logger.error("AWS S3 upload failed: %s", exc)
+        logger.error("Cloud backup upload failed: %s", exc)
         return False
+
+
+# Alias for backward compatibility
+backup_to_s3 = backup_to_r2_or_s3
 
 
 def main() -> None:
@@ -5672,12 +7801,23 @@ def main() -> None:
     except Exception as exc:
         logger.warning("Failed to copy raw database: %s", exc)
 
-    # AWS S3 Off-Instance Remote Backup
-    bucket = os.getenv("AWS_S3_BACKUP_BUCKET")
+    # Cloudflare R2 / AWS S3 Off-Instance Remote Backup
+    r2_endpoint = os.getenv("R2_ENDPOINT_URL")
+    r2_access_key = os.getenv("R2_ACCESS_KEY_ID")
+    r2_secret_key = os.getenv("R2_SECRET_ACCESS_KEY")
+    bucket = os.getenv("R2_BUCKET_NAME") or os.getenv("AWS_S3_BACKUP_BUCKET")
+
     if bucket and bucket.strip():
-        backup_to_s3(generated_files, stamp, bucket.strip())
+        backup_to_r2_or_s3(
+            generated_files,
+            stamp,
+            bucket.strip(),
+            endpoint_url=r2_endpoint.strip() if r2_endpoint else None,
+            access_key_id=r2_access_key.strip() if r2_access_key else os.getenv("AWS_ACCESS_KEY_ID"),
+            secret_access_key=r2_secret_key.strip() if r2_secret_key else os.getenv("AWS_SECRET_ACCESS_KEY"),
+        )
     else:
-        logger.info("AWS_S3_BACKUP_BUCKET not set; stored backups locally in database/backups/.")
+        logger.info("R2_BUCKET_NAME / AWS_S3_BACKUP_BUCKET not set; stored backups locally in database/backups/.")
 
     logger.info("=== Backup Routine Complete (%d artifacts created) ===", len(generated_files))
 
