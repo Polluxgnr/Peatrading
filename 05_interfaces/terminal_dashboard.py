@@ -2838,10 +2838,11 @@ with r4:
                   "seul theme (diversification imposee).",
     ), unsafe_allow_html=True)
 
-# --- Sidebar: settings & controls -------------------------------------------
 with st.sidebar:
     st.markdown("### ⚙️ Parametres")
+    st.info("⚙️ Orchestré par Prefect (UI locale: port 4200)")
     auto_refresh = st.checkbox("Rafraichissement auto", value=False)
+
     refresh_secs = st.slider("Intervalle (s)", 30, 600, 120, 30,
                              disabled=not auto_refresh)
     if st.button("🔄 Vider le cache & recharger", width="stretch"):

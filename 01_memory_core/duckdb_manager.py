@@ -91,9 +91,10 @@ class TimeSeriesDB:
                     """
                 )
             logger.info("DuckDB schema initialized at %s", self.db_path)
-        except duckdb.Error:
+        except Exception:
             logger.exception("Failed to initialize DuckDB schema.")
             raise
+
 
     def upsert_ohlcv(self, df: pd.DataFrame) -> int:
         """Insert or replace OHLCV rows from a DataFrame.
