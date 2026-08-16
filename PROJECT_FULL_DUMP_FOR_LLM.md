@@ -1,5 +1,5 @@
 # PEA Pollux — Complete Monolithic Repository Dump
-Generated: `2026-08-16 17:57 UTC` | File Count: `174`
+Generated: `2026-08-16 18:02 UTC` | File Count: `174`
 Institutional Systematic Decision Support Architecture for French PEA.
 ---
 ## Included Files Index
@@ -17523,9 +17523,12 @@ Polymarket), universe, architecture docs.
 
 Run (auto-opens browser):
     .\\run_dashboard.ps1
+"""
+
 import asyncio
 import os
 import sys
+
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -17683,11 +17686,9 @@ def short_name(ticker: str) -> str:
 
 
 def euronext_session_status() -> tuple[str, str]:
-    """Return ``(label, health)`` for Euronext Paris cash session.
+    """Return (label, health) for Euronext Paris cash session."""
+    # Rough hours 09:00-17:30 Europe/Paris, Mon-Fri. Good enough for a HUD; not a legal exchange calendar.
 
-    Rough hours 09:00–17:30 Europe/Paris, Mon–Fri. Good enough for a HUD;
-    not a legal exchange calendar.
-    """
     try:
         from zoneinfo import ZoneInfo
         now = datetime.now(ZoneInfo("Europe/Paris"))
@@ -17871,59 +17872,54 @@ def render_pending_trade_cards(pending_df: pd.DataFrame, portfolio_obj) -> None:
 
 
 # =============================================================================
-# Page config & Bloomberg CSS
+# Bloomberg Custom CSS Styling
 # =============================================================================
-st.set_page_config(
-    page_title="PEA Sniper Terminal | V-Prime",
-    layout="wide",
-    page_icon="\U0001F6E1\uFE0F",
-    initial_sidebar_state="collapsed",
-)
+
 
 st.markdown(
-    f"""
+    """
 <style>
-    .stApp {{ background-color: {_BG}; }}
-    section[data-testid="stSidebar"] {{ background-color: {_PANEL};
-        border-right: 1px solid #222; }}
-    h1, h2, h3, h4 {{ color: {_WHITE} !important;
-        font-family: 'Courier New', monospace; letter-spacing: 1px; }}
+    .stApp { background-color: #050505; }
+    section[data-testid="stSidebar"] { background-color: #000000;
+        border-right: 1px solid #222; }
+    h1, h2, h3, h4 { color: #E0E0E0 !important;
+        font-family: 'Courier New', monospace; letter-spacing: 1px; }
 
     /* --- Upgraded Bloomberg metric boxes (HUD) --- */
-    .metric-box {{ background: linear-gradient(180deg, #12151B 0%, #0A0D12 100%); padding: 14px 18px;
-        border: 1px solid #2A313D; border-left: 4px solid {_CYAN}; border-radius: 4px;
+    .metric-box { background: linear-gradient(180deg, #12151B 0%, #0A0D12 100%); padding: 14px 18px;
+        border: 1px solid #2A313D; border-left: 4px solid #00B4D8; border-radius: 4px;
         box-shadow: 0 4px 12px rgba(0, 0, 0, 0.45);
-        margin-bottom: 12px; font-family: 'Courier New', monospace; transition: all 0.2s ease; }}
-    .metric-box.green {{ border-left-color: {_NEON}; }}
-    .metric-box.amber {{ border-left-color: {_AMBER}; }}
-    .metric-box.cyan  {{ border-left-color: {_CYAN}; }}
-    .metric-box.red   {{ border-left-color: {_RED}; }}
-    .metric-box.muted {{ border-left-color: #4B5563; }}
-    .metric-box:hover {{ border-color: #4A5568; transform: translateY(-1px); }}
-    .metric-title {{ color: {_CYAN}; font-size: 12px; text-transform: uppercase;
-        letter-spacing: 1.5px; font-weight: 600; }}
-    .metric-value {{ color: {_WHITE}; font-size: 22px; font-weight: 700;
-        margin-top: 4px; word-break: break-word; line-height: 1.25; }}
-    .metric-sub {{ font-size: 12px; margin-top: 4px; font-weight: 600;
-        word-break: break-word; }}
-    .sub-green {{ color: {_NEON}; }}
-    .sub-red   {{ color: {_RED}; }}
-    .sub-amber {{ color: {_AMBER}; }}
-    .sub-muted {{ color: {_MUTED}; }}
+        margin-bottom: 12px; font-family: 'Courier New', monospace; transition: all 0.2s ease; }
+    .metric-box.green { border-left-color: #00FF00; }
+    .metric-box.amber { border-left-color: #FFB000; }
+    .metric-box.cyan  { border-left-color: #00B4D8; }
+    .metric-box.red   { border-left-color: #FF3B30; }
+    .metric-box.muted { border-left-color: #4B5563; }
+    .metric-box:hover { border-color: #4A5568; transform: translateY(-1px); }
+    .metric-title { color: #00B4D8; font-size: 12px; text-transform: uppercase;
+        letter-spacing: 1.5px; font-weight: 600; }
+    .metric-value { color: #E0E0E0; font-size: 22px; font-weight: 700;
+        margin-top: 4px; word-break: break-word; line-height: 1.25; }
+    .metric-sub { font-size: 12px; margin-top: 4px; font-weight: 600;
+        word-break: break-word; }
+    .sub-green { color: #00FF00; }
+    .sub-red   { color: #FF3B30; }
+    .sub-amber { color: #FFB000; }
+    .sub-muted { color: #9BA3AF; }
 
     /* --- Native metric widgets --- */
-    [data-testid="stMetricValue"] {{ color: {_WHITE} !important;
-        font-family: 'Courier New', monospace; }}
-    [data-testid="stMetricLabel"] p {{ color: {_CYAN} !important;
-        text-transform: uppercase; letter-spacing: 1px; font-weight: 600; }}
+    [data-testid="stMetricValue"] { color: #E0E0E0 !important;
+        font-family: 'Courier New', monospace; }
+    [data-testid="stMetricLabel"] p { color: #00B4D8 !important;
+        text-transform: uppercase; letter-spacing: 1px; font-weight: 600; }
 
     /* --- Info / explanation banners --- */
-    .info-text {{ color: #C8D0D8; font-size: 14px; margin-bottom: 14px;
-        padding: 10px 14px; border-left: 3px solid {_CYAN};
-        background-color: #0A0E14; border-radius: 3px; }}
-    .eli5 {{ color: {_WHITE}; font-size: 14px; line-height: 1.6;
+    .info-text { color: #C8D0D8; font-size: 14px; margin-bottom: 14px;
+        padding: 10px 14px; border-left: 3px solid #00B4D8;
+        background-color: #0A0E14; border-radius: 3px; }
+    .eli5 { color: #E0E0E0; font-size: 14px; line-height: 1.6;
         margin-bottom: 14px; padding: 14px 18px; border: 1px solid #28313E;
-        border-left: 4px solid {_AMBER}; background-color: #0A0D12; border-radius: 4px; }}
+        border-left: 4px solid #FFB000; background-color: #0A0D12; border-radius: 4px; }
 
     /* --- Tabs --- */
     .stTabs [data-baseweb="tab-list"] { gap: 4px; border-bottom: 1px solid #222; }
@@ -22498,10 +22494,11 @@ with tab_mkt:
     st.markdown("---")
     st.markdown("#### ⚖️ Arbitrage Statistique & Paires Cointégrées (Z-Score)")
     st.markdown(
-        "<div class='info-text'>Modèle de cointégration (Engle-Granger) et suivi en temps réel du Z-Score du spread. "
-        "Une anomalie $|Z| \ge 2.0\sigma$ signale une divergence statistique temporaire propice au retour à la moyenne.</div>",
+        r"<div class='info-text'>Modèle de cointégration (Engle-Granger) et suivi en temps réel du Z-Score du spread. "
+        r"Une anomalie $|Z| \ge 2.0\sigma$ signale une divergence statistique temporaire propice au retour à la moyenne.</div>",
         unsafe_allow_html=True,
     )
+
     try:
         from stat_arb_pairs import StatArbEngine
         from charts import render_statarb_zscore_chart

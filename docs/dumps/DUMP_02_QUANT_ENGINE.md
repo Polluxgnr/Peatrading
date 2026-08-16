@@ -1,5 +1,5 @@
 # PEA Pollux — Quantitative Strategy, Indicators, HMM Regimes & ML Feature Store
-Generated: `2026-08-16 17:57 UTC` | File Count: `16`
+Generated: `2026-08-16 18:02 UTC` | File Count: `16`
 Institutional Systematic Decision Support Architecture for French PEA.
 ---
 ## Included Files Index
