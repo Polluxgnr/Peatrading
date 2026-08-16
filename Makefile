@@ -41,3 +41,8 @@ update:
 # Forces an ML training pass
 train:
 	sudo docker compose exec daemon python 02_quant_engine/ml_trainer.py
+
+# Local Mini PC / Server Production Deployment & Self-Check
+deploy-check:
+	bash tools/deploy_local.sh
+

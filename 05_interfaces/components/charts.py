@@ -21,20 +21,24 @@ logger = logging.getLogger("interactive_charts")
 
 def render_hmm_candlestick_chart(
     ticker: str,
-    df: pd.DataFrame,
+    df: Optional[pd.DataFrame] = None,
     sma50: Optional[pd.Series] = None,
     sma200: Optional[pd.Series] = None,
     regime_series: Optional[pd.Series] = None,
     title: Optional[str] = None,
+    ohlcv_df: Optional[pd.DataFrame] = None,
+    sma_50: Optional[pd.Series] = None,
+    sma_200: Optional[pd.Series] = None,
+    hmm_regimes: Optional[pd.Series] = None,
 ) -> go.Figure:
     """Create a dark-themed interactive candlestick chart with SMA overlays and HMM regime bands.
 
     Args:
         ticker: Ticker symbol (e.g. "MC.PA").
-        df: DataFrame with DatetimeIndex and ['Open', 'High', 'Low', 'Close'].
-        sma50: Series of 50-day Simple Moving Average.
-        sma200: Series of 200-day Simple Moving Average.
-        regime_series: Series aligned with df index containing 'BULL', 'BEAR', 'VOLATILE'.
+        df: DataFrame with DatetimeIndex and ['Open', 'High', 'Low', 'Close'] (or ohlcv_df).
+        sma50: Series of 50-day Simple Moving Average (or sma_50).
+        sma200: Series of 200-day Simple Moving Average (or sma_200).
+        regime_series: Series aligned with df index containing 'BULL', 'BEAR', 'VOLATILE' (or hmm_regimes).
         title: Optional custom chart title.
 
     Returns:
@@ -42,7 +46,12 @@ def render_hmm_candlestick_chart(
     """
     fig = go.Figure()
 
-    if df is None or df.empty:
+    price_df = df if df is not None else ohlcv_df
+    s50 = sma50 if sma50 is not None else sma_50
+    s200 = sma200 if sma200 is not None else sma_200
+    regimes = regime_series if regime_series is not None else hmm_regimes
+
+    if price_df is None or price_df.empty:
         fig.update_layout(
             template="plotly_dark",
             title=f"{ticker} — Données de prix indisponibles",
@@ -52,7 +61,7 @@ def render_hmm_candlestick_chart(
         return fig
 
     # Align columns
-    cols = {c.lower(): c for c in df.columns}
+    cols = {c.lower(): c for c in price_df.columns}
     o_col = cols.get("open", "Open")
     h_col = cols.get("high", "High")
     l_col = cols.get("low", "Low")
@@ -61,11 +70,11 @@ def render_hmm_candlestick_chart(
     # 1. Candlestick Price Trace
     fig.add_trace(
         go.Candlestick(
-            x=df.index,
-            open=df[o_col],
-            high=df[h_col],
-            low=df[l_col],
-            close=df[c_col],
+            x=price_df.index,
+            open=price_df[o_col],
+            high=price_df[h_col],
+            low=price_df[l_col],
+            close=price_df[c_col],
             name="Cours",
             increasing_line_color="#00FF66",
             decreasing_line_color="#FF3B30",
@@ -75,11 +84,11 @@ def render_hmm_candlestick_chart(
     )
 
     # 2. SMA 50 Overlay (Orange)
-    if sma50 is not None and not sma50.dropna().empty:
+    if s50 is not None and not s50.dropna().empty:
         fig.add_trace(
             go.Scatter(
-                x=sma50.index,
-                y=sma50,
+                x=s50.index,
+                y=s50,
                 mode="lines",
                 line=dict(color="#FF9500", width=1.5),
                 name="SMA 50",
@@ -87,11 +96,11 @@ def render_hmm_candlestick_chart(
         )
 
     # 3. SMA 200 Overlay (White / Light Gray)
-    if sma200 is not None and not sma200.dropna().empty:
+    if s200 is not None and not s200.dropna().empty:
         fig.add_trace(
             go.Scatter(
-                x=sma200.index,
-                y=sma200,
+                x=s200.index,
+                y=s200,
                 mode="lines",
                 line=dict(color="#FFFFFF", width=1.5, dash="dot"),
                 name="SMA 200",
@@ -99,7 +108,7 @@ def render_hmm_candlestick_chart(
         )
 
     # 4. HMM Regime Background Highlights
-    if regime_series is not None and not regime_series.dropna().empty:
+    if regimes is not None and not regimes.dropna().empty:
         regime_colors = {
             "BULL": "rgba(0, 255, 102, 0.08)",
             "BEAR": "rgba(255, 59, 48, 0.08)",
@@ -107,7 +116,8 @@ def render_hmm_candlestick_chart(
             "PANIC": "rgba(239, 68, 68, 0.16)",
         }
         
-        reg_series = regime_series.dropna()
+        reg_series = regimes.dropna()
+
         if not reg_series.empty:
             start_dt = reg_series.index[0]
             cur_reg = str(reg_series.iloc[0]).upper()

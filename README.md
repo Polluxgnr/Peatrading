@@ -439,24 +439,29 @@ REBALANCE_PROFIT_SHAVE_PCT: 0.20   # Shave 20% of position quantity
 A complete `Makefile` is included for standardized operations:
 
 ```bash
-make install     # Install/upgrade all production dependencies
-make init        # Initialize SQLite, DuckDB, and seed account with 10k € cash
-make run         # Launch the Streamlit Terminal HUD (:8501)
+make deploy-check# Run production deploy self-check & database init (tools/deploy_local.sh)
+make dashboard   # Launch the Streamlit Terminal HUD (:8501)
 make api         # Launch the FastAPI Internal SSOT (:8000)
 make mcp         # Launch the Model Context Protocol Server for Claude Desktop
 make scheduler   # Run the Paris market scheduler daemon
-make pass        # Execute a synchronous market analysis pass immediately (--now)
-make morning-news# Run pre-market IMAP ingestion and FinBERT scoring (--morning-news)
-make retrain-ml  # Run monthly ML model retraining immediately (--retrain-ml)
-make backup      # Run Parquet export and S3 cloud backup now (--backup)
-make atr-stops   # Evaluate daily ATR stops now (--atr-stops)
-make rebalance   # Evaluate monthly profit-shaving rebalancer now (--rebalance)
-make weekly      # Generate Friday CIO weekly report now (--weekly)
-make backtest    # Run the event-driven Walk-Forward Backtester
-make test        # Run the full automated unit and regression test suite (65/65 passing)
+make test        # Run the full automated unit and regression test suite
 make dump        # Regenerate all LLM context dumps (global + categorized)
-make clean       # Clean temporary cache and bytecode files
+make train       # Force an ML model retraining pass
+make deploy      # Pull latest git commit and rebuild docker containers
+make update      # Pull latest git commit and restart services
 ```
+
+---
+
+## 🏗️ Production Hardware & Sovereign Deployment
+
+PEA Pollux is designed to operate 24/7 on low-power local hardware (Mini PC / Raspberry Pi / Oracle Free Tier):
+
+- **Zero-Cost Inference**: 100% local Sovereign AI inference via **Ollama** (`mistral` / `llama3.2`) with live token streaming in the Streamlit HUD.
+- **API Cost Guardrails**: Fallback OpenRouter models (`google/gemini-flash-1.5`) capped at 350 tokens with persistent 24-hour SQLite synthesis caching (`database/portfolio.db`).
+- **CPU Task Isolation**: CPU-heavy ML and NLP tasks isolated in a `ProcessPoolExecutor` (`04_orchestrator_ai/cpu_isolator.py`) to prevent event-loop latency.
+- **Self-Healing Data Gateway**: Automated stock split detection (`01_memory_core/corporate_actions.py`) and anomaly return tagging (`DataQualityGateway`).
+- **Zero-Cost Cloudflare R2 Storage**: Encrypted daily Parquet and SQLite snapshots uploaded to Cloudflare R2 (S3-compatible API with zero egress fees).
 
 ---
 
@@ -485,32 +490,25 @@ python tools/build_llm_dump.py
 
 ## 🧪 Verification & Test Suites
 
-The project features a **100% passing automated test suite (65 / 65 tests)** covering all architectural layers:
+The project features a **100% passing automated test suite (120+ tests)** covering all architectural layers:
 
 ```bash
-# Run all tests
+# Run full test suite
 python -m unittest discover tests
 
 # Or via pytest
 python -m pytest -v
 ```
 
-### Test Suite Inventory
-- `test_reconciliation_and_backup.py`: Tests French broker CSV reconciliation (Boursorama, Bourse Direct), SQLite state overwrites, audit signals, and AWS S3 Parquet/DB backups.
-- `test_limit_tiers_and_radar.py`: Tests 3-tier ATR limit price calculations (Aggressive, Optimal, Patient), direction reversals, and UCB Bandit + Dynamic Ensemble polar radar chart weights.
-- `test_fmp_copilot_retraining.py`: Tests Financial Modeling Prep (FMP) 9-point Piotroski scoring with yfinance fallback, enriched Discord copilot embeds, and autonomous monthly ML retraining.
-- `test_stealth_and_imap_ingest.py`: Tests Cloudscraper anti-bot resilience, Boursorama scraper error recovery, and production IMAP newsletter ingestion with Jaccard deduplication.
-- `test_amf_and_earnings_sync.py`: Tests AMF BDIF Short Interest API scraper, corporate earnings calendar updater, and Step 1f short interest veto.
-- `test_brain_and_decoupling.py`: Tests `VolatilityRegimeSentinel` continuous VIX conviction floors, `UCBBandit` + `DynamicEnsemble` weight lineage in `SignalGenerator`, OpenInsider currency cleaners, and decoupled FastAPI endpoints.
-- `test_ml_cascade_integration.py`: Tests live Isolation Forest anomaly veto, XGBoost probability scoring threshold ($p < 0.50$), signal lineage enrichment, trade card rendering, and API serialization.
-- `test_text_cleaner_and_feedback.py`: Tests Data Janitor HTML entity unescaping, bilingual disclaimer removal, 1500-char truncation, and Contextual Bandit UCB trade closure reward updates.
-- `test_finbert_sentiment.py`: Tests offline `ProsusAI/finbert` classification, score scaling, and heuristic keyword fallbacks.
-- `test_stat_arb_and_backtest.py`: Tests cointegration pairs discovery, sector isolation, Z-score spread computation, and walk-forward backtest execution at T+1 Open.
-- `test_api_and_mcp.py`: Tests FastAPI endpoints (`/portfolio/summary`, `/recommendations/pending`, `/system/health`), recommendation paradigm adherence, and Claude Desktop MCP tool formatters.
-- `test_institutional_suite.py`: Tests Pydantic `RiskParamsConfig` strictness (`extra='forbid', frozen=True`), DrawdownBreaker kinetic multipliers, Piotroski F-Score calculation, HRP allocation, and VaR/CVaR risk math.
-- `test_funnel_analytics.py`: Tests decision funnel waterfall classification and rejection taxonomy.
-- `test_phase16_foundations.py`: Tests core/satellite sizing, ATR stops, profit-shaving rebalancer, and correlation firewall.
-
+### Key Test Suites
+- `test_master_system.py`: Master end-to-end regression suite (Signals, 7-stage risk cascade, DuckDB/SQLite persistence, Data Quality Gateway outliers, Volatility Thermometer).
+- `test_visual_components.py`: Plotly HMM candlesticks, StatArb Z-score spread, Macro Thermometer gauge, and SHAP attribution trade card tests.
+- `test_local_ollama_streaming.py`: Sovereign local AI inference streaming, token chunking, and fallback mechanisms.
+- `test_llm_cache_and_guardrails.py`: 24-hour SQLite synthesis caching and OpenRouter token limit guardrails.
+- `test_data_hub.py` & `test_layer1_contracts_and_r2.py`: Data Ingestion Hub, standardized adapters, and Cloudflare R2 backup tests.
+- `test_phase3_cpu_and_market.py`: Market data chunking, Piotroski score adapter, and CPU process isolator tests.
+- `test_watchdog_and_llm_analyst.py`: Intraday crash watchdog and institutional analyst generation.
+- `test_corporate_actions_and_universe_manager.py`: Stock split detection and self-healing data pipeline tests.
 
 ---
 
@@ -525,4 +523,5 @@ Past performance and walk-forward backtest metrics do not guarantee future retur
 ---
 
 © 2026 Pollux Quantitative Research · PEA Pollux Systematic Terminal V-Prime.
+
 

@@ -175,12 +175,19 @@ def render_signal_card(
                 bar_items = []
                 for k, v in pos_shaps:
                     pct_str = f"{v*100:+.1f}%" if abs(v) <= 1.0 else f"{v:+.2f}"
-                    bar_items.append(f"<span style='background:rgba(34,197,94,0.15);border:1px solid #22C55E;color:#4ADE80;padding:2px 6px;border-radius:3px;font-size:11px;'>🟢 <b>{k}</b>: {pct_str}</span>")
+                    bar_items.append(
+                        f"<span style='background:rgba(34,197,94,0.15);border:1px solid #22C55E;color:#4ADE80;padding:2px 6px;border-radius:3px;font-size:11px;'>"
+                        f"🟢 ▲ {k} (+{v:.2f}) · {pct_str}</span>"
+                    )
                 for k, v in neg_shaps:
                     pct_str = f"{v*100:+.1f}%" if abs(v) <= 1.0 else f"{v:+.2f}"
-                    bar_items.append(f"<span style='background:rgba(239,68,68,0.15);border:1px solid #EF4444;color:#F87171;padding:2px 6px;border-radius:3px;font-size:11px;'>🔴 <b>{k}</b>: {pct_str}</span>")
+                    bar_items.append(
+                        f"<span style='background:rgba(239,68,68,0.15);border:1px solid #EF4444;color:#F87171;padding:2px 6px;border-radius:3px;font-size:11px;'>"
+                        f"🔴 ▼ {k} ({v:.2f}) · {pct_str}</span>"
+                    )
                 if bar_items:
                     shap_bars_html = f"<div style='margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;'>{' '.join(bar_items)}</div>"
+
 
             ml_html = (
                 f"<div style='margin-top:6px;color:#38BDF8;font-size:12px;line-height:1.45;'>"

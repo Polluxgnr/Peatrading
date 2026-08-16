@@ -209,3 +209,12 @@ class TimeSeriesDB:
         except duckdb.Error:
             logger.exception("Failed to fetch historical prices for %s.", ticker)
             raise
+
+    def close(self) -> None:
+        """No-op for connection-managed TimeSeriesDB instances."""
+        pass
+
+    # Aliases for flexibility
+    init_schema = init_db
+    upsert_daily_ohlcv = upsert_ohlcv
+
