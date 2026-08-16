@@ -2891,7 +2891,47 @@ with r4:
                   "seul theme (diversification imposee).",
     ), unsafe_allow_html=True)
 
+# --- Volatility Thermometer & Attack/Shield Allocation ---
+try:
+    from allocation_thermometer import VolatilityThermometer
+    fchi_df = yf.download("^FCHI", period="1y", interval="1d", progress=False, auto_adjust=True)
+    if fchi_df is not None and not fchi_df.empty:
+        if isinstance(fchi_df.columns, pd.MultiIndex):
+            fchi_df.columns = fchi_df.columns.get_level_values(0)
+    thermo = VolatilityThermometer()
+    thermo_res = thermo.calculate_attack_defense_split(fchi_df, current_vix=vix)
+
+    if thermo_res.get("mode") == "BUNKER":
+        st.error(
+            f"🛑 **BUNKER MODE ACTIVATED: Index < 200 SMA (CAC40: {thermo_res.get('close'):.2f} < SMA200 {thermo_res.get('sma_200'):.2f}).** "
+            f"100% Defense allocation required (Cash / CSH.PA). Zero equity buys."
+        )
+    else:
+        atk = float(thermo_res.get("attack_pct", 0.70)) * 100.0
+        defs = float(thermo_res.get("defense_pct", 0.30)) * 100.0
+        mode_label = "⚔️ MODE ATTAQUE" if atk >= 50.0 else "🛡️ MODE DÉFENSE LEANING"
+        st.markdown(
+            f"<div style='background:#0A0A0A;border:1px solid #222;padding:10px 14px;margin-top:10px;margin-bottom:10px;'>"
+            f"<div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;'>"
+            f"<span style='font-size:13px;font-weight:700;color:#FFF;'>🌡️ Thermomètre de Volatilité : <span style='color:{_NEON if atk>=50 else _AMBER};'>{mode_label}</span></span>"
+            f"<span style='font-size:12px;color:#9BA3AF;'>Vol 21j: {float(thermo_res.get('vol_21d', 0))*100:.1f}% · VIX: {vix:.1f} · Cap Exposition: 98%</span>"
+            f"</div>"
+            f"<div style='height:12px;background:#1F2937;border-radius:6px;overflow:hidden;display:flex;'>"
+            f"<div style='width:{atk:.1f}%;background:linear-gradient(90deg,#00FF00,#10B981);height:100%;' title='Attack: {atk:.1f}%'></div>"
+            f"<div style='width:{defs:.1f}%;background:linear-gradient(90deg,#3B82F6,#6366F1);height:100%;' title='Shield: {defs:.1f}%'></div>"
+            f"</div>"
+            f"<div style='display:flex;justify-content:space-between;font-size:11px;color:#9BA3AF;margin-top:4px;'>"
+            f"<span style='color:#34D399;'>⚔️ Moteur Attaque (Actions Cibles) : <b>{atk:.0f}%</b></span>"
+            f"<span style='color:#818CF8;'>🛡️ Moteur Bouclier (Cash & Monétaire CSH.PA) : <b>{defs:.0f}%</b></span>"
+            f"</div>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+except Exception as exc:
+    logger.debug("Thermometer display error: %s", exc)
+
 with st.sidebar:
+
     st.markdown("### ⚙️ Parametres")
     st.info("⚙️ Orchestré par Prefect (UI locale: port 4200)")
     auto_refresh = st.checkbox("Rafraichissement auto", value=False)

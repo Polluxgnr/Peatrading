@@ -55,14 +55,17 @@ class PeaSizer:
         self.max_sector_weight: float = float(risk.get("MAX_SECTOR_WEIGHT_PCT", 0.25))
         self.vol_reference: float = float(risk.get("VOLATILITY_REFERENCE", 0.20))
         self.vol_max_factor: float = float(risk.get("VOLATILITY_MAX_FACTOR", 1.5))
+        self.permanent_cash_buffer: float = float(risk.get("PERMANENT_CASH_BUFFER_PCT", 0.02))
         logger.debug(
-            "Sizer loaded: kelly=%.2f max_single=%.2f sat_budget=%.2f vol_ref=%.2f max_sector=%.2f",
+            "Sizer loaded: kelly=%.2f max_single=%.2f sat_budget=%.2f vol_ref=%.2f max_sector=%.2f cash_buffer=%.2f",
             self.kelly_fraction,
             self.max_single_position,
             self.satellite_max_budget,
             self.vol_reference,
             self.max_sector_weight,
+            self.permanent_cash_buffer,
         )
+
 
     @staticmethod
     def _load_risk_params(config_path: str | Path | None) -> dict:
@@ -155,12 +158,13 @@ class PeaSizer:
         historical_volatility: float | None = None,
         ticker_sector: str = "UNKNOWN",
         kinetic_multiplier: float = 1.0,
+        attack_budget_pct: float | None = None,
     ) -> tuple[int, dict]:
         """Return ``(qty, meta)`` so UIs can show the sizing reasoning.
 
         Meta keys: kelly_fraction, score, historical_volatility, vol_factor,
         max_alloc, target_cash_pre_cap, target_cash, notional, weight_pct,
-        satellite_room, cash_capped, sector_scale, kinetic_multiplier.
+        satellite_room, cash_capped, sector_scale, kinetic_multiplier, max_exposure_room.
         """
         meta: dict = {
             "kelly_fraction": self.kelly_fraction,
@@ -176,6 +180,7 @@ class PeaSizer:
             "cash_capped": False,
             "sector_scale": 1.0,
             "kinetic_multiplier": kinetic_multiplier,
+            "max_exposure_room": 0.0,
         }
         if current_price <= 0 or portfolio.total_equity <= 0 or kinetic_multiplier <= 0.0:
             logger.warning(
@@ -203,26 +208,43 @@ class PeaSizer:
             "sector_scale": sec_scale,
         })
 
+        # Strict 98% Max Exposure Limit (2% Permanent Cash Buffer)
+        invested_equity = sum(p.market_value for p in portfolio.positions)
+        max_exposure_cap = portfolio.total_equity * (1.0 - self.permanent_cash_buffer)
+        max_exposure_room = max(0.0, max_exposure_cap - invested_equity)
+
         satellite_room = max(
             0.0,
             self.satellite_budget_room(portfolio),
         )
+
+        # Dynamic Attack Budget cap from Volatility Thermometer
+        if attack_budget_pct is not None:
+            max_attack_equity = portfolio.total_equity * min(1.0 - self.permanent_cash_buffer, max(0.0, float(attack_budget_pct)))
+            current_sat = self._satellite_value(portfolio)
+            attack_room = max(0.0, max_attack_equity - current_sat)
+            satellite_room = min(satellite_room, attack_room)
+
+        satellite_room = min(satellite_room, max_exposure_room)
         meta["satellite_room"] = satellite_room
+        meta["max_exposure_room"] = max_exposure_room
+
         if target_cash > satellite_room:
             logger.info(
-                "%s sizing capped by satellite budget: %.2f -> %.2f EUR.",
+                "%s sizing capped by satellite/exposure budget: %.2f -> %.2f EUR.",
                 signal.ticker, target_cash, satellite_room,
             )
             target_cash = satellite_room
 
+        max_usable_cash = max(0.0, min(portfolio.cash_available, max_exposure_room))
         qty_shares = math.floor(target_cash / current_price)
         notional = qty_shares * current_price
-        if notional > portfolio.cash_available:
-            qty_shares = math.floor(portfolio.cash_available / current_price)
+        if notional > max_usable_cash:
+            qty_shares = math.floor(max_usable_cash / current_price)
             notional = qty_shares * current_price
             meta["cash_capped"] = True
             logger.info(
-                "%s sizing capped by cash -> %d shares.",
+                "%s sizing capped by usable cash (under 98%% exposure limit) -> %d shares.",
                 signal.ticker, qty_shares,
             )
         else:
@@ -231,6 +253,7 @@ class PeaSizer:
                 signal.ticker, qty_shares, target_cash, current_price,
                 signal.score, vol_factor, sec_scale,
             )
+
 
         qty_shares = max(0, qty_shares)
         notional = qty_shares * current_price
