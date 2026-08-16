@@ -3249,8 +3249,9 @@ with tab_gen:
 
     # --- Phase 7: AI Transparency & Strategy Weight Radar ---
     st.markdown("---")
-    st.markdown("### \U0001F9E0 R\u00e9partition des Strat\u00e9gies (IA & Bandit Contextuel)")
+    st.markdown("### 🧠 Pondération de l'IA (Bandit Contextuel)")
     st.markdown(
+
         "<div class='info-text'>Pond\u00e9rations dynamiques allou\u00e9es aux sous-mod\u00e8les par le "
         "<b>Bandit Contextuel UCB</b> et le <b>Dynamic Ensemble ML</b> selon le r\u00e9gime actif.</div>",
         unsafe_allow_html=True,

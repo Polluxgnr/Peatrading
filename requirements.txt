@@ -41,12 +41,16 @@ mcp>=1.0.0
 discord.py>=2.3
 plotly>=5.20
 matplotlib>=3.8   # required by pandas Styler.background_gradient in the dashboard
-mplfinance>=0.12.10b0
-# streamlit needs pyarrow, which has NO prebuilt wheel for Python 3.13 / arm64.
-# Use a Python 3.11/3.12 (x64) environment to install and run the dashboard.
 streamlit>=1.33
 
+# --- AI Agents & LangGraph (Phase 10) ---
+
+langgraph>=0.0.26
+langchain-core
+langchain-openai
+
 # --- Scheduler, Orchestration & Cloud Backups (Phase 9) ---
+
 schedule>=1.2
 prefect>=2.19.0
 boto3>=1.34.0

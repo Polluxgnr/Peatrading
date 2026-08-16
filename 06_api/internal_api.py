@@ -417,7 +417,119 @@ def get_signals_by_status(
         raise HTTPException(status_code=500, detail=str(exc))
 
 
+@app.get("/api/v1/hub/signals", response_model=List[Dict[str, Any]])
+def get_hub_alternative_signals(
+    ticker: Optional[str] = Query(default=None),
+    signal_type: Optional[str] = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=500),
+) -> List[Dict[str, Any]]:
+    """Fetch recent AlternativeSignal records ingested by Layer 1 Data Ingestion Hub."""
+    try:
+        import json
+        import sqlite3
+        with sqlite3.connect(_PORTFOLIO_DB.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS alternative_signals (
+                    id TEXT PRIMARY KEY,
+                    ticker TEXT,
+                    ts TEXT NOT NULL,
+                    signal_type TEXT NOT NULL,
+                    value REAL NOT NULL,
+                    confidence REAL NOT NULL,
+                    source TEXT NOT NULL,
+                    metadata_json TEXT
+                )
+                """
+            )
+            query = "SELECT id, ticker, ts, signal_type, value, confidence, source, metadata_json FROM alternative_signals WHERE 1=1"
+            params: list[Any] = []
+            if ticker:
+                query += " AND (ticker = ? OR ticker IS NULL)"
+                params.append(ticker.strip().upper())
+            if signal_type:
+                query += " AND signal_type = ?"
+                params.append(signal_type.strip().upper())
+            query += " ORDER BY ts DESC LIMIT ?;"
+            params.append(limit)
+
+            rows = conn.execute(query, params).fetchall()
+            results = []
+            for r in rows:
+                d = dict(r)
+                if d.get("metadata_json"):
+                    try:
+                        d["metadata"] = json.loads(d["metadata_json"])
+                    except Exception:
+                        d["metadata"] = {}
+                else:
+                    d["metadata"] = {}
+                results.append(d)
+            return results
+    except Exception as exc:
+        logger.exception("Failed to query hub signals: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/api/v1/hub/ticks", response_model=List[Dict[str, Any]])
+def get_hub_ticks(
+    ticker: str = Query(..., description="Target ticker symbol (e.g. MC.PA)"),
+    days: int = Query(default=30, ge=1, le=500),
+) -> List[Dict[str, Any]]:
+    """Fetch recent MarketTick / OHLCV price history from DuckDB/SQLite."""
+    clean_ticker = ticker.strip().upper()
+    try:
+        from duckdb_manager import TimeSeriesDB
+        tsdb = TimeSeriesDB()
+        df = tsdb.get_historical_prices(clean_ticker, days=days)
+        if df is not None and not df.empty:
+            records = []
+            for idx, row in df.iterrows():
+                d_str = idx.strftime("%Y-%m-%d") if hasattr(idx, "strftime") else str(idx)
+                records.append({
+                    "ticker": clean_ticker,
+                    "date": d_str,
+                    "open": float(row.get("Open") or row.get("open") or 0.0),
+                    "high": float(row.get("High") or row.get("high") or 0.0),
+                    "low": float(row.get("Low") or row.get("low") or 0.0),
+                    "close": float(row.get("Close") or row.get("close") or 0.0),
+                    "volume": float(row.get("Volume") or row.get("volume") or 0.0),
+                    "source": "DuckDB",
+                })
+            return records
+    except Exception as exc:
+        logger.debug("DuckDB lookup for %s failed: %s; trying yfinance fallback", clean_ticker, exc)
+
+    try:
+        import yfinance as yf
+        data = yf.download(clean_ticker, period=f"{min(days, 365)}d", interval="1d", progress=False, auto_adjust=True)
+        if data is not None and not data.empty:
+            if isinstance(data.columns, pd.MultiIndex):
+                data.columns = data.columns.get_level_values(0)
+            records = []
+            for idx, row in data.iterrows():
+                d_str = idx.strftime("%Y-%m-%d") if hasattr(idx, "strftime") else str(idx)
+                records.append({
+                    "ticker": clean_ticker,
+                    "date": d_str,
+                    "open": float(row.get("Open") or 0.0),
+                    "high": float(row.get("High") or 0.0),
+                    "low": float(row.get("Low") or 0.0),
+                    "close": float(row.get("Close") or 0.0),
+                    "volume": float(row.get("Volume") or 0.0),
+                    "source": "yfinance",
+                })
+            return records
+    except Exception as exc:
+        logger.exception("Failed to query market ticks for %s: %s", clean_ticker, exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    return []
+
+
 @app.get("/api/v1/system/health", response_model=Dict[str, Any])
+
 def get_system_health() -> Dict[str, Any]:
     """Return operational health status and database integrity."""
     db_path = _PORTFOLIO_DB.db_path

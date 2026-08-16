@@ -170,15 +170,27 @@ def render_signal_card(
                 )[:2]
                 if top_shaps:
                     shap_items = [f"{k} ({'+' if v > 0 else ''}{v:.2f})" for k, v in top_shaps]
-                    shap_txt = f" | Top Drivers: {', '.join(shap_items)}"
+            shap_bars_html = ""
+            if shap_vals and isinstance(shap_vals, dict):
+                pos_shaps = sorted([(k, float(v)) for k, v in shap_vals.items() if float(v) > 0], key=lambda x: x[1], reverse=True)[:2]
+                neg_shaps = sorted([(k, float(v)) for k, v in shap_vals.items() if float(v) < 0], key=lambda x: x[1])[:1]
+                bar_items = []
+                for k, v in pos_shaps:
+                    bar_items.append(f"<span style='background:rgba(34,197,94,0.15);border:1px solid #22C55E;color:#4ADE80;padding:2px 6px;border-radius:3px;font-size:11px;'>▲ {k} (+{v:.2f})</span>")
+                for k, v in neg_shaps:
+                    bar_items.append(f"<span style='background:rgba(239,68,68,0.15);border:1px solid #EF4444;color:#F87171;padding:2px 6px;border-radius:3px;font-size:11px;'>▼ {k} ({v:.2f})</span>")
+                if bar_items:
+                    shap_bars_html = f"<div style='margin-top:4px;display:flex;gap:6px;flex-wrap:wrap;'>{' '.join(bar_items)}</div>"
 
             ml_html = (
                 f"<div style='margin-top:6px;color:#38BDF8;font-size:12px;line-height:1.45;'>"
                 f"🧠 <b>ML Probability</b>: <b style='color:#7DD3FC;'>{prob_pct:.1f}%</b>{int_txt}{shap_txt}"
+                f"{shap_bars_html}"
                 f"</div>"
             )
         except Exception:
             ml_html = ""
+
 
 
 
