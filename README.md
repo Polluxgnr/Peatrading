@@ -448,11 +448,12 @@ make scheduler   # Run the Paris market scheduler daemon
 make pass        # Execute a synchronous market analysis pass immediately (--now)
 make morning-news# Run pre-market IMAP ingestion and FinBERT scoring (--morning-news)
 make retrain-ml  # Run monthly ML model retraining immediately (--retrain-ml)
+make backup      # Run Parquet export and S3 cloud backup now (--backup)
 make atr-stops   # Evaluate daily ATR stops now (--atr-stops)
 make rebalance   # Evaluate monthly profit-shaving rebalancer now (--rebalance)
 make weekly      # Generate Friday CIO weekly report now (--weekly)
 make backtest    # Run the event-driven Walk-Forward Backtester
-make test        # Run the full automated unit and regression test suite (61/61 passing)
+make test        # Run the full automated unit and regression test suite (65/65 passing)
 make dump        # Regenerate all LLM context dumps (global + categorized)
 make clean       # Clean temporary cache and bytecode files
 ```
@@ -469,7 +470,7 @@ For external LLM analysis, fine-tuning, or pair programming, the repository incl
 | `docs/dumps/DUMP_00_DATA_SENSORS.md` | Data sensors, scrapers, text cleaner, IMAP ingest, and APIs. | Data Engineering |
 | `docs/dumps/DUMP_01_MEMORY_CORE.md` | Pydantic contracts, SQLite, and DuckDB managers. | Persistence & Contracts |
 | `docs/dumps/DUMP_02_QUANT_ENGINE.md` | Technical scorer, Bandit, Ensemble, StatArb, HMM, FinBERT, ML trainer, Backtest. | Quantitative Alpha Models |
-| `docs/dumps/DUMP_03_RISK_PORTFOLIO.md` | Risk parameters, Kinetic brake, Sizers, Limit price tiers, Stress tester. | Risk Governance & Sizing |
+| `docs/dumps/DUMP_03_RISK_PORTFOLIO.md` | Risk parameters, Kinetic brake, Sizers, Broker reconciliation, Stress tester. | Risk Governance & Sizing |
 | `docs/dumps/DUMP_04_ORCHESTRATOR_AI.md` | Signal cascade, Red Team agent, Post-mortems, Historian. | AI Orchestration |
 | `docs/dumps/DUMP_05_INTERFACES.md` | Streamlit terminal HUD, AI Radar chart, trade cards, Discord bot. | User Interfaces |
 | `docs/dumps/DUMP_06_07_API_MCP.md` | Central FastAPI SSOT and Claude Desktop MCP server. | API & Integrations |
@@ -484,7 +485,7 @@ python tools/build_llm_dump.py
 
 ## 🧪 Verification & Test Suites
 
-The project features a **100% passing automated test suite (61 / 61 tests)** covering all architectural layers:
+The project features a **100% passing automated test suite (65 / 65 tests)** covering all architectural layers:
 
 ```bash
 # Run all tests
@@ -495,6 +496,7 @@ python -m pytest -v
 ```
 
 ### Test Suite Inventory
+- `test_reconciliation_and_backup.py`: Tests French broker CSV reconciliation (Boursorama, Bourse Direct), SQLite state overwrites, audit signals, and AWS S3 Parquet/DB backups.
 - `test_limit_tiers_and_radar.py`: Tests 3-tier ATR limit price calculations (Aggressive, Optimal, Patient), direction reversals, and UCB Bandit + Dynamic Ensemble polar radar chart weights.
 - `test_fmp_copilot_retraining.py`: Tests Financial Modeling Prep (FMP) 9-point Piotroski scoring with yfinance fallback, enriched Discord copilot embeds, and autonomous monthly ML retraining.
 - `test_stealth_and_imap_ingest.py`: Tests Cloudscraper anti-bot resilience, Boursorama scraper error recovery, and production IMAP newsletter ingestion with Jaccard deduplication.
@@ -508,6 +510,7 @@ python -m pytest -v
 - `test_institutional_suite.py`: Tests Pydantic `RiskParamsConfig` strictness (`extra='forbid', frozen=True`), DrawdownBreaker kinetic multipliers, Piotroski F-Score calculation, HRP allocation, and VaR/CVaR risk math.
 - `test_funnel_analytics.py`: Tests decision funnel waterfall classification and rejection taxonomy.
 - `test_phase16_foundations.py`: Tests core/satellite sizing, ATR stops, profit-shaving rebalancer, and correlation firewall.
+
 
 ---
 

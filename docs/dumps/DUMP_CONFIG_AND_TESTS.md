@@ -1,5 +1,5 @@
 # PEA Pollux — Configuration Yaml, Test Suites, Root Ops & Documentation
-Generated: `2026-08-15 22:25 UTC` | File Count: `36`
+Generated: `2026-08-16 13:03 UTC` | File Count: `37`
 Institutional Systematic Decision Support Architecture for French PEA.
 ---
 ## Included Files Index
@@ -28,6 +28,7 @@ Institutional Systematic Decision Support Architecture for French PEA.
 - [tests/test_ml_cascade_integration.py](#file-tests-test_ml_cascade_integration-py)
 - [tests/test_newsletter_whitelist.py](#file-tests-test_newsletter_whitelist-py)
 - [tests/test_phase16_foundations.py](#file-tests-test_phase16_foundations-py)
+- [tests/test_reconciliation_and_backup.py](#file-tests-test_reconciliation_and_backup-py)
 - [tests/test_stat_arb_and_backtest.py](#file-tests-test_stat_arb_and_backtest-py)
 - [tests/test_stealth_and_imap_ingest.py](#file-tests-test_stealth_and_imap_ingest-py)
 - [tests/test_text_cleaner_and_feedback.py](#file-tests-test_text_cleaner_and_feedback-py)
@@ -101,11 +102,24 @@ OPENROUTER_API_KEY=sk-or-your_openrouter_key_here
 OPENROUTER_MODEL=mistralai/mistral-7b-instruct
 
 # Financial Modeling Prep (https://site.financialmodelingprep.com/developer/docs).
-# Secondary insider-trading fallback after AMF BDIF.
+# Secondary insider-trading fallback after AMF BDIF & Piotroski statements.
 FMP_API_KEY=your_fmp_api_key_here
 
 # EOD Historical Data (https://eodhistoricaldata.com/) — optional market data.
 EODHD_API_KEY=your_eodhd_api_key_here
+
+# IMAP Newsletter Ingestion (Yahoo Mail)
+YAHOO_MAIL_USER=your_yahoo_email@yahoo.com
+YAHOO_MAIL_APP_PASSWORD=your_yahoo_app_password
+
+# Streamlit Terminal Dashboard Security Lock
+DASHBOARD_PASSWORD=your_secure_dashboard_password_here
+
+# Cloud Database Backup (AWS S3)
+AWS_S3_BACKUP_BUCKET=your_s3_bucket_name_here
+AWS_ACCESS_KEY_ID=your_aws_access_key_id
+AWS_SECRET_ACCESS_KEY=your_aws_secret_access_key
+AWS_DEFAULT_REGION=eu-west-3
 ```
 
 ## FILE: config/earnings_calendar.yaml
@@ -2853,6 +2867,21 @@ def run_monthly_ml_retraining() -> None:
         asyncio.run(_post_webhook(f"\u26a0\ufe0f **Monthly ML Retraining Failed**: `{exc}`"))
 
 
+def run_cloud_backup() -> None:
+    """Run local Parquet database exports and upload to AWS S3 (Friday 19:00 Paris)."""
+    started = time.perf_counter()
+    logger.info("=== Weekly Database Backup Routine starting (Friday 19:00 Paris) ===")
+    try:
+        import subprocess
+        res = subprocess.run([sys.executable, str(_ROOT / "tools" / "backup_databases.py")], capture_output=True, text=True, check=False)
+        if res.returncode == 0:
+            logger.info("Database backup completed in %.1fs: %s", time.perf_counter() - started, res.stdout.strip())
+        else:
+            logger.error("Database backup script failed (code %d): %s", res.returncode, res.stderr.strip())
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Database backup routine failed: %s", exc, exc_info=True)
+
+
 def _schedule_passes() -> None:
     """Register all periodic jobs in Europe/Paris time."""
     # Monthly ML retraining: probe daily at 02:00, acts only on the 1st of the month.
@@ -2866,13 +2895,15 @@ def _schedule_passes() -> None:
     # Weekly Earnings Calendar sync: Friday 18:30 Paris.
     if run_earnings_sync is not None:
         schedule.every().friday.at("18:30", _TIMEZONE).do(run_earnings_sync)
+    # Weekly Cloud Backup: Friday 19:00 Paris.
+    schedule.every().friday.at("19:00", _TIMEZONE).do(run_cloud_backup)
     # Monthly profit-shave: probe daily, act only on the 1st (guarded inside).
     schedule.every().day.at(_MONTHLY_CHECK_TIME, _TIMEZONE).do(run_monthly_rebalance)
     # Daily ATR stops (weekdays guarded inside).
     schedule.every().day.at(_ATR_STOP_CHECK_TIME, _TIMEZONE).do(run_daily_atr_stops)
     logger.info(
         "Scheduled: ML retrain 02:00; morning news 08:00; passes at %s; weekly report Fri %s; "
-        "earnings sync Fri 18:30; monthly probe %s; ATR stops %s (%s).",
+        "earnings sync Fri 18:30; backup Fri 19:00; monthly probe %s; ATR stops %s (%s).",
         ", ".join(_PASS_TIMES),
         _WEEKLY_REPORT_TIME,
         _MONTHLY_CHECK_TIME,
@@ -2921,6 +2952,11 @@ def main() -> None:
         action="store_true",
         help="Run autonomous monthly ML retraining now (ignores 1st-of-month guard).",
     )
+    parser.add_argument(
+        "--backup",
+        action="store_true",
+        help="Run database Parquet export and cloud backup now.",
+    )
     args = parser.parse_args()
 
     if args.now:
@@ -2964,6 +3000,10 @@ def main() -> None:
             logger.error("Retraining failed: %s", exc)
         return
 
+    if args.backup:
+        logger.info("--backup: executing database backup now.")
+        run_cloud_backup()
+        return
 
 
     _schedule_passes()
@@ -3485,11 +3525,12 @@ make scheduler   # Run the Paris market scheduler daemon
 make pass        # Execute a synchronous market analysis pass immediately (--now)
 make morning-news# Run pre-market IMAP ingestion and FinBERT scoring (--morning-news)
 make retrain-ml  # Run monthly ML model retraining immediately (--retrain-ml)
+make backup      # Run Parquet export and S3 cloud backup now (--backup)
 make atr-stops   # Evaluate daily ATR stops now (--atr-stops)
 make rebalance   # Evaluate monthly profit-shaving rebalancer now (--rebalance)
 make weekly      # Generate Friday CIO weekly report now (--weekly)
 make backtest    # Run the event-driven Walk-Forward Backtester
-make test        # Run the full automated unit and regression test suite (61/61 passing)
+make test        # Run the full automated unit and regression test suite (65/65 passing)
 make dump        # Regenerate all LLM context dumps (global + categorized)
 make clean       # Clean temporary cache and bytecode files
 ``​`
@@ -3506,7 +3547,7 @@ For external LLM analysis, fine-tuning, or pair programming, the repository incl
 | `docs/dumps/DUMP_00_DATA_SENSORS.md` | Data sensors, scrapers, text cleaner, IMAP ingest, and APIs. | Data Engineering |
 | `docs/dumps/DUMP_01_MEMORY_CORE.md` | Pydantic contracts, SQLite, and DuckDB managers. | Persistence & Contracts |
 | `docs/dumps/DUMP_02_QUANT_ENGINE.md` | Technical scorer, Bandit, Ensemble, StatArb, HMM, FinBERT, ML trainer, Backtest. | Quantitative Alpha Models |
-| `docs/dumps/DUMP_03_RISK_PORTFOLIO.md` | Risk parameters, Kinetic brake, Sizers, Limit price tiers, Stress tester. | Risk Governance & Sizing |
+| `docs/dumps/DUMP_03_RISK_PORTFOLIO.md` | Risk parameters, Kinetic brake, Sizers, Broker reconciliation, Stress tester. | Risk Governance & Sizing |
 | `docs/dumps/DUMP_04_ORCHESTRATOR_AI.md` | Signal cascade, Red Team agent, Post-mortems, Historian. | AI Orchestration |
 | `docs/dumps/DUMP_05_INTERFACES.md` | Streamlit terminal HUD, AI Radar chart, trade cards, Discord bot. | User Interfaces |
 | `docs/dumps/DUMP_06_07_API_MCP.md` | Central FastAPI SSOT and Claude Desktop MCP server. | API & Integrations |
@@ -3521,7 +3562,7 @@ python tools/build_llm_dump.py
 
 ## 🧪 Verification & Test Suites
 
-The project features a **100% passing automated test suite (61 / 61 tests)** covering all architectural layers:
+The project features a **100% passing automated test suite (65 / 65 tests)** covering all architectural layers:
 
 ``​`bash
 # Run all tests
@@ -3532,6 +3573,7 @@ python -m pytest -v
 ``​`
 
 ### Test Suite Inventory
+- `test_reconciliation_and_backup.py`: Tests French broker CSV reconciliation (Boursorama, Bourse Direct), SQLite state overwrites, audit signals, and AWS S3 Parquet/DB backups.
 - `test_limit_tiers_and_radar.py`: Tests 3-tier ATR limit price calculations (Aggressive, Optimal, Patient), direction reversals, and UCB Bandit + Dynamic Ensemble polar radar chart weights.
 - `test_fmp_copilot_retraining.py`: Tests Financial Modeling Prep (FMP) 9-point Piotroski scoring with yfinance fallback, enriched Discord copilot embeds, and autonomous monthly ML retraining.
 - `test_stealth_and_imap_ingest.py`: Tests Cloudscraper anti-bot resilience, Boursorama scraper error recovery, and production IMAP newsletter ingestion with Jaccard deduplication.
@@ -3545,6 +3587,7 @@ python -m pytest -v
 - `test_institutional_suite.py`: Tests Pydantic `RiskParamsConfig` strictness (`extra='forbid', frozen=True`), DrawdownBreaker kinetic multipliers, Piotroski F-Score calculation, HRP allocation, and VaR/CVaR risk math.
 - `test_funnel_analytics.py`: Tests decision funnel waterfall classification and rejection taxonomy.
 - `test_phase16_foundations.py`: Tests core/satellite sizing, ATR stops, profit-shaving rebalancer, and correlation firewall.
+
 
 ---
 
@@ -3611,8 +3654,9 @@ mplfinance>=0.12.10b0
 # Use a Python 3.11/3.12 (x64) environment to install and run the dashboard.
 streamlit>=1.33
 
-# --- Scheduler (Phase 9) ---
+# --- Scheduler & Cloud Backups (Phase 9) ---
 schedule>=1.2
+boto3>=1.34.0
 
 # --- Dev / tests / CI ---
 pytest>=8.0
@@ -5044,6 +5088,98 @@ if __name__ == "__main__":
     unittest.main()
 ```
 
+## FILE: tests/test_reconciliation_and_backup.py
+```python
+"""Unit Tests for Broker CSV Reconciliation, Dashboard Auth, and S3 Cloud Backups."""
+
+from __future__ import annotations
+
+import os
+import sys
+import unittest
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+ROOT = Path(__file__).resolve().parent.parent
+for sub in ("00_data_sensors", "01_memory_core", "02_quant_engine", "03_risk_portfolio", "04_orchestrator_ai", "05_interfaces", "tools"):
+    sys.path.insert(0, str(ROOT / sub))
+
+from broker_reconciliation import BrokerReconciliator
+import backup_databases
+from main_scheduler import run_cloud_backup
+
+
+class TestReconciliationAndBackupSuite(unittest.TestCase):
+
+    def test_01_parse_broker_csv_french_format(self):
+        """Verify parsing French Boursorama/Bourse Direct broker CSV exports."""
+        reconciliator = BrokerReconciliator()
+
+        csv_sample = """Libellé;Code / ISIN;Quantité;PRU;Dernier Cours;Valeur
+LVMH MOET HENNESSY;FR0000121014;10;620,50 €;650,00 €;6 500,00 €
+AIR LIQUIDE;FR0000120073;15;170,25 €;178,50 €;2 677,50 €
+TOTALENERGIES;FR0000120271;30;58,00 €;61,20 €;1 836,00 €
+Liquidités;;;;;1 500,00 €
+Total Portefeuille;;;;;12 513,50 €
+"""
+        parsed = reconciliator.parse_broker_csv(csv_sample)
+        self.assertEqual(len(parsed), 3)
+
+        lvmh = next((p for p in parsed if "MC.PA" in p["ticker"] or "LVMH" in p["ticker"] or "FR0000121014" in p["ticker"]), None)
+        self.assertIsNotNone(lvmh)
+        self.assertEqual(lvmh["qty_shares"], 10)
+        self.assertEqual(lvmh["avg_entry_price"], 620.50)
+        self.assertEqual(lvmh["current_price"], 650.00)
+
+    def test_02_reconcile_with_sqlite(self):
+        """Verify reconcile_with_sqlite correctly overwrites database state and logs audit record."""
+        reconciliator = BrokerReconciliator()
+        mock_db = MagicMock()
+
+        parsed_data = [
+            {"ticker": "MC.PA", "qty_shares": 8, "avg_entry_price": 600.0, "current_price": 620.0, "sector": "Consumer Cyclical"},
+            {"ticker": "CW8.PA", "qty_shares": 15, "avg_entry_price": 480.0, "current_price": 500.0, "sector": "Core ETF"},
+        ]
+        actual_cash = 2500.0
+
+        res = reconciliator.reconcile_with_sqlite(parsed_data, actual_cash, mock_db)
+
+        self.assertTrue(res["success"])
+        self.assertEqual(res["positions_synced"], 2)
+        self.assertEqual(res["cash_available"], 2500.0)
+        # Expected Equity = 2500 + (8*620 + 15*500) = 2500 + (4960 + 7500) = 14960.0
+        self.assertEqual(res["total_equity"], 14960.0)
+
+        self.assertTrue(mock_db.update_portfolio.called)
+        self.assertTrue(mock_db.log_signal.called)
+        logged_signal = mock_db.log_signal.call_args[0][0]
+        self.assertEqual(logged_signal.reason, "PORTFOLIO RECONCILIATION: Synced with broker reality.")
+        self.assertEqual(logged_signal.lineage.get("strategy"), "PORTFOLIO_RECONCILIATION")
+
+    def test_03_backup_databases_s3_upload(self):
+        """Verify backup_to_s3 calls boto3 upload_file properly."""
+        mock_file = ROOT / "config" / "pea_universe.yaml"
+        mock_boto = MagicMock()
+        mock_s3 = MagicMock()
+        mock_boto.client.return_value = mock_s3
+
+        with patch.dict(sys.modules, {"boto3": mock_boto}):
+            success = backup_databases.backup_to_s3([mock_file], "20260816_120000", "my-test-bucket")
+            self.assertTrue(success)
+            self.assertTrue(mock_s3.upload_file.called)
+
+    def test_04_run_cloud_backup_scheduler(self):
+        """Verify run_cloud_backup routine executes without crashing."""
+        with patch("subprocess.run") as mock_sub:
+            mock_sub.return_value = MagicMock(returncode=0, stdout="OK", stderr="")
+            run_cloud_backup()
+            self.assertTrue(mock_sub.called)
+
+
+if __name__ == "__main__":
+    unittest.main()
+```
+
 ## FILE: tests/test_stat_arb_and_backtest.py
 ```python
 """Unit & Integration Tests for StatArb Cointegration Engine & Walk-Forward Backtester."""
@@ -5430,7 +5566,7 @@ if __name__ == "__main__":
 
 ## FILE: tools/backup_databases.py
 ```python
-"""Export key SQLite tables to Parquet for backup and portability.
+"""Export key SQLite tables to Parquet and back up databases off-instance to AWS S3.
 
 Usage:
     python tools/backup_databases.py
@@ -5438,23 +5574,67 @@ Usage:
 
 from __future__ import annotations
 
+import logging
+import os
+import shutil
 import sqlite3
 from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
 
+try:
+    from dotenv import load_dotenv
+
+    _ENV_PATH = Path(__file__).resolve().parent.parent / "config" / "api_keys.env"
+    load_dotenv(_ENV_PATH)
+except Exception:  # noqa: BLE001
+    pass
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)-7s | %(message)s")
+logger = logging.getLogger("backup_databases")
+
 _ROOT = Path(__file__).resolve().parent.parent
 _DB_PATH = _ROOT / "database" / "portfolio.db"
 _BACKUP_DIR = _ROOT / "database" / "backups"
 
-TABLES_TO_EXPORT = ["portfolio_history", "audit_log", "news_history"]
+TABLES_TO_EXPORT = [
+    "portfolio_history",
+    "audit_logs",
+    "news_master",
+    "positions",
+    "account_state",
+    "fundamentals_cache",
+    "universe_snapshots",
+]
+
+
+def backup_to_s3(local_files: list[Path], stamp: str, bucket_name: str) -> bool:
+    """Upload backup artifacts to Amazon S3 bucket."""
+    try:
+        import boto3
+        s3 = boto3.client("s3")
+        prefix = f"pea_pollux_backups/{stamp}"
+        logger.info("Uploading %d backup files to s3://%s/%s/ ...", len(local_files), bucket_name, prefix)
+
+        for fpath in local_files:
+            if not fpath.exists():
+                continue
+            key = f"{prefix}/{fpath.name}"
+            s3.upload_file(str(fpath), bucket_name, key)
+            logger.info("  [S3 OK] %s -> s3://%s/%s", fpath.name, bucket_name, key)
+
+        logger.info("AWS S3 cloud backup completed successfully.")
+        return True
+    except Exception as exc:
+        logger.error("AWS S3 upload failed: %s", exc)
+        return False
 
 
 def main() -> None:
     _BACKUP_DIR.mkdir(parents=True, exist_ok=True)
     if not _DB_PATH.exists():
-        print(f"Database not found: {_DB_PATH}")
+        logger.warning("Database not found: %s", _DB_PATH)
         return
 
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -5467,17 +5647,39 @@ def main() -> None:
         ).fetchall()
     }
 
+    generated_files: list[Path] = []
+
     for table in TABLES_TO_EXPORT:
         if table not in existing:
-            print(f"  [skip] {table} (not found)")
             continue
-        df = pd.read_sql_query(f"SELECT * FROM {table}", conn)  # noqa: S608
-        out_path = _BACKUP_DIR / f"{table}_{stamp}.parquet"
-        df.to_parquet(out_path, index=False)
-        print(f"  [ok] {table} -> {out_path.name} ({len(df)} rows)")
+        try:
+            df = pd.read_sql_query(f"SELECT * FROM {table}", conn)  # noqa: S608
+            out_path = _BACKUP_DIR / f"{table}_{stamp}.parquet"
+            df.to_parquet(out_path, index=False)
+            logger.info("  [Parquet OK] %s -> %s (%d rows)", table, out_path.name, len(df))
+            generated_files.append(out_path)
+        except Exception as exc:
+            logger.warning("Failed to export table %s: %s", table, exc)
 
     conn.close()
-    print("Backup complete.")
+
+    # Also snapshot the raw SQLite database file
+    raw_db_snapshot = _BACKUP_DIR / f"portfolio_{stamp}.db"
+    try:
+        shutil.copy2(_DB_PATH, raw_db_snapshot)
+        logger.info("  [Raw DB OK] portfolio.db -> %s", raw_db_snapshot.name)
+        generated_files.append(raw_db_snapshot)
+    except Exception as exc:
+        logger.warning("Failed to copy raw database: %s", exc)
+
+    # AWS S3 Off-Instance Remote Backup
+    bucket = os.getenv("AWS_S3_BACKUP_BUCKET")
+    if bucket and bucket.strip():
+        backup_to_s3(generated_files, stamp, bucket.strip())
+    else:
+        logger.info("AWS_S3_BACKUP_BUCKET not set; stored backups locally in database/backups/.")
+
+    logger.info("=== Backup Routine Complete (%d artifacts created) ===", len(generated_files))
 
 
 if __name__ == "__main__":

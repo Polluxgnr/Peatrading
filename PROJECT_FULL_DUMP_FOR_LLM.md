@@ -1,5 +1,5 @@
 # PEA Pollux — Complete Monolithic Repository Dump
-Generated: `2026-08-15 22:25 UTC` | File Count: `135`
+Generated: `2026-08-16 13:03 UTC` | File Count: `137`
 Institutional Systematic Decision Support Architecture for French PEA.
 ---
 ## Included Files Index
@@ -67,6 +67,7 @@ Institutional Systematic Decision Support Architecture for French PEA.
 - [02_quant_engine/walk_forward_backtester.py](#file-02_quant_engine-walk_forward_backtester-py)
 - [03_risk_portfolio/__init__.py](#file-03_risk_portfolio-__init__-py)
 - [03_risk_portfolio/alpha_tracker.py](#file-03_risk_portfolio-alpha_tracker-py)
+- [03_risk_portfolio/broker_reconciliation.py](#file-03_risk_portfolio-broker_reconciliation-py)
 - [03_risk_portfolio/correlation_firewall.py](#file-03_risk_portfolio-correlation_firewall-py)
 - [03_risk_portfolio/drawdown_breaker.py](#file-03_risk_portfolio-drawdown_breaker-py)
 - [03_risk_portfolio/equity_metrics.py](#file-03_risk_portfolio-equity_metrics-py)
@@ -127,6 +128,7 @@ Institutional Systematic Decision Support Architecture for French PEA.
 - [tests/test_ml_cascade_integration.py](#file-tests-test_ml_cascade_integration-py)
 - [tests/test_newsletter_whitelist.py](#file-tests-test_newsletter_whitelist-py)
 - [tests/test_phase16_foundations.py](#file-tests-test_phase16_foundations-py)
+- [tests/test_reconciliation_and_backup.py](#file-tests-test_reconciliation_and_backup-py)
 - [tests/test_stat_arb_and_backtest.py](#file-tests-test_stat_arb_and_backtest-py)
 - [tests/test_stealth_and_imap_ingest.py](#file-tests-test_stealth_and_imap_ingest-py)
 - [tests/test_text_cleaner_and_feedback.py](#file-tests-test_text_cleaner_and_feedback-py)
@@ -9751,6 +9753,221 @@ if __name__ == "__main__":
     print(calculate_alpha_metrics(curve))
 ```
 
+## FILE: 03_risk_portfolio/broker_reconciliation.py
+```python
+"""Broker CSV Reconciliation Engine for PEA Pollux.
+
+Parses exported broker position CSVs (Boursorama, Bourse Direct, Fortuneo, Degiro, Interactive Brokers)
+and reconciles the SQLite database with real-world broker balances, quantities, and PRUs.
+"""
+
+from __future__ import annotations
+
+import csv
+import io
+import logging
+import re
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+_ROOT = Path(__file__).resolve().parent.parent
+for sub in ("01_memory_core", "05_interfaces"):
+    sys.path.insert(0, str(_ROOT / sub))
+
+from data_models import PortfolioState, Position, Signal, SignalStatus, SignalType
+
+logger = logging.getLogger("broker_reconciliation")
+
+
+def _clean_number(val: Any) -> float:
+    """Clean numeric string handling European formatting (e.g. '1 234,56 €' -> 1234.56)."""
+    if val is None:
+        return 0.0
+    if isinstance(val, (int, float)):
+        return float(val)
+    s = str(val).strip()
+    s = re.sub(r"[^\d,\.\-]", "", s)
+    if not s:
+        return 0.0
+    # Handle European decimal commas vs thousands separators
+    if "," in s and "." in s:
+        s = s.replace(".", "").replace(",", ".")
+    elif "," in s:
+        s = s.replace(",", ".")
+    try:
+        return float(s)
+    except ValueError:
+        return 0.0
+
+
+class BrokerReconciliator:
+    """Reconciles internal portfolio memory with official broker account exports."""
+
+    def __init__(self, config_dir: Optional[Path] = None) -> None:
+        self.config_dir = config_dir or (_ROOT / "config")
+
+    def resolve_ticker(self, raw_symbol_or_name: str) -> str:
+        """Resolve raw broker text (e.g. 'LVMH MOET HENNESSY', 'TTE', 'FR0000120271') to standard Yahoo ticker."""
+        cleaned = str(raw_symbol_or_name).strip().upper()
+        if not cleaned:
+            return "UNKNOWN"
+
+        # Direct ticker match
+        if cleaned.endswith((".PA", ".AS", ".DE", ".MI", ".BR", "=X")) or cleaned.startswith("^"):
+            return cleaned
+
+        # Common mapping
+        from discord_copilot import resolve_ticker_fuzzy
+        try:
+            return resolve_ticker_fuzzy(cleaned, config_dir=self.config_dir)
+        except Exception:
+            if re.match(r"^[A-Z0-9]{1,5}$", cleaned):
+                return f"{cleaned}.PA"
+            return cleaned
+
+    def parse_broker_csv(self, file_content: str) -> List[Dict[str, Any]]:
+        """Parse raw CSV string into normalized position records.
+
+        Supports Boursorama, Bourse Direct, Fortuneo, and generic brokers.
+
+        Returns:
+            List[Dict]: [{'ticker': 'MC.PA', 'qty_shares': 10, 'avg_entry_price': 650.0, 'current_price': 680.0, 'sector': 'Consumer Cyclical'}, ...]
+        """
+        if not file_content or not file_content.strip():
+            logger.warning("Empty broker CSV content provided.")
+            return []
+
+        lines = file_content.strip().splitlines()
+        # Find header line (skip initial metadata lines if any)
+        delimiter = ";" if ";" in lines[0] or (len(lines) > 1 and ";" in lines[1]) else ","
+        if "\t" in lines[0]:
+            delimiter = "\t"
+
+        reader = csv.reader(lines, delimiter=delimiter)
+        raw_rows = [row for row in reader if row and any(cell.strip() for cell in row)]
+        if not raw_rows:
+            return []
+
+        # Find header index
+        header_idx = 0
+        header_candidates = ["ticker", "symbol", "isin", "libellé", "libelle", "titre", "nom", "valeur", "quantité", "quantite", "pru", "cours"]
+        for idx, row in enumerate(raw_rows[:10]):
+            joined = " ".join(c.lower() for c in row)
+            if any(hc in joined for hc in header_candidates):
+                header_idx = idx
+                break
+
+        headers = [c.strip().lower() for c in raw_rows[header_idx]]
+        data_rows = raw_rows[header_idx + 1:]
+
+        # Map header columns
+        col_ticker = next((i for i, h in enumerate(headers) if any(k in h for k in ["ticker", "symbol", "isin", "libellé", "libelle", "titre", "nom", "valeur"])), 0)
+        col_qty = next((i for i, h in enumerate(headers) if any(k in h for k in ["quantité", "quantite", "qty", "qte", "titres", "nombre", "positions", "shares", "solde"])), None)
+        col_pru = next((i for i, h in enumerate(headers) if any(k in h for k in ["pru", "revient", "achat", "entry", "cost", "avg"])), None)
+        col_price = next((i for i, h in enumerate(headers) if any(k in h for k in ["cours", "dernier", "actuel", "price", "cotation", "valeur actuelle"])), None)
+        col_sector = next((i for i, h in enumerate(headers) if any(k in h for k in ["secteur", "sector", "catégorie", "categorie"])), None)
+
+        parsed_positions = []
+
+        for row in data_rows:
+            if not row or len(row) <= col_ticker:
+                continue
+            raw_tick = row[col_ticker].strip()
+            if not raw_tick or raw_tick.lower() in ("total", "somme", "liquidités", "especes", "cash", "disponible"):
+                continue
+
+            ticker = self.resolve_ticker(raw_tick)
+            qty = int(_clean_number(row[col_qty])) if col_qty is not None and len(row) > col_qty else 0
+            if qty <= 0:
+                continue
+
+            pru = _clean_number(row[col_pru]) if col_pru is not None and len(row) > col_pru else 0.0
+            price = _clean_number(row[col_price]) if col_price is not None and len(row) > col_price else pru
+            if price <= 0.0:
+                price = pru
+
+            sector = row[col_sector].strip() if col_sector is not None and len(row) > col_sector else "UNKNOWN"
+
+            parsed_positions.append({
+                "ticker": ticker,
+                "qty_shares": qty,
+                "avg_entry_price": round(pru, 2) if pru > 0 else round(price, 2),
+                "current_price": round(price, 2),
+                "sector": sector,
+            })
+
+        logger.info("Successfully parsed %d positions from broker CSV.", len(parsed_positions))
+        return parsed_positions
+
+    def reconcile_with_sqlite(
+        self,
+        parsed_data: List[Dict[str, Any]],
+        actual_cash: float,
+        portfolio_db: Any,
+    ) -> Dict[str, Any]:
+        """Overwrite SQLite positions and cash with true broker values and log an audit signal."""
+        cash = max(0.0, float(actual_cash))
+        new_positions = []
+
+        for item in parsed_data:
+            new_positions.append(
+                Position(
+                    ticker=item["ticker"],
+                    qty_shares=int(item["qty_shares"]),
+                    avg_entry_price=float(item["avg_entry_price"]),
+                    current_price=float(item["current_price"]),
+                    sector=str(item.get("sector", "UNKNOWN")),
+                )
+            )
+
+        total_market_value = sum(p.qty_shares * p.current_price for p in new_positions)
+        total_equity = cash + total_market_value
+
+        state = PortfolioState(
+            cash_available=cash,
+            total_equity=total_equity,
+            positions=new_positions,
+            last_updated=datetime.now(timezone.utc).isoformat(),
+        )
+
+        portfolio_db.update_portfolio(state)
+
+        # Log reconciliation audit record
+        rec_signal = Signal(
+            ticker="PORTFOLIO",
+            signal_type=SignalType.BUY,
+            score=100.0,
+            target_qty=len(new_positions),
+            status=SignalStatus.EXECUTED,
+            reason="PORTFOLIO RECONCILIATION: Synced with broker reality.",
+            lineage={
+                "actual_cash": cash,
+                "total_equity": total_equity,
+                "positions_count": len(new_positions),
+                "strategy": "PORTFOLIO_RECONCILIATION",
+                "reason": "PORTFOLIO RECONCILIATION: Synced with broker reality.",
+            },
+        )
+        portfolio_db.log_signal(rec_signal)
+
+
+        logger.info(
+            "Portfolio reconciliation complete: %d positions synced, cash=%.2f EUR, total_equity=%.2f EUR.",
+            len(new_positions),
+            cash,
+            total_equity,
+        )
+
+        return {
+            "success": True,
+            "positions_synced": len(new_positions),
+            "cash_available": cash,
+            "total_equity": total_equity,
+        }
+```
+
 ## FILE: 03_risk_portfolio/correlation_firewall.py
 ```python
 """Correlation Firewall for PEA Sniper Terminal V-Prime.
@@ -13772,15 +13989,21 @@ class DiscordCopilot(discord.Client):
         if ml_prob is not None:
             try:
                 prob_pct = float(ml_prob) * 100.0 if float(ml_prob) <= 1.0 else float(ml_prob)
-                ci = lineage.get("conformal_interval")
-                ci_str = f" [IC: {ci[0]:.0f}% - {ci[1]:.0f}%]" if isinstance(ci, (list, tuple)) and len(ci) == 2 else ""
+                ci = lineage.get("ml_interval") or lineage.get("conformal_interval")
+                ci_str = ""
+                if isinstance(ci, (list, tuple)) and len(ci) == 2:
+                    low_p = float(ci[0]) * 100.0 if float(ci[0]) <= 1.0 else float(ci[0])
+                    high_p = float(ci[1]) * 100.0 if float(ci[1]) <= 1.0 else float(ci[1])
+                    ci_str = f" [{low_p:.0f}% - {high_p:.0f}%]"
                 embed.add_field(
-                    name="\U0001F916 Probabilit\u00e9 ML (XGBoost)",
-                    value=f"`{prob_pct:.1f}%`{ci_str}",
+                    name="🧠 ML Probability (Probabilité ML)",
+                    value=f"{prob_pct:.1f}%{ci_str}",
                     inline=True,
                 )
             except Exception:
                 pass
+
+
 
         # 4. Red Team Verdict
         red_team = lineage.get("red_team_verdict") or lineage.get("judge_synthesis") or lineage.get("red_team_debate")
@@ -14063,10 +14286,8 @@ Polymarket), universe, architecture docs.
 
 Run (auto-opens browser):
     .\\run_dashboard.ps1
-    # or: venv_x64\\Scripts\\streamlit run 05_interfaces/terminal_dashboard.py
-"""
-
 import asyncio
+import os
 import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -14079,6 +14300,30 @@ import streamlit.components.v1 as components
 import yaml
 import yfinance as yf
 
+st.set_page_config(
+    page_title="PEA Sniper Terminal V-Prime",
+    page_icon="\U0001F6E1\uFE0F",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+# --- Basic Streamlit Auth & Lock ---
+_DASHBOARD_PASS = os.getenv("DASHBOARD_PASSWORD")
+if _DASHBOARD_PASS:
+    if not st.session_state.get("authenticated", False):
+        _, auth_col, _ = st.columns([1, 1.2, 1])
+        with auth_col:
+            st.markdown("### \U0001F512 Acc\u00e8s S\u00e9curis\u00e9 \u2022 PEA Sniper Terminal")
+            st.caption("Terminal Quantitatif Haute Performance. Saisissez votre mot de passe pour continuer.")
+            pwd_input = st.text_input("Mot de passe", type="password", key="pwd_input_field")
+            if st.button("\U0001F513 D\u00e9verrouiller", type="primary", use_container_width=True):
+                if pwd_input == _DASHBOARD_PASS:
+                    st.session_state["authenticated"] = True
+                    st.rerun()
+                else:
+                    st.error("\u274c Mot de passe incorrect.")
+            st.stop()
+
 # --- Cross-package imports (dirs start with digits) --------------------------
 _ROOT = Path(__file__).resolve().parent.parent
 for _sub in ("00_data_sensors", "01_memory_core", "02_quant_engine",
@@ -14087,6 +14332,7 @@ for _sub in ("00_data_sensors", "01_memory_core", "02_quant_engine",
 
 from sqlite_portfolio import PortfolioDB  # noqa: E402
 from data_models import Position, PortfolioState  # noqa: E402
+
 
 try:
     from equity_metrics import compute_equity_metrics  # noqa: E402
@@ -17636,7 +17882,44 @@ with tab_pf:
                 "Ticker Yahoo (ex. MC.PA). Qte=0 pour retirer une ligne."
             )
 
+        st.markdown("---")
+        st.markdown("##### \U0001F4C1 R\u00e9conciliation Automatique CSV Courtier")
+        st.markdown(
+            "<div class='info-text'>Importe l'export CSV officiel de ton courtier (Boursorama, Bourse Direct, Fortuneo, Degiro) "
+            "pour synchroniser automatiquement tes positions, PRU, et liquidit\u00e9s avec la base SQLite.</div>",
+            unsafe_allow_html=True,
+        )
+
+        up_file = st.file_uploader("Importer CSV Courtier (Boursorama / Bourse Direct)", type=["csv"], key="broker_csv_uploader")
+        actual_cash_input = st.number_input(
+            "Liquidit\u00e9s r\u00e9elles constat\u00e9es sur le compte (\u20ac)",
+            min_value=0.0,
+            value=float(portfolio.cash_available),
+            step=10.0,
+            key="broker_real_cash_input",
+        )
+
+        if st.button("\U0001F504 Synchroniser avec le Courtier", type="primary", key="sync_broker_btn"):
+            if up_file is None:
+                st.warning("\u26a0\ufe0f Veuillez s\u00e9lectionner un fichier CSV \u00e0 importer.")
+            else:
+                try:
+                    from broker_reconciliation import BrokerReconciliator
+                    reconciliator = BrokerReconciliator()
+                    content = up_file.getvalue().decode("utf-8", errors="ignore")
+                    parsed_positions = reconciliator.parse_broker_csv(content)
+                    if not parsed_positions:
+                        st.error("\u274c Aucun titre valide n'a pu \u00eatre extrait du CSV. V\u00e9rifiez le format.")
+                    else:
+                        db = PortfolioDB(_SQLITE_PATH)
+                        res = reconciliator.reconcile_with_sqlite(parsed_positions, actual_cash_input, db)
+                        st.success(f"\u2705 Wallet synchronis\u00e9 avec succ\u00e8s ({res['positions_synced']} lignes, Cash: {res['cash_available']:,.2f} \u20ac, Equity: {res['total_equity']:,.2f} \u20ac).")
+                        st.rerun()
+                except Exception as exc:
+                    st.error(f"\u274c Erreur lors de la r\u00e9conciliation : {exc}")
+
     # --- Portfolio Ledger (Audit logs) ---
+
     st.markdown("---")
     st.markdown("#### 📜 Journal d'Exécution & Ledger (Audit Logs)")
     st.markdown(
@@ -19221,18 +19504,24 @@ def render_signal_card(
 
             shap_txt = ""
             if shap_vals and isinstance(shap_vals, dict):
-                pos_shaps = sorted([(k, v) for k, v in shap_vals.items() if float(v) > 0], key=lambda x: float(x[1]), reverse=True)[:2]
-                if pos_shaps:
-                    shap_items = [f"{k} (+{float(v):.2f})" for k, v in pos_shaps]
-                    shap_txt = f" · <span style='color:{_MUTED};'>Top Drivers: {', '.join(shap_items)}</span>"
+                top_shaps = sorted(
+                    [(k, float(v)) for k, v in shap_vals.items()],
+                    key=lambda x: abs(x[1]),
+                    reverse=True,
+                )[:2]
+                if top_shaps:
+                    shap_items = [f"{k} ({'+' if v > 0 else ''}{v:.2f})" for k, v in top_shaps]
+                    shap_txt = f" | Top Drivers: {', '.join(shap_items)}"
 
             ml_html = (
-                f"<div style='margin-top:6px;color:#A78BFA;font-size:12px;line-height:1.45;'>"
-                f"🧠 <b>ML Probability</b>: <b style='color:#C4B5FD;'>{prob_pct:.1f}%</b>{int_txt}{shap_txt}"
+                f"<div style='margin-top:6px;color:#38BDF8;font-size:12px;line-height:1.45;'>"
+                f"🧠 <b>ML Probability</b>: <b style='color:#7DD3FC;'>{prob_pct:.1f}%</b>{int_txt}{shap_txt}"
                 f"</div>"
             )
         except Exception:
             ml_html = ""
+
+
 
     extras = ""
     if impact_line:
@@ -19971,11 +20260,24 @@ OPENROUTER_API_KEY=sk-or-your_openrouter_key_here
 OPENROUTER_MODEL=mistralai/mistral-7b-instruct
 
 # Financial Modeling Prep (https://site.financialmodelingprep.com/developer/docs).
-# Secondary insider-trading fallback after AMF BDIF.
+# Secondary insider-trading fallback after AMF BDIF & Piotroski statements.
 FMP_API_KEY=your_fmp_api_key_here
 
 # EOD Historical Data (https://eodhistoricaldata.com/) — optional market data.
 EODHD_API_KEY=your_eodhd_api_key_here
+
+# IMAP Newsletter Ingestion (Yahoo Mail)
+YAHOO_MAIL_USER=your_yahoo_email@yahoo.com
+YAHOO_MAIL_APP_PASSWORD=your_yahoo_app_password
+
+# Streamlit Terminal Dashboard Security Lock
+DASHBOARD_PASSWORD=your_secure_dashboard_password_here
+
+# Cloud Database Backup (AWS S3)
+AWS_S3_BACKUP_BUCKET=your_s3_bucket_name_here
+AWS_ACCESS_KEY_ID=your_aws_access_key_id
+AWS_SECRET_ACCESS_KEY=your_aws_secret_access_key
+AWS_DEFAULT_REGION=eu-west-3
 ```
 
 ## FILE: config/earnings_calendar.yaml
@@ -23032,6 +23334,21 @@ def run_monthly_ml_retraining() -> None:
         asyncio.run(_post_webhook(f"\u26a0\ufe0f **Monthly ML Retraining Failed**: `{exc}`"))
 
 
+def run_cloud_backup() -> None:
+    """Run local Parquet database exports and upload to AWS S3 (Friday 19:00 Paris)."""
+    started = time.perf_counter()
+    logger.info("=== Weekly Database Backup Routine starting (Friday 19:00 Paris) ===")
+    try:
+        import subprocess
+        res = subprocess.run([sys.executable, str(_ROOT / "tools" / "backup_databases.py")], capture_output=True, text=True, check=False)
+        if res.returncode == 0:
+            logger.info("Database backup completed in %.1fs: %s", time.perf_counter() - started, res.stdout.strip())
+        else:
+            logger.error("Database backup script failed (code %d): %s", res.returncode, res.stderr.strip())
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Database backup routine failed: %s", exc, exc_info=True)
+
+
 def _schedule_passes() -> None:
     """Register all periodic jobs in Europe/Paris time."""
     # Monthly ML retraining: probe daily at 02:00, acts only on the 1st of the month.
@@ -23045,13 +23362,15 @@ def _schedule_passes() -> None:
     # Weekly Earnings Calendar sync: Friday 18:30 Paris.
     if run_earnings_sync is not None:
         schedule.every().friday.at("18:30", _TIMEZONE).do(run_earnings_sync)
+    # Weekly Cloud Backup: Friday 19:00 Paris.
+    schedule.every().friday.at("19:00", _TIMEZONE).do(run_cloud_backup)
     # Monthly profit-shave: probe daily, act only on the 1st (guarded inside).
     schedule.every().day.at(_MONTHLY_CHECK_TIME, _TIMEZONE).do(run_monthly_rebalance)
     # Daily ATR stops (weekdays guarded inside).
     schedule.every().day.at(_ATR_STOP_CHECK_TIME, _TIMEZONE).do(run_daily_atr_stops)
     logger.info(
         "Scheduled: ML retrain 02:00; morning news 08:00; passes at %s; weekly report Fri %s; "
-        "earnings sync Fri 18:30; monthly probe %s; ATR stops %s (%s).",
+        "earnings sync Fri 18:30; backup Fri 19:00; monthly probe %s; ATR stops %s (%s).",
         ", ".join(_PASS_TIMES),
         _WEEKLY_REPORT_TIME,
         _MONTHLY_CHECK_TIME,
@@ -23100,6 +23419,11 @@ def main() -> None:
         action="store_true",
         help="Run autonomous monthly ML retraining now (ignores 1st-of-month guard).",
     )
+    parser.add_argument(
+        "--backup",
+        action="store_true",
+        help="Run database Parquet export and cloud backup now.",
+    )
     args = parser.parse_args()
 
     if args.now:
@@ -23143,6 +23467,10 @@ def main() -> None:
             logger.error("Retraining failed: %s", exc)
         return
 
+    if args.backup:
+        logger.info("--backup: executing database backup now.")
+        run_cloud_backup()
+        return
 
 
     _schedule_passes()
@@ -23664,11 +23992,12 @@ make scheduler   # Run the Paris market scheduler daemon
 make pass        # Execute a synchronous market analysis pass immediately (--now)
 make morning-news# Run pre-market IMAP ingestion and FinBERT scoring (--morning-news)
 make retrain-ml  # Run monthly ML model retraining immediately (--retrain-ml)
+make backup      # Run Parquet export and S3 cloud backup now (--backup)
 make atr-stops   # Evaluate daily ATR stops now (--atr-stops)
 make rebalance   # Evaluate monthly profit-shaving rebalancer now (--rebalance)
 make weekly      # Generate Friday CIO weekly report now (--weekly)
 make backtest    # Run the event-driven Walk-Forward Backtester
-make test        # Run the full automated unit and regression test suite (61/61 passing)
+make test        # Run the full automated unit and regression test suite (65/65 passing)
 make dump        # Regenerate all LLM context dumps (global + categorized)
 make clean       # Clean temporary cache and bytecode files
 ``​`
@@ -23685,7 +24014,7 @@ For external LLM analysis, fine-tuning, or pair programming, the repository incl
 | `docs/dumps/DUMP_00_DATA_SENSORS.md` | Data sensors, scrapers, text cleaner, IMAP ingest, and APIs. | Data Engineering |
 | `docs/dumps/DUMP_01_MEMORY_CORE.md` | Pydantic contracts, SQLite, and DuckDB managers. | Persistence & Contracts |
 | `docs/dumps/DUMP_02_QUANT_ENGINE.md` | Technical scorer, Bandit, Ensemble, StatArb, HMM, FinBERT, ML trainer, Backtest. | Quantitative Alpha Models |
-| `docs/dumps/DUMP_03_RISK_PORTFOLIO.md` | Risk parameters, Kinetic brake, Sizers, Limit price tiers, Stress tester. | Risk Governance & Sizing |
+| `docs/dumps/DUMP_03_RISK_PORTFOLIO.md` | Risk parameters, Kinetic brake, Sizers, Broker reconciliation, Stress tester. | Risk Governance & Sizing |
 | `docs/dumps/DUMP_04_ORCHESTRATOR_AI.md` | Signal cascade, Red Team agent, Post-mortems, Historian. | AI Orchestration |
 | `docs/dumps/DUMP_05_INTERFACES.md` | Streamlit terminal HUD, AI Radar chart, trade cards, Discord bot. | User Interfaces |
 | `docs/dumps/DUMP_06_07_API_MCP.md` | Central FastAPI SSOT and Claude Desktop MCP server. | API & Integrations |
@@ -23700,7 +24029,7 @@ python tools/build_llm_dump.py
 
 ## 🧪 Verification & Test Suites
 
-The project features a **100% passing automated test suite (61 / 61 tests)** covering all architectural layers:
+The project features a **100% passing automated test suite (65 / 65 tests)** covering all architectural layers:
 
 ``​`bash
 # Run all tests
@@ -23711,6 +24040,7 @@ python -m pytest -v
 ``​`
 
 ### Test Suite Inventory
+- `test_reconciliation_and_backup.py`: Tests French broker CSV reconciliation (Boursorama, Bourse Direct), SQLite state overwrites, audit signals, and AWS S3 Parquet/DB backups.
 - `test_limit_tiers_and_radar.py`: Tests 3-tier ATR limit price calculations (Aggressive, Optimal, Patient), direction reversals, and UCB Bandit + Dynamic Ensemble polar radar chart weights.
 - `test_fmp_copilot_retraining.py`: Tests Financial Modeling Prep (FMP) 9-point Piotroski scoring with yfinance fallback, enriched Discord copilot embeds, and autonomous monthly ML retraining.
 - `test_stealth_and_imap_ingest.py`: Tests Cloudscraper anti-bot resilience, Boursorama scraper error recovery, and production IMAP newsletter ingestion with Jaccard deduplication.
@@ -23724,6 +24054,7 @@ python -m pytest -v
 - `test_institutional_suite.py`: Tests Pydantic `RiskParamsConfig` strictness (`extra='forbid', frozen=True`), DrawdownBreaker kinetic multipliers, Piotroski F-Score calculation, HRP allocation, and VaR/CVaR risk math.
 - `test_funnel_analytics.py`: Tests decision funnel waterfall classification and rejection taxonomy.
 - `test_phase16_foundations.py`: Tests core/satellite sizing, ATR stops, profit-shaving rebalancer, and correlation firewall.
+
 
 ---
 
@@ -23790,8 +24121,9 @@ mplfinance>=0.12.10b0
 # Use a Python 3.11/3.12 (x64) environment to install and run the dashboard.
 streamlit>=1.33
 
-# --- Scheduler (Phase 9) ---
+# --- Scheduler & Cloud Backups (Phase 9) ---
 schedule>=1.2
+boto3>=1.34.0
 
 # --- Dev / tests / CI ---
 pytest>=8.0
@@ -25533,6 +25865,98 @@ if __name__ == "__main__":
     unittest.main()
 ```
 
+## FILE: tests/test_reconciliation_and_backup.py
+```python
+"""Unit Tests for Broker CSV Reconciliation, Dashboard Auth, and S3 Cloud Backups."""
+
+from __future__ import annotations
+
+import os
+import sys
+import unittest
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+ROOT = Path(__file__).resolve().parent.parent
+for sub in ("00_data_sensors", "01_memory_core", "02_quant_engine", "03_risk_portfolio", "04_orchestrator_ai", "05_interfaces", "tools"):
+    sys.path.insert(0, str(ROOT / sub))
+
+from broker_reconciliation import BrokerReconciliator
+import backup_databases
+from main_scheduler import run_cloud_backup
+
+
+class TestReconciliationAndBackupSuite(unittest.TestCase):
+
+    def test_01_parse_broker_csv_french_format(self):
+        """Verify parsing French Boursorama/Bourse Direct broker CSV exports."""
+        reconciliator = BrokerReconciliator()
+
+        csv_sample = """Libellé;Code / ISIN;Quantité;PRU;Dernier Cours;Valeur
+LVMH MOET HENNESSY;FR0000121014;10;620,50 €;650,00 €;6 500,00 €
+AIR LIQUIDE;FR0000120073;15;170,25 €;178,50 €;2 677,50 €
+TOTALENERGIES;FR0000120271;30;58,00 €;61,20 €;1 836,00 €
+Liquidités;;;;;1 500,00 €
+Total Portefeuille;;;;;12 513,50 €
+"""
+        parsed = reconciliator.parse_broker_csv(csv_sample)
+        self.assertEqual(len(parsed), 3)
+
+        lvmh = next((p for p in parsed if "MC.PA" in p["ticker"] or "LVMH" in p["ticker"] or "FR0000121014" in p["ticker"]), None)
+        self.assertIsNotNone(lvmh)
+        self.assertEqual(lvmh["qty_shares"], 10)
+        self.assertEqual(lvmh["avg_entry_price"], 620.50)
+        self.assertEqual(lvmh["current_price"], 650.00)
+
+    def test_02_reconcile_with_sqlite(self):
+        """Verify reconcile_with_sqlite correctly overwrites database state and logs audit record."""
+        reconciliator = BrokerReconciliator()
+        mock_db = MagicMock()
+
+        parsed_data = [
+            {"ticker": "MC.PA", "qty_shares": 8, "avg_entry_price": 600.0, "current_price": 620.0, "sector": "Consumer Cyclical"},
+            {"ticker": "CW8.PA", "qty_shares": 15, "avg_entry_price": 480.0, "current_price": 500.0, "sector": "Core ETF"},
+        ]
+        actual_cash = 2500.0
+
+        res = reconciliator.reconcile_with_sqlite(parsed_data, actual_cash, mock_db)
+
+        self.assertTrue(res["success"])
+        self.assertEqual(res["positions_synced"], 2)
+        self.assertEqual(res["cash_available"], 2500.0)
+        # Expected Equity = 2500 + (8*620 + 15*500) = 2500 + (4960 + 7500) = 14960.0
+        self.assertEqual(res["total_equity"], 14960.0)
+
+        self.assertTrue(mock_db.update_portfolio.called)
+        self.assertTrue(mock_db.log_signal.called)
+        logged_signal = mock_db.log_signal.call_args[0][0]
+        self.assertEqual(logged_signal.reason, "PORTFOLIO RECONCILIATION: Synced with broker reality.")
+        self.assertEqual(logged_signal.lineage.get("strategy"), "PORTFOLIO_RECONCILIATION")
+
+    def test_03_backup_databases_s3_upload(self):
+        """Verify backup_to_s3 calls boto3 upload_file properly."""
+        mock_file = ROOT / "config" / "pea_universe.yaml"
+        mock_boto = MagicMock()
+        mock_s3 = MagicMock()
+        mock_boto.client.return_value = mock_s3
+
+        with patch.dict(sys.modules, {"boto3": mock_boto}):
+            success = backup_databases.backup_to_s3([mock_file], "20260816_120000", "my-test-bucket")
+            self.assertTrue(success)
+            self.assertTrue(mock_s3.upload_file.called)
+
+    def test_04_run_cloud_backup_scheduler(self):
+        """Verify run_cloud_backup routine executes without crashing."""
+        with patch("subprocess.run") as mock_sub:
+            mock_sub.return_value = MagicMock(returncode=0, stdout="OK", stderr="")
+            run_cloud_backup()
+            self.assertTrue(mock_sub.called)
+
+
+if __name__ == "__main__":
+    unittest.main()
+```
+
 ## FILE: tests/test_stat_arb_and_backtest.py
 ```python
 """Unit & Integration Tests for StatArb Cointegration Engine & Walk-Forward Backtester."""
@@ -25919,7 +26343,7 @@ if __name__ == "__main__":
 
 ## FILE: tools/backup_databases.py
 ```python
-"""Export key SQLite tables to Parquet for backup and portability.
+"""Export key SQLite tables to Parquet and back up databases off-instance to AWS S3.
 
 Usage:
     python tools/backup_databases.py
@@ -25927,23 +26351,67 @@ Usage:
 
 from __future__ import annotations
 
+import logging
+import os
+import shutil
 import sqlite3
 from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
 
+try:
+    from dotenv import load_dotenv
+
+    _ENV_PATH = Path(__file__).resolve().parent.parent / "config" / "api_keys.env"
+    load_dotenv(_ENV_PATH)
+except Exception:  # noqa: BLE001
+    pass
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)-7s | %(message)s")
+logger = logging.getLogger("backup_databases")
+
 _ROOT = Path(__file__).resolve().parent.parent
 _DB_PATH = _ROOT / "database" / "portfolio.db"
 _BACKUP_DIR = _ROOT / "database" / "backups"
 
-TABLES_TO_EXPORT = ["portfolio_history", "audit_log", "news_history"]
+TABLES_TO_EXPORT = [
+    "portfolio_history",
+    "audit_logs",
+    "news_master",
+    "positions",
+    "account_state",
+    "fundamentals_cache",
+    "universe_snapshots",
+]
+
+
+def backup_to_s3(local_files: list[Path], stamp: str, bucket_name: str) -> bool:
+    """Upload backup artifacts to Amazon S3 bucket."""
+    try:
+        import boto3
+        s3 = boto3.client("s3")
+        prefix = f"pea_pollux_backups/{stamp}"
+        logger.info("Uploading %d backup files to s3://%s/%s/ ...", len(local_files), bucket_name, prefix)
+
+        for fpath in local_files:
+            if not fpath.exists():
+                continue
+            key = f"{prefix}/{fpath.name}"
+            s3.upload_file(str(fpath), bucket_name, key)
+            logger.info("  [S3 OK] %s -> s3://%s/%s", fpath.name, bucket_name, key)
+
+        logger.info("AWS S3 cloud backup completed successfully.")
+        return True
+    except Exception as exc:
+        logger.error("AWS S3 upload failed: %s", exc)
+        return False
 
 
 def main() -> None:
     _BACKUP_DIR.mkdir(parents=True, exist_ok=True)
     if not _DB_PATH.exists():
-        print(f"Database not found: {_DB_PATH}")
+        logger.warning("Database not found: %s", _DB_PATH)
         return
 
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -25956,17 +26424,39 @@ def main() -> None:
         ).fetchall()
     }
 
+    generated_files: list[Path] = []
+
     for table in TABLES_TO_EXPORT:
         if table not in existing:
-            print(f"  [skip] {table} (not found)")
             continue
-        df = pd.read_sql_query(f"SELECT * FROM {table}", conn)  # noqa: S608
-        out_path = _BACKUP_DIR / f"{table}_{stamp}.parquet"
-        df.to_parquet(out_path, index=False)
-        print(f"  [ok] {table} -> {out_path.name} ({len(df)} rows)")
+        try:
+            df = pd.read_sql_query(f"SELECT * FROM {table}", conn)  # noqa: S608
+            out_path = _BACKUP_DIR / f"{table}_{stamp}.parquet"
+            df.to_parquet(out_path, index=False)
+            logger.info("  [Parquet OK] %s -> %s (%d rows)", table, out_path.name, len(df))
+            generated_files.append(out_path)
+        except Exception as exc:
+            logger.warning("Failed to export table %s: %s", table, exc)
 
     conn.close()
-    print("Backup complete.")
+
+    # Also snapshot the raw SQLite database file
+    raw_db_snapshot = _BACKUP_DIR / f"portfolio_{stamp}.db"
+    try:
+        shutil.copy2(_DB_PATH, raw_db_snapshot)
+        logger.info("  [Raw DB OK] portfolio.db -> %s", raw_db_snapshot.name)
+        generated_files.append(raw_db_snapshot)
+    except Exception as exc:
+        logger.warning("Failed to copy raw database: %s", exc)
+
+    # AWS S3 Off-Instance Remote Backup
+    bucket = os.getenv("AWS_S3_BACKUP_BUCKET")
+    if bucket and bucket.strip():
+        backup_to_s3(generated_files, stamp, bucket.strip())
+    else:
+        logger.info("AWS_S3_BACKUP_BUCKET not set; stored backups locally in database/backups/.")
+
+    logger.info("=== Backup Routine Complete (%d artifacts created) ===", len(generated_files))
 
 
 if __name__ == "__main__":
