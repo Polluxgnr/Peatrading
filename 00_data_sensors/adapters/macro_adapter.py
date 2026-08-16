@@ -16,9 +16,17 @@ _ROOT = Path(__file__).resolve().parent.parent.parent
 for sub in ("00_data_sensors", "01_memory_core"):
     sys.path.insert(0, str(_ROOT / sub))
 
-from base_adapters import AbstractPollAdapter
+try:
+    from adapters.base_adapters import AbstractPollAdapter
+except ImportError:
+    try:
+        from .base_adapters import AbstractPollAdapter
+    except ImportError:
+        from base_adapters import AbstractPollAdapter
+
 from data_contracts import AlternativeSignal
 from macro_alpha_api import MacroAlphaSensor
+
 
 logger = logging.getLogger("macro_adapter")
 
@@ -69,3 +77,9 @@ class MacroAlphaAdapter(AbstractPollAdapter):
 
         logger.info("MacroAlphaAdapter emitted %d AlternativeSignal(s).", len(signals))
         return signals
+
+
+class MacroAdapter(MacroAlphaAdapter):
+    """Alias for MacroAlphaAdapter supporting standard naming convention."""
+    pass
+

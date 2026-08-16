@@ -16,8 +16,16 @@ _ROOT = Path(__file__).resolve().parent.parent.parent
 for sub in ("00_data_sensors", "00_data_sensors/scrapers", "01_memory_core"):
     sys.path.insert(0, str(_ROOT / sub))
 
-from base_adapters import AbstractPollAdapter
+try:
+    from adapters.base_adapters import AbstractPollAdapter
+except ImportError:
+    try:
+        from .base_adapters import AbstractPollAdapter
+    except ImportError:
+        from base_adapters import AbstractPollAdapter
+
 from data_contracts import AlternativeSignal
+
 
 try:
     from amf_short_scraper import AmfShortScraper
@@ -161,3 +169,26 @@ class AmfInsiderAdapter(AbstractPollAdapter):
 
         logger.info("AmfInsiderAdapter emitted %d AlternativeSignal(s).", len(signals))
         return signals
+
+
+class AmfAdapter(AbstractPollAdapter):
+    """Unified AMF regulatory data adapter polling both short interest and insider filings."""
+
+    interval_seconds: int = 3600
+
+    def __init__(
+        self,
+        isins: Optional[List[str]] = None,
+        tickers: Optional[List[str]] = None,
+        interval_seconds: int = 3600,
+    ) -> None:
+        self.interval_seconds = interval_seconds
+        self.short_adapter = AmfShortAdapter(isins=isins, tickers=tickers, interval_seconds=interval_seconds)
+        self.insider_adapter = AmfInsiderAdapter(tickers=tickers, interval_seconds=interval_seconds)
+
+    async def fetch(self) -> List[AlternativeSignal]:
+        """Fetch both short interest and insider filings from AMF BDIF."""
+        short_sigs = await self.short_adapter.fetch()
+        insider_sigs = await self.insider_adapter.fetch()
+        return short_sigs + insider_sigs
+

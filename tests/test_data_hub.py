@@ -16,13 +16,14 @@ ROOT = Path(__file__).resolve().parent.parent
 for sub in ("00_data_sensors", "00_data_sensors/adapters", "01_memory_core"):
     sys.path.insert(0, str(ROOT / sub))
 
-from adapters.amf_adapter import AmfInsiderAdapter, AmfShortAdapter
+from adapters.amf_adapter import AmfAdapter, AmfInsiderAdapter, AmfShortAdapter
 from adapters.base_adapters import AbstractPollAdapter
 from adapters.bourso_adapter import BoursoUniverseAdapter
-from adapters.macro_adapter import MacroAlphaAdapter
+from adapters.macro_adapter import MacroAdapter, MacroAlphaAdapter
 from adapters.news_adapter import ConsolidatedNewsAdapter
 from data_contracts import AlternativeSignal
 from hub import DataIngestionHub
+
 
 
 class MockCustomAdapter(AbstractPollAdapter):
@@ -187,6 +188,27 @@ class TestDataHubSuite(unittest.TestCase):
         val = cur.execute("SELECT value FROM alternative_signals WHERE ticker='SAN.PA';").fetchone()[0]
         self.assertEqual(val, 1.5)
 
+    def test_08_amf_adapter_unified(self):
+        """Verify unified AmfAdapter aggregates short interest and insider filings."""
+        adapter = AmfAdapter(isins=["FR0000121014"], tickers=["MC.PA"])
+        with patch.object(adapter.short_adapter.scraper, "get_short_interest", return_value=3.5), \
+             patch.object(adapter.insider_adapter.scraper, "get_recent_declarations", return_value=pd.DataFrame({"Date": ["2026-08-16"], "Transaction": ["Achat"]})):
+            signals = asyncio.run(adapter.fetch())
+            self.assertTrue(len(signals) >= 2)
+            types = [s.signal_type for s in signals]
+            self.assertIn("SHORT_INTEREST", types)
+            self.assertIn("INSIDER_TX", types)
+
+    def test_09_macro_adapter_alias(self):
+        """Verify MacroAdapter subclass correctly inherits MacroAlphaAdapter."""
+        adapter = MacroAdapter()
+        self.assertIsInstance(adapter, AbstractPollAdapter)
+        with patch.object(adapter.sensor, "get_european_vix", return_value=16.2), \
+             patch.object(adapter.sensor, "get_oat_bund_spread", return_value=72.0):
+            signals = asyncio.run(adapter.fetch())
+            self.assertEqual(len(signals), 2)
+
 
 if __name__ == "__main__":
     unittest.main()
+
