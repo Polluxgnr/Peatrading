@@ -22,15 +22,17 @@ _REQUIRED_COLS = ["Ticker", "Date", "Open", "High", "Low", "Close", "Volume"]
 
 
 class DataQualityGateway:
-    """Quality gate validating and cleaning OHLCV batches before persistence."""
+    """Quality gate validating, forward-filling, and flagging outliers without hard data deletion."""
 
     def __init__(
         self,
         max_ffill_limit: int = 3,
-        outlier_return_threshold: float = 0.40,
-        outlier_zscore_threshold: float = 4.0,
+        mad_threshold: float = 5.0,
+        outlier_return_threshold: Optional[float] = None,
+        outlier_zscore_threshold: Optional[float] = None,
     ) -> None:
         self.max_ffill_limit = max_ffill_limit
+        self.mad_threshold = float(mad_threshold)
         self.outlier_return_threshold = outlier_return_threshold
         self.outlier_zscore_threshold = outlier_zscore_threshold
 
@@ -42,7 +44,7 @@ class DataQualityGateway:
 
         Returns:
             pd.DataFrame: Cleaned DataFrame with ['Ticker', 'Date', 'Open', 'High', 'Low', 'Close', 'Volume', 'is_outlier'].
-                          Returns empty DataFrame if data is completely invalid.
+                          All valid price bars are preserved; outliers are flagged without dropping.
         """
         if df is None or df.empty:
             logger.warning("DataQualityGateway received empty or None DataFrame.")
@@ -75,7 +77,7 @@ class DataQualityGateway:
         if "Date" not in clean.columns and isinstance(clean.index, (pd.DatetimeIndex, pd.PeriodIndex)):
             clean["Date"] = clean.index
 
-        # Check for missing required columns
+        # Check required columns
         missing = [c for c in _REQUIRED_COLS if c not in clean.columns]
         if missing:
             logger.error("DataQualityGateway: Batch missing mandatory columns: %s", missing)
@@ -120,36 +122,41 @@ class DataQualityGateway:
         clean["Low"] = clean["Low"].fillna(clean["Close"])
         clean["Volume"] = clean["Volume"].fillna(0.0).astype(int)
 
-        # 2. Outlier Detection
-        # Calculate daily return per ticker
+        # 2. Outlier Detection via Robust Median Absolute Deviation (MAD)
         clean["is_outlier"] = False
 
         for ticker, grp in clean.groupby("Ticker"):
             if len(grp) < 2:
                 continue
-            
+
             c_prices = grp["Close"]
-            rets = c_prices.pct_change()
+            rets = c_prices.pct_change().dropna()
+            if rets.empty:
+                continue
 
-            # Extreme percentage jump/drop > 40%
-            is_extreme = rets.abs() > self.outlier_return_threshold
+            med_ret = float(rets.median())
+            abs_dev = (rets - med_ret).abs()
+            mad_val = float(abs_dev.median())
 
-            # Rolling return Z-score
-            if len(grp) >= 20:
-                roll_mean = rets.rolling(20, min_periods=5).mean()
-                roll_std = rets.rolling(20, min_periods=5).std().replace(0, np.nan)
-                zscores = (rets - roll_mean).abs() / roll_std
-                is_z_outlier = zscores >= self.outlier_zscore_threshold
-                is_flagged = is_extreme | is_z_outlier.fillna(False)
+            if mad_val > 1e-7:
+                # Flag returns that exceed 5 MADs
+                mad_distances = abs_dev / mad_val
+                is_flagged = mad_distances > self.mad_threshold
             else:
-                is_flagged = is_extreme
+                is_flagged = abs_dev > 0.05
+
+            # If legacy outlier_return_threshold is explicitly specified, include it
+            if self.outlier_return_threshold is not None:
+                is_flagged = is_flagged | (rets.abs() > self.outlier_return_threshold)
 
             if is_flagged.any():
-                flagged_idx = grp[is_flagged].index
+                flagged_idx = rets[is_flagged].index
                 clean.loc[flagged_idx, "is_outlier"] = True
                 logger.warning(
-                    "DataQualityGateway: Flagged %d price return outlier(s) for ticker %s.",
-                    len(flagged_idx), ticker,
+                    "DataQualityGateway: Flagged %d price return outlier(s) exceeding %0.1f MADs for ticker %s.",
+                    len(flagged_idx),
+                    self.mad_threshold,
+                    ticker,
                 )
 
         return clean[_REQUIRED_COLS + ["is_outlier"]]

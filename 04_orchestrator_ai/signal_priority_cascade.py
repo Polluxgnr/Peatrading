@@ -291,15 +291,18 @@ class SignalOrchestrator:
 
             # --- Check 1c: Strict Piotroski F-Score Veto (< 4) ---
             if self.fundamentals_sensor is not None and ticker != self.core_ticker:
-                piot_score, _ = self.fundamentals_sensor.calculate_piotroski_score(ticker)
-                if piot_score < 4:
-                    processed.append(
-                        self._reject(
-                            signal,
-                            f"REJECTED: Low Piotroski quality ({piot_score}/9 < 4)",
+                piot_res = self.fundamentals_sensor.calculate_piotroski_score(ticker)
+                if piot_res is not None and isinstance(piot_res, tuple) and len(piot_res) == 2:
+                    piot_score, _ = piot_res
+                    if piot_score is not None and piot_score < 4:
+                        processed.append(
+                            self._reject(
+                                signal,
+                                f"REJECTED: Low Piotroski quality ({piot_score}/9 < 4)",
+                            )
                         )
-                    )
-                    continue
+                        continue
+
 
             # --- Check 1d: Max simultaneous satellite lines ---
             already_held = any(p.ticker == ticker for p in portfolio.positions)
@@ -347,21 +350,37 @@ class SignalOrchestrator:
                 )
                 continue
 
-            # --- Check 2a: Sector concentration limit (cheap arithmetic) ---
+            # --- Check 2a & 2b: Sector concentration & Correlation (Indicator Warnings, No Hard Veto) ---
+            sector_res = self.firewall.check_sector_limit(ticker, portfolio)
+            if isinstance(sector_res, list):
+                sector_warnings = sector_res
+            elif isinstance(sector_res, bool):
+                sector_warnings = [f"⚠️ Sector exposure limit exceeded for {ticker}"] if not sector_res else []
+            else:
+                sector_warnings = []
 
-            if not self.firewall.check_sector_limit(ticker, portfolio):
-                processed.append(
-                    self._reject(signal, "REJECTED: Sector weight limit reached")
-                )
-                continue
+            corr_res = self.firewall.check_correlation(ticker, portfolio, self.timeseries_db)
+            if isinstance(corr_res, list):
+                corr_warnings = corr_res
+            elif isinstance(corr_res, tuple) and len(corr_res) == 2:
+                ok, msg = corr_res
+                corr_warnings = [f"⚠️ {msg}"] if not ok else []
+            elif isinstance(corr_res, bool):
+                corr_warnings = [f"⚠️ Correlation limit exceeded for {ticker}"] if not corr_res else []
+            else:
+                corr_warnings = []
 
-            # --- Check 2b: Correlation firewall (heavy Pearson) ---
-            ok, corr_reason = self.firewall.check_correlation(
-                ticker, portfolio, self.timeseries_db
-            )
-            if not ok:
-                processed.append(self._reject(signal, f"REJECTED: {corr_reason}"))
-                continue
+            all_risk_warnings = sector_warnings + corr_warnings
+
+            if all_risk_warnings:
+                if signal.lineage is None:
+                    signal.lineage = {}
+                signal.lineage["risk_warnings"] = all_risk_warnings
+                warn_suffix = " · " + " · ".join(all_risk_warnings)
+                if warn_suffix not in signal.reason:
+                    signal.reason += warn_suffix
+
+
 
             # --- Check 2c: ML Predictive Veto (XGBoost + Isolation Forest) ---
             if predict_anomaly is not None and predict_probability_with_shap is not None:

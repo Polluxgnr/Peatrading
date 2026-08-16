@@ -149,10 +149,21 @@ class PortfolioDB:
                         published_at    TEXT,
                         sentiment_score REAL,
                         sentiment_label TEXT,
+                        price_impact_1d REAL,
+                        price_impact_5d REAL,
+                        nlp_summary     TEXT,
                         created_at      TEXT NOT NULL
                     );
                     """
                 )
+                news_cols = [r["name"] for r in conn.execute("PRAGMA table_info(news_master);").fetchall()]
+                if "price_impact_1d" not in news_cols:
+                    conn.execute("ALTER TABLE news_master ADD COLUMN price_impact_1d REAL;")
+                if "price_impact_5d" not in news_cols:
+                    conn.execute("ALTER TABLE news_master ADD COLUMN price_impact_5d REAL;")
+                if "nlp_summary" not in news_cols:
+                    conn.execute("ALTER TABLE news_master ADD COLUMN nlp_summary TEXT;")
+
                 conn.execute(
                     """
                     CREATE TABLE IF NOT EXISTS news_sentiment_history (
@@ -165,6 +176,7 @@ class PortfolioDB:
                     );
                     """
                 )
+
                 conn.execute(
                     """
                     CREATE TABLE IF NOT EXISTS universe_snapshots (
@@ -532,6 +544,32 @@ class PortfolioDB:
     def insert_raw_news(self, items: list[dict]) -> int:
         """Alias for save_news_items to insert batch news."""
         return self.save_news_items(items)
+
+    def update_news_nlp_impact(
+        self,
+        news_id: str,
+        price_impact_1d: Optional[float] = None,
+        price_impact_5d: Optional[float] = None,
+        nlp_summary: Optional[str] = None,
+    ) -> None:
+        """Update forward price impact returns and NLP summary for a stored news article."""
+        try:
+            with self._connect() as conn:
+                conn.execute(
+                    """
+                    UPDATE news_master
+                    SET price_impact_1d = COALESCE(?, price_impact_1d),
+                        price_impact_5d = COALESCE(?, price_impact_5d),
+                        nlp_summary = COALESCE(?, nlp_summary)
+                    WHERE id = ?;
+                    """,
+                    (price_impact_1d, price_impact_5d, nlp_summary, news_id),
+                )
+            logger.debug("Updated NLP price impact for news item %s", news_id)
+        except sqlite3.Error:
+            logger.exception("Failed to update NLP price impact for news item %s", news_id)
+            raise
+
 
     def mark_news_processed(
         self, news_id: str, sentiment_score: float = 0.0, sentiment_label: str = "neutral"

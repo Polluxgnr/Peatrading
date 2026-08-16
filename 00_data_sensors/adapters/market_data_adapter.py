@@ -100,20 +100,67 @@ class YFinanceMarketDataAdapter(AbstractMarketDataAdapter):
             return pd.DataFrame()
 
     def fetch_latest_tick(self, ticker: str) -> Optional[MarketTick]:
-        """Fetch the latest spot quote and return validated MarketTick contract."""
+        """Fetch the latest spot quote with double-verification (yfinance vs Boursorama).
+
+        Compares prices between yfinance and Boursorama. If the delta is > 1.5%,
+        attaches a warning flag to the MarketTick metadata without dropping the data.
+        """
         clean_t = ticker.strip().upper()
+        yf_price: Optional[float] = None
+        yf_volume: float = 0.0
+
+        # 1. Primary quote from yfinance
         try:
             t_obj = yf.Ticker(clean_t)
             hist = t_obj.history(period="1d", interval="1m")
             if hist is not None and not hist.empty:
                 last_row = hist.iloc[-1]
-                return MarketTick(
-                    ticker=clean_t,
-                    ts=datetime.now(timezone.utc),
-                    price=float(last_row["Close"]),
-                    volume=float(last_row.get("Volume", 0.0)),
-                    source="yfinance_intraday",
-                )
+                yf_price = float(last_row["Close"])
+                yf_volume = float(last_row.get("Volume", 0.0))
+            elif hasattr(t_obj, "fast_info") and t_obj.fast_info:
+                yf_price = float(getattr(t_obj.fast_info, "last_price", 0.0) or 0.0) or None
         except Exception as exc:
-            logger.debug("Failed to fetch latest tick for %s: %s", clean_t, exc)
-        return None
+            logger.debug("Failed yfinance tick fetch for %s: %s", clean_t, exc)
+
+        # 2. Secondary verification quote from Boursorama
+        bourso_price: Optional[float] = None
+        try:
+            try:
+                from scrapers.bourso_scraper import BoursoramaScraper
+            except ImportError:
+                from bourso_scraper import BoursoramaScraper  # type: ignore
+            bourso = BoursoramaScraper()
+            profile = bourso.get_instrument_profile(clean_t)
+            if profile and isinstance(profile, dict):
+                p_cand = profile.get("price") or profile.get("current_price") or profile.get("target_price")
+                if p_cand is not None:
+                    bourso_price = float(p_cand)
+        except Exception as exc:
+            logger.debug("Failed Boursorama verification tick for %s: %s", clean_t, exc)
+
+
+        if yf_price is None and bourso_price is None:
+            return None
+
+        primary_price = yf_price if yf_price is not None else bourso_price
+        metadata: dict = {}
+
+        if yf_price is not None and bourso_price is not None and yf_price > 0:
+            delta_pct = abs(yf_price - bourso_price) / yf_price
+            if delta_pct > 0.015:
+                warning_msg = (
+                    f"Yahoo ({yf_price:.2f}€) and Boursorama ({bourso_price:.2f}€) "
+                    f"prices diverge by {delta_pct * 100:.2f}% (> 1.5%)"
+                )
+                metadata["price_warning"] = warning_msg
+                logger.warning("PRICE DIVERGENCE WARNING for %s: %s", clean_t, warning_msg)
+
+        return MarketTick(
+            ticker=clean_t,
+            ts=datetime.now(timezone.utc),
+            price=float(primary_price),
+            volume=yf_volume,
+            source="yfinance_with_bourso_check" if bourso_price else "yfinance_intraday",
+            metadata=metadata,
+        )
+

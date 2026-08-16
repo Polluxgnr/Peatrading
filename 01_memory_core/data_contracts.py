@@ -26,6 +26,7 @@ class MarketTick(BaseModel):
         price: Last traded or closing price (EUR).
         volume: Volume traded on the period / tick.
         source: Data provider identifier (e.g. 'yfinance', 'boursorama').
+        metadata: Additional unstructured metadata or price divergence warnings.
     """
 
     model_config = ConfigDict(validate_assignment=True, str_strip_whitespace=True)
@@ -35,6 +36,8 @@ class MarketTick(BaseModel):
     price: float = Field(..., gt=0, description="Last traded or closing price (EUR).")
     volume: float = Field(default=0.0, ge=0, description="Volume traded.")
     source: str = Field(..., min_length=1, description="Data source identifier (e.g., 'yfinance', 'boursorama').")
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional unstructured metadata or price divergence warnings.")
+
 
 
 class AlternativeSignal(BaseModel):

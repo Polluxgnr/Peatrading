@@ -101,20 +101,19 @@ class CorrelationFirewall:
         """Return the sector for a ticker, or ``"UNKNOWN"`` if unmapped."""
         return self.ticker_sectors.get(ticker, "UNKNOWN")
 
-    def check_sector_limit(self, ticker: str, portfolio: PortfolioState) -> bool:
-        """Check whether buying ``ticker`` keeps its sector within limits.
+    def check_sector_limit(self, ticker: str, portfolio: PortfolioState) -> list[str]:
+        """Check sector exposure and return warning indicators (never vetoes).
 
         Args:
             ticker: Candidate ticker.
             portfolio: Current portfolio snapshot.
 
         Returns:
-            bool: ``True`` if the projected sector weight is within
-            ``MAX_SECTOR_WEIGHT_PCT``; ``False`` (veto) otherwise.
+            list[str]: List of warning strings if sector limit would be exceeded, else empty list.
         """
+        warnings: list[str] = []
         if portfolio.total_equity <= 0:
-            logger.warning("Total equity is zero; vetoing %s on sector check.", ticker)
-            return False
+            return warnings
 
         sector = self.get_sector(ticker)
         current_sector_value = sum(
@@ -126,22 +125,21 @@ class CorrelationFirewall:
         projected_weight = (current_sector_value + proposed_add) / portfolio.total_equity
 
         if projected_weight > self.max_sector_weight:
-            logger.info(
-                "VETO %s: sector '%s' would reach %.1f%% (limit %.1f%%).",
+            warn = (
+                f"⚠️ Sector exposure would reach {projected_weight * 100:.1f}% "
+                f"for '{sector}' (cap {self.max_sector_weight * 100:.0f}%)"
+            )
+            warnings.append(warn)
+            logger.info("SECTOR CONCENTRATION WARNING for %s: %s", ticker, warn)
+        else:
+            logger.debug(
+                "%s sector '%s' projected weight %.1f%% within limit.",
                 ticker,
                 sector,
                 projected_weight * 100,
-                self.max_sector_weight * 100,
             )
-            return False
 
-        logger.debug(
-            "%s sector '%s' projected weight %.1f%% within limit.",
-            ticker,
-            sector,
-            projected_weight * 100,
-        )
-        return True
+        return warnings
 
     def check_vix_panic(self, vix_level: float) -> bool:
         """Emergency market-wide brake based on European volatility (VSTOXX).
@@ -176,8 +174,8 @@ class CorrelationFirewall:
 
     def check_correlation(
         self, ticker: str, portfolio: PortfolioState, db_manager
-    ) -> Tuple[bool, str]:
-        """Check Pearson correlation of the candidate vs existing holdings.
+    ) -> list[str]:
+        """Check Pearson correlation of the candidate vs existing holdings and return warnings.
 
         Args:
             ticker: Candidate ticker.
@@ -185,12 +183,12 @@ class CorrelationFirewall:
             db_manager: A ``TimeSeriesDB`` exposing ``get_historical_prices``.
 
         Returns:
-            tuple[bool, str]: ``(True, msg)`` if safe or the portfolio is empty;
-            ``(False, msg)`` naming the first holding that breaches the limit.
+            list[str]: List of warning strings for each holding where correlation exceeds max_correlation.
         """
+        warnings: list[str] = []
         holdings = [p.ticker for p in portfolio.positions if p.ticker != ticker]
         if not holdings:
-            return True, "Correlation check passed (empty portfolio)"
+            return warnings
 
         close_series: Dict[str, pd.Series] = {}
         for tkr in [ticker, *holdings]:
@@ -200,12 +198,12 @@ class CorrelationFirewall:
 
         if ticker not in close_series:
             logger.warning("No price history for candidate %s; cannot correlate.", ticker)
-            return True, "Correlation check skipped (no candidate history)"
+            return warnings
 
         prices = pd.concat(close_series, axis=1)
         prices = prices.ffill().dropna(how="all")
         if len(prices) < 2 or prices.shape[1] < 2:
-            return True, "Correlation check passed (insufficient overlap)"
+            return warnings
 
         corr_matrix = prices.corr(method="pearson")
         candidate_corr = corr_matrix[ticker].drop(labels=[ticker], errors="ignore")
@@ -214,14 +212,15 @@ class CorrelationFirewall:
             if pd.isna(corr):
                 continue
             if corr > self.max_correlation:
-                msg = f"Highly correlated with {existing_ticker} (r={corr:.2f})"
-                logger.info("VETO %s: %s (limit %.2f).", ticker, msg, self.max_correlation)
-                return False, msg
-
-        logger.debug("%s passed correlation check.", ticker)
-        return True, "Correlation check passed"
+                warn = (
+                    f"⚠️ {corr * 100:.0f}% correlation with existing holding {existing_ticker} "
+                    f"(cap {self.max_correlation * 100:.0f}%)"
+                )
+                warnings.append(warn)
+        return warnings
 
     def _close_series(self, ticker: str, db_manager) -> pd.Series | None:
+
         """Return a Date-indexed Close series for the configured lookback."""
         df = db_manager.get_historical_prices(
             ticker, days=self.corr_lookback_days

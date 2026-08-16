@@ -1,5 +1,5 @@
 # PEA Pollux — Complete Monolithic Repository Dump
-Generated: `2026-08-16 16:42 UTC` | File Count: `173`
+Generated: `2026-08-16 17:57 UTC` | File Count: `174`
 Institutional Systematic Decision Support Architecture for French PEA.
 ---
 ## Included Files Index
@@ -163,6 +163,7 @@ Institutional Systematic Decision Support Architecture for French PEA.
 - [tests/test_phase3_cpu_and_market.py](#file-tests-test_phase3_cpu_and_market-py)
 - [tests/test_prefect_and_cpu_isolator.py](#file-tests-test_prefect_and_cpu_isolator-py)
 - [tests/test_reconciliation_and_backup.py](#file-tests-test_reconciliation_and_backup-py)
+- [tests/test_research_assistant_and_nlp_db.py](#file-tests-test_research_assistant_and_nlp_db-py)
 - [tests/test_stat_arb_and_backtest.py](#file-tests-test_stat_arb_and_backtest-py)
 - [tests/test_stealth_and_imap_ingest.py](#file-tests-test_stealth_and_imap_ingest-py)
 - [tests/test_text_cleaner_and_feedback.py](#file-tests-test_text_cleaner_and_feedback-py)
@@ -1123,23 +1124,69 @@ class YFinanceMarketDataAdapter(AbstractMarketDataAdapter):
             return pd.DataFrame()
 
     def fetch_latest_tick(self, ticker: str) -> Optional[MarketTick]:
-        """Fetch the latest spot quote and return validated MarketTick contract."""
+        """Fetch the latest spot quote with double-verification (yfinance vs Boursorama).
+
+        Compares prices between yfinance and Boursorama. If the delta is > 1.5%,
+        attaches a warning flag to the MarketTick metadata without dropping the data.
+        """
         clean_t = ticker.strip().upper()
+        yf_price: Optional[float] = None
+        yf_volume: float = 0.0
+
+        # 1. Primary quote from yfinance
         try:
             t_obj = yf.Ticker(clean_t)
             hist = t_obj.history(period="1d", interval="1m")
             if hist is not None and not hist.empty:
                 last_row = hist.iloc[-1]
-                return MarketTick(
-                    ticker=clean_t,
-                    ts=datetime.now(timezone.utc),
-                    price=float(last_row["Close"]),
-                    volume=float(last_row.get("Volume", 0.0)),
-                    source="yfinance_intraday",
-                )
+                yf_price = float(last_row["Close"])
+                yf_volume = float(last_row.get("Volume", 0.0))
+            elif hasattr(t_obj, "fast_info") and t_obj.fast_info:
+                yf_price = float(getattr(t_obj.fast_info, "last_price", 0.0) or 0.0) or None
         except Exception as exc:
-            logger.debug("Failed to fetch latest tick for %s: %s", clean_t, exc)
-        return None
+            logger.debug("Failed yfinance tick fetch for %s: %s", clean_t, exc)
+
+        # 2. Secondary verification quote from Boursorama
+        bourso_price: Optional[float] = None
+        try:
+            try:
+                from scrapers.bourso_scraper import BoursoramaScraper
+            except ImportError:
+                from bourso_scraper import BoursoramaScraper  # type: ignore
+            bourso = BoursoramaScraper()
+            profile = bourso.get_instrument_profile(clean_t)
+            if profile and isinstance(profile, dict):
+                p_cand = profile.get("price") or profile.get("current_price") or profile.get("target_price")
+                if p_cand is not None:
+                    bourso_price = float(p_cand)
+        except Exception as exc:
+            logger.debug("Failed Boursorama verification tick for %s: %s", clean_t, exc)
+
+
+        if yf_price is None and bourso_price is None:
+            return None
+
+        primary_price = yf_price if yf_price is not None else bourso_price
+        metadata: dict = {}
+
+        if yf_price is not None and bourso_price is not None and yf_price > 0:
+            delta_pct = abs(yf_price - bourso_price) / yf_price
+            if delta_pct > 0.015:
+                warning_msg = (
+                    f"Yahoo ({yf_price:.2f}€) and Boursorama ({bourso_price:.2f}€) "
+                    f"prices diverge by {delta_pct * 100:.2f}% (> 1.5%)"
+                )
+                metadata["price_warning"] = warning_msg
+                logger.warning("PRICE DIVERGENCE WARNING for %s: %s", clean_t, warning_msg)
+
+        return MarketTick(
+            ticker=clean_t,
+            ts=datetime.now(timezone.utc),
+            price=float(primary_price),
+            volume=yf_volume,
+            source="yfinance_with_bourso_check" if bourso_price else "yfinance_intraday",
+            metadata=metadata,
+        )
 ```
 
 ## FILE: 00_data_sensors/adapters/news_adapter.py
@@ -4629,12 +4676,20 @@ if __name__ == "__main__":
 Isolated from the clean yfinance API layer. Every public method is antifragile.
 """
 
-from amf_scraper import AmfInsiderScraper
-from bourso_scraper import (
-    BoursoramaScraper,
-    bourso_slug_to_yahoo,
-    yahoo_to_bourso_slug,
-)
+try:
+    from .amf_scraper import AmfInsiderScraper
+    from .bourso_scraper import (
+        BoursoramaScraper,
+        bourso_slug_to_yahoo,
+        yahoo_to_bourso_slug,
+    )
+except ImportError:
+    from amf_scraper import AmfInsiderScraper  # type: ignore
+    from bourso_scraper import (  # type: ignore
+        BoursoramaScraper,
+        bourso_slug_to_yahoo,
+        yahoo_to_bourso_slug,
+    )
 
 __all__ = [
     "AmfInsiderScraper",
@@ -6819,6 +6874,7 @@ class MarketTick(BaseModel):
         price: Last traded or closing price (EUR).
         volume: Volume traded on the period / tick.
         source: Data provider identifier (e.g. 'yfinance', 'boursorama').
+        metadata: Additional unstructured metadata or price divergence warnings.
     """
 
     model_config = ConfigDict(validate_assignment=True, str_strip_whitespace=True)
@@ -6828,6 +6884,8 @@ class MarketTick(BaseModel):
     price: float = Field(..., gt=0, description="Last traded or closing price (EUR).")
     volume: float = Field(default=0.0, ge=0, description="Volume traded.")
     source: str = Field(..., min_length=1, description="Data source identifier (e.g., 'yfinance', 'boursorama').")
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional unstructured metadata or price divergence warnings.")
+
 
 
 class AlternativeSignal(BaseModel):
@@ -7046,15 +7104,17 @@ _REQUIRED_COLS = ["Ticker", "Date", "Open", "High", "Low", "Close", "Volume"]
 
 
 class DataQualityGateway:
-    """Quality gate validating and cleaning OHLCV batches before persistence."""
+    """Quality gate validating, forward-filling, and flagging outliers without hard data deletion."""
 
     def __init__(
         self,
         max_ffill_limit: int = 3,
-        outlier_return_threshold: float = 0.40,
-        outlier_zscore_threshold: float = 4.0,
+        mad_threshold: float = 5.0,
+        outlier_return_threshold: Optional[float] = None,
+        outlier_zscore_threshold: Optional[float] = None,
     ) -> None:
         self.max_ffill_limit = max_ffill_limit
+        self.mad_threshold = float(mad_threshold)
         self.outlier_return_threshold = outlier_return_threshold
         self.outlier_zscore_threshold = outlier_zscore_threshold
 
@@ -7066,7 +7126,7 @@ class DataQualityGateway:
 
         Returns:
             pd.DataFrame: Cleaned DataFrame with ['Ticker', 'Date', 'Open', 'High', 'Low', 'Close', 'Volume', 'is_outlier'].
-                          Returns empty DataFrame if data is completely invalid.
+                          All valid price bars are preserved; outliers are flagged without dropping.
         """
         if df is None or df.empty:
             logger.warning("DataQualityGateway received empty or None DataFrame.")
@@ -7099,7 +7159,7 @@ class DataQualityGateway:
         if "Date" not in clean.columns and isinstance(clean.index, (pd.DatetimeIndex, pd.PeriodIndex)):
             clean["Date"] = clean.index
 
-        # Check for missing required columns
+        # Check required columns
         missing = [c for c in _REQUIRED_COLS if c not in clean.columns]
         if missing:
             logger.error("DataQualityGateway: Batch missing mandatory columns: %s", missing)
@@ -7144,36 +7204,41 @@ class DataQualityGateway:
         clean["Low"] = clean["Low"].fillna(clean["Close"])
         clean["Volume"] = clean["Volume"].fillna(0.0).astype(int)
 
-        # 2. Outlier Detection
-        # Calculate daily return per ticker
+        # 2. Outlier Detection via Robust Median Absolute Deviation (MAD)
         clean["is_outlier"] = False
 
         for ticker, grp in clean.groupby("Ticker"):
             if len(grp) < 2:
                 continue
-            
+
             c_prices = grp["Close"]
-            rets = c_prices.pct_change()
+            rets = c_prices.pct_change().dropna()
+            if rets.empty:
+                continue
 
-            # Extreme percentage jump/drop > 40%
-            is_extreme = rets.abs() > self.outlier_return_threshold
+            med_ret = float(rets.median())
+            abs_dev = (rets - med_ret).abs()
+            mad_val = float(abs_dev.median())
 
-            # Rolling return Z-score
-            if len(grp) >= 20:
-                roll_mean = rets.rolling(20, min_periods=5).mean()
-                roll_std = rets.rolling(20, min_periods=5).std().replace(0, np.nan)
-                zscores = (rets - roll_mean).abs() / roll_std
-                is_z_outlier = zscores >= self.outlier_zscore_threshold
-                is_flagged = is_extreme | is_z_outlier.fillna(False)
+            if mad_val > 1e-7:
+                # Flag returns that exceed 5 MADs
+                mad_distances = abs_dev / mad_val
+                is_flagged = mad_distances > self.mad_threshold
             else:
-                is_flagged = is_extreme
+                is_flagged = abs_dev > 0.05
+
+            # If legacy outlier_return_threshold is explicitly specified, include it
+            if self.outlier_return_threshold is not None:
+                is_flagged = is_flagged | (rets.abs() > self.outlier_return_threshold)
 
             if is_flagged.any():
-                flagged_idx = grp[is_flagged].index
+                flagged_idx = rets[is_flagged].index
                 clean.loc[flagged_idx, "is_outlier"] = True
                 logger.warning(
-                    "DataQualityGateway: Flagged %d price return outlier(s) for ticker %s.",
-                    len(flagged_idx), ticker,
+                    "DataQualityGateway: Flagged %d price return outlier(s) exceeding %0.1f MADs for ticker %s.",
+                    len(flagged_idx),
+                    self.mad_threshold,
+                    ticker,
                 )
 
         return clean[_REQUIRED_COLS + ["is_outlier"]]
@@ -8090,10 +8155,21 @@ class PortfolioDB:
                         published_at    TEXT,
                         sentiment_score REAL,
                         sentiment_label TEXT,
+                        price_impact_1d REAL,
+                        price_impact_5d REAL,
+                        nlp_summary     TEXT,
                         created_at      TEXT NOT NULL
                     );
                     """
                 )
+                news_cols = [r["name"] for r in conn.execute("PRAGMA table_info(news_master);").fetchall()]
+                if "price_impact_1d" not in news_cols:
+                    conn.execute("ALTER TABLE news_master ADD COLUMN price_impact_1d REAL;")
+                if "price_impact_5d" not in news_cols:
+                    conn.execute("ALTER TABLE news_master ADD COLUMN price_impact_5d REAL;")
+                if "nlp_summary" not in news_cols:
+                    conn.execute("ALTER TABLE news_master ADD COLUMN nlp_summary TEXT;")
+
                 conn.execute(
                     """
                     CREATE TABLE IF NOT EXISTS news_sentiment_history (
@@ -8106,6 +8182,7 @@ class PortfolioDB:
                     );
                     """
                 )
+
                 conn.execute(
                     """
                     CREATE TABLE IF NOT EXISTS universe_snapshots (
@@ -8473,6 +8550,32 @@ class PortfolioDB:
     def insert_raw_news(self, items: list[dict]) -> int:
         """Alias for save_news_items to insert batch news."""
         return self.save_news_items(items)
+
+    def update_news_nlp_impact(
+        self,
+        news_id: str,
+        price_impact_1d: Optional[float] = None,
+        price_impact_5d: Optional[float] = None,
+        nlp_summary: Optional[str] = None,
+    ) -> None:
+        """Update forward price impact returns and NLP summary for a stored news article."""
+        try:
+            with self._connect() as conn:
+                conn.execute(
+                    """
+                    UPDATE news_master
+                    SET price_impact_1d = COALESCE(?, price_impact_1d),
+                        price_impact_5d = COALESCE(?, price_impact_5d),
+                        nlp_summary = COALESCE(?, nlp_summary)
+                    WHERE id = ?;
+                    """,
+                    (price_impact_1d, price_impact_5d, nlp_summary, news_id),
+                )
+            logger.debug("Updated NLP price impact for news item %s", news_id)
+        except sqlite3.Error:
+            logger.exception("Failed to update NLP price impact for news item %s", news_id)
+            raise
+
 
     def mark_news_processed(
         self, news_id: str, sentiment_score: float = 0.0, sentiment_label: str = "neutral"
@@ -11992,20 +12095,19 @@ class CorrelationFirewall:
         """Return the sector for a ticker, or ``"UNKNOWN"`` if unmapped."""
         return self.ticker_sectors.get(ticker, "UNKNOWN")
 
-    def check_sector_limit(self, ticker: str, portfolio: PortfolioState) -> bool:
-        """Check whether buying ``ticker`` keeps its sector within limits.
+    def check_sector_limit(self, ticker: str, portfolio: PortfolioState) -> list[str]:
+        """Check sector exposure and return warning indicators (never vetoes).
 
         Args:
             ticker: Candidate ticker.
             portfolio: Current portfolio snapshot.
 
         Returns:
-            bool: ``True`` if the projected sector weight is within
-            ``MAX_SECTOR_WEIGHT_PCT``; ``False`` (veto) otherwise.
+            list[str]: List of warning strings if sector limit would be exceeded, else empty list.
         """
+        warnings: list[str] = []
         if portfolio.total_equity <= 0:
-            logger.warning("Total equity is zero; vetoing %s on sector check.", ticker)
-            return False
+            return warnings
 
         sector = self.get_sector(ticker)
         current_sector_value = sum(
@@ -12017,22 +12119,21 @@ class CorrelationFirewall:
         projected_weight = (current_sector_value + proposed_add) / portfolio.total_equity
 
         if projected_weight > self.max_sector_weight:
-            logger.info(
-                "VETO %s: sector '%s' would reach %.1f%% (limit %.1f%%).",
+            warn = (
+                f"⚠️ Sector exposure would reach {projected_weight * 100:.1f}% "
+                f"for '{sector}' (cap {self.max_sector_weight * 100:.0f}%)"
+            )
+            warnings.append(warn)
+            logger.info("SECTOR CONCENTRATION WARNING for %s: %s", ticker, warn)
+        else:
+            logger.debug(
+                "%s sector '%s' projected weight %.1f%% within limit.",
                 ticker,
                 sector,
                 projected_weight * 100,
-                self.max_sector_weight * 100,
             )
-            return False
 
-        logger.debug(
-            "%s sector '%s' projected weight %.1f%% within limit.",
-            ticker,
-            sector,
-            projected_weight * 100,
-        )
-        return True
+        return warnings
 
     def check_vix_panic(self, vix_level: float) -> bool:
         """Emergency market-wide brake based on European volatility (VSTOXX).
@@ -12067,8 +12168,8 @@ class CorrelationFirewall:
 
     def check_correlation(
         self, ticker: str, portfolio: PortfolioState, db_manager
-    ) -> Tuple[bool, str]:
-        """Check Pearson correlation of the candidate vs existing holdings.
+    ) -> list[str]:
+        """Check Pearson correlation of the candidate vs existing holdings and return warnings.
 
         Args:
             ticker: Candidate ticker.
@@ -12076,12 +12177,12 @@ class CorrelationFirewall:
             db_manager: A ``TimeSeriesDB`` exposing ``get_historical_prices``.
 
         Returns:
-            tuple[bool, str]: ``(True, msg)`` if safe or the portfolio is empty;
-            ``(False, msg)`` naming the first holding that breaches the limit.
+            list[str]: List of warning strings for each holding where correlation exceeds max_correlation.
         """
+        warnings: list[str] = []
         holdings = [p.ticker for p in portfolio.positions if p.ticker != ticker]
         if not holdings:
-            return True, "Correlation check passed (empty portfolio)"
+            return warnings
 
         close_series: Dict[str, pd.Series] = {}
         for tkr in [ticker, *holdings]:
@@ -12091,12 +12192,12 @@ class CorrelationFirewall:
 
         if ticker not in close_series:
             logger.warning("No price history for candidate %s; cannot correlate.", ticker)
-            return True, "Correlation check skipped (no candidate history)"
+            return warnings
 
         prices = pd.concat(close_series, axis=1)
         prices = prices.ffill().dropna(how="all")
         if len(prices) < 2 or prices.shape[1] < 2:
-            return True, "Correlation check passed (insufficient overlap)"
+            return warnings
 
         corr_matrix = prices.corr(method="pearson")
         candidate_corr = corr_matrix[ticker].drop(labels=[ticker], errors="ignore")
@@ -12105,14 +12206,15 @@ class CorrelationFirewall:
             if pd.isna(corr):
                 continue
             if corr > self.max_correlation:
-                msg = f"Highly correlated with {existing_ticker} (r={corr:.2f})"
-                logger.info("VETO %s: %s (limit %.2f).", ticker, msg, self.max_correlation)
-                return False, msg
-
-        logger.debug("%s passed correlation check.", ticker)
-        return True, "Correlation check passed"
+                warn = (
+                    f"⚠️ {corr * 100:.0f}% correlation with existing holding {existing_ticker} "
+                    f"(cap {self.max_correlation * 100:.0f}%)"
+                )
+                warnings.append(warn)
+        return warnings
 
     def _close_series(self, ticker: str, db_manager) -> pd.Series | None:
+
         """Return a Date-indexed Close series for the configured lookback."""
         df = db_manager.get_historical_prices(
             ticker, days=self.corr_lookback_days
@@ -15587,15 +15689,18 @@ class SignalOrchestrator:
 
             # --- Check 1c: Strict Piotroski F-Score Veto (< 4) ---
             if self.fundamentals_sensor is not None and ticker != self.core_ticker:
-                piot_score, _ = self.fundamentals_sensor.calculate_piotroski_score(ticker)
-                if piot_score < 4:
-                    processed.append(
-                        self._reject(
-                            signal,
-                            f"REJECTED: Low Piotroski quality ({piot_score}/9 < 4)",
+                piot_res = self.fundamentals_sensor.calculate_piotroski_score(ticker)
+                if piot_res is not None and isinstance(piot_res, tuple) and len(piot_res) == 2:
+                    piot_score, _ = piot_res
+                    if piot_score is not None and piot_score < 4:
+                        processed.append(
+                            self._reject(
+                                signal,
+                                f"REJECTED: Low Piotroski quality ({piot_score}/9 < 4)",
+                            )
                         )
-                    )
-                    continue
+                        continue
+
 
             # --- Check 1d: Max simultaneous satellite lines ---
             already_held = any(p.ticker == ticker for p in portfolio.positions)
@@ -15643,21 +15748,37 @@ class SignalOrchestrator:
                 )
                 continue
 
-            # --- Check 2a: Sector concentration limit (cheap arithmetic) ---
+            # --- Check 2a & 2b: Sector concentration & Correlation (Indicator Warnings, No Hard Veto) ---
+            sector_res = self.firewall.check_sector_limit(ticker, portfolio)
+            if isinstance(sector_res, list):
+                sector_warnings = sector_res
+            elif isinstance(sector_res, bool):
+                sector_warnings = [f"⚠️ Sector exposure limit exceeded for {ticker}"] if not sector_res else []
+            else:
+                sector_warnings = []
 
-            if not self.firewall.check_sector_limit(ticker, portfolio):
-                processed.append(
-                    self._reject(signal, "REJECTED: Sector weight limit reached")
-                )
-                continue
+            corr_res = self.firewall.check_correlation(ticker, portfolio, self.timeseries_db)
+            if isinstance(corr_res, list):
+                corr_warnings = corr_res
+            elif isinstance(corr_res, tuple) and len(corr_res) == 2:
+                ok, msg = corr_res
+                corr_warnings = [f"⚠️ {msg}"] if not ok else []
+            elif isinstance(corr_res, bool):
+                corr_warnings = [f"⚠️ Correlation limit exceeded for {ticker}"] if not corr_res else []
+            else:
+                corr_warnings = []
 
-            # --- Check 2b: Correlation firewall (heavy Pearson) ---
-            ok, corr_reason = self.firewall.check_correlation(
-                ticker, portfolio, self.timeseries_db
-            )
-            if not ok:
-                processed.append(self._reject(signal, f"REJECTED: {corr_reason}"))
-                continue
+            all_risk_warnings = sector_warnings + corr_warnings
+
+            if all_risk_warnings:
+                if signal.lineage is None:
+                    signal.lineage = {}
+                signal.lineage["risk_warnings"] = all_risk_warnings
+                warn_suffix = " · " + " · ".join(all_risk_warnings)
+                if warn_suffix not in signal.reason:
+                    signal.reason += warn_suffix
+
+
 
             # --- Check 2c: ML Predictive Veto (XGBoost + Isolation Forest) ---
             if predict_anomaly is not None and predict_probability_with_shap is not None:
@@ -31526,6 +31647,207 @@ Total Portefeuille;;;;;12 513,50 €
             mock_sub.return_value = MagicMock(returncode=0, stdout="OK", stderr="")
             run_cloud_backup()
             self.assertTrue(mock_sub.called)
+
+
+if __name__ == "__main__":
+    unittest.main()
+```
+
+## FILE: tests/test_research_assistant_and_nlp_db.py
+```python
+"""Unit Tests for Phase 7: Research Assistant Paradigm, Double Price Verification & NLP News DB."""
+
+from __future__ import annotations
+
+import sys
+import unittest
+from datetime import datetime, timezone
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import numpy as np
+import pandas as pd
+
+ROOT = Path(__file__).resolve().parent.parent
+for sub in (
+    "00_data_sensors",
+    "00_data_sensors/adapters",
+    "01_memory_core",
+    "02_quant_engine",
+    "03_risk_portfolio",
+    "04_orchestrator_ai",
+    "05_interfaces",
+):
+    sys.path.insert(0, str(ROOT / sub))
+
+from correlation_firewall import CorrelationFirewall
+from data_contracts import MarketTick
+from data_models import Position, PortfolioState, Signal, SignalType
+from data_quality import DataQualityGateway
+from market_data_adapter import YFinanceMarketDataAdapter
+from signal_priority_cascade import SignalOrchestrator
+from sqlite_portfolio import PortfolioDB
+
+
+class TestResearchAssistantSuite(unittest.TestCase):
+
+    def setUp(self):
+        self.temp_db = ROOT / "database" / "test_phase7_portfolio.db"
+        if self.temp_db.exists():
+            self.temp_db.unlink()
+        self.db = PortfolioDB(db_path=self.temp_db)
+        self.db.init_db()
+
+    def tearDown(self):
+        if self.temp_db.exists():
+            self.temp_db.unlink()
+
+    def test_01_double_price_verification_divergence_warning(self):
+        """Verify fetch_latest_tick flags price divergence > 1.5% in metadata without dropping data."""
+        adapter = YFinanceMarketDataAdapter()
+
+        with patch("yfinance.Ticker") as mock_yf, patch("scrapers.bourso_scraper.BoursoramaScraper") as mock_bourso:
+            # Mock yfinance price = 700.00 EUR
+            mock_t = MagicMock()
+            mock_df = pd.DataFrame({"Close": [700.00], "Volume": [10000.0]})
+            mock_t.history.return_value = mock_df
+            mock_yf.return_value = mock_t
+
+            # Mock Boursorama price = 720.00 EUR (delta: 2.85% > 1.5%)
+            mock_b = MagicMock()
+            mock_b.get_instrument_profile.return_value = {"price": 720.00, "name": "LVMH"}
+            mock_bourso.return_value = mock_b
+
+            tick = adapter.fetch_latest_tick("MC.PA")
+
+            self.assertIsNotNone(tick)
+            self.assertEqual(tick.ticker, "MC.PA")
+            self.assertEqual(tick.price, 700.00)
+            self.assertIn("price_warning", tick.metadata)
+            self.assertIn("diverge by", tick.metadata["price_warning"])
+
+    def test_02_mad_based_outlier_detection_preserves_all_rows(self):
+        """Verify DataQualityGateway flags returns > 5 MADs without deleting rows."""
+        gateway = DataQualityGateway(mad_threshold=5.0)
+
+        dates = pd.date_range("2026-01-01", periods=20, freq="D")
+        # Steady prices around 100 with small daily moves +/- 0.5%
+        prices = [100.0 + (i % 2) * 0.5 for i in range(19)]
+        # Add single spike at index 19 (+50%)
+        prices.append(150.0)
+
+        df = pd.DataFrame(
+            {
+                "Ticker": ["OR.PA"] * 20,
+                "Date": dates,
+                "Open": prices,
+                "High": prices,
+                "Low": prices,
+                "Close": prices,
+                "Volume": [5000] * 20,
+            }
+        )
+
+        cleaned = gateway.validate_ohlcv_batch(df)
+
+        # All 20 rows must be preserved (zero deletion of outliers)
+        self.assertEqual(len(cleaned), 20)
+        self.assertIn("is_outlier", cleaned.columns)
+        # Outlier row is flagged True
+        self.assertTrue(cleaned.iloc[-1]["is_outlier"])
+
+    def test_03_indicators_over_blockers_correlation_warnings(self):
+        """Verify CorrelationFirewall returns warning list and SignalOrchestrator attaches them without vetoing."""
+        firewall = CorrelationFirewall()
+
+        portfolio = PortfolioState(
+            cash_available=5000.0,
+            total_equity=10000.0,
+            positions=[
+                Position(
+                    ticker="MC.PA",
+                    qty_shares=10,
+                    avg_entry_price=600.0,
+                    current_price=600.0,
+                    sector="Consumer Cyclical",
+                    last_updated=datetime.now(timezone.utc),
+                )
+            ],
+            last_updated=datetime.now(timezone.utc),
+        )
+
+        # 1. Sector check returns warning list instead of bool False
+        sector_warns = firewall.check_sector_limit("RMS.PA", portfolio)
+        self.assertIsInstance(sector_warns, list)
+
+        # 2. Mock high correlation
+        mock_tsdb = MagicMock()
+        mock_tsdb.get_historical_prices.return_value = pd.DataFrame(
+            {"Close": [100.0 + i for i in range(30)], "Date": pd.date_range("2026-01-01", periods=30, freq="D")}
+        )
+        corr_warns = firewall.check_correlation("RMS.PA", portfolio, mock_tsdb)
+        self.assertIsInstance(corr_warns, list)
+
+        # 3. Test Orchestrator attaches warnings without dropping
+        orchestrator = SignalOrchestrator(timeseries_db=mock_tsdb)
+        signal = Signal(
+            ticker="RMS.PA",
+            signal_type=SignalType.BUY,
+            score=88.0,
+            reason="Mean Reversion Dip",
+            price=2000.0,
+            target_qty=1,
+        )
+
+        processed = orchestrator.process_raw_signals(
+            raw_signals=[signal],
+            portfolio=portfolio,
+            current_prices={"RMS.PA": 2000.0, "MC.PA": 600.0},
+            vix_level=15.0,
+        )
+
+        self.assertEqual(len(processed), 1)
+        self.assertEqual(processed[0].ticker, "RMS.PA")
+        # Ensure warning attached to reason/lineage
+        self.assertTrue("risk_warnings" in processed[0].lineage or "⚠️" in processed[0].reason)
+
+    def test_04_nlp_news_impact_db_schema_and_update(self):
+        """Verify news_master table stores price_impact_1d, price_impact_5d, and nlp_summary."""
+        # Insert test news article
+        news_id = "test_news_001"
+        self.db.save_news_items(
+            [
+                {
+                    "id": news_id,
+                    "ticker": "MC.PA",
+                    "title": "LVMH publie d'excellents resultats T3",
+                    "source": "Reuters",
+                    "url": "https://reuters.com/news/123",
+                    "published_at": "2026-08-16T12:00:00Z",
+                    "sentiment_score": 0.85,
+                    "sentiment_label": "Positive",
+                }
+            ]
+        )
+
+        # Update NLP impact forward returns
+        self.db.update_news_nlp_impact(
+            news_id=news_id,
+            price_impact_1d=0.024,  # +2.4% at T+1
+            price_impact_5d=0.051,  # +5.1% at T+5
+            nlp_summary="Forte surperformance de la division Mode & Maroquinerie.",
+        )
+
+        with self.db._connect() as conn:
+            row = conn.execute(
+                "SELECT price_impact_1d, price_impact_5d, nlp_summary FROM news_master WHERE id = ?;",
+                (news_id,),
+            ).fetchone()
+
+            self.assertIsNotNone(row)
+            self.assertAlmostEqual(row["price_impact_1d"], 0.024)
+            self.assertAlmostEqual(row["price_impact_5d"], 0.051)
+            self.assertIn("Mode & Maroquinerie", row["nlp_summary"])
 
 
 if __name__ == "__main__":

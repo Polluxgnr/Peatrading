@@ -1,5 +1,5 @@
 # PEA Pollux — Memory Core, State Persistence & Data Contracts
-Generated: `2026-08-16 16:42 UTC` | File Count: `11`
+Generated: `2026-08-16 17:57 UTC` | File Count: `11`
 Institutional Systematic Decision Support Architecture for French PEA.
 ---
 ## Included Files Index
@@ -289,6 +289,7 @@ class MarketTick(BaseModel):
         price: Last traded or closing price (EUR).
         volume: Volume traded on the period / tick.
         source: Data provider identifier (e.g. 'yfinance', 'boursorama').
+        metadata: Additional unstructured metadata or price divergence warnings.
     """
 
     model_config = ConfigDict(validate_assignment=True, str_strip_whitespace=True)
@@ -298,6 +299,8 @@ class MarketTick(BaseModel):
     price: float = Field(..., gt=0, description="Last traded or closing price (EUR).")
     volume: float = Field(default=0.0, ge=0, description="Volume traded.")
     source: str = Field(..., min_length=1, description="Data source identifier (e.g., 'yfinance', 'boursorama').")
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional unstructured metadata or price divergence warnings.")
+
 
 
 class AlternativeSignal(BaseModel):
@@ -516,15 +519,17 @@ _REQUIRED_COLS = ["Ticker", "Date", "Open", "High", "Low", "Close", "Volume"]
 
 
 class DataQualityGateway:
-    """Quality gate validating and cleaning OHLCV batches before persistence."""
+    """Quality gate validating, forward-filling, and flagging outliers without hard data deletion."""
 
     def __init__(
         self,
         max_ffill_limit: int = 3,
-        outlier_return_threshold: float = 0.40,
-        outlier_zscore_threshold: float = 4.0,
+        mad_threshold: float = 5.0,
+        outlier_return_threshold: Optional[float] = None,
+        outlier_zscore_threshold: Optional[float] = None,
     ) -> None:
         self.max_ffill_limit = max_ffill_limit
+        self.mad_threshold = float(mad_threshold)
         self.outlier_return_threshold = outlier_return_threshold
         self.outlier_zscore_threshold = outlier_zscore_threshold
 
@@ -536,7 +541,7 @@ class DataQualityGateway:
 
         Returns:
             pd.DataFrame: Cleaned DataFrame with ['Ticker', 'Date', 'Open', 'High', 'Low', 'Close', 'Volume', 'is_outlier'].
-                          Returns empty DataFrame if data is completely invalid.
+                          All valid price bars are preserved; outliers are flagged without dropping.
         """
         if df is None or df.empty:
             logger.warning("DataQualityGateway received empty or None DataFrame.")
@@ -569,7 +574,7 @@ class DataQualityGateway:
         if "Date" not in clean.columns and isinstance(clean.index, (pd.DatetimeIndex, pd.PeriodIndex)):
             clean["Date"] = clean.index
 
-        # Check for missing required columns
+        # Check required columns
         missing = [c for c in _REQUIRED_COLS if c not in clean.columns]
         if missing:
             logger.error("DataQualityGateway: Batch missing mandatory columns: %s", missing)
@@ -614,36 +619,41 @@ class DataQualityGateway:
         clean["Low"] = clean["Low"].fillna(clean["Close"])
         clean["Volume"] = clean["Volume"].fillna(0.0).astype(int)
 
-        # 2. Outlier Detection
-        # Calculate daily return per ticker
+        # 2. Outlier Detection via Robust Median Absolute Deviation (MAD)
         clean["is_outlier"] = False
 
         for ticker, grp in clean.groupby("Ticker"):
             if len(grp) < 2:
                 continue
-            
+
             c_prices = grp["Close"]
-            rets = c_prices.pct_change()
+            rets = c_prices.pct_change().dropna()
+            if rets.empty:
+                continue
 
-            # Extreme percentage jump/drop > 40%
-            is_extreme = rets.abs() > self.outlier_return_threshold
+            med_ret = float(rets.median())
+            abs_dev = (rets - med_ret).abs()
+            mad_val = float(abs_dev.median())
 
-            # Rolling return Z-score
-            if len(grp) >= 20:
-                roll_mean = rets.rolling(20, min_periods=5).mean()
-                roll_std = rets.rolling(20, min_periods=5).std().replace(0, np.nan)
-                zscores = (rets - roll_mean).abs() / roll_std
-                is_z_outlier = zscores >= self.outlier_zscore_threshold
-                is_flagged = is_extreme | is_z_outlier.fillna(False)
+            if mad_val > 1e-7:
+                # Flag returns that exceed 5 MADs
+                mad_distances = abs_dev / mad_val
+                is_flagged = mad_distances > self.mad_threshold
             else:
-                is_flagged = is_extreme
+                is_flagged = abs_dev > 0.05
+
+            # If legacy outlier_return_threshold is explicitly specified, include it
+            if self.outlier_return_threshold is not None:
+                is_flagged = is_flagged | (rets.abs() > self.outlier_return_threshold)
 
             if is_flagged.any():
-                flagged_idx = grp[is_flagged].index
+                flagged_idx = rets[is_flagged].index
                 clean.loc[flagged_idx, "is_outlier"] = True
                 logger.warning(
-                    "DataQualityGateway: Flagged %d price return outlier(s) for ticker %s.",
-                    len(flagged_idx), ticker,
+                    "DataQualityGateway: Flagged %d price return outlier(s) exceeding %0.1f MADs for ticker %s.",
+                    len(flagged_idx),
+                    self.mad_threshold,
+                    ticker,
                 )
 
         return clean[_REQUIRED_COLS + ["is_outlier"]]
@@ -1560,10 +1570,21 @@ class PortfolioDB:
                         published_at    TEXT,
                         sentiment_score REAL,
                         sentiment_label TEXT,
+                        price_impact_1d REAL,
+                        price_impact_5d REAL,
+                        nlp_summary     TEXT,
                         created_at      TEXT NOT NULL
                     );
                     """
                 )
+                news_cols = [r["name"] for r in conn.execute("PRAGMA table_info(news_master);").fetchall()]
+                if "price_impact_1d" not in news_cols:
+                    conn.execute("ALTER TABLE news_master ADD COLUMN price_impact_1d REAL;")
+                if "price_impact_5d" not in news_cols:
+                    conn.execute("ALTER TABLE news_master ADD COLUMN price_impact_5d REAL;")
+                if "nlp_summary" not in news_cols:
+                    conn.execute("ALTER TABLE news_master ADD COLUMN nlp_summary TEXT;")
+
                 conn.execute(
                     """
                     CREATE TABLE IF NOT EXISTS news_sentiment_history (
@@ -1576,6 +1597,7 @@ class PortfolioDB:
                     );
                     """
                 )
+
                 conn.execute(
                     """
                     CREATE TABLE IF NOT EXISTS universe_snapshots (
@@ -1943,6 +1965,32 @@ class PortfolioDB:
     def insert_raw_news(self, items: list[dict]) -> int:
         """Alias for save_news_items to insert batch news."""
         return self.save_news_items(items)
+
+    def update_news_nlp_impact(
+        self,
+        news_id: str,
+        price_impact_1d: Optional[float] = None,
+        price_impact_5d: Optional[float] = None,
+        nlp_summary: Optional[str] = None,
+    ) -> None:
+        """Update forward price impact returns and NLP summary for a stored news article."""
+        try:
+            with self._connect() as conn:
+                conn.execute(
+                    """
+                    UPDATE news_master
+                    SET price_impact_1d = COALESCE(?, price_impact_1d),
+                        price_impact_5d = COALESCE(?, price_impact_5d),
+                        nlp_summary = COALESCE(?, nlp_summary)
+                    WHERE id = ?;
+                    """,
+                    (price_impact_1d, price_impact_5d, nlp_summary, news_id),
+                )
+            logger.debug("Updated NLP price impact for news item %s", news_id)
+        except sqlite3.Error:
+            logger.exception("Failed to update NLP price impact for news item %s", news_id)
+            raise
+
 
     def mark_news_processed(
         self, news_id: str, sentiment_score: float = 0.0, sentiment_label: str = "neutral"
