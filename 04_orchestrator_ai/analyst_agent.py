@@ -12,12 +12,10 @@ import logging
 import os
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional
-
-import requests
+from typing import Any, AsyncIterator, Dict, Iterator, List, Optional
 
 _ROOT = Path(__file__).resolve().parent.parent
-for sub in ("00_data_sensors", "01_memory_core", "02_quant_engine", "03_risk_portfolio"):
+for sub in ("00_data_sensors", "01_memory_core", "02_quant_engine", "03_risk_portfolio", "05_interfaces"):
     sys.path.insert(0, str(_ROOT / sub))
 
 logger = logging.getLogger("analyst_agent")
@@ -31,9 +29,8 @@ class InstitutionalAnalyst:
         model_name: Optional[str] = None,
         timeout: float = 8.0,
     ) -> None:
-        self.model_name = model_name or os.getenv("OPENROUTER_MODEL", "google/gemini-flash-1.5")
+        self.model_name = model_name or os.getenv("OLLAMA_MODEL", "mistral")
         self.timeout = timeout
-        self.api_key = os.getenv("OPENROUTER_API_KEY")
 
     def _build_prompt(
         self,
@@ -86,69 +83,12 @@ class InstitutionalAnalyst:
             f"Paragraphe 3 : Directive Stratégique pour le Portfolio Manager (recommandations d'exécution prudentielle et gestion du cash buffer)."
         )
 
-    async def generate_daily_brief(
+    def _build_deterministic_fallback(
         self,
-        portfolio_state: Any,
         thermometer_state: Dict[str, Any],
         top_signals: List[Dict[str, Any]],
-        watchdog_alert: Optional[Dict[str, Any]] = None,
     ) -> str:
-        """Asynchronously query OpenRouter or generate structured fallback report."""
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(
-            None,
-            self.generate_daily_brief_sync,
-            portfolio_state,
-            thermometer_state,
-            top_signals,
-            watchdog_alert,
-        )
-
-    def generate_daily_brief_sync(
-        self,
-        portfolio_state: Any,
-        thermometer_state: Dict[str, Any],
-        top_signals: List[Dict[str, Any]],
-        watchdog_alert: Optional[Dict[str, Any]] = None,
-    ) -> str:
-        """Synchronous generation of institutional daily brief with deterministic fallback."""
-        prompt = self._build_prompt(portfolio_state, thermometer_state, top_signals, watchdog_alert)
-
-        if self.api_key:
-            try:
-                headers = {
-                    "Authorization": f"Bearer {self.api_key}",
-                    "HTTP-Referer": "https://github.com/Polluxgnr/Peatrading",
-                    "X-Title": "PEA Pollux Institutional Terminal",
-                    "Content-Type": "application/json",
-                }
-                payload = {
-                    "model": self.model_name,
-                    "messages": [
-                        {
-                            "role": "system",
-                            "content": "Tu es un directeur de gestion quantitative et de gestion des risques PEA.",
-                        },
-                        {"role": "user", "content": prompt},
-                    ],
-                    "temperature": 0.2,
-                    "max_tokens": 500,
-                }
-                resp = requests.post(
-                    "https://openrouter.ai/api/v1/chat/completions",
-                    headers=headers,
-                    json=payload,
-                    timeout=self.timeout,
-                )
-                if resp.status_code == 200:
-                    data = resp.json()
-                    content = data["choices"][0]["message"]["content"]
-                    if content and len(content.strip()) > 80:
-                        return content.strip()
-            except Exception as exc:
-                logger.debug("LLM brief request failed (%s); using deterministic institutional template.", exc)
-
-        # High-Conviction Deterministic Fallback Synthesis
+        """High-Conviction Deterministic Fallback Synthesis."""
         atk_pct = float(thermometer_state.get("attack_pct", 0.70)) * 100.0
         def_pct = float(thermometer_state.get("defense_pct", 0.30)) * 100.0
         mode = thermometer_state.get("mode", "ATTACK")
@@ -176,3 +116,83 @@ class InstitutionalAnalyst:
         )
 
         return f"{p1}\n\n{p2}\n\n{p3}"
+
+    async def generate_daily_brief(
+        self,
+        portfolio_state: Any,
+        thermometer_state: Dict[str, Any],
+        top_signals: List[Dict[str, Any]],
+        watchdog_alert: Optional[Dict[str, Any]] = None,
+    ) -> AsyncIterator[str]:
+        """Asynchronously stream institutional briefing chunks from local Ollama instance."""
+        prompt = self._build_prompt(portfolio_state, thermometer_state, top_signals, watchdog_alert)
+        messages = [
+            {"role": "system", "content": "Tu es un directeur de gestion quantitative et de gestion des risques PEA."},
+            {"role": "user", "content": prompt},
+        ]
+        has_yielded = False
+        try:
+            from llm_explainer import ollama_chat_stream
+            async for chunk in ollama_chat_stream(messages, model=self.model_name):
+                if "Erreur" in chunk:
+                    fallback = self._build_deterministic_fallback(thermometer_state, top_signals)
+                    for word in fallback.split(" "):
+                        yield word + " "
+                    return
+                has_yielded = True
+                yield chunk
+        except Exception:
+            pass
+
+        if not has_yielded:
+            fallback = self._build_deterministic_fallback(thermometer_state, top_signals)
+            for word in fallback.split(" "):
+                yield word + " "
+
+
+    def generate_daily_brief_stream_sync(
+        self,
+        portfolio_state: Any,
+        thermometer_state: Dict[str, Any],
+        top_signals: List[Dict[str, Any]],
+        watchdog_alert: Optional[Dict[str, Any]] = None,
+    ) -> Iterator[str]:
+        """Synchronous streaming of institutional briefing chunks (for Streamlit st.write_stream)."""
+        prompt = self._build_prompt(portfolio_state, thermometer_state, top_signals, watchdog_alert)
+        messages = [
+            {"role": "system", "content": "Tu es un directeur de gestion quantitative et de gestion des risques PEA."},
+            {"role": "user", "content": prompt},
+        ]
+        try:
+            from llm_explainer import ollama_chat_stream_sync
+            stream_iter = ollama_chat_stream_sync(messages, model=self.model_name)
+            has_yielded = False
+            for chunk in stream_iter:
+                if "Erreur" in chunk:
+                    fallback = self._build_deterministic_fallback(thermometer_state, top_signals)
+                    for word in fallback.split(" "):
+                        yield word + " "
+                    return
+                has_yielded = True
+                yield chunk
+
+            if not has_yielded:
+                fallback = self._build_deterministic_fallback(thermometer_state, top_signals)
+                for word in fallback.split(" "):
+                    yield word + " "
+        except Exception:
+            fallback = self._build_deterministic_fallback(thermometer_state, top_signals)
+            for word in fallback.split(" "):
+                yield word + " "
+
+    def generate_daily_brief_sync(
+        self,
+        portfolio_state: Any,
+        thermometer_state: Dict[str, Any],
+        top_signals: List[Dict[str, Any]],
+        watchdog_alert: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """Synchronous generation of complete institutional daily brief."""
+        chunks = list(self.generate_daily_brief_stream_sync(portfolio_state, thermometer_state, top_signals, watchdog_alert))
+        return "".join(chunks).strip()
+

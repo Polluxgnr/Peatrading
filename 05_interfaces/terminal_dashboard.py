@@ -3044,9 +3044,41 @@ with st.sidebar:
             unsafe_allow_html=True,
         )
 
+    # Local Sovereign AI (Ollama) Health Monitor
+    st.markdown("---")
+    st.markdown("### 🧠 Moteur d'IA Souverain")
+    try:
+        import requests
+        r_ai = requests.get("http://localhost:11434/api/tags", timeout=0.3)
+        if r_ai.status_code == 200:
+            st.markdown(
+                f"<div style='background:rgba(0,255,0,0.08);border-left:3px solid {_NEON};padding:8px 10px;font-size:12px;color:{_NEON};'>"
+                f"🟢 <b>IA Locale : En ligne (Mistral)</b><br>"
+                f"<span style='color:{_MUTED};font-size:11px;'>Ollama souverain · Coût API : 0,00 €</span>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown(
+                f"<div style='background:rgba(255,59,48,0.12);border-left:3px solid {_RED};padding:8px 10px;font-size:12px;color:{_RED};'>"
+                f"🔴 <b>IA Locale : Hors ligne</b><br>"
+                f"<span style='color:{_MUTED};font-size:11px;'>Synthèse déterministe active</span>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+    except Exception:
+        st.markdown(
+            f"<div style='background:rgba(255,59,48,0.12);border-left:3px solid {_RED};padding:8px 10px;font-size:12px;color:{_RED};'>"
+            f"🔴 <b>IA Locale : Hors ligne</b><br>"
+            f"<span style='color:{_MUTED};font-size:11px;'>Ollama non détecté (port 11434)</span>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
     sync_ts = st.session_state.get("last_sync_utc") or portfolio.last_updated.strftime("%Y-%m-%d %H:%M:%S UTC")
     st.markdown("---")
     st.caption(f"🕒 **Dernière Synchronisation BD** :\n`{sync_ts}`")
+
 
     st.caption(
         "Amorcer le capital :\n\n`python seed_account.py --cash 10000`\n\n"
@@ -4501,43 +4533,61 @@ with tab_mkt:
     c_llm1, c_llm2 = st.columns([1.8, 2.2])
     with c_llm1:
         btn_llm = st.button(
-            "🧠 Générer la Synthèse IA (OpenRouter)",
+            "🧠 Générer la Synthèse IA (Ollama Local)",
             type="secondary",
             key=f"btn_llm_explore_{selected}",
             use_container_width=True,
         )
 
-    if btn_llm:
-        with st.spinner(f"Analyse institutionnelle approfondie en cours pour {selected}…"):
-            try:
-                from analyst_agent import InstitutionalAnalyst
-                analyst = InstitutionalAnalyst()
-                p_stub = type("PortStub", (), {"total_equity": float(portfolio.total_equity), "cash_available": float(portfolio.cash_available)})()
-                t_stub = {
-                    "mode": str(thermo_res.get("mode", "ATTACK")) if "thermo_res" in locals() and isinstance(thermo_res, dict) else "ATTACK",
-                    "attack_pct": float(thermo_res.get("attack_pct", 0.70)) if "thermo_res" in locals() and isinstance(thermo_res, dict) else 0.70,
-                    "defense_pct": float(thermo_res.get("defense_pct", 0.30)) if "thermo_res" in locals() and isinstance(thermo_res, dict) else 0.30,
-                    "vix": float(vix),
-                    "vol_21d": float(thermo_res.get("vol_21d", 0.15)) if "thermo_res" in locals() and isinstance(thermo_res, dict) else 0.15,
-                }
-                cand_sig = [{
-                    "ticker": selected,
-                    "score": float(ind.get("rsi", 50.0)) if ind else 50.0,
-                    "reason": f"Dossier {dossier.get('name', selected)} - RSI {ind.get('rsi', 'N/A') if ind else 'N/A'}, Tendance {ind.get('trend', 'N/A') if ind else 'N/A'}",
-                }]
-                brief_text = analyst.generate_daily_brief_sync(p_stub, t_stub, cand_sig)
-                st.session_state[f"llm_brief_{selected}"] = brief_text
-            except Exception as exc:
-                st.error(f"Erreur lors de la génération IA : {exc}")
+    resp_container = st.empty()
 
-    if st.session_state.get(f"llm_brief_{selected}"):
-        st.markdown(
+    if btn_llm:
+        try:
+            from analyst_agent import InstitutionalAnalyst
+            analyst = InstitutionalAnalyst()
+            p_stub = type("PortStub", (), {"total_equity": float(portfolio.total_equity), "cash_available": float(portfolio.cash_available)})()
+            t_stub = {
+                "mode": str(thermo_res.get("mode", "ATTACK")) if "thermo_res" in locals() and isinstance(thermo_res, dict) else "ATTACK",
+                "attack_pct": float(thermo_res.get("attack_pct", 0.70)) if "thermo_res" in locals() and isinstance(thermo_res, dict) else 0.70,
+                "defense_pct": float(thermo_res.get("defense_pct", 0.30)) if "thermo_res" in locals() and isinstance(thermo_res, dict) else 0.30,
+                "vix": float(vix),
+                "vol_21d": float(thermo_res.get("vol_21d", 0.15)) if "thermo_res" in locals() and isinstance(thermo_res, dict) else 0.15,
+            }
+            cand_sig = [{
+                "ticker": selected,
+                "score": float(ind.get("rsi", 50.0)) if ind else 50.0,
+                "reason": f"Dossier {dossier.get('name', selected)} - RSI {ind.get('rsi', 'N/A') if ind else 'N/A'}, Tendance {ind.get('trend', 'N/A') if ind else 'N/A'}",
+            }]
+            streamed_full = ""
+            for chunk in analyst.generate_daily_brief_stream_sync(p_stub, t_stub, cand_sig):
+                streamed_full += chunk
+                resp_container.markdown(
+                    f"<div style='border:1px solid #333;background:#0A0A0A;padding:14px;margin-top:10px;border-left:4px solid {_CYAN};'>"
+                    f"<div style='color:{_CYAN};font-weight:700;font-size:13px;margin-bottom:8px;'>NOTE STRATÉGIQUE INSTITUTIONNELLE ({selected}) :</div>"
+                    f"{streamed_full}▌"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+            resp_container.markdown(
+                f"<div style='border:1px solid #333;background:#0A0A0A;padding:14px;margin-top:10px;border-left:4px solid {_CYAN};'>"
+                f"<div style='color:{_CYAN};font-weight:700;font-size:13px;margin-bottom:8px;'>NOTE STRATÉGIQUE INSTITUTIONNELLE ({selected}) :</div>"
+                f"{streamed_full}"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+            st.session_state[f"llm_brief_{selected}"] = streamed_full
+        except Exception as exc:
+            st.error(f"Erreur lors de la génération IA : {exc}")
+
+    elif st.session_state.get(f"llm_brief_{selected}"):
+        resp_container.markdown(
             f"<div style='border:1px solid #333;background:#0A0A0A;padding:14px;margin-top:10px;border-left:4px solid {_CYAN};'>"
             f"<div style='color:{_CYAN};font-weight:700;font-size:13px;margin-bottom:8px;'>NOTE STRATÉGIQUE INSTITUTIONNELLE ({selected}) :</div>"
             f"{st.session_state[f'llm_brief_{selected}']}"
             f"</div>",
             unsafe_allow_html=True,
         )
+
 
     # TA widget + SMAs under chart
     tw1, tw2 = st.columns([1, 1])

@@ -117,16 +117,21 @@ class TestWatchdogAndAnalystSuite(unittest.TestCase):
         }
 
         async def run_test():
-            return await analyst.generate_daily_brief(
+            gen = analyst.generate_daily_brief(
                 portfolio_state=portfolio_state,
                 thermometer_state=thermometer_state,
                 top_signals=[],
                 watchdog_alert={"alert": True, "drop_pct": -0.11},
             )
+            chunks = []
+            async for c in gen:
+                chunks.append(c)
+            return "".join(chunks)
 
         loop = asyncio.new_event_loop()
         res = loop.run_until_complete(run_test())
         loop.close()
+
 
         self.assertIsInstance(res, str)
         self.assertIn("BUNKER", res)

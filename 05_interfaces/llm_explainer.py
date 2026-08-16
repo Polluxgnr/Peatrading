@@ -35,10 +35,109 @@ from data_models import PortfolioState, Signal  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
+import json
+from typing import AsyncIterator, Iterator
+import requests
+
 _OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-_DEFAULT_MODEL = "mistralai/mistral-7b-instruct"
+_OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434/api/chat")
+_DEFAULT_MODEL = os.getenv("OLLAMA_MODEL", "mistral")
 _FALLBACK = "Technical signal approved. (AI explanation unavailable)"
 _REQUEST_TIMEOUT_S = 20
+
+
+async def ollama_chat_stream(
+    messages: list[dict],
+    model: str = _DEFAULT_MODEL,
+    timeout_s: int = 60,
+) -> AsyncIterator[str]:
+    """Stream chat completion tokens from a local Ollama instance asynchronously.
+
+    Args:
+        messages: List of [{"role": "user"|"system"|"assistant", "content": "..."}].
+        model: Local model tag (default: 'mistral').
+        timeout_s: Request timeout in seconds.
+
+    Yields:
+        str: Content delta chunk as received.
+    """
+    payload = {
+        "model": model,
+        "messages": messages,
+        "stream": True,
+    }
+    try:
+        timeout = aiohttp.ClientTimeout(total=timeout_s)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(_OLLAMA_URL, json=payload) as resp:
+                if resp.status != 200:
+                    err_text = await resp.text()
+                    logger.error("Ollama HTTP %s: %s", resp.status, err_text[:200])
+                    yield f"🔴 Erreur HTTP {resp.status} depuis l'IA locale (Ollama)."
+                    return
+
+                async for line in resp.content:
+                    if not line:
+                        continue
+                    try:
+                        line_str = line.decode("utf-8").strip()
+                        if not line_str:
+                            continue
+                        chunk_obj = json.loads(line_str)
+                        msg_chunk = chunk_obj.get("message", {}).get("content", "")
+                        if msg_chunk:
+                            yield msg_chunk
+                        if chunk_obj.get("done", False):
+                            break
+                    except Exception:
+                        continue
+
+    except (aiohttp.ClientConnectorError, aiohttp.ServerDisconnectedError):
+        logger.warning("Ollama connection refused at %s. Service offline.", _OLLAMA_URL)
+        yield "🔴 Erreur : Le moteur d'IA local (Ollama) est hors ligne ou injoignable."
+    except Exception as exc:
+        logger.exception("Ollama chat stream failed: %s", exc)
+        yield f"🔴 Erreur IA locale : {exc}"
+
+
+def ollama_chat_stream_sync(
+    messages: list[dict],
+    model: str = _DEFAULT_MODEL,
+    timeout_s: int = 60,
+) -> Iterator[str]:
+    """Synchronous generator yielding text chunks from local Ollama instance (for Streamlit)."""
+    payload = {
+        "model": model,
+        "messages": messages,
+        "stream": True,
+    }
+    try:
+        with requests.post(_OLLAMA_URL, json=payload, stream=True, timeout=timeout_s) as resp:
+            if resp.status_code != 200:
+                yield f"🔴 Erreur HTTP {resp.status_code} depuis l'IA locale (Ollama)."
+                return
+
+            for line in resp.iter_lines():
+                if line:
+                    try:
+                        line_str = line.decode("utf-8").strip()
+                        if not line_str:
+                            continue
+                        chunk_obj = json.loads(line_str)
+                        content = chunk_obj.get("message", {}).get("content", "")
+                        if content:
+                            yield content
+                        if chunk_obj.get("done", False):
+                            break
+                    except Exception:
+                        continue
+    except (requests.ConnectionError, requests.Timeout):
+        logger.warning("Ollama connection refused at %s.", _OLLAMA_URL)
+        yield "🔴 Erreur : Le moteur d'IA local (Ollama) est hors ligne ou injoignable."
+    except Exception as exc:
+        logger.exception("Ollama sync stream failed: %s", exc)
+        yield f"🔴 Erreur IA locale : {exc}"
+
 
 
 async def openrouter_chat(
