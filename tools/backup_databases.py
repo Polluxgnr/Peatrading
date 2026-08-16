@@ -1,4 +1,6 @@
-"""Export key SQLite tables to Parquet and back up databases off-instance to AWS S3.
+"""Export key SQLite tables to Parquet and back up databases off-instance to Cloudflare R2 (or AWS S3).
+
+Cloudflare R2 is 100% S3-compatible with zero egress fees.
 
 Usage:
     python tools/backup_databases.py
@@ -12,6 +14,7 @@ import shutil
 import sqlite3
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 import pandas as pd
 
@@ -41,26 +44,47 @@ TABLES_TO_EXPORT = [
 ]
 
 
-def backup_to_s3(local_files: list[Path], stamp: str, bucket_name: str) -> bool:
-    """Upload backup artifacts to Amazon S3 bucket."""
+def backup_to_r2_or_s3(
+    local_files: list[Path],
+    stamp: str,
+    bucket_name: str,
+    endpoint_url: Optional[str] = None,
+    access_key_id: Optional[str] = None,
+    secret_access_key: Optional[str] = None,
+) -> bool:
+    """Upload backup artifacts to Cloudflare R2 or Amazon S3 bucket."""
     try:
         import boto3
-        s3 = boto3.client("s3")
+
+        client_kwargs = {}
+        if endpoint_url:
+            client_kwargs["endpoint_url"] = endpoint_url
+            client_kwargs["region_name"] = "auto"
+        if access_key_id and secret_access_key:
+            client_kwargs["aws_access_key_id"] = access_key_id
+            client_kwargs["aws_secret_access_key"] = secret_access_key
+
+        s3 = boto3.client("s3", **client_kwargs)
+        dest_name = "Cloudflare R2" if endpoint_url else "Amazon S3"
         prefix = f"pea_pollux_backups/{stamp}"
-        logger.info("Uploading %d backup files to s3://%s/%s/ ...", len(local_files), bucket_name, prefix)
+        logger.info("Uploading %d backup files to %s (bucket: %s, prefix: %s) ...", len(local_files), dest_name, bucket_name, prefix)
 
         for fpath in local_files:
             if not fpath.exists():
                 continue
             key = f"{prefix}/{fpath.name}"
             s3.upload_file(str(fpath), bucket_name, key)
-            logger.info("  [S3 OK] %s -> s3://%s/%s", fpath.name, bucket_name, key)
+            logger.info("  [R2/S3 OK] %s -> s3://%s/%s", fpath.name, bucket_name, key)
 
-        logger.info("AWS S3 cloud backup completed successfully.")
+        logger.info("%s remote cloud backup completed successfully.", dest_name)
         return True
     except Exception as exc:
-        logger.error("AWS S3 upload failed: %s", exc)
+        logger.error("Cloud backup upload failed: %s", exc)
         return False
+
+
+# Alias for backward compatibility
+backup_to_s3 = backup_to_r2_or_s3
 
 
 def main() -> None:
@@ -104,12 +128,23 @@ def main() -> None:
     except Exception as exc:
         logger.warning("Failed to copy raw database: %s", exc)
 
-    # AWS S3 Off-Instance Remote Backup
-    bucket = os.getenv("AWS_S3_BACKUP_BUCKET")
+    # Cloudflare R2 / AWS S3 Off-Instance Remote Backup
+    r2_endpoint = os.getenv("R2_ENDPOINT_URL")
+    r2_access_key = os.getenv("R2_ACCESS_KEY_ID")
+    r2_secret_key = os.getenv("R2_SECRET_ACCESS_KEY")
+    bucket = os.getenv("R2_BUCKET_NAME") or os.getenv("AWS_S3_BACKUP_BUCKET")
+
     if bucket and bucket.strip():
-        backup_to_s3(generated_files, stamp, bucket.strip())
+        backup_to_r2_or_s3(
+            generated_files,
+            stamp,
+            bucket.strip(),
+            endpoint_url=r2_endpoint.strip() if r2_endpoint else None,
+            access_key_id=r2_access_key.strip() if r2_access_key else os.getenv("AWS_ACCESS_KEY_ID"),
+            secret_access_key=r2_secret_key.strip() if r2_secret_key else os.getenv("AWS_SECRET_ACCESS_KEY"),
+        )
     else:
-        logger.info("AWS_S3_BACKUP_BUCKET not set; stored backups locally in database/backups/.")
+        logger.info("R2_BUCKET_NAME / AWS_S3_BACKUP_BUCKET not set; stored backups locally in database/backups/.")
 
     logger.info("=== Backup Routine Complete (%d artifacts created) ===", len(generated_files))
 
