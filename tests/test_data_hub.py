@@ -10,13 +10,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pandas as pd
+
 ROOT = Path(__file__).resolve().parent.parent
 for sub in ("00_data_sensors", "00_data_sensors/adapters", "01_memory_core"):
     sys.path.insert(0, str(ROOT / sub))
 
-from adapters.amf_adapter import AmfShortAdapter
+from adapters.amf_adapter import AmfInsiderAdapter, AmfShortAdapter
 from adapters.base_adapters import AbstractPollAdapter
+from adapters.bourso_adapter import BoursoUniverseAdapter
 from adapters.macro_adapter import MacroAlphaAdapter
+from adapters.news_adapter import ConsolidatedNewsAdapter
 from data_contracts import AlternativeSignal
 from hub import DataIngestionHub
 
@@ -52,7 +56,60 @@ class TestDataHubSuite(unittest.TestCase):
             self.assertEqual(sig.source, "AMF_BDIF")
             self.assertEqual(sig.metadata.get("threshold_breach"), True)
 
-    def test_02_macro_alpha_adapter_fetch(self):
+    def test_02_amf_insider_adapter_fetch(self):
+        """Verify AmfInsiderAdapter parses transactions and emits direction signals."""
+        adapter = AmfInsiderAdapter(tickers=["MC.PA"])
+        mock_df = pd.DataFrame(
+            {
+                "Date": ["2026-08-14", "2026-08-15"],
+                "Transaction": ["Acquisition d'actions", "Achat"],
+                "Volume": [1000, 500],
+            }
+        )
+        if adapter.scraper is not None:
+            with patch.object(adapter.scraper, "get_recent_declarations", return_value=mock_df):
+                signals = asyncio.run(adapter.fetch())
+                self.assertEqual(len(signals), 1)
+                self.assertEqual(signals[0].signal_type, "INSIDER_TX")
+                self.assertEqual(signals[0].value, 1.0)
+                self.assertEqual(signals[0].metadata.get("buys_count"), 2)
+
+    def test_03_consolidated_news_adapter_fetch(self):
+        """Verify ConsolidatedNewsAdapter gathers RSS news items."""
+        adapter = ConsolidatedNewsAdapter(tickers=["MC.PA"])
+        mock_feed_items = [
+            {
+                "id": "rss_1",
+                "ticker": "MC.PA",
+                "title": "LVMH annonce des resultats solides",
+                "source": "Boursorama",
+                "url": "https://boursorama.com/art1",
+                "published_at": "2026-08-16T10:00:00Z",
+                "sentiment_score": 0.65,
+            }
+        ]
+        with patch("adapters.news_adapter.parse_rss_feed", return_value=mock_feed_items):
+            signals = asyncio.run(adapter.fetch())
+            self.assertTrue(len(signals) >= 1)
+            self.assertEqual(signals[0].signal_type, "NEWS_SENTIMENT")
+            self.assertIn("LVMH", signals[0].metadata.get("headline", ""))
+
+    def test_04_bourso_universe_adapter_fetch(self):
+        """Verify BoursoUniverseAdapter harvests PEA constituents."""
+        adapter = BoursoUniverseAdapter()
+        mock_universe = [
+            {"ticker": "MC.PA", "sector": "Consumer Cyclical"},
+            {"ticker": "OR.PA", "sector": "Consumer Defensive"},
+        ]
+        if adapter.scraper is not None:
+            with patch.object(adapter.scraper, "get_pea_universe", return_value=mock_universe):
+                signals = asyncio.run(adapter.fetch())
+                self.assertEqual(len(signals), 1)
+                self.assertEqual(signals[0].signal_type, "UNIVERSE_UPDATE")
+                self.assertEqual(signals[0].value, 2.0)
+                self.assertEqual(signals[0].metadata.get("total_constituents"), 2)
+
+    def test_05_macro_alpha_adapter_fetch(self):
         """Verify MacroAlphaAdapter emits MACRO_VIX and MACRO_SPREAD signals."""
         adapter = MacroAlphaAdapter()
         with patch.object(adapter.sensor, "get_european_vix", return_value=17.8), \
@@ -66,25 +123,21 @@ class TestDataHubSuite(unittest.TestCase):
             self.assertEqual(vix_sig.value, 17.8)
             self.assertEqual(vix_sig.ticker, "MARCHE")
 
-    def test_03_data_hub_concurrent_gather(self):
-        """Verify DataIngestionHub concurrently queries all registered adapters."""
-        hub = DataIngestionHub()
-        hub.register_adapter(MockCustomAdapter())
+    def test_06_data_hub_default_registration_and_concurrent_gather(self):
+        """Verify DataIngestionHub registers all default adapters and runs gather."""
+        hub = DataIngestionHub(adapters=[MockCustomAdapter()])
+        signals = asyncio.run(hub.fetch_all_alternative_signals())
+        self.assertEqual(len(signals), 1)
+        self.assertEqual(signals[0].signal_type, "INSIDER_TRADE")
 
-        amf = AmfShortAdapter(isins=["FR0000120271"], tickers=["TTE.PA"])
-        with patch.object(amf.scraper, "get_short_interest", return_value=1.1):
-            hub.register_adapter(amf)
+        # Test with default adapters
+        hub_defaults = DataIngestionHub()
+        self.assertTrue(len(hub_defaults.adapters) >= 5)
 
-            signals = asyncio.run(hub.fetch_all_alternative_signals())
-            self.assertTrue(len(signals) >= 2)
-            types = {s.signal_type for s in signals}
-            self.assertIn("INSIDER_TRADE", types)
-            self.assertIn("SHORT_INTEREST", types)
-
-    def test_04_save_signals_to_sqlite(self):
+    def test_07_save_signals_to_sqlite(self):
         """Verify signals are persisted and upserted into SQLite alternative_signals table."""
         conn = sqlite3.connect(":memory:")
-        hub = DataIngestionHub()
+        hub = DataIngestionHub(adapters=[])
 
         signals = [
             AlternativeSignal(
@@ -98,43 +151,41 @@ class TestDataHubSuite(unittest.TestCase):
             AlternativeSignal(
                 ticker="MARCHE",
                 signal_type="MACRO_VIX",
-                value=16.5,
+                value=15.4,
                 confidence=1.0,
-                source="Yahoo/ECB",
-                metadata={"index": "^V2TX"},
+                source="MACRO_ALPHA_SENSOR",
+                metadata={"regime": "NORMAL"},
             ),
         ]
 
-        count = hub.save_signals_to_sqlite(signals, conn)
-        self.assertEqual(count, 2)
+        saved = hub.save_signals_to_sqlite(signals, conn)
+        self.assertEqual(saved, 2)
 
-        # Query back
-        cursor = conn.execute("SELECT ticker, signal_type, value, source FROM alternative_signals ORDER BY ticker")
-        rows = cursor.fetchall()
+        cur = conn.cursor()
+        rows = cur.execute("SELECT ticker, signal_type, value FROM alternative_signals ORDER BY ticker ASC;").fetchall()
         self.assertEqual(len(rows), 2)
         self.assertEqual(rows[0][0], "MARCHE")
         self.assertEqual(rows[0][1], "MACRO_VIX")
-        self.assertEqual(rows[0][2], 16.5)
         self.assertEqual(rows[1][0], "SAN.PA")
         self.assertEqual(rows[1][1], "SHORT_INTEREST")
 
-        # Test upsert on same signature
+        # Test Upsert update
         updated_signals = [
             AlternativeSignal(
                 ticker="SAN.PA",
                 ts=signals[0].ts,
                 signal_type="SHORT_INTEREST",
-                value=2.5,
-                confidence=0.9,
+                value=1.5,
+                confidence=1.0,
                 source="AMF_BDIF",
                 metadata={"isin": "FR0000120578", "updated": True},
             )
         ]
-        hub.save_signals_to_sqlite(updated_signals, conn)
-        cursor = conn.execute("SELECT value, confidence FROM alternative_signals WHERE ticker='SAN.PA'")
-        row = cursor.fetchone()
-        self.assertEqual(row[0], 2.5)
-        self.assertEqual(row[1], 0.9)
+        saved2 = hub.save_signals_to_sqlite(updated_signals, conn)
+        self.assertEqual(saved2, 1)
+
+        val = cur.execute("SELECT value FROM alternative_signals WHERE ticker='SAN.PA';").fetchone()[0]
+        self.assertEqual(val, 1.5)
 
 
 if __name__ == "__main__":

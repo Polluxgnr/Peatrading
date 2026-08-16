@@ -19,9 +19,11 @@ _ROOT = Path(__file__).resolve().parent.parent
 for sub in ("00_data_sensors", "00_data_sensors/adapters", "01_memory_core"):
     sys.path.insert(0, str(_ROOT / sub))
 
-from adapters.amf_adapter import AmfShortAdapter
+from adapters.amf_adapter import AmfInsiderAdapter, AmfShortAdapter
 from adapters.base_adapters import AbstractPollAdapter
+from adapters.bourso_adapter import BoursoUniverseAdapter
 from adapters.macro_adapter import MacroAlphaAdapter
+from adapters.news_adapter import ConsolidatedNewsAdapter
 from data_contracts import AlternativeSignal
 
 logger = logging.getLogger("data_hub")
@@ -31,7 +33,11 @@ class DataIngestionHub:
     """Central orchestrator for all Layer 1 ingestion adapters."""
 
     def __init__(self, adapters: Optional[List[AbstractPollAdapter]] = None) -> None:
-        self.adapters: List[AbstractPollAdapter] = adapters or []
+        if adapters is not None:
+            self.adapters: List[AbstractPollAdapter] = list(adapters)
+        else:
+            self.adapters = []
+            self.register_default_adapters()
 
     def register_adapter(self, adapter: AbstractPollAdapter) -> None:
         """Register a new poll adapter into the hub."""
@@ -40,8 +46,11 @@ class DataIngestionHub:
             logger.info("Registered adapter: %s (interval=%ds)", type(adapter).__name__, adapter.interval_seconds)
 
     def register_default_adapters(self) -> None:
-        """Register the standard production adapters (AMF Short Interest, Macro VIX/Spread)."""
+        """Register the standard concrete adapters (AMF Short, AMF Insider, News, Boursorama, Macro)."""
         self.register_adapter(AmfShortAdapter())
+        self.register_adapter(AmfInsiderAdapter())
+        self.register_adapter(ConsolidatedNewsAdapter())
+        self.register_adapter(BoursoUniverseAdapter())
         self.register_adapter(MacroAlphaAdapter())
 
     async def fetch_all_alternative_signals(self) -> List[AlternativeSignal]:
@@ -110,7 +119,6 @@ class DataIngestionHub:
                 for s in signals:
                     ts_str = s.ts.isoformat()
                     tick_str = s.ticker or "ALL"
-                    # Deterministic ID hash
                     sig_id = hashlib.sha256(f"{tick_str}_{ts_str[:13]}_{s.signal_type}_{s.source}".encode()).hexdigest()[:24]
                     meta_str = json.dumps(s.metadata)
 

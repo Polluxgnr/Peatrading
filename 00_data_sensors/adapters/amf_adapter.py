@@ -1,7 +1,7 @@
-"""AMF Short Interest Adapter for Layer 1 Ingestion.
+"""AMF Regulatory Ingestion Adapters for Layer 1.
 
 Polls the Autorité des Marchés Financiers (AMF) BDIF portal for Net Short Positions
-and transforms raw regulatory records into standardized AlternativeSignal contracts.
+and Dirigeants / Insider Transactions, converting raw records into strict Pydantic AlternativeSignals.
 """
 
 from __future__ import annotations
@@ -25,17 +25,24 @@ except ImportError:
     from scrapers.amf_short_scraper import AmfShortScraper
 
 try:
+    from amf_scraper import AmfInsiderScraper
+except ImportError:
+    from scrapers.amf_scraper import AmfInsiderScraper
+
+try:
     from figi_mapper import FigiMapper
 except ImportError:
     FigiMapper = None
 
 logger = logging.getLogger("amf_adapter")
 
+_DEFAULT_PEA_TICKERS = ["MC.PA", "OR.PA", "TTE.PA", "SAN.PA", "AIR.PA", "AI.PA", "BNP.PA", "KER.PA"]
+
 
 class AmfShortAdapter(AbstractPollAdapter):
-    """Adapter polling AMF short interest data."""
+    """Adapter polling AMF net short positions."""
 
-    interval_seconds: int = 3600  # regulatory publications updated daily/hourly
+    interval_seconds: int = 3600
 
     def __init__(
         self,
@@ -49,12 +56,10 @@ class AmfShortAdapter(AbstractPollAdapter):
         self.isins = isins or []
         self.tickers = tickers or []
 
-        # If empty, populate with standard French blue chips
         if not self.isins and not self.tickers:
-            self.tickers = ["MC.PA", "OR.PA", "TTE.PA", "SAN.PA", "AIR.PA", "AI.PA", "BNP.PA", "KER.PA"]
+            self.tickers = list(_DEFAULT_PEA_TICKERS)
 
     def _resolve_isin(self, ticker_or_isin: str) -> str:
-        """Resolve ticker to ISIN if needed."""
         if ticker_or_isin.startswith("FR") and len(ticker_or_isin) == 12:
             return ticker_or_isin
         if self.figi is not None:
@@ -99,4 +104,60 @@ class AmfShortAdapter(AbstractPollAdapter):
                 logger.warning("Failed to fetch AMF short interest for %s (%s): %s", ticker, isin, exc)
 
         logger.info("AmfShortAdapter emitted %d AlternativeSignal(s).", len(signals))
+        return signals
+
+
+class AmfInsiderAdapter(AbstractPollAdapter):
+    """Adapter polling AMF official declarations of directors and executives."""
+
+    interval_seconds: int = 7200
+
+    def __init__(
+        self,
+        tickers: Optional[List[str]] = None,
+        interval_seconds: int = 7200,
+    ) -> None:
+        self.interval_seconds = interval_seconds
+        self.scraper = AmfInsiderScraper() if AmfInsiderScraper is not None else None
+        self.tickers = tickers or list(_DEFAULT_PEA_TICKERS)
+
+    async def fetch(self) -> List[AlternativeSignal]:
+        """Poll insider filings and compute direction scores."""
+        if self.scraper is None:
+            return []
+
+        loop = asyncio.get_event_loop()
+        signals: List[AlternativeSignal] = []
+
+        for ticker in self.tickers:
+            try:
+                df = await loop.run_in_executor(None, self.scraper.get_recent_declarations, ticker)
+                if df is not None and not df.empty:
+                    tx_col = next((c for c in ("Transaction", "Title", "type") if c in df.columns), None)
+                    buys, sells = 0, 0
+                    if tx_col:
+                        tx_series = df[tx_col].astype(str).str.lower()
+                        buys = int(tx_series.str.contains("acqui|achat|buy|souscription").sum())
+                        sells = int(tx_series.str.contains("cess|vente|sell|dispos").sum())
+
+                    direction = 1.0 if buys > sells else (-1.0 if sells > buys else 0.0)
+                    signals.append(
+                        AlternativeSignal(
+                            ticker=ticker,
+                            signal_type="INSIDER_TX",
+                            value=direction,
+                            confidence=1.0,
+                            source="AMF_BDIF",
+                            metadata={
+                                "declarations_count": len(df),
+                                "buys_count": buys,
+                                "sells_count": sells,
+                                "latest_date": str(df["Date"].iloc[0]) if "Date" in df.columns else "",
+                            },
+                        )
+                    )
+            except Exception as exc:
+                logger.warning("AmfInsiderAdapter failed for %s: %s", ticker, exc)
+
+        logger.info("AmfInsiderAdapter emitted %d AlternativeSignal(s).", len(signals))
         return signals
