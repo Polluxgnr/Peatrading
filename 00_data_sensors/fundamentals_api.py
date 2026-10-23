@@ -14,7 +14,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 
-import pandas as pd
 import yfinance as yf
 
 logger = logging.getLogger(__name__)
@@ -170,6 +169,8 @@ class FundamentalsSensor:
         score = sum(breakdown.values())
         self._cache_fundamentals(ticker, score, {})
         logger.info("Piotroski F-Score for %s: %d/9", ticker, score)
+        return score, breakdown
+
     def _calculate_piotroski_fmp(self, ticker: str, api_key: str) -> Optional[Tuple[int, Dict[str, int]]]:
         """Fetch statements from Financial Modeling Prep (FMP) and compute Piotroski F-Score."""
         import requests
@@ -234,7 +235,7 @@ class FundamentalsSensor:
             tot_assets_0 = float(bs0.get("totalAssets") or 0.0)
             tot_assets_1 = float(bs1.get("totalAssets") or 0.0)
             cfo_0 = float(cf0.get("operatingCashFlow") or 0.0)
-            cfo_1 = float(cf1.get("operatingCashFlow") or 0.0)
+            float(cf1.get("operatingCashFlow") or 0.0)
             lt_debt_0 = float(bs0.get("longTermDebt") or 0.0)
             lt_debt_1 = float(bs1.get("longTermDebt") or 0.0)
             curr_assets_0 = float(bs0.get("totalCurrentAssets") or 0.0)

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import sys
 import tempfile
 import unittest
@@ -18,7 +17,6 @@ for sub in ("01_memory_core", "03_risk_portfolio", "04_orchestrator_ai"):
 from equity_metrics import (  # noqa: E402
     compute_equity_metrics,
     max_drawdown,
-    sharpe_ratio,
 )
 from monthly_rebalancer import PortfolioRebalancer  # noqa: E402
 from earnings_blackout import EarningsBlackoutEngine  # noqa: E402

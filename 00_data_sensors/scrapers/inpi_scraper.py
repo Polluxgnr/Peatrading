@@ -7,7 +7,7 @@ for corporate distress, collective proceedings, or major capital restructuring a
 from __future__ import annotations
 
 import logging
-from typing import Dict, List, Optional
+from typing import Dict
 
 logger = logging.getLogger(__name__)
 

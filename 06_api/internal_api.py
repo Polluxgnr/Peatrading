@@ -16,7 +16,6 @@ Endpoints:
 from __future__ import annotations
 
 import logging
-import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -32,10 +31,10 @@ _ROOT = Path(__file__).resolve().parent.parent
 for d in ("00_data_sensors", "01_memory_core", "02_quant_engine", "03_risk_portfolio", "04_orchestrator_ai", "05_interfaces"):
     sys.path.insert(0, str(_ROOT / d))
 
-from data_models import PortfolioState, Signal, SignalStatus, SignalType
+from data_models import PortfolioState
 from sqlite_portfolio import PortfolioDB
 from macro_alpha_api import MacroAlphaSensor
-from hmm_regime import HMMRegimeClassifier, MarketRegimeState
+from hmm_regime import HMMRegimeClassifier
 
 logger = logging.getLogger(__name__)
 

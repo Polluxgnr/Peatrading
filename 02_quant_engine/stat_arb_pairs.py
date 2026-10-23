@@ -12,10 +12,9 @@ Strict Sector Isolation:
 from __future__ import annotations
 
 import logging
-import os
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 
 import numpy as np
 import pandas as pd
@@ -29,7 +28,7 @@ _ROOT = Path(__file__).resolve().parent.parent
 for _d in ("00_data_sensors", "01_memory_core", "02_quant_engine", "03_risk_portfolio"):
     sys.path.insert(0, str(_ROOT / _d))
 
-from data_models import Signal, SignalStatus, SignalType
+from data_models import Signal, SignalType
 
 logger = logging.getLogger(__name__)
 

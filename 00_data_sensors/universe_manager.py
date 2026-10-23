@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import sys
-from datetime import date, datetime
+from datetime import date
 from pathlib import Path
 from typing import Dict, List, Optional, Set
 
@@ -19,7 +19,6 @@ _ROOT = Path(__file__).resolve().parent.parent
 for d in ("00_data_sensors", "00_data_sensors/adapters", "00_data_sensors/scrapers", "01_memory_core"):
     sys.path.insert(0, str(_ROOT / d))
 
-from adapters.bourso_adapter import BoursoUniverseAdapter
 try:
     from bourso_scraper import BoursoramaScraper
 except ImportError:

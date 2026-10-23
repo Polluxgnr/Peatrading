@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import sys
 import unittest
-from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np

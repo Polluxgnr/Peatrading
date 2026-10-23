@@ -31,13 +31,13 @@ ROOT = Path(__file__).resolve().parent.parent
 for d in ("00_data_sensors", "00_data_sensors/scrapers", "01_memory_core", "02_quant_engine", "03_risk_portfolio", "04_orchestrator_ai", "05_interfaces"):
     sys.path.insert(0, str(ROOT / d))
 
-from risk_config import RiskParamsConfig, load_and_validate_risk_params
+from risk_config import RiskParamsConfig
 from drawdown_breaker import DrawdownBreaker
 from fundamentals_api import FundamentalsSensor
 from signal_priority_cascade import SignalOrchestrator
-from data_models import PortfolioState, Position, Signal, SignalStatus, SignalType
+from data_models import PortfolioState, Signal, SignalStatus, SignalType
 from hrp_sizer import HRPSizer
-from quantitative_math import calculate_historical_var, calculate_cvar, calculate_cornish_fisher_var, compute_comprehensive_risk_profile
+from quantitative_math import calculate_historical_var, calculate_cvar, calculate_cornish_fisher_var
 from stochastic_models import StochasticEngine
 from ml_feature_store import FeatureStore
 from hmm_regime import HMMRegimeClassifier, MarketRegimeState

@@ -11,9 +11,8 @@ is committed to DuckDB or processed by quantitative models:
 from __future__ import annotations
 
 import logging
-from typing import List, Optional
+from typing import Optional
 
-import numpy as np
 import pandas as pd
 
 logger = logging.getLogger("data_quality")

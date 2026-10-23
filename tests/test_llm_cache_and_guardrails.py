@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-import sqlite3
 import sys
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parent.parent
 for sub in ("01_memory_core", "04_orchestrator_ai", "05_interfaces"):

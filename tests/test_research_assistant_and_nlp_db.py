@@ -8,7 +8,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import numpy as np
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -24,7 +23,6 @@ for sub in (
     sys.path.insert(0, str(ROOT / sub))
 
 from correlation_firewall import CorrelationFirewall
-from data_contracts import MarketTick
 from data_models import Position, PortfolioState, Signal, SignalType
 from data_quality import DataQualityGateway
 from market_data_adapter import YFinanceMarketDataAdapter

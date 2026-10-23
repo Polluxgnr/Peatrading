@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 from enum import Enum
-from typing import Any, Dict, Optional, Tuple, Union
+from typing import Any, Dict, Optional
 
 import numpy as np
 import pandas as pd

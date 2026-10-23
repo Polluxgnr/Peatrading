@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import sys
 import unittest
-from datetime import date, datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -71,7 +70,7 @@ class TestDataQualityAndHardeningSuite(unittest.TestCase):
         res = gateway.validate_ohlcv_batch(df)
 
         self.assertEqual(len(res), 10)
-        outliers = res[res["is_outlier"] == True]
+        outliers = res[res["is_outlier"] == True]  # noqa: E712
         self.assertGreaterEqual(len(outliers), 1)
         # Index 5 (165.0) and Index 6 (-38% / drop back)
         self.assertTrue(res.iloc[5]["is_outlier"])

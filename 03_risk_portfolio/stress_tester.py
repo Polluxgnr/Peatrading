@@ -10,9 +10,8 @@ by mathematically stitching their price action to long-history proxies
 from __future__ import annotations
 
 import logging
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional
 
-import numpy as np
 import pandas as pd
 import yfinance as yf
 

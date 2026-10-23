@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import sys
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import List
 from unittest.mock import MagicMock, patch

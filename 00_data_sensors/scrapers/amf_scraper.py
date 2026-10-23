@@ -8,7 +8,6 @@ Any failure returns an empty DataFrame so callers fall back to yfinance.
 from __future__ import annotations
 
 import logging
-import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
 

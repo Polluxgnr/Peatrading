@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parent.parent
 for sub in ("00_data_sensors", "00_data_sensors/scrapers", "00_data_sensors/imap_ingest", "01_memory_core", "02_quant_engine", "03_risk_portfolio", "04_orchestrator_ai", "05_interfaces", "06_api"):
     sys.path.insert(0, str(ROOT / sub))
 
-from _http import safe_get, stealth_headers
+from _http import stealth_headers
 from bourso_scraper import BoursoramaScraper
 from imap_ingest import RawMessage, parse_newsletter, is_allowed_sender, dedupe_articles
 from news_email_scraper import run_email_scraper

@@ -20,9 +20,9 @@ except ImportError:
     cloudscraper = None
 
 try:
-    from _http import rate_limit, safe_get, stealth_headers
+    from _http import rate_limit, safe_get, stealth_headers  # noqa: F401
 except ImportError:  # pragma: no cover
-    from scrapers._http import rate_limit, safe_get, stealth_headers  # type: ignore
+    from scrapers._http import safe_get, stealth_headers  # type: ignore
 
 logger = logging.getLogger(__name__)
 

@@ -20,12 +20,16 @@ Run (auto-opens browser):
 """
 
 import asyncio
+import json
+import logging
 import os
+import sqlite3
 import sys
 
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import plotly.express as pex
 import plotly.graph_objects as go
@@ -67,6 +71,13 @@ for _sub in ("00_data_sensors", "01_memory_core", "02_quant_engine",
 
 from sqlite_portfolio import PortfolioDB  # noqa: E402
 from data_models import Position, PortfolioState  # noqa: E402
+
+try:
+    from duckdb_manager import TimeSeriesDB  # noqa: E402
+except Exception:  # noqa: BLE001
+    TimeSeriesDB = None  # type: ignore[assignment]
+
+logger = logging.getLogger("dashboard")
 
 
 try:
@@ -118,6 +129,7 @@ except Exception:  # noqa: BLE001
 
 _DB_DIR = _ROOT / "database"
 _SQLITE_PATH = _DB_DIR / "portfolio.db"
+_PORTFOLIO_DB_PATH = _SQLITE_PATH
 _UNIVERSE_PATH = _ROOT / "config" / "pea_universe.yaml"
 _RISK_PATH = _ROOT / "config" / "risk_params.yaml"
 _API_BASE_URL = "http://localhost:8000/api/v1"
@@ -532,7 +544,7 @@ def generate_ai_ticker_summary(
         f"RSI(14) à {rsi} ({'Survendu - setup Mean-Reversion' if indicators and indicators.get('rsi', 50) < 30 else 'Zone neutre'}).\n"
         f"• **Valorisation & Consensus** : Multiple P/E {pe}. Objectif moyen du consensus à {target} (Avis : {consensus}).\n"
         f"• **Catalyseurs Clés** : " + ", ".join(dossier.get("catalysts") or ["Croissance du chiffre d'affaires", "Résilience des marges", "Expansion européenne"]) + ".\n"
-        f"• **Risques à Surveiller** : " + ", ".join(dossier.get("risk_events") or ["Volatilité des devises", "Ralentissement macroéconomique", "Hausses de taux"]) + ".\n\n"
+        "• **Risques à Surveiller** : " + ", ".join(dossier.get("risk_events") or ["Volatilité des devises", "Ralentissement macroéconomique", "Hausses de taux"]) + ".\n\n"
         f"**Verdict Stratégique PEA** : *{'Candidat de rebond attractif (RSI < 30 au-dessus de SMA200)' if indicators and indicators.get('rsi', 50) < 30 else 'Surveillance active - attendre confirmation de repli en zone d’achat'}.*"
     )
 
@@ -2985,7 +2997,6 @@ with st.sidebar:
         with st.spinner("Synchronisation des flux et calcul des signaux en cours..."):
             try:
                 from hub import DataIngestionHub
-                from data_quality import DataQualityGateway
                 from market_data_adapter import YFinanceMarketDataAdapter
                 
                 hub = DataIngestionHub()
@@ -5196,9 +5207,9 @@ with tab_backtest:
                     if len(df_t) < 200:
                         continue
                     try:
-                        import pandas_ta_classic as ta
+                        import pandas_ta_classic as ta  # noqa: F401
                     except ImportError:
-                        import pandas_ta as ta
+                        pass
 
                     df_calc = df_t.copy()
                     df_calc["SMA200"] = df_calc["Close"].rolling(200).mean()

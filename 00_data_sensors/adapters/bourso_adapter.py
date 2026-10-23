@@ -10,7 +10,7 @@ import asyncio
 import logging
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import List
 
 _ROOT = Path(__file__).resolve().parent.parent.parent
 for sub in ("00_data_sensors", "00_data_sensors/scrapers", "01_memory_core"):

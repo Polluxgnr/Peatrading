@@ -1,20 +1,20 @@
 """Profile builder logic extracted from dashboard for Night Run."""
-import sys
-import logging
+import asyncio
 import json
+import os
+import sys
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import datetime
 
 _ROOT = Path(__file__).resolve().parent.parent
 
 if str(_ROOT / "01_memory_core") not in sys.path:
     sys.path.insert(0, str(_ROOT / "01_memory_core"))
-from sqlite_portfolio import PortfolioDB, get_portfolio_db
+from sqlite_portfolio import get_portfolio_db
 from duckdb_manager import get_ts_db
 
 if str(_ROOT / "04_orchestrator_ai") not in sys.path:
     sys.path.insert(0, str(_ROOT / "04_orchestrator_ai"))
-from llm_explainer import NarrativeExplainer
 
 import yfinance as yf
 _CORE_TICKER = "CW8.PA"
@@ -104,8 +104,21 @@ def get_fundamental_metrics(ticker: str) ->dict:
         'valuation_fallback'}
 
 def get_deep_news_synthesis(ticker: str, headlines: tuple[str, ...]) ->str:
-    """Alias used by Exploration (same 24h cache key family as analysis)."""
-    return get_deep_news_analysis(ticker, headlines)
+    """Short French brief of the latest headlines for a ticker (OpenRouter)."""
+    api_key = os.getenv('OPENROUTER_API_KEY')
+    if not api_key or not headlines:
+        return 'Synthèse IA indisponible (pas de clé OpenRouter ou pas de news).'
+    from llm_explainer import openrouter_chat
+    joined = '\n'.join(f'- {h}' for h in headlines)
+    prompt = f"""Résume en français, en 3 à 5 phrases, ce que ces titres disent de {ticker} pour un investisseur PEA. Distingue les faits des rumeurs.
+
+{joined}"""
+    out = asyncio.run(openrouter_chat([{'role': 'system', 'content':
+        'Tu es un analyste financier FR concis.'}, {'role': 'user',
+        'content': prompt}], api_key=api_key, max_tokens=300,
+        temperature=0.2))
+    return (out or '').strip() or 'Synthèse IA indisponible.'
+
 
 def _fetch_news_from_apis(symbol: str, limit: int=6) ->list[dict]:
     """Fetch diverse news from live APIs (Boursorama + Google + Yahoo)."""

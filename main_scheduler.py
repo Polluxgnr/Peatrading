@@ -27,7 +27,6 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
 
 import yaml
 
@@ -604,7 +603,7 @@ def run_cloud_backup() -> None:
 
 async def run_monthly_rebalance_async() -> None:
     """Probe daily: profit-shave triggers on 1st of month."""
-    started = time.perf_counter()
+    time.perf_counter()
     try:
         rebalancer = PortfolioRebalancer(_CONFIG_DIR)
         pdb = PortfolioDB()
@@ -629,7 +628,7 @@ async def run_monthly_rebalance_async() -> None:
         webhook_url = os.getenv("DISCORD_WEBHOOK_URL")
         if webhook_url and signals:
             lines = [f"• **{s.ticker}**: Vendre {s.target_qty} titre(s) - {s.reason}" for s in signals]
-            msg = f"🔄 **Ajustement Mensuel PEA (Prise de Bénéfices)**\n" + "\n".join(lines)
+            msg = "🔄 **Ajustement Mensuel PEA (Prise de Bénéfices)**\n" + "\n".join(lines)
             _post_webhook(webhook_url, {"content": msg})
     except Exception as exc:  # noqa: BLE001
         logger.error("Monthly rebalance failed: %s", exc, exc_info=True)

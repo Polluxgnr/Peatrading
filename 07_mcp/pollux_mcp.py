@@ -14,10 +14,9 @@ Run:
 
 from __future__ import annotations
 
-import json
 import logging
 import sys
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
 
 import requests
 

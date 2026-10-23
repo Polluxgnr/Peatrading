@@ -7,7 +7,6 @@ executive 3-paragraph daily briefing for the human Portfolio Manager.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
 import sys
@@ -110,9 +109,9 @@ class InstitutionalAnalyst:
         )
 
         p3 = (
-            f"**3. Directives Stratégiques d'Aide à la Décision** : Il est recommandé au gérant de maintenir le strict respect du plafond "
-            f"d'exposition à 98% (sanctuarisation du buffer de sécurité de 2% de liquidités). L'exécution des ordres proposés doit être "
-            f"échelonnée aux cours limites optimaux calculés par le sizer, en neutralisant tout risque de slippage."
+            "**3. Directives Stratégiques d'Aide à la Décision** : Il est recommandé au gérant de maintenir le strict respect du plafond "
+            "d'exposition à 98% (sanctuarisation du buffer de sécurité de 2% de liquidités). L'exécution des ordres proposés doit être "
+            "échelonnée aux cours limites optimaux calculés par le sizer, en neutralisant tout risque de slippage."
         )
 
         return f"{p1}\n\n{p2}\n\n{p3}"

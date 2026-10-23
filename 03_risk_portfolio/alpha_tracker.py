@@ -2,7 +2,6 @@ import logging
 import pandas as pd
 import numpy as np
 import yfinance as yf
-from datetime import datetime, timezone
 import sys
 from pathlib import Path
 
@@ -71,7 +70,7 @@ def calculate_alpha_metrics(portfolio_curve: pd.DataFrame) -> dict:
             raise ValueError("Not enough overlapping data points to calculate metrics.")
             
         port_ret = merged['returns']
-        rf_daily = RISK_FREE_RATE_ANNUAL / 252.0
+        RISK_FREE_RATE_ANNUAL / 252.0
         
         metrics = {}
         

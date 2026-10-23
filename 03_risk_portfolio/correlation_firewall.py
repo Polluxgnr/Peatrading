@@ -12,7 +12,7 @@ import logging
 import os
 import sys
 from pathlib import Path
-from typing import Dict, Tuple
+from typing import Dict
 
 import pandas as pd
 import yaml

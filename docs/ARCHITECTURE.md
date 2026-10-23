@@ -83,7 +83,7 @@ flowchart TD
 | `07_mcp/` | **MCP Server** | Model Context Protocol gateway for Claude Desktop & LLMs. | `pollux_mcp.py` (`get_portfolio_status`, `get_top_recommendations`, `analyze_asset`) |
 | `config/` | **Configuration** | YAML configurations validated at runtime. | `risk_params.yaml`, `pea_universe.yaml`, `macro_calendar.yaml`, `earnings_calendar.yaml` |
 | `tests/` | **Test Suite** | Comprehensive unit & regression test suites. | `test_institutional_suite.py`, `test_api_and_mcp.py`, `test_funnel_analytics.py` |
-| `tools/` | **Developer Tools** | LLM context generator, universe synchronizers. | `build_llm_dump.py`, `sync_universe_from_bourso.py` |
+| `tools/` | **Developer Tools** | Universe synchronizers, backups, walk-forward runs. | `sync_universe_from_bourso.py`, `backup_databases.py`, `run_wfo.py` |
 
 ---
 

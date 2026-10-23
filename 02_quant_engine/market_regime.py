@@ -10,7 +10,7 @@ Upgrades hard binary VIX cutoffs to continuous 252-day percentile-ranked volatil
 from __future__ import annotations
 
 import logging
-from typing import Optional, Tuple, Union
+from typing import Optional, Sequence, Union
 
 import numpy as np
 import pandas as pd

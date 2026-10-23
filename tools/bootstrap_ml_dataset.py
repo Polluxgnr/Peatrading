@@ -4,10 +4,8 @@ Simulates the last 10 years to generate XGBoost training features.
 Uses multiprocessing to scan tickers x 10 years efficiently.
 """
 
-import concurrent.futures
 import datetime
 import logging
-import os
 import sys
 from pathlib import Path
 from typing import List, Dict
@@ -202,7 +200,7 @@ def main() -> None:
         logger.info("Training XGBoost model...")
         train_model(dataset_path=str(out_path))
         logger.info("Training complete.")
-    except Exception as e:
+    except Exception:
         logger.exception("Failed to train model.")
 
 if __name__ == "__main__":

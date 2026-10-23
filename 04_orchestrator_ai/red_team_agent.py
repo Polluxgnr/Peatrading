@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Dict, Optional
+from typing import Dict
 
 logger = logging.getLogger(__name__)
 
@@ -80,8 +80,8 @@ class RedTeamDebateAgent:
         )
 
         bear = (
-            f"• Risque de 'falling knife' si la dynamique macro sectorielle se dégrade davantage.\n"
-            f"• Présence d'incertitudes sur les taux et l'élasticité de la demande européenne."
+            "• Risque de 'falling knife' si la dynamique macro sectorielle se dégrade davantage.\n"
+            "• Présence d'incertitudes sur les taux et l'élasticité de la demande européenne."
         )
 
         if is_high_conviction and is_oversold:
@@ -89,7 +89,7 @@ class RedTeamDebateAgent:
             verdict = "GO"
             conf = 0.85
         elif technical_score >= 70:
-            judge = f"Setup valide mais prudence requise. Réduction recommandée de la taille de tranche pour limiter la volatilité."
+            judge = "Setup valide mais prudence requise. Réduction recommandée de la taille de tranche pour limiter la volatilité."
             verdict = "REDUCE_SIZE"
             conf = 0.65
         else:

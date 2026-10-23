@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import sys
 import unittest
 from datetime import datetime, timezone
@@ -101,7 +100,7 @@ class TestFmpCopilotRetrainingSuite(unittest.TestCase):
             "tactical_BEAR": {"accuracy_pct": 68.2},
         }
         with patch("ml_trainer.train_model", return_value=mock_metrics), \
-             patch("main_scheduler._post_webhook") as mock_webhook:
+             patch("main_scheduler._post_webhook"):
             # Force day = 1 for the test
             with patch("main_scheduler.datetime") as mock_dt:
                 mock_dt.today.return_value = datetime(2026, 9, 1, 2, 0, 0, tzinfo=timezone.utc)

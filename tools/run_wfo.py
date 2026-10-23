@@ -7,7 +7,6 @@ import logging
 import sys
 from pathlib import Path
 import yaml
-import pandas as pd
 import numpy as np
 
 _ROOT = Path(__file__).resolve().parent.parent
@@ -15,7 +14,6 @@ sys.path.insert(0, str(_ROOT / "01_memory_core"))
 sys.path.insert(0, str(_ROOT / "02_quant_engine"))
 
 from duckdb_manager import TimeSeriesDB
-from technical_scorer import SignalGenerator
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -24,7 +22,7 @@ _CONFIG_PATH = _ROOT / "config" / "risk_params.yaml"
 
 def run_wfo():
     logger.info("Starting Walk-Forward Optimization for RSI_OVERSOLD...")
-    tsdb = TimeSeriesDB(read_only=True)
+    TimeSeriesDB(read_only=True)
     
     # Normally we would fetch the universe and simulate the last 6 months.
     # For this implementation, we will simulate a metric generation and pick

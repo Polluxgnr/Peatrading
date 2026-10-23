@@ -10,7 +10,6 @@ the scheduler (Phase 9) calling ``copilot.send_signal_alert(...)``. For a quick
 manual smoke test, pass --demo to post one fake alert on ``on_ready``.
 """
 
-import asyncio
 import logging
 import os
 import sys

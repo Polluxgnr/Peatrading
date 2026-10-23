@@ -56,7 +56,6 @@ def _assign_regimes(df: pd.DataFrame) -> pd.DataFrame:
     if "regime" not in df.columns:
         logger.info("Computing historical regimes for training data...")
         from duckdb_manager import TimeSeriesDB
-        from hmmlearn.hmm import GaussianHMM
         
         tsdb = TimeSeriesDB(read_only=True)
         fchi = tsdb.get_historical_prices("^FCHI", days=3000)

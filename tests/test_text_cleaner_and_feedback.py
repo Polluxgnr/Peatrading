@@ -48,7 +48,7 @@ class TestTextCleanerAndFeedbackSuite(unittest.TestCase):
 
         try:
             bandit = UCBBandit(storage_path=bandit_path)
-            prev_counts = bandit.state["BULL"]["mean_reversion"]["counts"]
+            bandit.state["BULL"]["mean_reversion"]["counts"]
 
             engine = TradePostMortemEngine(db_path=db_path)
             res = engine.generate_post_mortem(

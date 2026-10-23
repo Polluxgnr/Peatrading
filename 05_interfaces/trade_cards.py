@@ -81,7 +81,6 @@ def market_impact_line(
     if adv is None or adv <= 0:
         return "Impact marché estimé: < 0.05% (liquidité standard)"
     participation_pct = (notional / adv) * 100.0 if adv > 0 else 0.0
-    color = "sub-green" if participation_pct < 1.0 else ("sub-amber" if participation_pct < 5.0 else "sub-red")
     return f"Impact marché estimé: {participation_pct:.2f}% de l'ADV 20j (€{adv:,.0f})"
 
 
@@ -161,9 +160,8 @@ def render_signal_card(
                 high_p = float(ml_interval[1]) * 100.0 if float(ml_interval[1]) <= 1.0 else float(ml_interval[1])
                 int_txt = f" (Confidence Interval: {low_p:.0f}%-{high_p:.0f}%)"
 
-            shap_txt = ""
             if shap_vals and isinstance(shap_vals, dict):
-                top_shaps = sorted(
+                sorted(
                     [(k, float(v)) for k, v in shap_vals.items()],
                     key=lambda x: abs(x[1]),
                     reverse=True,

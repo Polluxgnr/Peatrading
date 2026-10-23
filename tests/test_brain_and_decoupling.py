@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import gc
-import os
 import sys
-import tempfile
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
@@ -17,10 +14,10 @@ ROOT = Path(__file__).resolve().parent.parent
 for sub in ("00_data_sensors", "00_data_sensors/scrapers", "01_memory_core", "02_quant_engine", "03_risk_portfolio", "04_orchestrator_ai", "05_interfaces", "06_api"):
     sys.path.insert(0, str(ROOT / sub))
 
-from openinsider_eu_scraper import OpenInsiderEuScraper, clean_numeric_value
+from openinsider_eu_scraper import clean_numeric_value
 from technical_scorer import SignalGenerator
 from signal_priority_cascade import SignalOrchestrator
-from data_models import PortfolioState, Position, Signal, SignalStatus, SignalType
+from data_models import PortfolioState, Signal, SignalStatus, SignalType
 from internal_api import app
 
 

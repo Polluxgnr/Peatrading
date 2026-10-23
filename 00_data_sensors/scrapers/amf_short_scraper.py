@@ -8,13 +8,13 @@ Provides quantitative data on heavily shorted French and European equities to ve
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 try:
     from ._http import safe_get, stealth_headers
 except ImportError:
     try:
-        from _http import safe_get, stealth_headers
+        from _http import safe_get, stealth_headers  # noqa: F401
     except ImportError:
         import requests
         def safe_get(url: str, **kwargs):
